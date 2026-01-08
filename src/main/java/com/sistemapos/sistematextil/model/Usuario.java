@@ -1,6 +1,4 @@
 package com.sistemapos.sistematextil.model;
-
-
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;

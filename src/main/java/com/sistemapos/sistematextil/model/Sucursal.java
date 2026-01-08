@@ -42,12 +42,12 @@ public class Sucursal {
     private String correo;
 
     @NotBlank(message = "El estado es obligatorio")
-    private String estado;
+    private String estado = "ACTIVO";
 
     @Column(name = "fecha_creacion")
     private LocalDateTime fechaCreacion;
 
-    // Cambia FetchType.LAZY por FetchType.EAGER
+    // se Cambio FetchType.LAZY por FetchType.EAGER
 @ManyToOne(fetch = FetchType.EAGER)
 @JoinColumn(name = "id_empresa", nullable = false)
 @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})

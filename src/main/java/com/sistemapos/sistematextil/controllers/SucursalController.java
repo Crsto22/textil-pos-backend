@@ -64,4 +64,18 @@ public class SucursalController {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
         }
     }
+
+    @PutMapping("estado/{id}")
+public ResponseEntity<Sucursal> cambiarEstado(@PathVariable Integer id) {
+    try {
+        Sucursal sucursalActualizada = sucursalService.cambiarEstado(id);
+        return ResponseEntity.ok(sucursalActualizada);
+    } catch (RuntimeException e) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(null);
+    }
+}
+
+
+
+
 }

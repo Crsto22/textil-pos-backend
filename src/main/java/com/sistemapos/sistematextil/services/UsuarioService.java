@@ -14,7 +14,7 @@ public class UsuarioService {
     private final UsuarioRepository usuarioRepository;
 
 
-    public Usuario findByCorreo (String correo){
+    public Usuario Buscarporemail (String correo){
         return usuarioRepository.findByCorreo(correo).orElseThrow();
     }
 

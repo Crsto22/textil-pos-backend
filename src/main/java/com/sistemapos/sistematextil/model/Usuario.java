@@ -19,10 +19,11 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-
+@Builder
 @Entity
 @Data
 @NoArgsConstructor
@@ -49,6 +50,11 @@ public class Usuario {
     @Pattern(regexp = "\\d{8}", message = "El DNI debe tener exactamente 8 dígitos")
     @Column(nullable = false, unique = true, length = 8)
     private String dni;
+
+    @NotBlank(message = "Ingrese teléfono")
+    @Pattern(regexp = "\\d{9}",message = "El teléfono debe tener exactamente 9 dígitos")
+    @Column(nullable = false, unique = true, length = 9)
+    private String telefono;
 
     @NotBlank(message = "Ingrese correo")
     @Email(message = "Formato de correo inválido")
@@ -84,5 +90,4 @@ public class Usuario {
         this.estado = "ACTIVO";
     }
 
-    
 }

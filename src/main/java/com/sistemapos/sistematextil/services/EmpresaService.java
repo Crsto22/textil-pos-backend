@@ -45,7 +45,7 @@ public class EmpresaService {
 
     public void eliminar(Integer idEmpresa){
         if (!empresaRepository.existsById(idEmpresa)) {
-            throw new RuntimeException("La empresa " +idEmpresa+" no existe");            
+            throw new RuntimeException("La empresa " +idEmpresa+" no existe");
         }
         empresaRepository.deleteById(idEmpresa);
     }

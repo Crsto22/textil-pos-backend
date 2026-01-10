@@ -66,7 +66,7 @@ public class SucursalController {
     }
 
     @PutMapping("estado/{id}")
-public ResponseEntity<Sucursal> cambiarEstado(@PathVariable Integer id) {
+    public ResponseEntity<Sucursal> cambiarEstado(@PathVariable Integer id) {
     try {
         Sucursal sucursalActualizada = sucursalService.cambiarEstado(id);
         return ResponseEntity.ok(sucursalActualizada);

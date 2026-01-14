@@ -51,6 +51,15 @@ public class SecurityConfig {
                     .requestMatchers("/api/auth/**").permitAll() // Ingresar sin token
                     .requestMatchers("/api/sucursal/**").permitAll()
                     .requestMatchers("/api/empresa/**").permitAll()
+
+
+                    // AGREGA ESTAS LÍNEAS AQUÍ:
+                .requestMatchers("/api/talla/**").permitAll()
+                .requestMatchers("/api/color/**").permitAll()
+                .requestMatchers("/api/producto/**").permitAll()
+                .requestMatchers("/api/variante/**").permitAll()
+
+                    
                     
                     .anyRequest().authenticated()) // cualquier otra ruta no mencionada necesita que el usuario sea autenticado pero sin importar si es admin o client
                 .sessionManagement(sess -> sess.sessionCreationPolicy(SessionCreationPolicy.STATELESS))

@@ -37,11 +37,18 @@ public class Sucursal {
 
     private String descripcion;
 
+    // NUEVOS CAMPOS
+    @NotBlank(message = "La dirección es obligatoria")
+    private String direccion;
+
+    @NotBlank(message = "El teléfono es obligatorio")
+    @Size(min = 7, max = 15, message = "El teléfono debe tener entre 7 y 15 caracteres")
+    private String telefono;
+
     @NotBlank(message = "El correo es obligatorio")
     @Email(message = "Correo no válido")
     private String correo;
 
-    @NotBlank(message = "El estado es obligatorio")
     private String estado = "ACTIVO";
 
     @Column(name = "fecha_creacion")

@@ -47,13 +47,17 @@ public class SucursalController {
     }
 
     @PutMapping("actualizar/{id}")
-    public ResponseEntity<Sucursal> actualizar(@PathVariable Integer id, @Valid @RequestBody Sucursal sucursal) {
-        try {
-            return ResponseEntity.ok(sucursalService.actualizar(id, sucursal));
-        } catch (RuntimeException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(null);
-        }
+public ResponseEntity<?> actualizar(@PathVariable Integer id, @Valid @RequestBody Sucursal sucursal) {
+    try {
+        // Aquí devuelve un objeto Sucursal
+        Sucursal actualizada = sucursalService.actualizar(id, sucursal);
+        return ResponseEntity.ok(actualizada);
+    } catch (RuntimeException e) {
+        // Aquí devuelve un String con el error
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
     }
+}
+    
 
     @DeleteMapping("eliminar/{id}")
     public ResponseEntity<String> eliminar(@PathVariable Integer id) {

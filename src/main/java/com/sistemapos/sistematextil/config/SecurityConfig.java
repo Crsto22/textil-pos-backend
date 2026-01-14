@@ -46,7 +46,7 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
             .csrf(AbstractHttpConfigurer::disable)
-            .cors(Customizer.withDefaults()) // HABILITAR y CREAMOS EN LINK DE CONFIGURACION , QUE SERIA LO DE LA LINEA 70 PARA ABAJO: UrlBasedCorsConfigurationSource
+            .cors(Customizer.withDefaults()) // HABILITAR y CREAMOS EN LINK DE CONFIGURACION , QUE SERIA LO DE LA LINEA 63 PARA ABAJO: UrlBasedCorsConfigurationSource
             .authorizeHttpRequests(auth -> auth
                     .requestMatchers("/api/auth/**").permitAll() // Ingresar sin token
                     .requestMatchers("/api/sucursal/**").permitAll()
@@ -71,7 +71,7 @@ public class SecurityConfig {
     @Bean
     UrlBasedCorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(Arrays.asList( "*"));
+        configuration.setAllowedOrigins(Arrays.asList( "https://sistema-pos-swart.vercel.app", "http://localhost:5173"));
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(Arrays.asList("*")); // PARA LOS ENCABEZADOS , EL * PERMITE TODO LOS ENCABEZADOS
         configuration.setAllowCredentials(false);

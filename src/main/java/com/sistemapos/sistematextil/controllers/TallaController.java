@@ -21,11 +21,19 @@ import lombok.AllArgsConstructor;
 @RequestMapping("api/talla")
 @AllArgsConstructor
 public class TallaController {
+    
     private final TallaService tallaService;
 
+    // Listar absolutamente todas (Para el administrador)
     @GetMapping("listar")
     public ResponseEntity<List<Talla>> listar() {
         return ResponseEntity.ok(tallaService.listarTodas());
+    }
+
+    // NUEVO: Listar solo las que están en ACTIVO (Para formularios de productos)
+    @GetMapping("activas")
+    public ResponseEntity<List<Talla>> listarActivas() {
+        return ResponseEntity.ok(tallaService.listarActivas());
     }
 
     @PostMapping("insertar")
@@ -33,16 +41,26 @@ public class TallaController {
         return ResponseEntity.ok(tallaService.insertar(talla));
     }
 
-    // NUEVO: Método para actualizar (Corregir nombres)
     @PutMapping("actualizar/{id}")
     public ResponseEntity<Talla> actualizar(@PathVariable Integer id, @RequestBody Talla talla) {
         return ResponseEntity.ok(tallaService.actualizar(id, talla));
     }
 
-    // NUEVO: Método para eliminar
+    // NUEVO: Cambiar estado (Desactivar/Activar sin borrar)
+    @PutMapping("estado/{id}")
+    public ResponseEntity<Talla> cambiarEstado(@PathVariable Integer id) {
+        return ResponseEntity.ok(tallaService.cambiarEstado(id));
+    }
+
+    // Eliminar físicamente (Solo si no tiene productos asociados)
     @DeleteMapping("eliminar/{id}")
-    public ResponseEntity<Void> eliminar(@PathVariable Integer id) {
-        tallaService.eliminar(id);
-        return ResponseEntity.noContent().build();
+    public ResponseEntity<String> eliminar(@PathVariable Integer id) {
+        try {
+            tallaService.eliminar(id);
+            return ResponseEntity.ok("Talla eliminada correctamente");
+        } catch (RuntimeException e) {
+            // Aquí atrapamos el error si la base de datos prohíbe el borrado
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
     }
 }

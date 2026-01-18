@@ -4,6 +4,7 @@ import java.util.List;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -44,4 +45,15 @@ public class ProductoVarianteController {
     public ResponseEntity<ProductoVariante> actualizarStock(@PathVariable Integer id, @RequestBody Integer stock) {
         return ResponseEntity.ok(service.actualizarStock(id, stock));
     }
+    @DeleteMapping("eliminar/{id}")
+public ResponseEntity<String> eliminar(@PathVariable Integer id) {
+    service.eliminar(id);
+    return ResponseEntity.ok("Variante eliminada correctamente");
+}
+
+@PatchMapping("precio/{id}")
+public ResponseEntity<ProductoVariante> actualizarPrecio(@PathVariable Integer id, @RequestBody Double precio) {
+    return ResponseEntity.ok(service.actualizarPrecio(id, precio));
+}
+
 }

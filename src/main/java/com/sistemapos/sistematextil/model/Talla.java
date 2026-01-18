@@ -26,4 +26,8 @@ public class Talla {
 
     @NotBlank(message = "El nombre de la talla es obligatorio")
     private String nombre; // Ej: S, M, L, XL, 32, 34
+
+    private String estado = "ACTIVO";
+
+
 }

@@ -26,4 +26,9 @@ public class Color {
 
     @NotBlank(message = "El nombre del color es obligatorio")
     private String nombre; // Ej: Rojo, Azul, Negro, Blanco
+
+    @NotBlank(message= "El código del color es obligatorio")
+    private String codigo;
+
+    private String estado = "ACTIVO";
 }

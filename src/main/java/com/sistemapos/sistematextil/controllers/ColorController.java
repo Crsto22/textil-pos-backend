@@ -28,23 +28,33 @@ public class ColorController {
         return ResponseEntity.ok(colorService.listarTodos());
     }
 
+    @GetMapping("activos")
+    public ResponseEntity<List<Color>> listarActivos() {
+        return ResponseEntity.ok(colorService.listarActivos());
+    }
+
     @PostMapping("insertar")
     public ResponseEntity<Color> crear(@RequestBody Color color) {
         return ResponseEntity.ok(colorService.insertar(color));
     }
 
-    // NUEVO: Método para actualizar (Corregir nombres)
     @PutMapping("actualizar/{id}")
     public ResponseEntity<Color> actualizar(@PathVariable Integer id, @RequestBody Color color) {
         return ResponseEntity.ok(colorService.actualizar(id, color));
     }
 
-    // NUEVO: Método para eliminar
-    @DeleteMapping("eliminar/{id}")
-    public ResponseEntity<Void> eliminar(@PathVariable Integer id) {
-        colorService.eliminar(id);
-        return ResponseEntity.noContent().build();
+    @PutMapping("estado/{id}")
+    public ResponseEntity<Color> cambiarEstado(@PathVariable Integer id) {
+        return ResponseEntity.ok(colorService.cambiarEstado(id));
     }
 
-    
+    @DeleteMapping("eliminar/{id}")
+    public ResponseEntity<String> eliminar(@PathVariable Integer id) {
+        try {
+            colorService.eliminar(id);
+            return ResponseEntity.ok("Color eliminado correctamente");
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
 }

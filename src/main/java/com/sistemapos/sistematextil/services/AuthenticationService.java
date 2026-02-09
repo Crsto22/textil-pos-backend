@@ -32,7 +32,14 @@ public class AuthenticationService {
 
     // El RegisterRequest viene del paquete util
     public String register (RegisterRequest request){
-        Sucursal sucursal = sucursalRepository.findById(request.idSucursal()).orElseThrow(() -> new RuntimeException("Sucursal no encontrada"));
+        Sucursal sucursal = null;
+
+        // Solo buscar sucursal si idSucursal no es null
+        if (request.idSucursal() != null) {
+            sucursal = sucursalRepository.findById(request.idSucursal())
+                .orElseThrow(() -> new RuntimeException("Sucursal no encontrada"));
+        }
+
         var user = Usuario.builder()
             .nombre(request.nombre()) //Los nombres como .nombre() , .apellido() etc , tienen que ser los mismos de mi atributo de la entidad
             .apellido(request.apellido())
@@ -41,7 +48,7 @@ public class AuthenticationService {
             .telefono(request.telefono())
             .password(passwordEncoder.encode(request.password()))
             .rol(Rol.ADMINISTRADOR)
-            .sucursal(sucursal) // <- aquí va el objeto Sucursal
+            .sucursal(sucursal) // <- aquí va el objeto Sucursal (puede ser null)
             .build();
         usuarioRepository.save(user);
 
@@ -58,13 +65,16 @@ public class AuthenticationService {
         authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(request.email(), request.password())); //request.email(), request.password() , correo y contraseña que el usuario ingreso lo envia al AuthenticationManager de SecurityConfig (VALIDA QUE EL USUARIO EXISTA EN LA DATABASEE) y si valida y existe recien pasa a la siguiente linea (ES DECIR ESTA LINEA HACE EL PROCESO DE LOGIN)
         //↑↑ VALIDA QUE EXISTA EN LA DATABASE
         var user = usuarioRepository.findByCorreo(request.email()).orElseThrow(); //Obtiene el correo que el usuario ingreso al iniciar sesion
-        
+
         //ENVOLVEMOS el usuario en un CustomUser (Que implementa un UserDetails)
         CustomUser customUser = new CustomUser(user);
 
         //Ponemos el customUser en los jwt , porque en nuestro jwtService esta codificado para que los token se guarden en el custonUser que envuelve la entidad Usuario, ademas para el spring security se maneja  solo con customUser
         var jwtToken = jwtService.generateToken(customUser);
         var refreshToken = jwtService.generateRefreshToken(customUser);
+
+        // Obtener idSucursal de forma segura (null si no tiene sucursal)
+        Integer idSucursal = user.getSucursal() != null ? user.getSucursal().getIdSucursal() : null;
 
         //Me retornara o devolvera esto y nuestro controlador devolvera esto al frontend
         return new AuthenticationResponse(
@@ -74,7 +84,7 @@ public class AuthenticationService {
             user.getNombre(),
             user.getApellido(),
             user.getRol().name(),
-            user.getSucursal().getIdSucursal() //obtener id de sucursal
+            idSucursal //puede ser null si el usuario no tiene sucursal
         );
 
 

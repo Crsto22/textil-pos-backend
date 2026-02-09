@@ -9,10 +9,12 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 
 import lombok.AllArgsConstructor;
+import lombok.Getter;
 
 @AllArgsConstructor
-public class CustomUser implements UserDetails{
+public class CustomUser implements UserDetails {
 
+    @Getter
     private Usuario usuario;
 
     @Override

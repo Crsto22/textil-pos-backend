@@ -28,66 +28,73 @@ public class AuthenticationService {
     private final JwtService jwtService;
     private final AuthenticationManager authenticationManager;
 
-   
-
-    // El RegisterRequest viene del paquete util
-    public String register (RegisterRequest request){
+    // ── REGISTRO ──
+    public String register(RegisterRequest request) {
         Sucursal sucursal = null;
 
-        // Solo buscar sucursal si idSucursal no es null
         if (request.idSucursal() != null) {
             sucursal = sucursalRepository.findById(request.idSucursal())
-                .orElseThrow(() -> new RuntimeException("Sucursal no encontrada"));
+                    .orElseThrow(() -> new RuntimeException("Sucursal no encontrada"));
         }
 
         var user = Usuario.builder()
-            .nombre(request.nombre()) //Los nombres como .nombre() , .apellido() etc , tienen que ser los mismos de mi atributo de la entidad
-            .apellido(request.apellido())
-            .dni(request.dni())
-            .correo(request.email())
-            .telefono(request.telefono())
-            .password(passwordEncoder.encode(request.password()))
-            .rol(Rol.ADMINISTRADOR)
-            .sucursal(sucursal) // <- aquí va el objeto Sucursal (puede ser null)
-            .build();
+                .nombre(request.nombre())
+                .apellido(request.apellido())
+                .dni(request.dni())
+                .correo(request.email())
+                .telefono(request.telefono())
+                .password(passwordEncoder.encode(request.password()))
+                .rol(Rol.ADMINISTRADOR)
+                .sucursal(sucursal)
+                .build();
         usuarioRepository.save(user);
 
         return "Usuario registrado exitosamente";
-
     }
 
+    // ── LOGIN → retorna AuthenticationResponse + refreshToken por separado ──
+    public LoginResult authenticate(AuthenticationRequest request) {
+        authenticationManager.authenticate(
+                new UsernamePasswordAuthenticationToken(request.email(), request.password()));
 
-
-    // EL AuthenticationResponse VIENE DE util, AuthenticationResponse
-
-    // El AuthenticationRequest viene del paquete util (Al momento de iniciar sesion valida credenciales y se genera un token)
-    public AuthenticationResponse authenticate(AuthenticationRequest request) {
-        authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(request.email(), request.password())); //request.email(), request.password() , correo y contraseña que el usuario ingreso lo envia al AuthenticationManager de SecurityConfig (VALIDA QUE EL USUARIO EXISTA EN LA DATABASEE) y si valida y existe recien pasa a la siguiente linea (ES DECIR ESTA LINEA HACE EL PROCESO DE LOGIN)
-        //↑↑ VALIDA QUE EXISTA EN LA DATABASE
-        var user = usuarioRepository.findByCorreo(request.email()).orElseThrow(); //Obtiene el correo que el usuario ingreso al iniciar sesion
-
-        //ENVOLVEMOS el usuario en un CustomUser (Que implementa un UserDetails)
+        var user = usuarioRepository.findByCorreo(request.email()).orElseThrow();
         CustomUser customUser = new CustomUser(user);
 
-        //Ponemos el customUser en los jwt , porque en nuestro jwtService esta codificado para que los token se guarden en el custonUser que envuelve la entidad Usuario, ademas para el spring security se maneja  solo con customUser
-        var jwtToken = jwtService.generateToken(customUser);
-        var refreshToken = jwtService.generateRefreshToken(customUser);
+        String accessToken = jwtService.generateAccessToken(customUser);
+        String refreshToken = jwtService.generateRefreshToken(customUser);
 
-        // Obtener idSucursal de forma segura (null si no tiene sucursal)
         Integer idSucursal = user.getSucursal() != null ? user.getSucursal().getIdSucursal() : null;
 
-        //Me retornara o devolvera esto y nuestro controlador devolvera esto al frontend
-        return new AuthenticationResponse(
-            jwtToken,
-            refreshToken,
-            user.getIdUsuario(),
-            user.getNombre(),
-            user.getApellido(),
-            user.getRol().name(),
-            idSucursal //puede ser null si el usuario no tiene sucursal
-        );
+        AuthenticationResponse body = new AuthenticationResponse(
+                accessToken,
+                user.getIdUsuario(),
+                user.getNombre(),
+                user.getApellido(),
+                user.getRol().name(),
+                idSucursal);
 
-
+        return new LoginResult(body, refreshToken);
     }
 
+    // ── REFRESH → valida refresh token y genera nuevo access + refresh ──
+    public RefreshResult refresh(String refreshToken) {
+        String email = jwtService.extractUsername(refreshToken);
+        var user = usuarioRepository.findByCorreo(email)
+                .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
+        CustomUser customUser = new CustomUser(user);
+
+        if (!jwtService.isTokenValid(refreshToken, customUser)) {
+            throw new RuntimeException("Refresh token inválido o expirado");
+        }
+
+        // Rotación: generar nuevos tokens
+        String newAccessToken = jwtService.generateAccessToken(customUser);
+        String newRefreshToken = jwtService.generateRefreshToken(customUser);
+
+        return new RefreshResult(newAccessToken, newRefreshToken);
+    }
+
+    // ── Records internos para agrupar resultados ──
+    public record LoginResult(AuthenticationResponse response, String refreshToken) {}
+    public record RefreshResult(String accessToken, String refreshToken) {}
 }

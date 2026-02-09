@@ -16,27 +16,30 @@ import lombok.Data;
 @ConfigurationProperties(prefix = "application.jwt")
 public class JwtConfig {
 
-    //Escritura calmel case, sera escrito en kebab case en el application.properties
     private String secretKey;
     private String tokenPrefix;
-    private Integer tokenExpirationAfterDays; //En dias
-    private Integer refreshTokenExpirationAfterDays;
+    private Integer accessTokenExpirationMinutes;   // access token en minutos (ej: 15)
+    private Integer refreshTokenExpirationDays;      // refresh token en días (ej: 7)
+    private Boolean cookieSecure;                    // true en prod (HTTPS), false en dev
+    private String cookieDomain;                     // dominio para la cookie
 
-    // Acces token, Metodos para obtener la expiracion  en milisegundos (El nombre del metodo puede ser cualquiera solo tiene que ser igual cuando se llama en JwtService)
-    public long getTokenExpirationInMillis(){
-        return tokenExpirationAfterDays * 24 * 60 * 60 * 1000;
+    // Access token: minutos -> milisegundos
+    public long getAccessTokenExpirationInMillis() {
+        return accessTokenExpirationMinutes * 60L * 1000L;
     }
 
-    //Refresh token
-    public long getRefreshTokenExpirationInMillis(){
-        return refreshTokenExpirationAfterDays * 24 * 60 * 60 * 1000;
+    // Refresh token: días -> milisegundos
+    public long getRefreshTokenExpirationInMillis() {
+        return refreshTokenExpirationDays * 24L * 60L * 60L * 1000L;
     }
 
-    //El secret key conocido como clave secreta ,se usa para firmar y verificar el token
+    // Refresh token: días -> segundos (para Max-Age de la cookie)
+    public int getRefreshTokenExpirationInSeconds() {
+        return refreshTokenExpirationDays * 24 * 60 * 60;
+    }
+
     @Bean
-    SecretKey secretKey(){
+    SecretKey secretKey() {
         return Keys.hmacShaKeyFor(secretKey.getBytes(StandardCharsets.UTF_8));
     }
-
-
 }

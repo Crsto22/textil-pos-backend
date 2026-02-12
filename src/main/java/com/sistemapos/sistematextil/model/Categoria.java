@@ -12,14 +12,18 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
+import jakarta.persistence.Convert;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import com.sistemapos.sistematextil.model.converter.EstadoActivoConverter;
 
 @Entity
+@Table(name = "categoria")
 @NoArgsConstructor
 @AllArgsConstructor
 @Getter
@@ -28,6 +32,7 @@ public class Categoria {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "id_categoria")
     private Integer idCategoria;
 
     @NotBlank(message = "El nombre de la categoría es obligatorio")
@@ -38,9 +43,11 @@ public class Categoria {
     private String descripcion;
 
     // Se inicializa como ACTIVO por defecto
+    @Convert(converter = EstadoActivoConverter.class)
+    @Column(name = "activo", nullable = false)
     private String estado = "ACTIVO";
 
-    @Column(name = "fecha_registro")
+    @Column(name = "created_at")
     private LocalDateTime fechaRegistro;
 
     // Relación con Sucursal

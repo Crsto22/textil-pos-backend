@@ -29,4 +29,9 @@ public class HistorialStockController {
     public ResponseEntity<List<HistorialStock>> porProducto(@PathVariable Integer id) {
         return ResponseEntity.ok(service.listarPorProducto(id));
     }
+
+    @GetMapping("variante/{id}")
+    public ResponseEntity<List<HistorialStock>> porVariante(@PathVariable Integer id) {
+        return ResponseEntity.ok(service.listarPorVariante(id));
+    }
 }

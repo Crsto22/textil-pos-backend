@@ -2,8 +2,10 @@ package com.sistemapos.sistematextil.model;
 import java.time.LocalDateTime;
 
 import com.sistemapos.sistematextil.util.Rol;
+import com.sistemapos.sistematextil.model.converter.EstadoActivoConverter;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -13,6 +15,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
+import jakarta.persistence.Table;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -25,6 +28,7 @@ import lombok.NoArgsConstructor;
 
 @Builder
 @Entity
+@Table(name = "usuario")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -32,6 +36,7 @@ public class Usuario {
     
     @Id
     @GeneratedValue (strategy = GenerationType.IDENTITY)
+    @Column(name = "id_usuario")
     private Integer idUsuario;
 
     @NotBlank(message = "Ingrese un Nombre")
@@ -71,11 +76,15 @@ public class Usuario {
     @NotNull(message = "Ingrese rol")
     private Rol rol;
 
-    @Column(nullable = false, length = 10)
+    @Convert(converter = EstadoActivoConverter.class)
+    @Column(name = "activo", nullable = false)
     private String estado; //Activo , Inactivo
 
-    @Column(name = "fecha_creacion", nullable = false, updatable = false)
+    @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime fechaCreacion;
+
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
 
 
     @NotNull(message = "La sucursal es obligatoria")
@@ -88,6 +97,7 @@ public class Usuario {
     protected void onCreate() {
         this.fechaCreacion = LocalDateTime.now();
         this.estado = "ACTIVO";
+        this.deletedAt = null;
     }
 
 }

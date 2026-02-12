@@ -12,6 +12,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
 import jakarta.validation.constraints.NotBlank;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -19,6 +20,7 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
+@Table(name = "producto")
 @NoArgsConstructor
 @AllArgsConstructor
 @Getter
@@ -31,7 +33,7 @@ public class Producto {
     private Integer idProducto;
 
     @NotBlank(message = "El SKU es obligatorio")
-    @Column(unique = true)
+    @Column(nullable = false, length = 100)
     private String sku;
 
     @NotBlank(message = "El nombre del producto es obligatorio")
@@ -41,9 +43,13 @@ public class Producto {
 
     private String estado; 
 
-    @Column(name = "fecha_creacion")
+    @Column(name = "created_at")
     private LocalDateTime fechaCreacion;
 
+    @Column(name = "codigo_externo")
+    private String codigoExterno;
+
+    @Column(name = "imagen_url")
     private String imagen;
  // aca trate de ponerlo asi, para no traer datos extra innecesarios, revisarlo abel
     @ManyToOne(fetch = FetchType.EAGER)

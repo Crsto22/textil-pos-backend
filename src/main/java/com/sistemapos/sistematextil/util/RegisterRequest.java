@@ -34,6 +34,7 @@ public record RegisterRequest(
     @NotNull(message = "Ingrese rol")
     Rol rol,
 
+    @NotNull(message = "La sucursal es obligatoria")
     Integer idSucursal
 
 ) {

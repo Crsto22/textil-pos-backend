@@ -5,6 +5,7 @@ import java.util.Map;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.CookieValue;
@@ -18,6 +19,7 @@ import com.sistemapos.sistematextil.services.AuthenticationService;
 import com.sistemapos.sistematextil.services.AuthenticationService.LoginResult;
 import com.sistemapos.sistematextil.services.AuthenticationService.RefreshResult;
 import com.sistemapos.sistematextil.util.AuthenticationRequest;
+import com.sistemapos.sistematextil.util.ChangePasswordRequest;
 import com.sistemapos.sistematextil.util.RegisterRequest;
 
 import jakarta.validation.Valid;
@@ -40,7 +42,7 @@ public class AuthenticationController {
             return ResponseEntity.ok(Map.of("message", mensaje));
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(Map.of("message", "Error en el registro: " + e.getMessage()));
+                    .body(Map.of("message", e.getMessage()));
         }
     }
 
@@ -102,5 +104,24 @@ public class AuthenticationController {
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, cookieUtil.deleteRefreshTokenCookie().toString())
                 .body(Map.of("ok", true));
+    }
+
+    // POST /api/auth/cambiar-password
+    // Requiere Authorization: Bearer <access_token>
+    @PostMapping("/cambiar-password")
+    public ResponseEntity<?> cambiarPassword(
+            Authentication authentication,
+            @Valid @RequestBody ChangePasswordRequest request) {
+        try {
+            String email = authentication.getName();
+            String mensaje = authenticationService.changePassword(email, request);
+            return ResponseEntity.ok(Map.of("message", mensaje));
+        } catch (BadCredentialsException e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("message", e.getMessage()));
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("message", e.getMessage()));
+        }
     }
 }

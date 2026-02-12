@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.sistemapos.sistematextil.model.Empresa;
 import com.sistemapos.sistematextil.services.EmpresaService;
+import com.sistemapos.sistematextil.util.EmpresaResponse;
 
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
@@ -51,10 +52,10 @@ public class EmpresaController {
 
     
     @PutMapping("actualizar/{id}")
-    public ResponseEntity<Empresa> actualizar(@PathVariable Integer id, @Valid @RequestBody Empresa empresa) {
+    public ResponseEntity<EmpresaResponse> actualizar(@PathVariable Integer id, @Valid @RequestBody Empresa empresa) {
         try {
             Empresa empresaActualizada = empresaService.actualizar(id, empresa);
-            return ResponseEntity.ok(empresaActualizada);
+            return ResponseEntity.ok(EmpresaResponse.fromEntity(empresaActualizada));
         } catch (RuntimeException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(null);
         }

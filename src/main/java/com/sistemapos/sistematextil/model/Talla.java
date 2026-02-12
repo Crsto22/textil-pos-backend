@@ -1,12 +1,14 @@
 package com.sistemapos.sistematextil.model;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.validation.constraints.NotBlank;
+import com.sistemapos.sistematextil.model.converter.EstadoActivoConverter;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -27,6 +29,8 @@ public class Talla {
     @NotBlank(message = "El nombre de la talla es obligatorio")
     private String nombre; // Ej: S, M, L, XL, 32, 34
 
+    @Convert(converter = EstadoActivoConverter.class)
+    @Column(name = "activo", nullable = false)
     private String estado = "ACTIVO";
 
 

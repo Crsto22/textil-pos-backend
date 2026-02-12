@@ -7,6 +7,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Table;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
@@ -17,6 +18,7 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
+@Table(name = "empresa")
 @NoArgsConstructor
 @AllArgsConstructor
 @Getter
@@ -25,6 +27,7 @@ public class Empresa {
 
     @Id
     @GeneratedValue (strategy = GenerationType.IDENTITY)
+    @Column(name = "id_empresa")
     private Integer idEmpresa;
 
     @NotBlank(message = "El nombre es obligatorio")
@@ -45,7 +48,7 @@ public class Empresa {
     @Email(message = "El correo no tiene un formato válido")
     private String correo;
 
-    @Column(name = "fecha_creacion")
+    @Column(name = "created_at")
     private LocalDateTime fechaCreacion;
 
 }

@@ -27,6 +27,9 @@ public class ProductoVariante {
     @Min(value = 0, message = "El precio no puede ser negativo")
     private Double precio;
 
+    @Column(nullable = false)
+    private String estado = "ACTIVO";
+
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "producto_id", nullable = false)
     @JsonIgnoreProperties({"categoria", "sucursal"}) 

@@ -1,6 +1,7 @@
 package com.sistemapos.sistematextil.services;
 
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -13,8 +14,8 @@ import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
 import com.sistemapos.sistematextil.util.AuthenticationRequest;
 import com.sistemapos.sistematextil.util.AuthenticationResponse;
+import com.sistemapos.sistematextil.util.ChangePasswordRequest;
 import com.sistemapos.sistematextil.util.RegisterRequest;
-import com.sistemapos.sistematextil.util.Rol;
 
 import lombok.RequiredArgsConstructor;
 
@@ -28,36 +29,46 @@ public class AuthenticationService {
     private final JwtService jwtService;
     private final AuthenticationManager authenticationManager;
 
-    // ── REGISTRO ──
     public String register(RegisterRequest request) {
-        Sucursal sucursal = null;
-
-        if (request.idSucursal() != null) {
-            sucursal = sucursalRepository.findById(request.idSucursal())
-                    .orElseThrow(() -> new RuntimeException("Sucursal no encontrada"));
+        if (request.idSucursal() == null) {
+            throw new RuntimeException("La sucursal es obligatoria");
         }
 
-        var user = Usuario.builder()
+        usuarioRepository.findByCorreoAndDeletedAtIsNull(request.email()).ifPresent(u -> {
+            throw new RuntimeException("El correo '" + request.email() + "' ya existe");
+        });
+
+        usuarioRepository.findByDniAndDeletedAtIsNull(request.dni()).ifPresent(u -> {
+            throw new RuntimeException("El DNI '" + request.dni() + "' ya existe");
+        });
+
+        usuarioRepository.findByTelefonoAndDeletedAtIsNull(request.telefono()).ifPresent(u -> {
+            throw new RuntimeException("El telefono '" + request.telefono() + "' ya existe");
+        });
+
+        Sucursal sucursal = sucursalRepository.findById(request.idSucursal())
+                .orElseThrow(() -> new RuntimeException("Sucursal no encontrada"));
+
+        Usuario user = Usuario.builder()
                 .nombre(request.nombre())
                 .apellido(request.apellido())
                 .dni(request.dni())
                 .correo(request.email())
                 .telefono(request.telefono())
                 .password(passwordEncoder.encode(request.password()))
-                .rol(Rol.ADMINISTRADOR)
+                .rol(request.rol())
                 .sucursal(sucursal)
                 .build();
-        usuarioRepository.save(user);
 
+        usuarioRepository.save(user);
         return "Usuario registrado exitosamente";
     }
 
-    // ── LOGIN → retorna AuthenticationResponse + refreshToken por separado ──
     public LoginResult authenticate(AuthenticationRequest request) {
         authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(request.email(), request.password()));
 
-        var user = usuarioRepository.findByCorreo(request.email()).orElseThrow();
+        Usuario user = usuarioRepository.findByCorreoAndDeletedAtIsNull(request.email()).orElseThrow();
         CustomUser customUser = new CustomUser(user);
 
         String accessToken = jwtService.generateAccessToken(customUser);
@@ -76,25 +87,43 @@ public class AuthenticationService {
         return new LoginResult(body, refreshToken);
     }
 
-    // ── REFRESH → valida refresh token y genera nuevo access + refresh ──
     public RefreshResult refresh(String refreshToken) {
         String email = jwtService.extractUsername(refreshToken);
-        var user = usuarioRepository.findByCorreo(email)
+        Usuario user = usuarioRepository.findByCorreoAndDeletedAtIsNull(email)
                 .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
         CustomUser customUser = new CustomUser(user);
 
         if (!jwtService.isTokenValid(refreshToken, customUser)) {
-            throw new RuntimeException("Refresh token inválido o expirado");
+            throw new RuntimeException("Refresh token invalido o expirado");
         }
 
-        // Rotación: generar nuevos tokens
         String newAccessToken = jwtService.generateAccessToken(customUser);
         String newRefreshToken = jwtService.generateRefreshToken(customUser);
 
         return new RefreshResult(newAccessToken, newRefreshToken);
     }
 
-    // ── Records internos para agrupar resultados ──
+    public String changePassword(String email, ChangePasswordRequest request) {
+        Usuario user = usuarioRepository.findByCorreoAndDeletedAtIsNull(email)
+                .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
+
+        if (!passwordEncoder.matches(request.passwordActual(), user.getPassword())) {
+            throw new BadCredentialsException("La contrasena actual es incorrecta");
+        }
+
+        if (!request.passwordNueva().equals(request.confirmarPassword())) {
+            throw new RuntimeException("La confirmacion de contrasena no coincide");
+        }
+
+        if (request.passwordActual().equals(request.passwordNueva())) {
+            throw new RuntimeException("La nueva contrasena no puede ser igual a la actual");
+        }
+
+        user.setPassword(passwordEncoder.encode(request.passwordNueva()));
+        usuarioRepository.save(user);
+        return "Contrasena actualizada exitosamente";
+    }
+
     public record LoginResult(AuthenticationResponse response, String refreshToken) {}
     public record RefreshResult(String accessToken, String refreshToken) {}
 }

@@ -42,7 +42,6 @@ public class SistematextilApplication {
 				usuario.setRol(Rol.ADMINISTRADOR);
 				usuario.setSucursal(sucursal); // asignamos la sucursal
 				usuario.setEstado("ACTIVO"); // aunque el @PrePersist también lo hace
-
 				// Guardamos en la base de datos
 				usuarioRepository.save(usuario);
 

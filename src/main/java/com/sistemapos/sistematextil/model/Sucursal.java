@@ -12,6 +12,8 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
+import jakarta.persistence.Convert;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -19,8 +21,10 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import com.sistemapos.sistematextil.model.converter.EstadoActivoConverter;
 
 @Entity
+@Table(name = "sucursal")
 @NoArgsConstructor
 @AllArgsConstructor
 @Getter
@@ -29,6 +33,7 @@ public class Sucursal {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "id_sucursal")
     private Integer idSucursal;
 
     @NotBlank(message = "El nombre es obligatorio")
@@ -49,9 +54,11 @@ public class Sucursal {
     @Email(message = "Correo no válido")
     private String correo;
 
+    @Convert(converter = EstadoActivoConverter.class)
+    @Column(name = "activo", nullable = false)
     private String estado = "ACTIVO";
 
-    @Column(name = "fecha_creacion")
+    @Column(name = "created_at")
     private LocalDateTime fechaCreacion;
 
     // se Cambio FetchType.LAZY por FetchType.EAGER

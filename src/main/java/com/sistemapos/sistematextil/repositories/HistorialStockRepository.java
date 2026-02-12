@@ -11,7 +11,8 @@ import com.sistemapos.sistematextil.model.HistorialStock;
 public interface HistorialStockRepository extends JpaRepository<HistorialStock, Integer> {
     
     // Buscar historial de un producto específico ordenado por lo más reciente
-    List<HistorialStock> findByProductoIdProductoOrderByFechaDesc(Integer idProducto);
+    List<HistorialStock> findByProductoVarianteProductoIdProductoOrderByFechaDesc(Integer idProducto);
+    List<HistorialStock> findByProductoVarianteIdProductoVarianteOrderByFechaDesc(Integer idProductoVariante);
     
     // Buscar movimientos realizados en una sucursal específica
     List<HistorialStock> findBySucursalIdSucursalOrderByFechaDesc(Integer idSucursal);

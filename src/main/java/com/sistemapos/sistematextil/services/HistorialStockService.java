@@ -21,7 +21,11 @@ public class HistorialStockService {
     }
 
     public List<HistorialStock> listarPorProducto(Integer idProducto) {
-        return repository.findByProductoIdProductoOrderByFechaDesc(idProducto);
+        return repository.findByProductoVarianteProductoIdProductoOrderByFechaDesc(idProducto);
+    }
+
+    public List<HistorialStock> listarPorVariante(Integer idProductoVariante) {
+        return repository.findByProductoVarianteIdProductoVarianteOrderByFechaDesc(idProductoVariante);
     }
 
     @Transactional

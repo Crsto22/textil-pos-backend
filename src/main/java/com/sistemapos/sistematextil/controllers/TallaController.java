@@ -1,7 +1,6 @@
 package com.sistemapos.sistematextil.controllers;
 
 import java.util.List;
-
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -10,10 +9,12 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.sistemapos.sistematextil.model.Talla;
 import com.sistemapos.sistematextil.services.TallaService;
+import com.sistemapos.sistematextil.util.PagedResponse;
 
 import lombok.AllArgsConstructor;
 
@@ -24,10 +25,10 @@ public class TallaController {
     
     private final TallaService tallaService;
 
-    // Listar absolutamente todas (Para el administrador)
+    // Listado paginado de 10 en 10 (Para el administrador)
     @GetMapping("listar")
-    public ResponseEntity<List<Talla>> listar() {
-        return ResponseEntity.ok(tallaService.listarTodas());
+    public ResponseEntity<PagedResponse<Talla>> listar(@RequestParam(defaultValue = "0") int page) {
+        return ResponseEntity.ok(tallaService.listarPaginado(page));
     }
 
     // NUEVO: Listar solo las que están en ACTIVO (Para formularios de productos)

@@ -49,7 +49,7 @@ public class CustomUser implements UserDetails {
 
     @Override
     public boolean isEnabled() {
-        return true;
+        return "ACTIVO".equalsIgnoreCase(usuario.getEstado()) && usuario.getDeletedAt() == null;
     }
 
 }

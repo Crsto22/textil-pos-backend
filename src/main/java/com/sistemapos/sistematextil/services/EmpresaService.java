@@ -33,13 +33,14 @@ public class EmpresaService {
 
 
     public Empresa actualizar (Integer idEmpresa , Empresa empresa){
-        if (!empresaRepository.existsById(idEmpresa)) {
-            throw new RuntimeException("La empresa no existe");
-        }
-        
-        Empresa original = empresaRepository.findById(idEmpresa).get();
+        Empresa original = empresaRepository.findById(idEmpresa)
+                .orElseThrow(() -> new RuntimeException("La empresa no existe"));
+        LocalDateTime fechaCreacion = original.getFechaCreacion() != null
+                ? original.getFechaCreacion()
+                : LocalDateTime.now();
+
         empresa.setIdEmpresa(idEmpresa);
-        empresa.setFechaCreacion(original.getFechaCreacion());
+        empresa.setFechaCreacion(fechaCreacion);
         return empresaRepository.save(empresa);
     }
 

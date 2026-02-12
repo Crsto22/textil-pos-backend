@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.sistemapos.sistematextil.services.UsuarioService;
 import com.sistemapos.sistematextil.util.PagedResponse;
+import com.sistemapos.sistematextil.util.Rol;
 import com.sistemapos.sistematextil.util.UsuarioListItemResponse;
 import com.sistemapos.sistematextil.util.UsuarioResetPasswordRequest;
 import com.sistemapos.sistematextil.util.UsuarioUpdateRequest;
@@ -40,9 +41,11 @@ public class UsuarioController {
     @GetMapping("/buscar")
     public ResponseEntity<?> buscar(
             @RequestParam(name = "q", required = false) String q,
+            @RequestParam(name = "rol", required = false) Rol rol,
+            @RequestParam(name = "idSucursal", required = false) Integer idSucursal,
             @RequestParam(defaultValue = "0") int page) {
         try {
-            return ResponseEntity.ok(usuarioService.buscarPaginado(q, page));
+            return ResponseEntity.ok(usuarioService.buscarPaginado(q, rol, idSucursal, page));
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
         }

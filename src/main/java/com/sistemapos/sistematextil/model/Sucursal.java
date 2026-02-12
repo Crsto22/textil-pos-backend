@@ -12,6 +12,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import jakarta.persistence.Convert;
 import jakarta.validation.constraints.Email;
@@ -61,10 +62,23 @@ public class Sucursal {
     @Column(name = "created_at")
     private LocalDateTime fechaCreacion;
 
-    // se Cambio FetchType.LAZY por FetchType.EAGER
-@ManyToOne(fetch = FetchType.EAGER)
-@JoinColumn(name = "id_empresa", nullable = false)
-@JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
-private Empresa empresa;
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "id_empresa", nullable = false)
+    @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
+    private Empresa empresa;
+
+    @PrePersist
+    protected void onCreate() {
+        if (this.fechaCreacion == null) {
+            this.fechaCreacion = LocalDateTime.now();
+        }
+        if (this.estado == null || this.estado.isBlank()) {
+            this.estado = "ACTIVO";
+        }
+        this.deletedAt = null;
+    }
 
 }

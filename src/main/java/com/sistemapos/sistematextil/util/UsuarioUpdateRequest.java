@@ -35,7 +35,6 @@ public record UsuarioUpdateRequest(
         @Pattern(regexp = "ACTIVO|INACTIVO", message = "Estado permitido: ACTIVO o INACTIVO")
         String estado,
 
-        @NotNull(message = "La sucursal es obligatoria")
         Integer idSucursal
 ) {
 }

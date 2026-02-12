@@ -36,7 +36,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/registro").hasAuthority("ADMINISTRADOR")
                         .requestMatchers("/api/auth/logout").authenticated()
                         .requestMatchers("/api/usuario/**").hasAuthority("ADMINISTRADOR")
-                        .requestMatchers("/api/sucursal/**").permitAll()
+                        .requestMatchers("/api/sucursal/**").hasAuthority("ADMINISTRADOR")
                         .requestMatchers("/api/empresa/listar").hasAuthority("ADMINISTRADOR")
                         .requestMatchers("/api/empresa/actualizar/**").hasAuthority("ADMINISTRADOR")
                         .requestMatchers("/api/empresa/**").permitAll()

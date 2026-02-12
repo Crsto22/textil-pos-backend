@@ -87,9 +87,8 @@ public class Usuario {
     private LocalDateTime deletedAt;
 
 
-    @NotNull(message = "La sucursal es obligatoria")
-    @ManyToOne
-    @JoinColumn(name = "id_sucursal", nullable = false)
+    @ManyToOne(optional = true)
+    @JoinColumn(name = "id_sucursal", nullable = true)
     private Sucursal sucursal;
 
     

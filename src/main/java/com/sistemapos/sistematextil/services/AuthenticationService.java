@@ -16,6 +16,7 @@ import com.sistemapos.sistematextil.util.AuthenticationRequest;
 import com.sistemapos.sistematextil.util.AuthenticationResponse;
 import com.sistemapos.sistematextil.util.ChangePasswordRequest;
 import com.sistemapos.sistematextil.util.RegisterRequest;
+import com.sistemapos.sistematextil.util.Rol;
 
 import lombok.RequiredArgsConstructor;
 
@@ -30,10 +31,6 @@ public class AuthenticationService {
     private final AuthenticationManager authenticationManager;
 
     public String register(RegisterRequest request) {
-        if (request.idSucursal() == null) {
-            throw new RuntimeException("La sucursal es obligatoria");
-        }
-
         usuarioRepository.findByCorreoAndDeletedAtIsNull(request.email()).ifPresent(u -> {
             throw new RuntimeException("El correo '" + request.email() + "' ya existe");
         });
@@ -46,8 +43,7 @@ public class AuthenticationService {
             throw new RuntimeException("El telefono '" + request.telefono() + "' ya existe");
         });
 
-        Sucursal sucursal = sucursalRepository.findById(request.idSucursal())
-                .orElseThrow(() -> new RuntimeException("Sucursal no encontrada"));
+        Sucursal sucursal = resolverSucursalSegunRol(request.rol(), request.idSucursal());
 
         Usuario user = Usuario.builder()
                 .nombre(request.nombre())
@@ -62,6 +58,17 @@ public class AuthenticationService {
 
         usuarioRepository.save(user);
         return "Usuario registrado exitosamente";
+    }
+
+    private Sucursal resolverSucursalSegunRol(Rol rol, Integer idSucursal) {
+        if (rol == Rol.ADMINISTRADOR) {
+            return null;
+        }
+        if (idSucursal == null) {
+            throw new RuntimeException("La sucursal es obligatoria para el rol " + rol.name());
+        }
+        return sucursalRepository.findById(idSucursal)
+                .orElseThrow(() -> new RuntimeException("Sucursal no encontrada"));
     }
 
     public LoginResult authenticate(AuthenticationRequest request) {

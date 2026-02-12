@@ -15,6 +15,7 @@ import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
 import com.sistemapos.sistematextil.util.PagedResponse;
+import com.sistemapos.sistematextil.util.Rol;
 import com.sistemapos.sistematextil.util.UsuarioListItemResponse;
 import com.sistemapos.sistematextil.util.UsuarioResetPasswordRequest;
 import com.sistemapos.sistematextil.util.UsuarioUpdateRequest;
@@ -43,14 +44,16 @@ public class UsuarioService {
         return PagedResponse.fromPage(usuarios);
     }
 
-    public PagedResponse<UsuarioListItemResponse> buscarPaginado(String term, int page) {
-        if (term == null || term.isBlank()) {
-            throw new RuntimeException("Debe ingresar nombre o DNI para buscar");
+    public PagedResponse<UsuarioListItemResponse> buscarPaginado(String term, Rol rol, Integer idSucursal, int page) {
+        String termNormalizado = (term == null || term.isBlank()) ? null : term.trim();
+
+        if (termNormalizado == null && rol == null && idSucursal == null) {
+            return listarPaginado(page);
         }
 
         PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idUsuario").ascending());
         Page<UsuarioListItemResponse> usuarios = usuarioRepository
-                .buscarPorNombreODni(term.trim(), pageable)
+                .buscarConFiltros(termNormalizado, rol, idSucursal, pageable)
                 .map(this::toListItemResponse);
 
         return PagedResponse.fromPage(usuarios);
@@ -79,8 +82,7 @@ public class UsuarioService {
             }
         });
 
-        Sucursal sucursal = sucursalRepository.findById(request.idSucursal())
-                .orElseThrow(() -> new RuntimeException("Sucursal no encontrada"));
+        Sucursal sucursal = resolverSucursalSegunRol(request.rol(), request.idSucursal());
 
         usuario.setNombre(request.nombre());
         usuario.setApellido(request.apellido());
@@ -130,6 +132,17 @@ public class UsuarioService {
         usuario.setCorreo("deleted_" + id + "@invalid.local");
         usuario.setDni(String.format("%08d", 10_000_000 + (id % 90_000_000)));
         usuario.setTelefono(String.format("%09d", 100_000_000 + (id % 900_000_000)));
+    }
+
+    private Sucursal resolverSucursalSegunRol(Rol rol, Integer idSucursal) {
+        if (rol == Rol.ADMINISTRADOR) {
+            return null;
+        }
+        if (idSucursal == null) {
+            throw new RuntimeException("La sucursal es obligatoria para el rol " + rol.name());
+        }
+        return sucursalRepository.findById(idSucursal)
+                .orElseThrow(() -> new RuntimeException("Sucursal no encontrada"));
     }
 
     private UsuarioListItemResponse toListItemResponse(Usuario usuario) {

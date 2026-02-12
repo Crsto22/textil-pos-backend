@@ -42,7 +42,7 @@ CREATE TABLE sucursal (
 -- USUARIO
 CREATE TABLE usuario (
   id_usuario INT(11) NOT NULL AUTO_INCREMENT,
-  id_sucursal INT(11) NOT NULL,
+  id_sucursal INT(11),
   nombre VARCHAR(80) NOT NULL,
   apellido VARCHAR(80) NOT NULL,
   correo VARCHAR(150) NOT NULL,

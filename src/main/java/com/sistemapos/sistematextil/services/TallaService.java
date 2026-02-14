@@ -1,8 +1,7 @@
 package com.sistemapos.sistematextil.services;
 
-import java.util.List;
-
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -12,26 +11,36 @@ import org.springframework.transaction.annotation.Transactional;
 import com.sistemapos.sistematextil.model.Talla;
 import com.sistemapos.sistematextil.repositories.TallaRepository;
 import com.sistemapos.sistematextil.util.PagedResponse;
+import com.sistemapos.sistematextil.util.TallaCreateRequest;
 
 import lombok.RequiredArgsConstructor;
 
 @Service
 @RequiredArgsConstructor
 public class TallaService {
+
     private final TallaRepository tallaRepository;
 
     @Value("${application.pagination.default-size:10}")
     private int defaultPageSize;
 
     public PagedResponse<Talla> listarPaginado(int page) {
+        validarPagina(page);
         PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idTalla").ascending());
         Page<Talla> tallas = tallaRepository.findAll(pageable);
         return PagedResponse.fromPage(tallas);
     }
 
-    // NUEVO: Para que el Front solo muestre las tallas que se pueden usar
-    public List<Talla> listarActivas() {
-        return tallaRepository.findByEstado("ACTIVO");
+    public PagedResponse<Talla> buscarPaginado(String q, int page) {
+        validarPagina(page);
+        String term = normalizar(q);
+        if (term == null) {
+            return listarPaginado(page);
+        }
+
+        PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idTalla").ascending());
+        Page<Talla> tallas = tallaRepository.findByNombreContainingIgnoreCase(term, pageable);
+        return PagedResponse.fromPage(tallas);
     }
 
     public Talla obtenerPorId(Integer id) {
@@ -40,44 +49,70 @@ public class TallaService {
     }
 
     @Transactional
-    public Talla insertar(Talla talla) {
-        // Forzamos que siempre sea ACTIVO al crear
-        talla.setEstado("ACTIVO");
-        return tallaRepository.save(talla);
-    }
-
-    @Transactional
-    public Talla actualizar(Integer id, Talla tallaActualizada) {
-        Talla tallaExistente = obtenerPorId(id);
-        tallaExistente.setNombre(tallaActualizada.getNombre());
-
-        // Si el front manda un estado nuevo, lo actualizamos, si no, mantenemos el actual
-        if (tallaActualizada.getEstado() != null) {
-            tallaExistente.setEstado(tallaActualizada.getEstado());
+    public Talla insertar(TallaCreateRequest request) {
+        String nombre = normalizar(request.nombre());
+        if (nombre == null) {
+            throw new RuntimeException("El nombre de la talla es obligatorio");
         }
 
-        return tallaRepository.save(tallaExistente);
+        if (tallaRepository.existsByNombreIgnoreCase(nombre)) {
+            throw new RuntimeException("La talla '" + nombre + "' ya existe");
+        }
+
+        Talla talla = new Talla();
+        talla.setNombre(nombre);
+        talla.setEstado("ACTIVO");
+
+        try {
+            return tallaRepository.save(talla);
+        } catch (DataIntegrityViolationException e) {
+            throw new RuntimeException("La talla '" + nombre + "' ya existe");
+        }
     }
 
-    // NUEVO: Metodo para activar/desactivar (Toggle)
     @Transactional
-    public Talla cambiarEstado(Integer id) {
+    public Talla actualizar(Integer id, TallaCreateRequest request) {
         Talla talla = obtenerPorId(id);
-        String nuevoEstado = "ACTIVO".equals(talla.getEstado()) ? "INACTIVO" : "ACTIVO";
-        talla.setEstado(nuevoEstado);
-        return tallaRepository.save(talla);
+        String nombre = normalizar(request.nombre());
+        if (nombre == null) {
+            throw new RuntimeException("El nombre de la talla es obligatorio");
+        }
+
+        if (tallaRepository.existsByNombreIgnoreCaseAndIdTallaNot(nombre, id)) {
+            throw new RuntimeException("La talla '" + nombre + "' ya existe");
+        }
+
+        talla.setNombre(nombre);
+        try {
+            return tallaRepository.save(talla);
+        } catch (DataIntegrityViolationException e) {
+            throw new RuntimeException("La talla '" + nombre + "' ya existe");
+        }
     }
 
+    @Transactional
     public void eliminar(Integer id) {
         Talla talla = obtenerPorId(id);
 
-        // 1. Verificamos si la talla esta siendo usada por algun producto
         if (tallaRepository.estaEnUso(id)) {
-            throw new RuntimeException("No se puede eliminar la talla '" + talla.getNombre() +
-                    "' porque ya esta asociada a productos. Te sugiero desactivarla.");
+            throw new RuntimeException("No se puede eliminar la talla '" + talla.getNombre()
+                    + "' porque ya esta asociada a productos. Te sugiero desactivarla.");
         }
 
-        // 2. Si no esta en uso, se borra fisicamente
         tallaRepository.deleteById(id);
+    }
+
+    private void validarPagina(int page) {
+        if (page < 0) {
+            throw new RuntimeException("El parametro page debe ser mayor o igual a 0");
+        }
+    }
+
+    private String normalizar(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }

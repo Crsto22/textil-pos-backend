@@ -10,6 +10,7 @@ import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.DisabledException;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.CookieValue;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -108,6 +109,26 @@ public class AuthenticationController {
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, cookieUtil.deleteRefreshTokenCookie().toString())
                 .body(Map.of("ok", true));
+    }
+
+    // GET /api/auth/me
+    // Requiere Authorization: Bearer <access_token>
+    @GetMapping("/me")
+    public ResponseEntity<?> me(Authentication authentication) {
+        try {
+            if (authentication == null || authentication.getName() == null || authentication.getName().isBlank()) {
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                        .body(Map.of("message", "No autenticado"));
+            }
+            String email = authentication.getName();
+            return ResponseEntity.ok(authenticationService.me(email));
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al obtener usuario autenticado" : e.getMessage();
+            HttpStatus status = message.toLowerCase().contains("no encontrado")
+                    ? HttpStatus.NOT_FOUND
+                    : HttpStatus.BAD_REQUEST;
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
     }
 
     // POST /api/auth/cambiar-password

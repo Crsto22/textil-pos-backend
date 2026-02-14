@@ -1,5 +1,7 @@
 package com.sistemapos.sistematextil.util;
 
+import java.time.LocalDateTime;
+
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 public record AuthenticationResponse(
@@ -7,7 +9,12 @@ public record AuthenticationResponse(
     Integer idUsuario,
     String nombre,
     String apellido,
+    String correo,
+    String dni,
+    String telefono,
     String rol,
-    Integer idSucursal
+    LocalDateTime fechaCreacion,
+    Integer idSucursal,
+    String nombreSucursal
 ) {
 }

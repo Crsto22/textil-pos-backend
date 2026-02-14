@@ -5,8 +5,10 @@ SET time_zone = "+00:00";
 CREATE DATABASE IF NOT EXISTS sistema_textil CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
 USE sistema_textil;
 
+-- =========================
 -- EMPRESA
-CREATE TABLE empresa (
+-- =========================
+CREATE TABLE IF NOT EXISTS empresa (
   id_empresa INT(11) NOT NULL AUTO_INCREMENT,
   nombre VARCHAR(100) NOT NULL,
   razon_social VARCHAR(150) NOT NULL,
@@ -20,8 +22,10 @@ CREATE TABLE empresa (
   UNIQUE KEY uk_empresa_ruc (ruc)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+-- =========================
 -- SUCURSAL
-CREATE TABLE sucursal (
+-- =========================
+CREATE TABLE IF NOT EXISTS sucursal (
   id_sucursal INT(11) NOT NULL AUTO_INCREMENT,
   id_empresa INT(11) NOT NULL,
   nombre VARCHAR(100) NOT NULL,
@@ -36,11 +40,15 @@ CREATE TABLE sucursal (
   PRIMARY KEY (id_sucursal),
   UNIQUE KEY uk_sucursal_empresa_nombre (id_empresa, nombre),
   KEY idx_sucursal_empresa (id_empresa),
-  CONSTRAINT fk_sucursal_empresa FOREIGN KEY (id_empresa) REFERENCES empresa (id_empresa) ON DELETE RESTRICT ON UPDATE RESTRICT
+  CONSTRAINT fk_sucursal_empresa
+    FOREIGN KEY (id_empresa) REFERENCES empresa (id_empresa)
+    ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+-- =========================
 -- USUARIO
-CREATE TABLE usuario (
+-- =========================
+CREATE TABLE IF NOT EXISTS usuario (
   id_usuario INT(11) NOT NULL AUTO_INCREMENT,
   id_sucursal INT(11),
   nombre VARCHAR(80) NOT NULL,
@@ -59,11 +67,15 @@ CREATE TABLE usuario (
   UNIQUE KEY uk_usuario_dni (dni),
   UNIQUE KEY uk_usuario_telefono (telefono),
   KEY idx_usuario_sucursal (id_sucursal),
-  CONSTRAINT fk_usuario_sucursal FOREIGN KEY (id_sucursal) REFERENCES sucursal (id_sucursal) ON DELETE RESTRICT ON UPDATE RESTRICT
+  CONSTRAINT fk_usuario_sucursal
+    FOREIGN KEY (id_sucursal) REFERENCES sucursal (id_sucursal)
+    ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+-- =========================
 -- CATEGORIA
-CREATE TABLE categoria (
+-- =========================
+CREATE TABLE IF NOT EXISTS categoria (
   id_categoria INT(11) NOT NULL AUTO_INCREMENT,
   id_sucursal INT(11) NOT NULL,
   nombre_categoria VARCHAR(100) NOT NULL,
@@ -75,11 +87,15 @@ CREATE TABLE categoria (
   PRIMARY KEY (id_categoria),
   UNIQUE KEY uk_categoria_sucursal_nombre (id_sucursal, nombre_categoria),
   KEY idx_categoria_sucursal (id_sucursal),
-  CONSTRAINT fk_categoria_sucursal FOREIGN KEY (id_sucursal) REFERENCES sucursal (id_sucursal) ON DELETE RESTRICT ON UPDATE RESTRICT
+  CONSTRAINT fk_categoria_sucursal
+    FOREIGN KEY (id_sucursal) REFERENCES sucursal (id_sucursal)
+    ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+-- =========================
 -- TALLAS
-CREATE TABLE tallas (
+-- =========================
+CREATE TABLE IF NOT EXISTS tallas (
   talla_id INT(11) NOT NULL AUTO_INCREMENT,
   nombre VARCHAR(20) NOT NULL,
   activo TINYINT(1) NOT NULL DEFAULT 1,
@@ -90,8 +106,10 @@ CREATE TABLE tallas (
   UNIQUE KEY uk_talla_nombre (nombre)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+-- =========================
 -- COLORES
-CREATE TABLE colores (
+-- =========================
+CREATE TABLE IF NOT EXISTS colores (
   color_id INT(11) NOT NULL AUTO_INCREMENT,
   nombre VARCHAR(50) NOT NULL,
   codigo VARCHAR(20) DEFAULT NULL,
@@ -103,16 +121,17 @@ CREATE TABLE colores (
   UNIQUE KEY uk_color_nombre (nombre)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
--- PRODUCTO
-CREATE TABLE producto (
+-- =========================
+-- PRODUCTO (SIN imagen_url: ahora imágenes van por variante)
+-- =========================
+CREATE TABLE IF NOT EXISTS producto (
   producto_id INT(11) NOT NULL AUTO_INCREMENT,
   sucursal_id INT(11) NOT NULL,
   categoria_id INT(11) NOT NULL,
   nombre VARCHAR(150) NOT NULL,
-  descripcion VARCHAR(255) DEFAULT NULL,
+  descripcion VARCHAR(500) DEFAULT NULL,
   sku VARCHAR(100) NOT NULL,
   codigo_externo VARCHAR(100) DEFAULT NULL,
-  imagen_url VARCHAR(500) DEFAULT NULL,
   estado ENUM('ACTIVO','AGOTADO','ARCHIVADO') NOT NULL DEFAULT 'ACTIVO',
   activo TINYINT(1) NOT NULL DEFAULT 1,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -123,12 +142,18 @@ CREATE TABLE producto (
   UNIQUE KEY uk_producto_codigo_externo (codigo_externo),
   KEY idx_producto_sucursal (sucursal_id),
   KEY idx_producto_categoria (categoria_id),
-  CONSTRAINT fk_producto_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursal (id_sucursal) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT fk_producto_categoria FOREIGN KEY (categoria_id) REFERENCES categoria (id_categoria) ON DELETE RESTRICT ON UPDATE RESTRICT
+  CONSTRAINT fk_producto_sucursal
+    FOREIGN KEY (sucursal_id) REFERENCES sucursal (id_sucursal)
+    ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_producto_categoria
+    FOREIGN KEY (categoria_id) REFERENCES categoria (id_categoria)
+    ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
--- PRODUCTO VARIANTE
-CREATE TABLE producto_variante (
+-- =========================
+-- PRODUCTO VARIANTE (Color + Talla + Precio + Stock)
+-- =========================
+CREATE TABLE IF NOT EXISTS producto_variante (
   id_producto_variante INT(11) NOT NULL AUTO_INCREMENT,
   producto_id INT(11) NOT NULL,
   sucursal_id INT(11) NOT NULL,
@@ -147,16 +172,48 @@ CREATE TABLE producto_variante (
   KEY idx_variante_sucursal (sucursal_id),
   KEY idx_variante_talla (talla_id),
   KEY idx_variante_color (color_id),
-  CONSTRAINT fk_variante_producto FOREIGN KEY (producto_id) REFERENCES producto (producto_id) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT fk_variante_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursal (id_sucursal) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT fk_variante_talla FOREIGN KEY (talla_id) REFERENCES tallas (talla_id) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT fk_variante_color FOREIGN KEY (color_id) REFERENCES colores (color_id) ON DELETE RESTRICT ON UPDATE RESTRICT
+  CONSTRAINT fk_variante_producto
+    FOREIGN KEY (producto_id) REFERENCES producto (producto_id)
+    ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_variante_sucursal
+    FOREIGN KEY (sucursal_id) REFERENCES sucursal (id_sucursal)
+    ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_variante_talla
+    FOREIGN KEY (talla_id) REFERENCES tallas (talla_id)
+    ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_variante_color
+    FOREIGN KEY (color_id) REFERENCES colores (color_id)
+    ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+-- =========================
+-- IMÁGENES POR VARIANTE (cambia por color y talla si deseas)
+-- =========================
+CREATE TABLE IF NOT EXISTS producto_variante_imagen (
+  id_variante_imagen INT(11) NOT NULL AUTO_INCREMENT,
+  id_producto_variante INT(11) NOT NULL,
+  url VARCHAR(600) NOT NULL,
+  orden INT(11) NOT NULL DEFAULT 1,
+  es_principal TINYINT(1) NOT NULL DEFAULT 0,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  deleted_at DATETIME(6) DEFAULT NULL,
+  PRIMARY KEY (id_variante_imagen),
+  KEY idx_pvi_variante (id_producto_variante),
+  KEY idx_pvi_principal (id_producto_variante, es_principal),
+  CONSTRAINT fk_pvi_variante
+    FOREIGN KEY (id_producto_variante) REFERENCES producto_variante (id_producto_variante)
+    ON DELETE RESTRICT ON UPDATE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- =========================
 -- CLIENTE
-CREATE TABLE cliente (
+-- =========================
+CREATE TABLE IF NOT EXISTS cliente (
   id_cliente INT(11) NOT NULL AUTO_INCREMENT,
   id_sucursal INT(11) NOT NULL,
+  id_usuario_creacion INT(11) NOT NULL,
   tipo_documento ENUM('DNI','RUC','CE','SIN_DOC') NOT NULL DEFAULT 'SIN_DOC',
   nro_documento VARCHAR(20) DEFAULT NULL,
   nombres VARCHAR(150) NOT NULL,
@@ -170,11 +227,19 @@ CREATE TABLE cliente (
   PRIMARY KEY (id_cliente),
   KEY idx_cliente_sucursal (id_sucursal),
   KEY idx_cliente_doc (tipo_documento, nro_documento),
-  CONSTRAINT fk_cliente_sucursal FOREIGN KEY (id_sucursal) REFERENCES sucursal (id_sucursal) ON DELETE RESTRICT ON UPDATE RESTRICT
+  KEY idx_cliente_usuario_creacion (id_usuario_creacion),
+  CONSTRAINT fk_cliente_sucursal
+    FOREIGN KEY (id_sucursal) REFERENCES sucursal (id_sucursal)
+    ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_cliente_usuario_creacion
+    FOREIGN KEY (id_usuario_creacion) REFERENCES usuario (id_usuario)
+    ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+-- =========================
 -- CAJA
-CREATE TABLE caja (
+-- =========================
+CREATE TABLE IF NOT EXISTS caja (
   id_caja INT(11) NOT NULL AUTO_INCREMENT,
   id_sucursal INT(11) NOT NULL,
   nombre VARCHAR(100) NOT NULL,
@@ -185,11 +250,15 @@ CREATE TABLE caja (
   PRIMARY KEY (id_caja),
   UNIQUE KEY uk_caja_sucursal_nombre (id_sucursal, nombre),
   KEY idx_caja_sucursal (id_sucursal),
-  CONSTRAINT fk_caja_sucursal FOREIGN KEY (id_sucursal) REFERENCES sucursal (id_sucursal) ON DELETE RESTRICT ON UPDATE RESTRICT
+  CONSTRAINT fk_caja_sucursal
+    FOREIGN KEY (id_sucursal) REFERENCES sucursal (id_sucursal)
+    ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+-- =========================
 -- CAJA SESION
-CREATE TABLE caja_sesion (
+-- =========================
+CREATE TABLE IF NOT EXISTS caja_sesion (
   id_caja_sesion INT(11) NOT NULL AUTO_INCREMENT,
   id_caja INT(11) NOT NULL,
   id_usuario_apertura INT(11) NOT NULL,
@@ -203,13 +272,21 @@ CREATE TABLE caja_sesion (
   KEY idx_caja_sesion_caja (id_caja),
   KEY idx_caja_sesion_usuario_apertura (id_usuario_apertura),
   KEY idx_caja_sesion_usuario_cierre (id_usuario_cierre),
-  CONSTRAINT fk_caja_sesion_caja FOREIGN KEY (id_caja) REFERENCES caja (id_caja) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT fk_caja_sesion_usuario_apertura FOREIGN KEY (id_usuario_apertura) REFERENCES usuario (id_usuario) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT fk_caja_sesion_usuario_cierre FOREIGN KEY (id_usuario_cierre) REFERENCES usuario (id_usuario) ON DELETE RESTRICT ON UPDATE RESTRICT
+  CONSTRAINT fk_caja_sesion_caja
+    FOREIGN KEY (id_caja) REFERENCES caja (id_caja)
+    ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_caja_sesion_usuario_apertura
+    FOREIGN KEY (id_usuario_apertura) REFERENCES usuario (id_usuario)
+    ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_caja_sesion_usuario_cierre
+    FOREIGN KEY (id_usuario_cierre) REFERENCES usuario (id_usuario)
+    ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+-- =========================
 -- VENTA
-CREATE TABLE venta (
+-- =========================
+CREATE TABLE IF NOT EXISTS venta (
   id_venta INT(11) NOT NULL AUTO_INCREMENT,
   id_sucursal INT(11) NOT NULL,
   id_usuario INT(11) NOT NULL,
@@ -234,14 +311,24 @@ CREATE TABLE venta (
   KEY idx_venta_usuario (id_usuario),
   KEY idx_venta_cliente (id_cliente),
   KEY idx_venta_caja_sesion (id_caja_sesion),
-  CONSTRAINT fk_venta_sucursal FOREIGN KEY (id_sucursal) REFERENCES sucursal (id_sucursal) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT fk_venta_usuario FOREIGN KEY (id_usuario) REFERENCES usuario (id_usuario) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT fk_venta_cliente FOREIGN KEY (id_cliente) REFERENCES cliente (id_cliente) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT fk_venta_caja_sesion FOREIGN KEY (id_caja_sesion) REFERENCES caja_sesion (id_caja_sesion) ON DELETE RESTRICT ON UPDATE RESTRICT
+  CONSTRAINT fk_venta_sucursal
+    FOREIGN KEY (id_sucursal) REFERENCES sucursal (id_sucursal)
+    ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_venta_usuario
+    FOREIGN KEY (id_usuario) REFERENCES usuario (id_usuario)
+    ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_venta_cliente
+    FOREIGN KEY (id_cliente) REFERENCES cliente (id_cliente)
+    ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_venta_caja_sesion
+    FOREIGN KEY (id_caja_sesion) REFERENCES caja_sesion (id_caja_sesion)
+    ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+-- =========================
 -- VENTA DETALLE
-CREATE TABLE venta_detalle (
+-- =========================
+CREATE TABLE IF NOT EXISTS venta_detalle (
   id_venta_detalle INT(11) NOT NULL AUTO_INCREMENT,
   id_venta INT(11) NOT NULL,
   id_producto_variante INT(11) NOT NULL,
@@ -256,12 +343,18 @@ CREATE TABLE venta_detalle (
   PRIMARY KEY (id_venta_detalle),
   KEY idx_venta_detalle_venta (id_venta),
   KEY idx_venta_detalle_variante (id_producto_variante),
-  CONSTRAINT fk_venta_detalle_venta FOREIGN KEY (id_venta) REFERENCES venta (id_venta) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT fk_venta_detalle_variante FOREIGN KEY (id_producto_variante) REFERENCES producto_variante (id_producto_variante) ON DELETE RESTRICT ON UPDATE RESTRICT
+  CONSTRAINT fk_venta_detalle_venta
+    FOREIGN KEY (id_venta) REFERENCES venta (id_venta)
+    ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_venta_detalle_variante
+    FOREIGN KEY (id_producto_variante) REFERENCES producto_variante (id_producto_variante)
+    ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+-- =========================
 -- PAGO
-CREATE TABLE pago (
+-- =========================
+CREATE TABLE IF NOT EXISTS pago (
   id_pago INT(11) NOT NULL AUTO_INCREMENT,
   id_venta INT(11) NOT NULL,
   metodo ENUM('EFECTIVO','YAPE','PLIN','TARJETA','TRANSFERENCIA') NOT NULL,
@@ -273,11 +366,15 @@ CREATE TABLE pago (
   deleted_at DATETIME(6) DEFAULT NULL,
   PRIMARY KEY (id_pago),
   KEY idx_pago_venta (id_venta),
-  CONSTRAINT fk_pago_venta FOREIGN KEY (id_venta) REFERENCES venta (id_venta) ON DELETE RESTRICT ON UPDATE RESTRICT
+  CONSTRAINT fk_pago_venta
+    FOREIGN KEY (id_venta) REFERENCES venta (id_venta)
+    ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+-- =========================
 -- HISTORIAL STOCK
-CREATE TABLE historial_stock (
+-- =========================
+CREATE TABLE IF NOT EXISTS historial_stock (
   id_historial INT(11) NOT NULL AUTO_INCREMENT,
   fecha DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   tipo_movimiento ENUM('ENTRADA','SALIDA','AJUSTE','VENTA','DEVOLUCION','RESERVA','LIBERACION') NOT NULL,
@@ -292,33 +389,25 @@ CREATE TABLE historial_stock (
   KEY idx_historial_variante (id_producto_variante),
   KEY idx_historial_sucursal (id_sucursal),
   KEY idx_historial_usuario (id_usuario),
-  CONSTRAINT fk_historial_variante FOREIGN KEY (id_producto_variante) REFERENCES producto_variante (id_producto_variante) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT fk_historial_sucursal FOREIGN KEY (id_sucursal) REFERENCES sucursal (id_sucursal) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT fk_historial_usuario FOREIGN KEY (id_usuario) REFERENCES usuario (id_usuario) ON DELETE RESTRICT ON UPDATE RESTRICT
+  CONSTRAINT fk_historial_variante
+    FOREIGN KEY (id_producto_variante) REFERENCES producto_variante (id_producto_variante)
+    ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_historial_sucursal
+    FOREIGN KEY (id_sucursal) REFERENCES sucursal (id_sucursal)
+    ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_historial_usuario
+    FOREIGN KEY (id_usuario) REFERENCES usuario (id_usuario)
+    ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+-- =========================
 -- DATOS INICIALES MINIMOS (EMPRESA + SUCURSAL)
--- Permite registrar usuarios cuando id_sucursal es obligatorio.
+-- =========================
 INSERT INTO empresa (
-  id_empresa,
-  nombre,
-  razon_social,
-  ruc,
-  correo,
-  activo,
-  created_at,
-  updated_at,
-  deleted_at
+  id_empresa, nombre, razon_social, ruc, correo, activo, created_at, updated_at, deleted_at
 ) VALUES (
-  1,
-  'Empresa Demo',
-  'Empresa Demo S.A.C.',
-  '20123456789',
-  'empresa@demo.com',
-  1,
-  CURRENT_TIMESTAMP(6),
-  CURRENT_TIMESTAMP(6),
-  NULL
+  1, 'Empresa Demo', 'Empresa Demo S.A.C.', '20123456789', 'empresa@demo.com', 1,
+  CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6), NULL
 )
 ON DUPLICATE KEY UPDATE
   nombre = VALUES(nombre),
@@ -328,29 +417,10 @@ ON DUPLICATE KEY UPDATE
   updated_at = CURRENT_TIMESTAMP(6);
 
 INSERT INTO sucursal (
-  id_sucursal,
-  id_empresa,
-  nombre,
-  descripcion,
-  direccion,
-  telefono,
-  correo,
-  activo,
-  created_at,
-  updated_at,
-  deleted_at
+  id_sucursal, id_empresa, nombre, descripcion, direccion, telefono, correo, activo, created_at, updated_at, deleted_at
 ) VALUES (
-  1,
-  1,
-  'Sucursal Principal',
-  'Sucursal inicial del sistema',
-  'Direccion principal',
-  '900000000',
-  'sucursal@demo.com',
-  1,
-  CURRENT_TIMESTAMP(6),
-  CURRENT_TIMESTAMP(6),
-  NULL
+  1, 1, 'Sucursal Principal', 'Sucursal inicial del sistema', 'Direccion principal',
+  '900000000', 'sucursal@demo.com', 1, CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6), NULL
 )
 ON DUPLICATE KEY UPDATE
   id_empresa = VALUES(id_empresa),

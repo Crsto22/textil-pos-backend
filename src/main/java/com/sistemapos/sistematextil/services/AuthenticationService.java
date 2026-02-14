@@ -15,6 +15,7 @@ import com.sistemapos.sistematextil.repositories.UsuarioRepository;
 import com.sistemapos.sistematextil.util.AuthenticationRequest;
 import com.sistemapos.sistematextil.util.AuthenticationResponse;
 import com.sistemapos.sistematextil.util.ChangePasswordRequest;
+import com.sistemapos.sistematextil.util.MeResponse;
 import com.sistemapos.sistematextil.util.RegisterRequest;
 import com.sistemapos.sistematextil.util.Rol;
 
@@ -82,14 +83,20 @@ public class AuthenticationService {
         String refreshToken = jwtService.generateRefreshToken(customUser);
 
         Integer idSucursal = user.getSucursal() != null ? user.getSucursal().getIdSucursal() : null;
+        String nombreSucursal = user.getSucursal() != null ? user.getSucursal().getNombre() : null;
 
         AuthenticationResponse body = new AuthenticationResponse(
                 accessToken,
                 user.getIdUsuario(),
                 user.getNombre(),
                 user.getApellido(),
+                user.getCorreo(),
+                user.getDni(),
+                user.getTelefono(),
                 user.getRol().name(),
-                idSucursal);
+                user.getFechaCreacion(),
+                idSucursal,
+                nombreSucursal);
 
         return new LoginResult(body, refreshToken);
     }
@@ -129,6 +136,26 @@ public class AuthenticationService {
         user.setPassword(passwordEncoder.encode(request.passwordNueva()));
         usuarioRepository.save(user);
         return "Contrasena actualizada exitosamente";
+    }
+
+    public MeResponse me(String email) {
+        Usuario user = usuarioRepository.findByCorreoAndDeletedAtIsNull(email)
+                .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
+
+        Integer idSucursal = user.getSucursal() != null ? user.getSucursal().getIdSucursal() : null;
+        String nombreSucursal = user.getSucursal() != null ? user.getSucursal().getNombre() : null;
+
+        return new MeResponse(
+                user.getIdUsuario(),
+                user.getNombre(),
+                user.getApellido(),
+                user.getCorreo(),
+                user.getDni(),
+                user.getTelefono(),
+                user.getRol().name(),
+                user.getFechaCreacion(),
+                idSucursal,
+                nombreSucursal);
     }
 
     public record LoginResult(AuthenticationResponse response, String refreshToken) {}

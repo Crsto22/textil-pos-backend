@@ -43,9 +43,9 @@ public class SecurityConfig {
                         .requestMatchers("/api/empresa/**").permitAll()
                         .requestMatchers("/api/talla/**").hasAuthority("ADMINISTRADOR")
                         .requestMatchers("/api/color/**").hasAuthority("ADMINISTRADOR")
-                        .requestMatchers("/api/producto/**").permitAll()
+                        .requestMatchers("/api/producto/**").hasAnyAuthority("ADMINISTRADOR", "VENTAS", "ALMACEN")
                         .requestMatchers("/api/variante/**").permitAll()
-                        .requestMatchers("/api/categoria/**").permitAll()
+                        .requestMatchers("/api/categoria/**").hasAnyAuthority("ADMINISTRADOR", "VENTAS", "ALMACEN")
                         .anyRequest().authenticated())
                 .sessionManagement(sess -> sess.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);

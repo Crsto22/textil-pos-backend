@@ -75,137 +75,104 @@ CREATE TABLE IF NOT EXISTS usuario (
 -- =========================
 -- CATEGORIA
 -- =========================
-CREATE TABLE IF NOT EXISTS categoria (
-  id_categoria INT(11) NOT NULL AUTO_INCREMENT,
-  id_sucursal INT(11) NOT NULL,
+CREATE TABLE categoria(
+  id_categoria INT AUTO_INCREMENT PRIMARY KEY,
+  id_sucursal INT NOT NULL,
   nombre_categoria VARCHAR(100) NOT NULL,
-  descripcion VARCHAR(255) DEFAULT NULL,
+  descripcion VARCHAR(255),
   activo TINYINT(1) NOT NULL DEFAULT 1,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
-  deleted_at DATETIME(6) DEFAULT NULL,
-  PRIMARY KEY (id_categoria),
-  UNIQUE KEY uk_categoria_sucursal_nombre (id_sucursal, nombre_categoria),
-  KEY idx_categoria_sucursal (id_sucursal),
-  CONSTRAINT fk_categoria_sucursal
-    FOREIGN KEY (id_sucursal) REFERENCES sucursal (id_sucursal)
-    ON DELETE RESTRICT ON UPDATE RESTRICT
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
+  deleted_at DATETIME(6),
+  UNIQUE KEY uk_categoria_sucursal_nombre(id_sucursal,nombre_categoria),
+  FOREIGN KEY(id_sucursal) REFERENCES sucursal(id_sucursal)
+) ENGINE=InnoDB;
 -- =========================
 -- TALLAS
 -- =========================
-CREATE TABLE IF NOT EXISTS tallas (
-  talla_id INT(11) NOT NULL AUTO_INCREMENT,
-  nombre VARCHAR(20) NOT NULL,
+CREATE TABLE tallas(
+  talla_id INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(20) NOT NULL UNIQUE,
   activo TINYINT(1) NOT NULL DEFAULT 1,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
-  deleted_at DATETIME(6) DEFAULT NULL,
-  PRIMARY KEY (talla_id),
-  UNIQUE KEY uk_talla_nombre (nombre)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
+  deleted_at DATETIME(6)
+) ENGINE=InnoDB;
 -- =========================
 -- COLORES
 -- =========================
-CREATE TABLE IF NOT EXISTS colores (
-  color_id INT(11) NOT NULL AUTO_INCREMENT,
-  nombre VARCHAR(50) NOT NULL,
-  codigo VARCHAR(20) DEFAULT NULL,
+CREATE TABLE colores(
+  color_id INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(50) NOT NULL UNIQUE,
+  codigo VARCHAR(20),
   activo TINYINT(1) NOT NULL DEFAULT 1,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
-  deleted_at DATETIME(6) DEFAULT NULL,
-  PRIMARY KEY (color_id),
-  UNIQUE KEY uk_color_nombre (nombre)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
+  deleted_at DATETIME(6)
+) ENGINE=InnoDB;
 -- =========================
--- PRODUCTO (SIN imagen_url: ahora imágenes van por variante)
+-- PRODUCTO
 -- =========================
-CREATE TABLE IF NOT EXISTS producto (
-  producto_id INT(11) NOT NULL AUTO_INCREMENT,
-  sucursal_id INT(11) NOT NULL,
-  categoria_id INT(11) NOT NULL,
+CREATE TABLE producto(
+  producto_id INT AUTO_INCREMENT PRIMARY KEY,
+  sucursal_id INT NOT NULL,
+  categoria_id INT NOT NULL,
   nombre VARCHAR(150) NOT NULL,
-  descripcion VARCHAR(500) DEFAULT NULL,
+  descripcion VARCHAR(500),
   sku VARCHAR(100) NOT NULL,
-  codigo_externo VARCHAR(100) DEFAULT NULL,
+  codigo_externo VARCHAR(100),
   estado ENUM('ACTIVO','AGOTADO','ARCHIVADO') NOT NULL DEFAULT 'ACTIVO',
   activo TINYINT(1) NOT NULL DEFAULT 1,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
-  deleted_at DATETIME(6) DEFAULT NULL,
-  PRIMARY KEY (producto_id),
-  UNIQUE KEY uk_producto_sucursal_sku (sucursal_id, sku),
-  UNIQUE KEY uk_producto_codigo_externo (codigo_externo),
-  KEY idx_producto_sucursal (sucursal_id),
-  KEY idx_producto_categoria (categoria_id),
-  CONSTRAINT fk_producto_sucursal
-    FOREIGN KEY (sucursal_id) REFERENCES sucursal (id_sucursal)
-    ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT fk_producto_categoria
-    FOREIGN KEY (categoria_id) REFERENCES categoria (id_categoria)
-    ON DELETE RESTRICT ON UPDATE RESTRICT
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
+  deleted_at DATETIME(6),
+  UNIQUE KEY uk_producto_sucursal_sku(sucursal_id,sku),
+  UNIQUE KEY uk_producto_codigo_externo(codigo_externo),
+  FOREIGN KEY(sucursal_id) REFERENCES sucursal(id_sucursal),
+  FOREIGN KEY(categoria_id) REFERENCES categoria(id_categoria)
+) ENGINE=InnoDB;
 -- =========================
--- PRODUCTO VARIANTE (Color + Talla + Precio + Stock)
+-- PRODUCTO COLOR IMAGEN
 -- =========================
-CREATE TABLE IF NOT EXISTS producto_variante (
-  id_producto_variante INT(11) NOT NULL AUTO_INCREMENT,
-  producto_id INT(11) NOT NULL,
-  sucursal_id INT(11) NOT NULL,
-  talla_id INT(11) NOT NULL,
-  color_id INT(11) NOT NULL,
-  precio DECIMAL(10,2) NOT NULL,
-  stock INT(11) NOT NULL DEFAULT 0,
-  estado ENUM('ACTIVO','AGOTADO') NOT NULL DEFAULT 'ACTIVO',
-  activo TINYINT(1) NOT NULL DEFAULT 1,
-  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
-  deleted_at DATETIME(6) DEFAULT NULL,
-  PRIMARY KEY (id_producto_variante),
-  UNIQUE KEY uk_variante_unica (producto_id, sucursal_id, talla_id, color_id),
-  KEY idx_variante_producto (producto_id),
-  KEY idx_variante_sucursal (sucursal_id),
-  KEY idx_variante_talla (talla_id),
-  KEY idx_variante_color (color_id),
-  CONSTRAINT fk_variante_producto
-    FOREIGN KEY (producto_id) REFERENCES producto (producto_id)
-    ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT fk_variante_sucursal
-    FOREIGN KEY (sucursal_id) REFERENCES sucursal (id_sucursal)
-    ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT fk_variante_talla
-    FOREIGN KEY (talla_id) REFERENCES tallas (talla_id)
-    ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT fk_variante_color
-    FOREIGN KEY (color_id) REFERENCES colores (color_id)
-    ON DELETE RESTRICT ON UPDATE RESTRICT
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
--- =========================
--- IMÁGENES POR VARIANTE (cambia por color y talla si deseas)
--- =========================
-CREATE TABLE IF NOT EXISTS producto_variante_imagen (
-  id_variante_imagen INT(11) NOT NULL AUTO_INCREMENT,
-  id_producto_variante INT(11) NOT NULL,
+CREATE TABLE producto_color_imagen(
+  id_color_imagen INT AUTO_INCREMENT PRIMARY KEY,
+  producto_id INT NOT NULL,
+  color_id INT NOT NULL,
   url VARCHAR(600) NOT NULL,
-  orden INT(11) NOT NULL DEFAULT 1,
+  url_thumb VARCHAR(600),
+  orden INT NOT NULL DEFAULT 1,
   es_principal TINYINT(1) NOT NULL DEFAULT 0,
   activo TINYINT(1) NOT NULL DEFAULT 1,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
-  deleted_at DATETIME(6) DEFAULT NULL,
-  PRIMARY KEY (id_variante_imagen),
-  KEY idx_pvi_variante (id_producto_variante),
-  KEY idx_pvi_principal (id_producto_variante, es_principal),
-  CONSTRAINT fk_pvi_variante
-    FOREIGN KEY (id_producto_variante) REFERENCES producto_variante (id_producto_variante)
-    ON DELETE RESTRICT ON UPDATE RESTRICT
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+  deleted_at DATETIME(6),
+  KEY idx_pci_producto_color(producto_id,color_id),
+  FOREIGN KEY(producto_id) REFERENCES producto(producto_id),
+  FOREIGN KEY(color_id) REFERENCES colores(color_id)
+) ENGINE=InnoDB;
+
+-- =========================
+-- PRODUCTO VARIANTE
+-- =========================
+CREATE TABLE producto_variante(
+  id_producto_variante INT AUTO_INCREMENT PRIMARY KEY,
+  producto_id INT NOT NULL,
+  sucursal_id INT NOT NULL,
+  talla_id INT NOT NULL,
+  color_id INT NOT NULL,
+  precio DECIMAL(10,2) NOT NULL,
+  stock INT NOT NULL DEFAULT 0,
+  estado ENUM('ACTIVO','AGOTADO') NOT NULL DEFAULT 'ACTIVO',
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  deleted_at DATETIME(6),
+  UNIQUE KEY uk_variante_unica(producto_id,sucursal_id,talla_id,color_id),
+  FOREIGN KEY(producto_id) REFERENCES producto(producto_id),
+  FOREIGN KEY(sucursal_id) REFERENCES sucursal(id_sucursal),
+  FOREIGN KEY(talla_id) REFERENCES tallas(talla_id),
+  FOREIGN KEY(color_id) REFERENCES colores(color_id)
+) ENGINE=InnoDB;
 
 -- =========================
 -- CLIENTE

@@ -49,9 +49,6 @@ public class Producto {
     @Column(name = "codigo_externo")
     private String codigoExterno;
 
-    @Column(name = "imagen_url")
-    private String imagen;
- // aca trate de ponerlo asi, para no traer datos extra innecesarios, revisarlo abel
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "categoria_id", nullable = false)
     @JsonIgnoreProperties({"productos", "sucursal"}) 

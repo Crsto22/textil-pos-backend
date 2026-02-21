@@ -16,11 +16,11 @@ import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.repositories.CategoriaRepository;
 import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
-import com.sistemapos.sistematextil.util.CategoriaCreateRequest;
-import com.sistemapos.sistematextil.util.CategoriaListItemResponse;
-import com.sistemapos.sistematextil.util.CategoriaUpdateRequest;
-import com.sistemapos.sistematextil.util.PagedResponse;
-import com.sistemapos.sistematextil.util.Rol;
+import com.sistemapos.sistematextil.util.categoria.CategoriaCreateRequest;
+import com.sistemapos.sistematextil.util.categoria.CategoriaListItemResponse;
+import com.sistemapos.sistematextil.util.categoria.CategoriaUpdateRequest;
+import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
+import com.sistemapos.sistematextil.util.usuario.Rol;
 
 import lombok.RequiredArgsConstructor;
 

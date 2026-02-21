@@ -4,7 +4,7 @@ import java.time.LocalDateTime;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.sistemapos.sistematextil.model.converter.EstadoActivoConverter;
-import com.sistemapos.sistematextil.util.TipoDocumento;
+import com.sistemapos.sistematextil.util.cliente.TipoDocumento;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Convert;

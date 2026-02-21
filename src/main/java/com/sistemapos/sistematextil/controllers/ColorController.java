@@ -19,8 +19,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.sistemapos.sistematextil.model.Color;
 import com.sistemapos.sistematextil.services.ColorService;
-import com.sistemapos.sistematextil.util.ColorCreateRequest;
-import com.sistemapos.sistematextil.util.PagedResponse;
+import com.sistemapos.sistematextil.util.color.ColorCreateRequest;
+import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
 
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;

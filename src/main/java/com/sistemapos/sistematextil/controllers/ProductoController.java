@@ -17,12 +17,18 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
+import com.sistemapos.sistematextil.services.ProductoImagenService;
 import com.sistemapos.sistematextil.services.ProductoService;
-import com.sistemapos.sistematextil.util.PagedResponse;
-import com.sistemapos.sistematextil.util.ProductoCreateRequest;
-import com.sistemapos.sistematextil.util.ProductoListItemResponse;
-import com.sistemapos.sistematextil.util.ProductoUpdateRequest;
+import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
+import com.sistemapos.sistematextil.util.producto.ProductoCompletoCreateRequest;
+import com.sistemapos.sistematextil.util.producto.ProductoCompletoResponse;
+import com.sistemapos.sistematextil.util.producto.ProductoCreateRequest;
+import com.sistemapos.sistematextil.util.producto.ProductoImagenUploadResponse;
+import com.sistemapos.sistematextil.util.producto.ProductoListadoResumenResponse;
+import com.sistemapos.sistematextil.util.producto.ProductoListItemResponse;
+import com.sistemapos.sistematextil.util.producto.ProductoUpdateRequest;
 
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
@@ -33,12 +39,26 @@ import lombok.AllArgsConstructor;
 public class ProductoController {
 
     private final ProductoService productoService;
+    private final ProductoImagenService productoImagenService;
 
     @GetMapping("/listar")
     public ResponseEntity<?> listar(Authentication authentication, @RequestParam(defaultValue = "0") int page) {
         try {
             PagedResponse<ProductoListItemResponse> response = productoService
                     .listarPaginado(page, obtenerCorreoAutenticado(authentication));
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al listar productos" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
+    @GetMapping("/listar-resumen")
+    public ResponseEntity<?> listarResumen(Authentication authentication, @RequestParam(defaultValue = "0") int page) {
+        try {
+            PagedResponse<ProductoListadoResumenResponse> response = productoService
+                    .listarResumenPaginado(page, obtenerCorreoAutenticado(authentication));
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al listar productos" : e.getMessage();
@@ -70,6 +90,37 @@ public class ProductoController {
             return ResponseEntity.status(HttpStatus.CREATED).body(creado);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al crear producto" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
+    @PostMapping(value = "/imagenes", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<?> subirImagenes(
+            @RequestParam(name = "productoId", required = false) Integer productoId,
+            @RequestParam("colorId") Integer colorId,
+            @RequestParam("files") java.util.List<MultipartFile> files) {
+        try {
+            ProductoImagenUploadResponse response = productoImagenService.subirImagenes(productoId, colorId, files);
+            return ResponseEntity.status(HttpStatus.CREATED).body(response);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al subir imagenes" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
+    @PostMapping("/insertar-completo")
+    public ResponseEntity<?> crearCompleto(
+            Authentication authentication,
+            @Valid @RequestBody ProductoCompletoCreateRequest request) {
+        try {
+            ProductoCompletoResponse creado = productoService.insertarCompleto(
+                    request,
+                    obtenerCorreoAutenticado(authentication));
+            return ResponseEntity.status(HttpStatus.CREATED).body(creado);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al crear producto completo" : e.getMessage();
             HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
             return ResponseEntity.status(status).body(Map.of("message", message));
         }

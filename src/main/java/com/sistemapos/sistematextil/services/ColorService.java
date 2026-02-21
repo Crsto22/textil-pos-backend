@@ -10,8 +10,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.sistemapos.sistematextil.model.Color;
 import com.sistemapos.sistematextil.repositories.ColorRepository;
-import com.sistemapos.sistematextil.util.ColorCreateRequest;
-import com.sistemapos.sistematextil.util.PagedResponse;
+import com.sistemapos.sistematextil.util.color.ColorCreateRequest;
+import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
 
 import lombok.RequiredArgsConstructor;
 

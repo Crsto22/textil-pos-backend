@@ -18,10 +18,10 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.sistemapos.sistematextil.services.SucursalService;
-import com.sistemapos.sistematextil.util.PagedResponse;
-import com.sistemapos.sistematextil.util.SucursalCreateRequest;
-import com.sistemapos.sistematextil.util.SucursalListItemResponse;
-import com.sistemapos.sistematextil.util.SucursalUpdateRequest;
+import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
+import com.sistemapos.sistematextil.util.sucursal.SucursalCreateRequest;
+import com.sistemapos.sistematextil.util.sucursal.SucursalListItemResponse;
+import com.sistemapos.sistematextil.util.sucursal.SucursalUpdateRequest;
 
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;

@@ -14,11 +14,11 @@ import com.sistemapos.sistematextil.model.Sucursal;
 import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
-import com.sistemapos.sistematextil.util.PagedResponse;
-import com.sistemapos.sistematextil.util.Rol;
-import com.sistemapos.sistematextil.util.UsuarioListItemResponse;
-import com.sistemapos.sistematextil.util.UsuarioResetPasswordRequest;
-import com.sistemapos.sistematextil.util.UsuarioUpdateRequest;
+import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
+import com.sistemapos.sistematextil.util.usuario.Rol;
+import com.sistemapos.sistematextil.util.usuario.UsuarioListItemResponse;
+import com.sistemapos.sistematextil.util.usuario.UsuarioResetPasswordRequest;
+import com.sistemapos.sistematextil.util.usuario.UsuarioUpdateRequest;
 
 import lombok.RequiredArgsConstructor;
 

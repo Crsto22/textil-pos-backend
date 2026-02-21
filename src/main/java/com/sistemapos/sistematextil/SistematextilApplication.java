@@ -10,7 +10,7 @@ import com.sistemapos.sistematextil.model.Sucursal;
 import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
-import com.sistemapos.sistematextil.util.Rol;
+import com.sistemapos.sistematextil.util.usuario.Rol;
 
 @SpringBootApplication
 public class SistematextilApplication {

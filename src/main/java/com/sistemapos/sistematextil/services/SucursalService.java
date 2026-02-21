@@ -16,10 +16,10 @@ import com.sistemapos.sistematextil.model.Sucursal;
 import com.sistemapos.sistematextil.repositories.EmpresaRepository;
 import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
-import com.sistemapos.sistematextil.util.PagedResponse;
-import com.sistemapos.sistematextil.util.SucursalCreateRequest;
-import com.sistemapos.sistematextil.util.SucursalListItemResponse;
-import com.sistemapos.sistematextil.util.SucursalUpdateRequest;
+import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
+import com.sistemapos.sistematextil.util.sucursal.SucursalCreateRequest;
+import com.sistemapos.sistematextil.util.sucursal.SucursalListItemResponse;
+import com.sistemapos.sistematextil.util.sucursal.SucursalUpdateRequest;
 
 import lombok.RequiredArgsConstructor;
 

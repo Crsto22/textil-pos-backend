@@ -1,7 +1,7 @@
 package com.sistemapos.sistematextil.model;
 import java.time.LocalDateTime;
 
-import com.sistemapos.sistematextil.util.Rol;
+import com.sistemapos.sistematextil.util.usuario.Rol;
 import com.sistemapos.sistematextil.model.converter.EstadoActivoConverter;
 
 import jakarta.persistence.Column;

@@ -16,7 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.sistemapos.sistematextil.model.Empresa;
 import com.sistemapos.sistematextil.services.EmpresaService;
-import com.sistemapos.sistematextil.util.EmpresaResponse;
+import com.sistemapos.sistematextil.util.empresa.EmpresaResponse;
 
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;

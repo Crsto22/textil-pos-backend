@@ -15,12 +15,12 @@ import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.repositories.ClienteRepository;
 import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
-import com.sistemapos.sistematextil.util.ClienteCreateRequest;
-import com.sistemapos.sistematextil.util.ClienteListItemResponse;
-import com.sistemapos.sistematextil.util.ClienteUpdateRequest;
-import com.sistemapos.sistematextil.util.PagedResponse;
-import com.sistemapos.sistematextil.util.Rol;
-import com.sistemapos.sistematextil.util.TipoDocumento;
+import com.sistemapos.sistematextil.util.cliente.ClienteCreateRequest;
+import com.sistemapos.sistematextil.util.cliente.ClienteListItemResponse;
+import com.sistemapos.sistematextil.util.cliente.ClienteUpdateRequest;
+import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
+import com.sistemapos.sistematextil.util.usuario.Rol;
+import com.sistemapos.sistematextil.util.cliente.TipoDocumento;
 
 import lombok.RequiredArgsConstructor;
 

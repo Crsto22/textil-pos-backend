@@ -9,7 +9,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import com.sistemapos.sistematextil.model.Usuario;
-import com.sistemapos.sistematextil.util.Rol;
+import com.sistemapos.sistematextil.util.usuario.Rol;
 
 
 public interface UsuarioRepository extends JpaRepository <Usuario, Integer>{

@@ -10,8 +10,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.sistemapos.sistematextil.model.Talla;
 import com.sistemapos.sistematextil.repositories.TallaRepository;
-import com.sistemapos.sistematextil.util.PagedResponse;
-import com.sistemapos.sistematextil.util.TallaCreateRequest;
+import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
+import com.sistemapos.sistematextil.util.talla.TallaCreateRequest;
 
 import lombok.RequiredArgsConstructor;
 

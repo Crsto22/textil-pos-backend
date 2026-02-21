@@ -9,7 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import com.sistemapos.sistematextil.model.Cliente;
-import com.sistemapos.sistematextil.util.TipoDocumento;
+import com.sistemapos.sistematextil.util.cliente.TipoDocumento;
 
 public interface ClienteRepository extends JpaRepository<Cliente, Integer> {
 

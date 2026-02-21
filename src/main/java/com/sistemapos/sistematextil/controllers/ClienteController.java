@@ -19,10 +19,10 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.sistemapos.sistematextil.services.ClienteService;
-import com.sistemapos.sistematextil.util.ClienteCreateRequest;
-import com.sistemapos.sistematextil.util.ClienteListItemResponse;
-import com.sistemapos.sistematextil.util.ClienteUpdateRequest;
-import com.sistemapos.sistematextil.util.PagedResponse;
+import com.sistemapos.sistematextil.util.cliente.ClienteCreateRequest;
+import com.sistemapos.sistematextil.util.cliente.ClienteListItemResponse;
+import com.sistemapos.sistematextil.util.cliente.ClienteUpdateRequest;
+import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
 
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;

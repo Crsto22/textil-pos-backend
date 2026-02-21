@@ -19,8 +19,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.sistemapos.sistematextil.model.Talla;
 import com.sistemapos.sistematextil.services.TallaService;
-import com.sistemapos.sistematextil.util.PagedResponse;
-import com.sistemapos.sistematextil.util.TallaCreateRequest;
+import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
+import com.sistemapos.sistematextil.util.talla.TallaCreateRequest;
 
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;

@@ -20,9 +20,9 @@ import com.sistemapos.sistematextil.config.CookieUtil;
 import com.sistemapos.sistematextil.services.AuthenticationService;
 import com.sistemapos.sistematextil.services.AuthenticationService.LoginResult;
 import com.sistemapos.sistematextil.services.AuthenticationService.RefreshResult;
-import com.sistemapos.sistematextil.util.AuthenticationRequest;
-import com.sistemapos.sistematextil.util.ChangePasswordRequest;
-import com.sistemapos.sistematextil.util.RegisterRequest;
+import com.sistemapos.sistematextil.util.auth.AuthenticationRequest;
+import com.sistemapos.sistematextil.util.auth.ChangePasswordRequest;
+import com.sistemapos.sistematextil.util.auth.RegisterRequest;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;

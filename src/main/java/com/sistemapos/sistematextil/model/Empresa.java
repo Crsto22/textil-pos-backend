@@ -48,6 +48,9 @@ public class Empresa {
     @Email(message = "El correo no tiene un formato válido")
     private String correo;
 
+    @Column(name = "logo_url")
+    private String logoUrl;
+
     @Column(name = "created_at")
     private LocalDateTime fechaCreacion;
 

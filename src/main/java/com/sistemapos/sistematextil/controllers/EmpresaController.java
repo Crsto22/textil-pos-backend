@@ -1,5 +1,6 @@
 package com.sistemapos.sistematextil.controllers;
 
+import java.io.IOException;
 import java.util.List;
 
 import org.springframework.http.HttpStatus;
@@ -12,7 +13,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import com.sistemapos.sistematextil.model.Empresa;
 import com.sistemapos.sistematextil.services.EmpresaService;
@@ -72,6 +75,14 @@ public class EmpresaController {
         }
     }
 
+    @PutMapping("/{id}/logo")
+public ResponseEntity<Empresa> subirLogo(
+        @PathVariable Integer id,
+        @RequestParam("file") MultipartFile file) throws IOException {
 
+    return ResponseEntity.ok(
+            empresaService.subirLogo(id, file)
+    );
+}
 
 }

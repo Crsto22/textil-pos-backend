@@ -1,6 +1,7 @@
 package com.sistemapos.sistematextil.repositories;
 
 import java.util.Optional;
+import java.util.List;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -25,6 +26,10 @@ public interface CategoriaRepository extends JpaRepository<Categoria, Integer> {
     Optional<Categoria> findByIdCategoria(Integer idCategoria);
 
     Optional<Categoria> findByIdCategoriaAndSucursal_IdSucursal(Integer idCategoria, Integer idSucursal);
+
+    Optional<Categoria> findBySucursal_IdSucursalAndNombreCategoriaIgnoreCase(Integer idSucursal, String nombreCategoria);
+
+    List<Categoria> findBySucursal_IdSucursal(Integer idSucursal);
 
     boolean existsBySucursal_IdSucursalAndNombreCategoriaIgnoreCase(Integer idSucursal, String nombreCategoria);
 

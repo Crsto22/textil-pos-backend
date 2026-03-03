@@ -1,5 +1,7 @@
 package com.sistemapos.sistematextil.model;
 
+import com.sistemapos.sistematextil.model.converter.EstadoActivoConverter;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
@@ -8,7 +10,6 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.validation.constraints.NotBlank;
-import com.sistemapos.sistematextil.model.converter.EstadoActivoConverter;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -29,7 +30,7 @@ public class Color {
     @NotBlank(message = "El nombre del color es obligatorio")
     private String nombre; // Ej: Rojo, Azul, Negro, Blanco
 
-    @NotBlank(message= "El código del color es obligatorio")
+    @Column(name = "codigo", length = 20)
     private String codigo;
 
     @Convert(converter = EstadoActivoConverter.class)

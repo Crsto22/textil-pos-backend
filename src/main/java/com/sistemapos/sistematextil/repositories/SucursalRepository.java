@@ -12,5 +12,6 @@ public interface SucursalRepository extends JpaRepository<Sucursal, Integer> {
     Page<Sucursal> findByDeletedAtIsNull(Pageable pageable);
     Page<Sucursal> findByDeletedAtIsNullAndNombreStartingWithIgnoreCase(String nombre, Pageable pageable);
     Optional<Sucursal> findByIdSucursalAndDeletedAtIsNull(Integer idSucursal);
+    Optional<Sucursal> findByNombreIgnoreCaseAndDeletedAtIsNull(String nombre);
     Optional<Sucursal> findByEmpresa_IdEmpresaAndNombreIgnoreCaseAndDeletedAtIsNull(Integer idEmpresa, String nombre);
 }

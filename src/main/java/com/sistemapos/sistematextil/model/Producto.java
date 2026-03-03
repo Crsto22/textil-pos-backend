@@ -13,7 +13,6 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
-import jakarta.validation.constraints.NotBlank;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -32,22 +31,17 @@ public class Producto {
     @Column(name = "producto_id")
     private Integer idProducto;
 
-    @NotBlank(message = "El SKU es obligatorio")
-    @Column(nullable = false, length = 100)
-    private String sku;
-
-    @NotBlank(message = "El nombre del producto es obligatorio")
+    @Column(nullable = false, length = 150)
     private String nombre;
 
+    @Column(length = 500)
     private String descripcion;
 
-    private String estado; 
+    @Column(nullable = false)
+    private String estado;
 
     @Column(name = "created_at")
     private LocalDateTime fechaCreacion;
-
-    @Column(name = "codigo_externo")
-    private String codigoExterno;
 
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "categoria_id", nullable = false)

@@ -20,12 +20,17 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.sistemapos.sistematextil.services.ProductoImagenService;
+import com.sistemapos.sistematextil.services.ProductoImportService;
 import com.sistemapos.sistematextil.services.ProductoService;
 import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoCompletoCreateRequest;
 import com.sistemapos.sistematextil.util.producto.ProductoCompletoResponse;
+import com.sistemapos.sistematextil.util.producto.ProductoCompletoUpdateRequest;
 import com.sistemapos.sistematextil.util.producto.ProductoCreateRequest;
+import com.sistemapos.sistematextil.util.producto.ProductoDetalleResponse;
+import com.sistemapos.sistematextil.util.producto.ProductoImagenEditResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoImagenUploadResponse;
+import com.sistemapos.sistematextil.util.producto.ProductoImportResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoListadoResumenResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoListItemResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoUpdateRequest;
@@ -40,6 +45,7 @@ public class ProductoController {
 
     private final ProductoService productoService;
     private final ProductoImagenService productoImagenService;
+    private final ProductoImportService productoImportService;
 
     @GetMapping("/listar")
     public ResponseEntity<?> listar(Authentication authentication, @RequestParam(defaultValue = "0") int page) {
@@ -73,11 +79,23 @@ public class ProductoController {
             @RequestParam(name = "q", required = false) String q,
             @RequestParam(defaultValue = "0") int page) {
         try {
-            PagedResponse<ProductoListItemResponse> response = productoService
+            PagedResponse<ProductoListadoResumenResponse> response = productoService
                     .buscarPaginado(q, page, obtenerCorreoAutenticado(authentication));
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al buscar productos" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
+    @GetMapping("/detalle/{id}")
+    public ResponseEntity<?> obtenerDetalle(Authentication authentication, @PathVariable Integer id) {
+        try {
+            ProductoDetalleResponse detalle = productoService.obtenerDetalle(id, obtenerCorreoAutenticado(authentication));
+            return ResponseEntity.ok(detalle);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al obtener detalle del producto" : e.getMessage();
             HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
             return ResponseEntity.status(status).body(Map.of("message", message));
         }
@@ -121,6 +139,61 @@ public class ProductoController {
             return ResponseEntity.status(HttpStatus.CREATED).body(creado);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al crear producto completo" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
+    @PostMapping(value = "/importar", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<?> importarDesdeExcel(
+            Authentication authentication,
+            @RequestParam("file") MultipartFile file) {
+        try {
+            ProductoImportResponse response = productoImportService
+                    .importarDesdeExcel(file, obtenerCorreoAutenticado(authentication));
+            return ResponseEntity.status(HttpStatus.CREATED).body(response);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al importar productos" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
+    @PutMapping("/actualizar-completo/{id}")
+    public ResponseEntity<?> actualizarCompleto(
+            Authentication authentication,
+            @PathVariable Integer id,
+            @Valid @RequestBody ProductoCompletoUpdateRequest request) {
+        try {
+            ProductoCompletoResponse actualizado = productoService.actualizarCompleto(
+                    id,
+                    request,
+                    obtenerCorreoAutenticado(authentication));
+            return ResponseEntity.ok(actualizado);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al actualizar producto completo" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
+    @PutMapping(value = "/imagenes/{idColorImagen}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<?> reemplazarImagen(
+            Authentication authentication,
+            @PathVariable Integer idColorImagen,
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(name = "orden", required = false) Integer orden,
+            @RequestParam(name = "esPrincipal", required = false) Boolean esPrincipal) {
+        try {
+            ProductoImagenEditResponse response = productoImagenService.reemplazarImagen(
+                    idColorImagen,
+                    obtenerCorreoAutenticado(authentication),
+                    file,
+                    orden,
+                    esPrincipal);
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al reemplazar imagen" : e.getMessage();
             HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
             return ResponseEntity.status(status).body(Map.of("message", message));
         }

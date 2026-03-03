@@ -119,15 +119,12 @@ CREATE TABLE producto(
   categoria_id INT NOT NULL,
   nombre VARCHAR(150) NOT NULL,
   descripcion VARCHAR(500),
-  sku VARCHAR(100) NOT NULL,
-  codigo_externo VARCHAR(100),
   estado ENUM('ACTIVO','AGOTADO','ARCHIVADO') NOT NULL DEFAULT 'ACTIVO',
   activo TINYINT(1) NOT NULL DEFAULT 1,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   deleted_at DATETIME(6),
-  UNIQUE KEY uk_producto_sucursal_sku(sucursal_id,sku),
-  UNIQUE KEY uk_producto_codigo_externo(codigo_externo),
+  KEY idx_producto_sucursal(sucursal_id),
   FOREIGN KEY(sucursal_id) REFERENCES sucursal(id_sucursal),
   FOREIGN KEY(categoria_id) REFERENCES categoria(id_categoria)
 ) ENGINE=InnoDB;
@@ -160,6 +157,8 @@ CREATE TABLE producto_variante(
   sucursal_id INT NOT NULL,
   talla_id INT NOT NULL,
   color_id INT NOT NULL,
+  sku VARCHAR(100) NOT NULL,
+  codigo_externo VARCHAR(100),
   precio DECIMAL(10,2) NOT NULL,
   stock INT NOT NULL DEFAULT 0,
   estado ENUM('ACTIVO','AGOTADO') NOT NULL DEFAULT 'ACTIVO',
@@ -167,6 +166,8 @@ CREATE TABLE producto_variante(
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   deleted_at DATETIME(6),
+  UNIQUE KEY uk_variante_sucursal_sku(sucursal_id,sku),
+  UNIQUE KEY uk_variante_codigo_externo(codigo_externo),
   UNIQUE KEY uk_variante_unica(producto_id,sucursal_id,talla_id,color_id),
   FOREIGN KEY(producto_id) REFERENCES producto(producto_id),
   FOREIGN KEY(sucursal_id) REFERENCES sucursal(id_sucursal),
@@ -204,51 +205,60 @@ CREATE TABLE IF NOT EXISTS cliente (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- =========================
--- CAJA
+-- MIGRACION: ELIMINAR CAJA/CAJA_SESION (SI EXISTE)
 -- =========================
-CREATE TABLE IF NOT EXISTS caja (
-  id_caja INT(11) NOT NULL AUTO_INCREMENT,
-  id_sucursal INT(11) NOT NULL,
-  nombre VARCHAR(100) NOT NULL,
-  activo TINYINT(1) NOT NULL DEFAULT 1,
-  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
-  deleted_at DATETIME(6) DEFAULT NULL,
-  PRIMARY KEY (id_caja),
-  UNIQUE KEY uk_caja_sucursal_nombre (id_sucursal, nombre),
-  KEY idx_caja_sucursal (id_sucursal),
-  CONSTRAINT fk_caja_sucursal
-    FOREIGN KEY (id_sucursal) REFERENCES sucursal (id_sucursal)
-    ON DELETE RESTRICT ON UPDATE RESTRICT
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+SET @fk_venta_caja := (
+  SELECT CONSTRAINT_NAME
+  FROM information_schema.TABLE_CONSTRAINTS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'venta'
+    AND CONSTRAINT_NAME = 'fk_venta_caja_sesion'
+    AND CONSTRAINT_TYPE = 'FOREIGN KEY'
+  LIMIT 1
+);
+SET @sql := IF(
+  @fk_venta_caja IS NULL,
+  'SELECT 1',
+  'ALTER TABLE venta DROP FOREIGN KEY fk_venta_caja_sesion'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
--- =========================
--- CAJA SESION
--- =========================
-CREATE TABLE IF NOT EXISTS caja_sesion (
-  id_caja_sesion INT(11) NOT NULL AUTO_INCREMENT,
-  id_caja INT(11) NOT NULL,
-  id_usuario_apertura INT(11) NOT NULL,
-  fecha_apertura DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  monto_apertura DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-  fecha_cierre DATETIME(6) DEFAULT NULL,
-  id_usuario_cierre INT(11) DEFAULT NULL,
-  monto_cierre DECIMAL(10,2) DEFAULT NULL,
-  estado ENUM('ABIERTA','CERRADA') NOT NULL DEFAULT 'ABIERTA',
-  PRIMARY KEY (id_caja_sesion),
-  KEY idx_caja_sesion_caja (id_caja),
-  KEY idx_caja_sesion_usuario_apertura (id_usuario_apertura),
-  KEY idx_caja_sesion_usuario_cierre (id_usuario_cierre),
-  CONSTRAINT fk_caja_sesion_caja
-    FOREIGN KEY (id_caja) REFERENCES caja (id_caja)
-    ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT fk_caja_sesion_usuario_apertura
-    FOREIGN KEY (id_usuario_apertura) REFERENCES usuario (id_usuario)
-    ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT fk_caja_sesion_usuario_cierre
-    FOREIGN KEY (id_usuario_cierre) REFERENCES usuario (id_usuario)
-    ON DELETE RESTRICT ON UPDATE RESTRICT
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+SET @idx_venta_caja := (
+  SELECT COUNT(*)
+  FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'venta'
+    AND INDEX_NAME = 'idx_venta_caja_sesion'
+);
+SET @sql := IF(
+  @idx_venta_caja = 0,
+  'SELECT 1',
+  'ALTER TABLE venta DROP INDEX idx_venta_caja_sesion'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @col_venta_caja := (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'venta'
+    AND COLUMN_NAME = 'id_caja_sesion'
+);
+SET @sql := IF(
+  @col_venta_caja = 0,
+  'SELECT 1',
+  'ALTER TABLE venta DROP COLUMN id_caja_sesion'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+DROP TABLE IF EXISTS caja_sesion;
+DROP TABLE IF EXISTS caja;
 
 -- =========================
 -- VENTA
@@ -258,7 +268,6 @@ CREATE TABLE IF NOT EXISTS venta (
   id_sucursal INT(11) NOT NULL,
   id_usuario INT(11) NOT NULL,
   id_cliente INT(11) DEFAULT NULL,
-  id_caja_sesion INT(11) NOT NULL,
   tipo_comprobante ENUM('TICKET','BOLETA','FACTURA') NOT NULL DEFAULT 'TICKET',
   serie VARCHAR(10) DEFAULT NULL,
   correlativo INT(11) DEFAULT NULL,
@@ -277,7 +286,6 @@ CREATE TABLE IF NOT EXISTS venta (
   KEY idx_venta_sucursal (id_sucursal),
   KEY idx_venta_usuario (id_usuario),
   KEY idx_venta_cliente (id_cliente),
-  KEY idx_venta_caja_sesion (id_caja_sesion),
   CONSTRAINT fk_venta_sucursal
     FOREIGN KEY (id_sucursal) REFERENCES sucursal (id_sucursal)
     ON DELETE RESTRICT ON UPDATE RESTRICT,
@@ -286,9 +294,6 @@ CREATE TABLE IF NOT EXISTS venta (
     ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT fk_venta_cliente
     FOREIGN KEY (id_cliente) REFERENCES cliente (id_cliente)
-    ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT fk_venta_caja_sesion
-    FOREIGN KEY (id_caja_sesion) REFERENCES caja_sesion (id_caja_sesion)
     ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -319,12 +324,26 @@ CREATE TABLE IF NOT EXISTS venta_detalle (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- =========================
+-- METODO PAGO CONFIG
+-- =========================
+CREATE TABLE IF NOT EXISTS metodo_pago_config (
+  id_metodo_pago INT(11) NOT NULL AUTO_INCREMENT,
+  nombre VARCHAR(50) NOT NULL,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  deleted_at DATETIME(6) DEFAULT NULL,
+  PRIMARY KEY (id_metodo_pago),
+  UNIQUE KEY uk_metodo_pago_nombre (nombre)
+) ENGINE=InnoDB;
+
+-- =========================
 -- PAGO
 -- =========================
 CREATE TABLE IF NOT EXISTS pago (
   id_pago INT(11) NOT NULL AUTO_INCREMENT,
   id_venta INT(11) NOT NULL,
-  metodo ENUM('EFECTIVO','YAPE','PLIN','TARJETA','TRANSFERENCIA') NOT NULL,
+  id_metodo_pago INT(11) NOT NULL,
   monto DECIMAL(10,2) NOT NULL,
   referencia VARCHAR(100) DEFAULT NULL,
   activo TINYINT(1) NOT NULL DEFAULT 1,
@@ -333,8 +352,12 @@ CREATE TABLE IF NOT EXISTS pago (
   deleted_at DATETIME(6) DEFAULT NULL,
   PRIMARY KEY (id_pago),
   KEY idx_pago_venta (id_venta),
+  KEY idx_pago_metodo (id_metodo_pago),
   CONSTRAINT fk_pago_venta
     FOREIGN KEY (id_venta) REFERENCES venta (id_venta)
+    ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_pago_metodo
+    FOREIGN KEY (id_metodo_pago) REFERENCES metodo_pago_config (id_metodo_pago)
     ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -364,6 +387,42 @@ CREATE TABLE IF NOT EXISTS historial_stock (
     ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT fk_historial_usuario
     FOREIGN KEY (id_usuario) REFERENCES usuario (id_usuario)
+    ON DELETE RESTRICT ON UPDATE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- =========================
+-- IMPORTACION PRODUCTO HISTORIAL
+-- =========================
+CREATE TABLE IF NOT EXISTS importacion_producto_historial (
+  id_importacion INT(11) NOT NULL AUTO_INCREMENT,
+  id_usuario INT(11) NOT NULL,
+  id_sucursal INT(11) DEFAULT NULL,
+  nombre_archivo VARCHAR(255) NOT NULL,
+  tamano_bytes BIGINT NOT NULL,
+  filas_procesadas INT(11) NOT NULL DEFAULT 0,
+  productos_creados INT(11) NOT NULL DEFAULT 0,
+  productos_actualizados INT(11) NOT NULL DEFAULT 0,
+  variantes_guardadas INT(11) NOT NULL DEFAULT 0,
+  categorias_creadas INT(11) NOT NULL DEFAULT 0,
+  colores_creados INT(11) NOT NULL DEFAULT 0,
+  tallas_creadas INT(11) NOT NULL DEFAULT 0,
+  estado ENUM('EXITOSA','PARCIAL','FALLIDA') NOT NULL DEFAULT 'EXITOSA',
+  mensaje_error VARCHAR(1000) DEFAULT NULL,
+  duracion_ms INT(11) DEFAULT NULL,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  deleted_at DATETIME(6) DEFAULT NULL,
+  PRIMARY KEY (id_importacion),
+  KEY idx_importacion_usuario (id_usuario),
+  KEY idx_importacion_sucursal (id_sucursal),
+  KEY idx_importacion_fecha (created_at),
+  KEY idx_importacion_estado (estado),
+  CONSTRAINT fk_importacion_usuario
+    FOREIGN KEY (id_usuario) REFERENCES usuario (id_usuario)
+    ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_importacion_sucursal
+    FOREIGN KEY (id_sucursal) REFERENCES sucursal (id_sucursal)
     ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -398,5 +457,12 @@ ON DUPLICATE KEY UPDATE
   correo = VALUES(correo),
   activo = VALUES(activo),
   updated_at = CURRENT_TIMESTAMP(6);
+
+INSERT INTO metodo_pago_config (nombre, activo) VALUES
+  ('EFECTIVO', 1),
+  ('YAPE', 1),
+  ('PLIN', 1),
+  ('TARJETA', 0),
+  ('TRANSFERENCIA', 0);
 
 COMMIT;

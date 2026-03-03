@@ -1,5 +1,7 @@
 package com.sistemapos.sistematextil.repositories;
 
+import java.util.Optional;
+
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -12,6 +14,8 @@ import com.sistemapos.sistematextil.model.Color;
 public interface ColorRepository extends JpaRepository<Color, Integer> {
 
     Page<Color> findByNombreContainingIgnoreCase(String nombre, Pageable pageable);
+
+    Optional<Color> findByNombreIgnoreCase(String nombre);
 
     boolean existsByNombreIgnoreCase(String nombre);
 

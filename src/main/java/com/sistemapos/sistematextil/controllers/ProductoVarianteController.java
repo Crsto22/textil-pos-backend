@@ -1,8 +1,10 @@
 package com.sistemapos.sistematextil.controllers;
 
 import java.util.List;
+import java.util.Map;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,7 +22,7 @@ import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
 
 @RestController
-@RequestMapping("api/variante")
+@RequestMapping(value = "api/variante", produces = MediaType.APPLICATION_JSON_VALUE)
 @AllArgsConstructor
 public class ProductoVarianteController {
 
@@ -45,15 +47,31 @@ public class ProductoVarianteController {
     public ResponseEntity<ProductoVariante> actualizarStock(@PathVariable Integer id, @RequestBody Integer stock) {
         return ResponseEntity.ok(service.actualizarStock(id, stock));
     }
-    @DeleteMapping("eliminar/{id}")
-public ResponseEntity<String> eliminar(@PathVariable Integer id) {
-    service.eliminar(id);
-    return ResponseEntity.ok("Variante eliminada correctamente");
-}
 
-@PatchMapping("precio/{id}")
-public ResponseEntity<ProductoVariante> actualizarPrecio(@PathVariable Integer id, @RequestBody Double precio) {
-    return ResponseEntity.ok(service.actualizarPrecio(id, precio));
-}
+    @DeleteMapping("eliminar/{id}")
+    public ResponseEntity<?> eliminar(@PathVariable Integer id) {
+        try {
+            service.eliminar(id);
+            return ResponseEntity.ok(Map.of("message", "Variante eliminada correctamente"));
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al eliminar variante" : e.getMessage();
+            HttpStatus status = esNoEncontrada(message)
+                    ? HttpStatus.NOT_FOUND
+                    : HttpStatus.BAD_REQUEST;
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
+    @PatchMapping("precio/{id}")
+    public ResponseEntity<ProductoVariante> actualizarPrecio(@PathVariable Integer id, @RequestBody Double precio) {
+        return ResponseEntity.ok(service.actualizarPrecio(id, precio));
+    }
+
+    private boolean esNoEncontrada(String message) {
+        String normalizedMessage = message.toLowerCase();
+        return normalizedMessage.contains("no encontrada")
+                || normalizedMessage.contains("no encontrado")
+                || normalizedMessage.contains("no existe");
+    }
 
 }

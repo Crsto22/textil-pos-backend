@@ -82,6 +82,7 @@ public class EmpresaService {
         validarImagen(file);
 
         byte[] optimized = convertirAWebp(file.getBytes());
+        String logoAnteriorUrl = empresa.getLogoUrl();
 
         String key = "empresa/" + idEmpresa + "/logo-" + UUID.randomUUID() + ".webp";
 
@@ -93,7 +94,21 @@ public class EmpresaService {
 
         empresa.setLogoUrl(url);
 
-        return empresaRepository.save(empresa);
+        try {
+            Empresa guardada = empresaRepository.save(empresa);
+
+            if (logoAnteriorUrl != null
+                    && !logoAnteriorUrl.isBlank()
+                    && !logoAnteriorUrl.equals(url)) {
+                s3StorageService.deleteByUrl(logoAnteriorUrl);
+            }
+
+            return guardada;
+        } catch (RuntimeException e) {
+            // Si falla la persistencia, removemos el archivo nuevo para no dejar basura en S3.
+            s3StorageService.deleteByUrl(url);
+            throw e;
+        }
     }
 
     private byte[] convertirAWebp(byte[] input) throws IOException {

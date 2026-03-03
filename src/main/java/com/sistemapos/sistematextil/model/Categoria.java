@@ -12,6 +12,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import jakarta.persistence.Convert;
 import jakarta.validation.constraints.NotBlank;
@@ -55,4 +56,14 @@ public class Categoria {
     @JoinColumn(name = "id_sucursal", nullable = false)
     @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
     private Sucursal sucursal;
+
+    @PrePersist
+    protected void onCreate() {
+        if (this.fechaRegistro == null) {
+            this.fechaRegistro = LocalDateTime.now();
+        }
+        if (this.estado == null || this.estado.isBlank()) {
+            this.estado = "ACTIVO";
+        }
+    }
 }

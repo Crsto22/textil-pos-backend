@@ -1,5 +1,6 @@
 package com.sistemapos.sistematextil.services;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 import org.springframework.stereotype.Service;
@@ -28,11 +29,11 @@ public class ProductoVarianteService {
     private final EntityManager entityManager;
 
     public List<ProductoVariante> listarTodas() {
-        return repository.findAll();
+        return repository.findByDeletedAtIsNull();
     }
 
     public List<ProductoVariante> listarPorProducto(Integer idProducto) {
-        return repository.findByProductoIdProducto(idProducto);
+        return repository.findByProductoIdProductoAndDeletedAtIsNull(idProducto);
     }
 
     @Transactional
@@ -62,31 +63,49 @@ public class ProductoVarianteService {
         }
 
         String sku = normalizarRequerido(variante.getSku(), "El SKU de la variante es obligatorio");
-        String codigoExterno = normalizar(variante.getCodigoExterno());
+        Double precioOferta = normalizarPrecioOferta(variante.getPrecioOferta());
+        validarPrecioOferta(variante.getPrecio(), precioOferta);
 
-        boolean existeCombinacion = repository.existsByProductoIdProductoAndTallaIdTallaAndColorIdColorAndSucursalIdSucursal(
-                variante.getProducto().getIdProducto(),
-                variante.getTalla().getIdTalla(),
-                variante.getColor().getIdColor(),
-                variante.getSucursal().getIdSucursal());
-        if (existeCombinacion) {
-            throw new RuntimeException("Ya existe esta variante (talla/color) en esta sucursal");
-        }
+        ProductoVariante existente = repository
+                .findByProductoIdProductoAndTallaIdTallaAndColorIdColorAndSucursalIdSucursal(
+                        variante.getProducto().getIdProducto(),
+                        variante.getTalla().getIdTalla(),
+                        variante.getColor().getIdColor(),
+                        variante.getSucursal().getIdSucursal())
+                .orElse(null);
 
-        if (repository.existsBySucursalIdSucursalAndSku(variante.getSucursal().getIdSucursal(), sku)) {
+        boolean skuDuplicado = existente == null
+                ? repository.existsBySucursalIdSucursalAndSku(variante.getSucursal().getIdSucursal(), sku)
+                : repository.existsBySucursalIdSucursalAndSkuAndIdProductoVarianteNot(
+                        variante.getSucursal().getIdSucursal(),
+                        sku,
+                        existente.getIdProductoVariante());
+        if (skuDuplicado) {
             throw new RuntimeException("El SKU '" + sku + "' ya existe en esta sucursal");
         }
-        if (codigoExterno != null && repository.existsByCodigoExterno(codigoExterno)) {
-            throw new RuntimeException("El codigo externo '" + codigoExterno + "' ya pertenece a otra variante");
+
+        ProductoVariante destino;
+        if (existente != null) {
+            if ("ACTIVO".equalsIgnoreCase(existente.getActivo()) && existente.getDeletedAt() == null) {
+                throw new RuntimeException("Ya existe esta variante (talla/color) en esta sucursal");
+            }
+            destino = existente;
+        } else {
+            destino = variante;
         }
 
-        variante.setProducto(producto);
-        variante.setTalla(talla);
-        variante.setColor(color);
-        variante.setSku(sku);
-        variante.setCodigoExterno(codigoExterno);
+        destino.setProducto(producto);
+        destino.setTalla(talla);
+        destino.setColor(color);
+        destino.setSku(sku);
+        destino.setPrecio(variante.getPrecio());
+        destino.setPrecioOferta(precioOferta);
+        destino.setStock(variante.getStock());
+        destino.setEstado("ACTIVO");
+        destino.setActivo("ACTIVO");
+        destino.setDeletedAt(null);
 
-        ProductoVariante guardado = repository.saveAndFlush(variante);
+        ProductoVariante guardado = repository.saveAndFlush(destino);
         entityManager.clear();
 
         return repository.findById(guardado.getIdProductoVariante())
@@ -94,7 +113,7 @@ public class ProductoVarianteService {
     }
 
     public ProductoVariante actualizarStock(Integer id, Integer nuevoStock) {
-        ProductoVariante variante = repository.findById(id)
+        ProductoVariante variante = repository.findByIdProductoVarianteAndDeletedAtIsNull(id)
                 .orElseThrow(() -> new RuntimeException("Variante no encontrada"));
 
         variante.setStock(nuevoStock);
@@ -102,18 +121,34 @@ public class ProductoVarianteService {
     }
 
     public ProductoVariante actualizarPrecio(Integer id, Double nuevoPrecio) {
-        ProductoVariante variante = repository.findById(id)
+        ProductoVariante variante = repository.findByIdProductoVarianteAndDeletedAtIsNull(id)
                 .orElseThrow(() -> new RuntimeException("Variante no encontrada"));
 
+        if (nuevoPrecio == null || nuevoPrecio < 0) {
+            throw new RuntimeException("El precio no puede ser negativo");
+        }
+        validarPrecioOferta(nuevoPrecio, variante.getPrecioOferta());
         variante.setPrecio(nuevoPrecio);
         return repository.save(variante);
     }
 
     public void eliminar(Integer id) {
-        if (!repository.existsById(id)) {
-            throw new RuntimeException("Variante con ID " + id + " no encontrada");
+        ProductoVariante variante = repository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Variante con ID " + id + " no encontrada"));
+
+        if (!"ACTIVO".equalsIgnoreCase(variante.getActivo()) || variante.getDeletedAt() != null) {
+            throw new RuntimeException("Variante con ID " + id + " ya se encuentra eliminada");
         }
-        repository.deleteById(id);
+
+        Integer idProducto = variante.getProducto() != null ? variante.getProducto().getIdProducto() : null;
+        Integer idColor = variante.getColor() != null ? variante.getColor().getIdColor() : null;
+
+        variante.setEstado("AGOTADO");
+        variante.setActivo("INACTIVO");
+        variante.setDeletedAt(LocalDateTime.now());
+        repository.save(variante);
+
+        productoService.limpiarImagenesColorSiNoHayVariantesActivas(idProducto, idColor);
     }
 
     private String normalizarRequerido(String value, String message) {
@@ -130,5 +165,27 @@ public class ProductoVarianteService {
         }
         String trimmed = value.trim();
         return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private Double normalizarPrecioOferta(Double precioOferta) {
+        if (precioOferta == null) {
+            return null;
+        }
+        if (precioOferta <= 0) {
+            throw new RuntimeException("El precio de oferta debe ser mayor a 0");
+        }
+        return precioOferta;
+    }
+
+    private void validarPrecioOferta(Double precio, Double precioOferta) {
+        if (precioOferta == null) {
+            return;
+        }
+        if (precio == null) {
+            throw new RuntimeException("El precio es obligatorio para validar el precio de oferta");
+        }
+        if (precioOferta >= precio) {
+            throw new RuntimeException("El precio de oferta debe ser menor al precio regular");
+        }
     }
 }

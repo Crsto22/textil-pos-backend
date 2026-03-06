@@ -10,7 +10,6 @@ public record ProductoListadoResumenResponse(
         String descripcion,
         String estado,
         LocalDateTime fechaCreacion,
-        String codigoExterno,
         Double precioMin,
         Double precioMax,
         Integer idCategoria,

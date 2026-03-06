@@ -19,6 +19,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import com.sistemapos.sistematextil.model.Empresa;
 import com.sistemapos.sistematextil.services.EmpresaService;
+import com.sistemapos.sistematextil.util.empresa.EmpresaPublicoResponse;
 import com.sistemapos.sistematextil.util.empresa.EmpresaResponse;
 
 import jakarta.validation.Valid;
@@ -30,6 +31,15 @@ import lombok.AllArgsConstructor;
 public class EmpresaController {
 
     private final EmpresaService empresaService;
+
+    @GetMapping("publico")
+    public ResponseEntity<EmpresaPublicoResponse> obtenerPublica() {
+        try {
+            return ResponseEntity.ok(empresaService.obtenerPublica());
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(null);
+        }
+    }
 
     @GetMapping("listar")
     public ResponseEntity<List<Empresa>> listarEmpresa() {

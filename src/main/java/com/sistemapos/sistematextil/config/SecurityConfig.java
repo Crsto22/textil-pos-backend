@@ -9,6 +9,7 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
@@ -38,12 +39,12 @@ public class SecurityConfig {
                         .requestMatchers("/api/usuario/**").hasAuthority("ADMINISTRADOR")
                         .requestMatchers("/api/cliente/**").hasAnyAuthority("ADMINISTRADOR", "VENTAS")
                         .requestMatchers("/api/sucursal/**").hasAuthority("ADMINISTRADOR")
-                        .requestMatchers("/api/empresa/listar").hasAuthority("ADMINISTRADOR")
-                        .requestMatchers("/api/empresa/actualizar/**").hasAuthority("ADMINISTRADOR")
-                        .requestMatchers("/api/empresa/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/empresa/publico").permitAll()
+                        .requestMatchers("/api/empresa/**").hasAuthority("ADMINISTRADOR")
                         .requestMatchers("/api/talla/**").hasAuthority("ADMINISTRADOR")
                         .requestMatchers("/api/color/**").hasAuthority("ADMINISTRADOR")
                         .requestMatchers("/api/config/metodos-pago/**").hasAuthority("ADMINISTRADOR")
+                        .requestMatchers("/api/config/comprobantes/**").hasAuthority("ADMINISTRADOR")
                         .requestMatchers("/api/producto/**").hasAnyAuthority("ADMINISTRADOR", "VENTAS", "ALMACEN")
                         .requestMatchers("/api/venta/**").hasAnyAuthority("ADMINISTRADOR", "VENTAS", "ALMACEN")
                         .requestMatchers("/api/variante/**").permitAll()

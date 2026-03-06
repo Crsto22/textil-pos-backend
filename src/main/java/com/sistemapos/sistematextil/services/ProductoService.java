@@ -58,11 +58,13 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class ProductoService {
 
-    private static final String ESTADO_PRODUCTO_ACTIVO = "ACTIVO";
+    private static final String VALOR_ACTIVO = "ACTIVO";
+    private static final String VALOR_INACTIVO = "INACTIVO";
+    private static final String ESTADO_PRODUCTO_ACTIVO = VALOR_ACTIVO;
     private static final String ESTADO_PRODUCTO_ARCHIVADO = "ARCHIVADO";
-    private static final String ESTADO_VARIANTE_ACTIVA = "ACTIVO";
+    private static final String ESTADO_VARIANTE_ACTIVA = VALOR_ACTIVO;
     private static final String ESTADO_VARIANTE_INACTIVA = "AGOTADO";
-    private static final String ESTADO_IMAGEN_INACTIVA = "INACTIVO";
+    private static final String ESTADO_IMAGEN_INACTIVA = VALOR_INACTIVO;
 
     private final ProductoRepository productoRepository;
     private final CategoriaRepository categoriaRepository;
@@ -77,32 +79,43 @@ public class ProductoService {
     @Value("${application.pagination.default-size:10}")
     private int defaultPageSize;
 
-    public PagedResponse<ProductoListItemResponse> listarPaginado(int page, String correoUsuarioAutenticado) {
+    public PagedResponse<ProductoListItemResponse> listarPaginado(
+            int page,
+            Integer idCategoria,
+            Integer idColor,
+            String correoUsuarioAutenticado) {
         validarPagina(page);
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
         validarRolPermitido(usuarioAutenticado);
 
         PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idProducto").ascending());
-        Page<Producto> productos = esAdministrador(usuarioAutenticado)
-                ? productoRepository.findByEstadoNotOrderByIdProductoAsc(ESTADO_PRODUCTO_ARCHIVADO, pageable)
-                : productoRepository.findBySucursal_IdSucursalAndEstadoNotOrderByIdProductoAsc(
-                        obtenerIdSucursalUsuario(usuarioAutenticado),
-                        ESTADO_PRODUCTO_ARCHIVADO,
-                        pageable);
+        Integer idSucursalFiltro = esAdministrador(usuarioAutenticado) ? null : obtenerIdSucursalUsuario(usuarioAutenticado);
+        Page<Producto> productos = productoRepository.buscarConFiltros(
+                null,
+                idSucursalFiltro,
+                idCategoria,
+                idColor,
+                ESTADO_PRODUCTO_ARCHIVADO,
+                pageable);
 
         Map<Integer, VarianteReferencia> referencias = obtenerReferenciasVariantes(productos.getContent());
         return PagedResponse.fromPage(productos.map(producto ->
                 toListItemResponse(producto, referencias.get(producto.getIdProducto()))));
     }
 
-    public PagedResponse<ProductoListadoResumenResponse> buscarPaginado(String q, int page, String correoUsuarioAutenticado) {
+    public PagedResponse<ProductoListadoResumenResponse> buscarPaginado(
+            String q,
+            int page,
+            Integer idCategoria,
+            Integer idColor,
+            String correoUsuarioAutenticado) {
         validarPagina(page);
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
         validarRolPermitido(usuarioAutenticado);
 
         String term = normalizar(q);
         if (term == null) {
-            return listarResumenPaginado(page, correoUsuarioAutenticado);
+            return listarResumenPaginado(page, idCategoria, idColor, correoUsuarioAutenticado);
         }
 
         Integer idSucursalFiltro = esAdministrador(usuarioAutenticado) ? null : obtenerIdSucursalUsuario(usuarioAutenticado);
@@ -110,6 +123,8 @@ public class ProductoService {
         Page<Producto> productos = productoRepository.buscarConFiltros(
                 term,
                 idSucursalFiltro,
+                idCategoria,
+                idColor,
                 ESTADO_PRODUCTO_ARCHIVADO,
                 pageable);
 
@@ -154,18 +169,22 @@ public class ProductoService {
 
     public PagedResponse<ProductoListadoResumenResponse> listarResumenPaginado(
             int page,
+            Integer idCategoria,
+            Integer idColor,
             String correoUsuarioAutenticado) {
         validarPagina(page);
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
         validarRolPermitido(usuarioAutenticado);
 
         PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idProducto").ascending());
-        Page<Producto> productos = esAdministrador(usuarioAutenticado)
-                ? productoRepository.findByEstadoNotOrderByIdProductoAsc(ESTADO_PRODUCTO_ARCHIVADO, pageable)
-                : productoRepository.findBySucursal_IdSucursalAndEstadoNotOrderByIdProductoAsc(
-                        obtenerIdSucursalUsuario(usuarioAutenticado),
-                        ESTADO_PRODUCTO_ARCHIVADO,
-                        pageable);
+        Integer idSucursalFiltro = esAdministrador(usuarioAutenticado) ? null : obtenerIdSucursalUsuario(usuarioAutenticado);
+        Page<Producto> productos = productoRepository.buscarConFiltros(
+                null,
+                idSucursalFiltro,
+                idCategoria,
+                idColor,
+                ESTADO_PRODUCTO_ARCHIVADO,
+                pageable);
 
         List<Integer> productoIds = productos.getContent().stream()
                 .map(Producto::getIdProducto)
@@ -310,7 +329,21 @@ public class ProductoService {
             productoColorImagenRepository.saveAll(imagenesNuevas);
         }
 
-        Set<String> urlsNuevas = extraerUrlsImagenes(imagenesNuevas);
+        Set<Integer> coloresImagenes = imagenesNuevas.stream()
+                .map(ProductoColorImagen::getColor)
+                .filter(color -> color != null && color.getIdColor() != null)
+                .map(color -> color.getIdColor())
+                .collect(java.util.stream.Collectors.toSet());
+        for (Integer colorId : coloresImagenes) {
+            limpiarImagenesColorSiNoHayVariantesActivas(idProducto, colorId);
+        }
+
+        List<ProductoColorImagen> imagenesVigentes = productoColorImagenRepository.findByProductoIdProducto(idProducto).stream()
+                .filter(img -> img != null
+                        && "ACTIVO".equalsIgnoreCase(img.getEstado())
+                        && img.getDeletedAt() == null)
+                .toList();
+        Set<String> urlsNuevas = extraerUrlsImagenes(imagenesVigentes);
         eliminarImagenesObsoletasEnS3(urlsActuales, urlsNuevas);
 
         return new ProductoCompletoResponse(
@@ -342,8 +375,9 @@ public class ProductoService {
         try {
             Producto actualizado = productoRepository.save(producto);
             VarianteReferencia referencia = productoVarianteRepository
-                    .findFirstByProductoIdProductoOrderByIdProductoVarianteAsc(actualizado.getIdProducto())
-                    .map(variante -> new VarianteReferencia(variante.getSku(), variante.getCodigoExterno()))
+                    .findFirstByProductoIdProductoAndDeletedAtIsNullOrderByIdProductoVarianteAsc(
+                            actualizado.getIdProducto())
+                    .map(variante -> new VarianteReferencia(variante.getSku()))
                     .orElse(null);
             return toListItemResponse(actualizado, referencia);
         } catch (DataIntegrityViolationException e) {
@@ -360,25 +394,31 @@ public class ProductoService {
         producto.setEstado(ESTADO_PRODUCTO_ARCHIVADO);
         productoRepository.save(producto);
 
-        List<ProductoVariante> variantes = productoVarianteRepository.findByProductoIdProducto(producto.getIdProducto());
+        List<ProductoVariante> variantes = productoVarianteRepository
+                .findByProductoIdProductoAndDeletedAtIsNull(producto.getIdProducto());
         if (!variantes.isEmpty()) {
+            LocalDateTime now = LocalDateTime.now();
             for (ProductoVariante variante : variantes) {
                 if (variante == null) {
                     continue;
                 }
                 variante.setEstado(ESTADO_VARIANTE_INACTIVA);
+                variante.setActivo(VALOR_INACTIVO);
+                variante.setDeletedAt(now);
             }
             productoVarianteRepository.saveAll(variantes);
         }
 
         List<ProductoColorImagen> imagenes = productoColorImagenRepository.findByProductoIdProducto(producto.getIdProducto());
         if (!imagenes.isEmpty()) {
+            LocalDateTime now = LocalDateTime.now();
             for (ProductoColorImagen imagen : imagenes) {
                 if (imagen == null) {
                     continue;
                 }
                 imagen.setEstado(ESTADO_IMAGEN_INACTIVA);
                 imagen.setEsPrincipal(false);
+                imagen.setDeletedAt(now);
             }
             productoColorImagenRepository.saveAll(imagenes);
         }
@@ -401,7 +441,8 @@ public class ProductoService {
 
         Producto producto = obtenerProductoConAlcance(idProducto, usuarioAutenticado);
 
-        List<ProductoVarianteDetalleResponse> variantes = productoVarianteRepository.findByProductoIdProducto(idProducto).stream()
+        List<ProductoVarianteDetalleResponse> variantes = productoVarianteRepository
+                .findByProductoIdProductoAndDeletedAtIsNull(idProducto).stream()
                 .map(this::toVarianteDetalleResponse)
                 .sorted(Comparator
                         .comparing(ProductoVarianteDetalleResponse::colorId, Comparator.nullsLast(Integer::compareTo))
@@ -479,16 +520,6 @@ public class ProductoService {
         boolean existe = productoVarianteRepository.existsSkuEnSucursalParaOtroProducto(idSucursal, sku, idProductoExcluir);
         if (existe) {
             throw new RuntimeException("El SKU '" + sku + "' ya existe en esta sucursal");
-        }
-    }
-
-    private void validarCodigoExternoVarianteUnico(String codigoExterno, Integer idProductoExcluir) {
-        if (codigoExterno == null) {
-            return;
-        }
-        boolean existe = productoVarianteRepository.existsCodigoExternoParaOtroProducto(codigoExterno, idProductoExcluir);
-        if (existe) {
-            throw new RuntimeException("El codigo externo '" + codigoExterno + "' ya pertenece a otra variante");
         }
     }
 
@@ -575,7 +606,7 @@ public class ProductoService {
         Map<Integer, VarianteReferencia> referencias = new HashMap<>();
         for (Map.Entry<Integer, ProductoVarianteResumenRow> entry : elegidas.entrySet()) {
             ProductoVarianteResumenRow row = entry.getValue();
-            referencias.put(entry.getKey(), new VarianteReferencia(row.sku(), row.codigoExterno()));
+            referencias.put(entry.getKey(), new VarianteReferencia(row.sku()));
         }
         return referencias;
     }
@@ -593,7 +624,7 @@ public class ProductoService {
         if (referencia == null) {
             return null;
         }
-        return new VarianteReferencia(referencia.getSku(), referencia.getCodigoExterno());
+        return new VarianteReferencia(referencia.getSku());
     }
 
     private VarianteReferencia resolverReferenciaDesdeDetalle(List<ProductoVarianteDetalleResponse> variantes) {
@@ -608,7 +639,7 @@ public class ProductoService {
         if (referencia == null) {
             return null;
         }
-        return new VarianteReferencia(referencia.sku(), referencia.codigoExterno());
+        return new VarianteReferencia(referencia.sku());
     }
 
     private ProductoListItemResponse toListItemResponse(Producto producto, VarianteReferencia referencia) {
@@ -624,7 +655,6 @@ public class ProductoService {
                 producto.getDescripcion(),
                 producto.getEstado(),
                 producto.getFechaCreacion(),
-                referencia != null ? referencia.codigoExterno() : null,
                 idCategoria,
                 nombreCategoria,
                 idSucursal,
@@ -641,13 +671,13 @@ public class ProductoService {
         return new ProductoVarianteDetalleResponse(
                 variante.getIdProductoVariante(),
                 variante.getSku(),
-                variante.getCodigoExterno(),
                 colorId,
                 colorNombre,
                 colorHex,
                 tallaId,
                 tallaNombre,
                 variante.getPrecio(),
+                variante.getPrecioOferta(),
                 variante.getStock(),
                 variante.getEstado());
     }
@@ -688,7 +718,6 @@ public class ProductoService {
                 producto.getDescripcion(),
                 producto.getEstado(),
                 producto.getFechaCreacion(),
-                referencia != null ? referencia.codigoExterno() : null,
                 precioMin,
                 precioMax,
                 idCategoria,
@@ -709,7 +738,6 @@ public class ProductoService {
 
         Set<String> combinaciones = new HashSet<>();
         Set<String> skusNormalizados = new HashSet<>();
-        Set<String> codigosExternosNormalizados = new HashSet<>();
         Map<Integer, Color> coloresCache = new HashMap<>();
         Map<Integer, Talla> tallasCache = new HashMap<>();
 
@@ -729,15 +757,8 @@ public class ProductoService {
                         throw new RuntimeException("No puede repetir SKU dentro del mismo producto");
                     }
                     validarSkuVarianteUnicoPorSucursal(sku, sucursal.getIdSucursal(), idProductoExcluir);
-
-                    String codigoExterno = normalizar(item.codigoExterno());
-                    if (codigoExterno != null) {
-                        String codigoKey = codigoExterno.toLowerCase();
-                        if (!codigosExternosNormalizados.add(codigoKey)) {
-                            throw new RuntimeException("No puede repetir codigo externo dentro del mismo producto");
-                        }
-                        validarCodigoExternoVarianteUnico(codigoExterno, idProductoExcluir);
-                    }
+                    Double precioOferta = normalizarPrecioOferta(item.precioOferta());
+                    validarPrecioOferta(item.precio(), precioOferta);
 
                     Color color = coloresCache.computeIfAbsent(item.colorId(), id -> colorService.obtenerPorId(id));
                     if (!"ACTIVO".equalsIgnoreCase(color.getEstado())) {
@@ -754,10 +775,12 @@ public class ProductoService {
                     variante.setColor(color);
                     variante.setTalla(talla);
                     variante.setPrecio(item.precio());
+                    variante.setPrecioOferta(precioOferta);
                     variante.setStock(item.stock());
                     variante.setEstado(ESTADO_VARIANTE_ACTIVA);
+                    variante.setActivo(VALOR_ACTIVO);
+                    variante.setDeletedAt(null);
                     variante.setSku(sku);
-                    variante.setCodigoExterno(codigoExterno);
                     return variante;
                 })
                 .toList();
@@ -874,7 +897,6 @@ public class ProductoService {
 
         Map<String, ProductoVariante> existentesPorCombinacion = new HashMap<>();
         Map<String, ProductoVariante> existentesPorSku = new HashMap<>();
-        Map<String, ProductoVariante> existentesPorCodigoExterno = new HashMap<>();
         for (ProductoVariante existente : existentes) {
             if (existente == null) {
                 continue;
@@ -889,17 +911,13 @@ public class ProductoService {
             if (skuExistente != null) {
                 existentesPorSku.putIfAbsent(skuExistente.toLowerCase(), existente);
             }
-
-            String codigoExistente = normalizar(existente.getCodigoExterno());
-            if (codigoExistente != null) {
-                existentesPorCodigoExterno.putIfAbsent(codigoExistente.toLowerCase(), existente);
-            }
         }
 
+        LocalDateTime now = LocalDateTime.now();
         Set<String> combinaciones = new HashSet<>();
         Set<String> skusNormalizados = new HashSet<>();
-        Set<String> codigosExternosNormalizados = new HashSet<>();
         Set<Integer> idsActivos = new HashSet<>();
+        Set<Integer> coloresTocados = new HashSet<>();
         Map<Integer, Color> coloresCache = new HashMap<>();
         Map<Integer, Talla> tallasCache = new HashMap<>();
 
@@ -930,22 +948,8 @@ public class ProductoService {
                 throw new RuntimeException("El SKU '" + sku
                         + "' ya existe en otra variante de este producto y no se puede reasignar");
             }
-
-            String codigoExterno = normalizar(item.codigoExterno());
-            if (codigoExterno != null) {
-                String codigoKey = codigoExterno.toLowerCase();
-                if (!codigosExternosNormalizados.add(codigoKey)) {
-                    throw new RuntimeException("No puede repetir codigo externo dentro del mismo producto");
-                }
-                validarCodigoExternoVarianteUnico(codigoExterno, idProducto);
-                ProductoVariante varianteCodigoExistente = existentesPorCodigoExterno.get(codigoKey);
-                if (varianteCodigoExistente != null
-                        && (varianteExistente == null
-                        || !varianteCodigoExistente.getIdProductoVariante().equals(varianteExistente.getIdProductoVariante()))) {
-                    throw new RuntimeException("El codigo externo '" + codigoExterno
-                            + "' ya existe en otra variante de este producto y no se puede reasignar");
-                }
-            }
+            Double precioOferta = normalizarPrecioOferta(item.precioOferta());
+            validarPrecioOferta(item.precio(), precioOferta);
 
             Color color = coloresCache.computeIfAbsent(item.colorId(), id -> colorService.obtenerPorId(id));
             if (!"ACTIVO".equalsIgnoreCase(color.getEstado())) {
@@ -962,10 +966,13 @@ public class ProductoService {
             destino.setColor(color);
             destino.setTalla(talla);
             destino.setPrecio(item.precio());
+            destino.setPrecioOferta(precioOferta);
             destino.setStock(item.stock());
             destino.setEstado(ESTADO_VARIANTE_ACTIVA);
+            destino.setActivo(VALOR_ACTIVO);
+            destino.setDeletedAt(null);
             destino.setSku(sku);
-            destino.setCodigoExterno(codigoExterno);
+            coloresTocados.add(item.colorId());
 
             if (destino.getIdProductoVariante() != null) {
                 idsActivos.add(destino.getIdProductoVariante());
@@ -982,11 +989,20 @@ public class ProductoService {
                 continue;
             }
             existente.setEstado(ESTADO_VARIANTE_INACTIVA);
+            existente.setActivo(VALOR_INACTIVO);
+            existente.setDeletedAt(now);
+            if (existente.getColor() != null && existente.getColor().getIdColor() != null) {
+                coloresTocados.add(existente.getColor().getIdColor());
+            }
             variantesParaPersistir.add(existente);
         }
 
         if (!variantesParaPersistir.isEmpty()) {
             productoVarianteRepository.saveAll(variantesParaPersistir);
+        }
+
+        for (Integer colorId : coloresTocados) {
+            limpiarImagenesColorSiNoHayVariantesActivas(idProducto, colorId);
         }
 
         return variantesActivas;
@@ -1009,7 +1025,7 @@ public class ProductoService {
         return fallback;
     }
 
-    private record VarianteReferencia(String sku, String codigoExterno) {
+    private record VarianteReferencia(String sku) {
     }
 
     private record ColorMeta(String nombre, String hex) {
@@ -1084,8 +1100,8 @@ public class ProductoService {
                             row.tallaId(),
                             row.tallaNombre(),
                             row.sku(),
-                            row.codigoExterno(),
                             row.precio(),
+                            row.precioOferta(),
                             row.stock(),
                             row.estado()));
         }
@@ -1114,10 +1130,39 @@ public class ProductoService {
                 continue;
             }
             PrecioRange range = precios.computeIfAbsent(row.productoId(), key -> new PrecioRange());
-            range.acumular(row.precio());
+            range.acumular(resolverPrecioVigente(row.precio(), row.precioOferta()));
         }
 
         return precios;
+    }
+
+    private Double normalizarPrecioOferta(Double precioOferta) {
+        if (precioOferta == null) {
+            return null;
+        }
+        if (precioOferta <= 0) {
+            throw new RuntimeException("El precio de oferta debe ser mayor a 0");
+        }
+        return precioOferta;
+    }
+
+    private void validarPrecioOferta(Double precio, Double precioOferta) {
+        if (precioOferta == null) {
+            return;
+        }
+        if (precio == null) {
+            throw new RuntimeException("El precio es obligatorio para validar el precio de oferta");
+        }
+        if (precioOferta >= precio) {
+            throw new RuntimeException("El precio de oferta debe ser menor al precio regular");
+        }
+    }
+
+    private Double resolverPrecioVigente(Double precio, Double precioOferta) {
+        if (precioOferta != null && precio != null && precioOferta > 0 && precioOferta < precio) {
+            return precioOferta;
+        }
+        return precio;
     }
 
     private static class PrecioRange {
@@ -1241,6 +1286,45 @@ public class ProductoService {
         for (String url : urlsActuales) {
             if (!urlsVigentes.contains(url)) {
                 s3StorageService.deleteByUrl(url);
+            }
+        }
+    }
+
+    public void limpiarImagenesColorSiNoHayVariantesActivas(Integer idProducto, Integer idColor) {
+        if (idProducto == null || idColor == null) {
+            return;
+        }
+        boolean existenVariantesActivas = productoVarianteRepository
+                .existsVarianteActivaPorProductoYColor(idProducto, idColor);
+        if (existenVariantesActivas) {
+            return;
+        }
+
+        List<ProductoColorImagen> imagenes = productoColorImagenRepository
+                .findByProductoIdProductoAndColorIdColor(idProducto, idColor);
+        if (imagenes.isEmpty()) {
+            return;
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        Set<String> urls = new HashSet<>();
+        for (ProductoColorImagen imagen : imagenes) {
+            if (imagen == null) {
+                continue;
+            }
+            agregarSiTieneValor(urls, imagen.getUrl());
+            agregarSiTieneValor(urls, imagen.getUrlThumb());
+            imagen.setEstado(ESTADO_IMAGEN_INACTIVA);
+            imagen.setEsPrincipal(false);
+            imagen.setDeletedAt(now);
+        }
+        productoColorImagenRepository.saveAll(imagenes);
+
+        for (String url : urls) {
+            try {
+                s3StorageService.deleteByUrl(url);
+            } catch (RuntimeException ignored) {
+                // Best-effort: no se revierte la transaccion por falla externa de S3.
             }
         }
     }

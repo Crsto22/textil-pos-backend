@@ -48,10 +48,14 @@ public class ProductoController {
     private final ProductoImportService productoImportService;
 
     @GetMapping("/listar")
-    public ResponseEntity<?> listar(Authentication authentication, @RequestParam(defaultValue = "0") int page) {
+    public ResponseEntity<?> listar(
+            Authentication authentication,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(name = "idCategoria", required = false) Integer idCategoria,
+            @RequestParam(name = "idColor", required = false) Integer idColor) {
         try {
             PagedResponse<ProductoListItemResponse> response = productoService
-                    .listarPaginado(page, obtenerCorreoAutenticado(authentication));
+                    .listarPaginado(page, idCategoria, idColor, obtenerCorreoAutenticado(authentication));
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al listar productos" : e.getMessage();
@@ -61,10 +65,14 @@ public class ProductoController {
     }
 
     @GetMapping("/listar-resumen")
-    public ResponseEntity<?> listarResumen(Authentication authentication, @RequestParam(defaultValue = "0") int page) {
+    public ResponseEntity<?> listarResumen(
+            Authentication authentication,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(name = "idCategoria", required = false) Integer idCategoria,
+            @RequestParam(name = "idColor", required = false) Integer idColor) {
         try {
             PagedResponse<ProductoListadoResumenResponse> response = productoService
-                    .listarResumenPaginado(page, obtenerCorreoAutenticado(authentication));
+                    .listarResumenPaginado(page, idCategoria, idColor, obtenerCorreoAutenticado(authentication));
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al listar productos" : e.getMessage();
@@ -77,10 +85,12 @@ public class ProductoController {
     public ResponseEntity<?> buscar(
             Authentication authentication,
             @RequestParam(name = "q", required = false) String q,
+            @RequestParam(name = "idCategoria", required = false) Integer idCategoria,
+            @RequestParam(name = "idColor", required = false) Integer idColor,
             @RequestParam(defaultValue = "0") int page) {
         try {
             PagedResponse<ProductoListadoResumenResponse> response = productoService
-                    .buscarPaginado(q, page, obtenerCorreoAutenticado(authentication));
+                    .buscarPaginado(q, page, idCategoria, idColor, obtenerCorreoAutenticado(authentication));
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al buscar productos" : e.getMessage();

@@ -12,7 +12,7 @@ public record VentaCreateRequest(
 
         Integer idCliente,
 
-        @Size(max = 10, message = "El tipoComprobante no debe superar 10 caracteres")
+        @Size(max = 20, message = "El tipoComprobante no debe superar 20 caracteres")
         String tipoComprobante,
 
         @Size(max = 10, message = "La serie no debe superar 10 caracteres")

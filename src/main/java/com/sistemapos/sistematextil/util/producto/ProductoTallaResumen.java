@@ -5,8 +5,8 @@ public record ProductoTallaResumen(
         Integer tallaId,
         String nombre,
         String sku,
-        String codigoExterno,
         Double precio,
+        Double precioOferta,
         Integer stock,
         String estado
 ) {

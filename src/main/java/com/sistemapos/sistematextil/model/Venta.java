@@ -47,7 +47,7 @@ public class Venta {
     @JoinColumn(name = "id_cliente")
     private Cliente cliente;
 
-    @Column(name = "tipo_comprobante", nullable = false, length = 10)
+    @Column(name = "tipo_comprobante", nullable = false, length = 20)
     private String tipoComprobante;
 
     @Column(length = 10)
@@ -97,7 +97,7 @@ public class Venta {
         }
         this.updatedAt = now;
         if (this.tipoComprobante == null || this.tipoComprobante.isBlank()) {
-            this.tipoComprobante = "TICKET";
+            this.tipoComprobante = "NOTA DE VENTA";
         }
         if (this.igvPorcentaje == null) {
             this.igvPorcentaje = BigDecimal.valueOf(18);

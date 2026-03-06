@@ -27,11 +27,12 @@ public interface ProductoRepository extends JpaRepository<Producto, Integer> {
                     LEFT JOIN ProductoVariante v ON v.producto = p
                     WHERE p.estado <> :estadoExcluido
                       AND (:idSucursal IS NULL OR s.idSucursal = :idSucursal)
+                      AND (:idCategoria IS NULL OR p.categoria.idCategoria = :idCategoria)
+                      AND (:idColor IS NULL OR v.color.idColor = :idColor)
                       AND (
                             :term IS NULL
                             OR LOWER(p.nombre) LIKE LOWER(CONCAT('%', :term, '%'))
                             OR v.sku LIKE CONCAT(:term, '%')
-                            OR (v.codigoExterno IS NOT NULL AND v.codigoExterno LIKE CONCAT(:term, '%'))
                       )
                     """,
             countQuery = """
@@ -41,16 +42,19 @@ public interface ProductoRepository extends JpaRepository<Producto, Integer> {
                     LEFT JOIN ProductoVariante v ON v.producto = p
                     WHERE p.estado <> :estadoExcluido
                       AND (:idSucursal IS NULL OR s.idSucursal = :idSucursal)
+                      AND (:idCategoria IS NULL OR p.categoria.idCategoria = :idCategoria)
+                      AND (:idColor IS NULL OR v.color.idColor = :idColor)
                       AND (
                             :term IS NULL
                             OR LOWER(p.nombre) LIKE LOWER(CONCAT('%', :term, '%'))
                             OR v.sku LIKE CONCAT(:term, '%')
-                            OR (v.codigoExterno IS NOT NULL AND v.codigoExterno LIKE CONCAT(:term, '%'))
                       )
                     """)
     Page<Producto> buscarConFiltros(
             @Param("term") String term,
             @Param("idSucursal") Integer idSucursal,
+            @Param("idCategoria") Integer idCategoria,
+            @Param("idColor") Integer idColor,
             @Param("estadoExcluido") String estadoExcluido,
             Pageable pageable);
 

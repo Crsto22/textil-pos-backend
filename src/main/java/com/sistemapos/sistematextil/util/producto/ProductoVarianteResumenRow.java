@@ -4,13 +4,13 @@ public record ProductoVarianteResumenRow(
         Integer productoId,
         Integer varianteId,
         String sku,
-        String codigoExterno,
         Integer colorId,
         String colorNombre,
         String colorHex,
         Integer tallaId,
         String tallaNombre,
         Double precio,
+        Double precioOferta,
         Integer stock,
         String estado
 ) {

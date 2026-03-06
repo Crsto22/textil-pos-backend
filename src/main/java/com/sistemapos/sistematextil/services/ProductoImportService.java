@@ -54,12 +54,12 @@ public class ProductoImportService {
     private static final String H_SKU = "sku";
     private static final String H_NOMBRE_PRODUCTO = "nombreproducto";
     private static final String H_DESCRIPCION = "descripcion";
-    private static final String H_CODIGO_EXTERNO = "codigoexterno";
     private static final String H_CATEGORIA_NOMBRE = "categorianombre";
     private static final String H_COLOR_NOMBRE = "colornombre";
     private static final String H_COLOR_HEX = "colorhex";
     private static final String H_TALLA_NOMBRE = "tallanombre";
     private static final String H_PRECIO = "precio";
+    private static final String H_PRECIO_OFERTA = "preciooferta";
     private static final String H_STOCK = "stock";
     private static final String H_SUCURSAL = "sucursal";
 
@@ -308,10 +308,6 @@ public class ProductoImportService {
         String descripcion = idxDescripcion == null ? null : opcional(texto(row.getCell(idxDescripcion)));
         validarLongitudMaxima(descripcion, 500, "descripcion", rowNumber);
 
-        Integer idxCodigoExterno = headers.get(H_CODIGO_EXTERNO);
-        String codigoExterno = idxCodigoExterno == null ? null : opcional(texto(row.getCell(idxCodigoExterno)));
-        validarLongitudMaxima(codigoExterno, 100, "codigoExterno", rowNumber);
-
         String categoriaNombre = requerido(texto(row.getCell(headers.get(H_CATEGORIA_NOMBRE))), "categoriaNombre", rowNumber);
         categoriaNombre = limpiarTextoCatalogo(categoriaNombre);
         validarLongitudMaxima(categoriaNombre, 50, "categoriaNombre", rowNumber);
@@ -328,6 +324,8 @@ public class ProductoImportService {
         validarLongitudMaxima(tallaNombre, 20, "tallaNombre", rowNumber);
 
         BigDecimal precio = decimal(row.getCell(headers.get(H_PRECIO)), "precio", rowNumber);
+        BigDecimal precioOferta = decimalOpcionalNoNegativo(row.getCell(headers.get(H_PRECIO_OFERTA)), "precioOferta", rowNumber);
+        validarPrecioOferta(precio, precioOferta, rowNumber);
         int stock = enteroNoNegativo(row.getCell(headers.get(H_STOCK)), "stock", rowNumber);
         String sucursal = opcional(texto(row.getCell(headers.get(H_SUCURSAL))));
         validarLongitudMaxima(sucursal, 100, "sucursal", rowNumber);
@@ -337,12 +335,12 @@ public class ProductoImportService {
                 sku,
                 nombreProducto,
                 descripcion,
-                codigoExterno,
                 categoriaNombre,
                 colorNombre,
                 colorHex,
                 tallaNombre,
                 precio,
+                precioOferta,
                 stock,
                 sucursal);
     }
@@ -363,7 +361,6 @@ public class ProductoImportService {
     private Map<ProductoClave, ProductoAgrupado> agruparFilas(List<FilaExcel> filas, Usuario usuario) {
         Map<ProductoClave, ProductoAgrupado> agrupados = new LinkedHashMap<>();
         Map<SkuSucursalClave, Integer> skuPorSucursal = new HashMap<>();
-        Map<String, Integer> codigosExternos = new HashMap<>();
         for (FilaExcel fila : filas) {
             Sucursal sucursal = resolverSucursal(fila, usuario);
             String skuNormalizado = normalizarComparable(fila.sku());
@@ -373,16 +370,6 @@ public class ProductoImportService {
                 throw new RuntimeException("Fila " + fila.fila()
                         + ": el SKU '" + fila.sku()
                         + "' ya fue enviado en la fila " + filaDuplicadaSku + " para la misma sucursal");
-            }
-
-            String codigoExternoNormalizado = normalizarComparable(fila.codigoExterno());
-            if (codigoExternoNormalizado != null) {
-                Integer filaDuplicadaCodigo = codigosExternos.putIfAbsent(codigoExternoNormalizado, fila.fila());
-                if (filaDuplicadaCodigo != null) {
-                    throw new RuntimeException("Fila " + fila.fila()
-                            + ": el codigo externo '" + fila.codigoExterno()
-                            + "' ya fue enviado en la fila " + filaDuplicadaCodigo);
-                }
             }
 
             ProductoClave clave = new ProductoClave(
@@ -462,13 +449,6 @@ public class ProductoImportService {
                     throw new RuntimeException("Fila " + varianteFila.fila()
                             + ": el SKU '" + varianteFila.sku() + "' ya existe en la sucursal");
                 }
-                if (varianteFila.codigoExterno() != null
-                        && productoVarianteRepository.existsCodigoExternoParaOtroProducto(
-                                varianteFila.codigoExterno(),
-                                guardado.getIdProducto())) {
-                    throw new RuntimeException("Fila " + varianteFila.fila()
-                            + ": el codigo externo '" + varianteFila.codigoExterno() + "' ya existe");
-                }
 
                 ProductoVariante variante = new ProductoVariante();
                 variante.setProducto(guardado);
@@ -476,8 +456,8 @@ public class ProductoImportService {
                 variante.setColor(color);
                 variante.setTalla(talla);
                 variante.setSku(varianteFila.sku());
-                variante.setCodigoExterno(varianteFila.codigoExterno());
                 variante.setPrecio(varianteFila.precio().doubleValue());
+                variante.setPrecioOferta(varianteFila.precioOferta() == null ? null : varianteFila.precioOferta().doubleValue());
                 variante.setStock(varianteFila.stock());
                 variante.setEstado("ACTIVO");
                 nuevasVariantes.add(variante);
@@ -719,11 +699,11 @@ public class ProductoImportService {
     private String headerOriginal(String headerNormalizado) {
         return switch (headerNormalizado) {
             case H_NOMBRE_PRODUCTO -> "nombreProducto";
-            case H_CODIGO_EXTERNO -> "codigoExterno";
             case H_CATEGORIA_NOMBRE -> "categoriaNombre";
             case H_COLOR_NOMBRE -> "colorNombre";
             case H_COLOR_HEX -> "colorHex";
             case H_TALLA_NOMBRE -> "tallaNombre";
+            case H_PRECIO_OFERTA -> "precioOferta";
             default -> headerNormalizado;
         };
     }
@@ -733,12 +713,12 @@ public class ProductoImportService {
             String sku,
             String nombreProducto,
             String descripcion,
-            String codigoExterno,
             String categoriaNombre,
             String colorNombre,
             String colorHex,
             String tallaNombre,
             BigDecimal precio,
+            BigDecimal precioOferta,
             int stock,
             String sucursal
     ) {
@@ -760,11 +740,11 @@ public class ProductoImportService {
     private record VarianteFila(
             int fila,
             String sku,
-            String codigoExterno,
             String colorNombre,
             String colorHex,
             String tallaNombre,
             BigDecimal precio,
+            BigDecimal precioOferta,
             int stock
     ) {
     }
@@ -809,11 +789,11 @@ public class ProductoImportService {
             variantes.put(clave, new VarianteFila(
                     fila.fila(),
                     fila.sku(),
-                    fila.codigoExterno(),
                     fila.colorNombre(),
                     fila.colorHex(),
                     fila.tallaNombre(),
                     fila.precio(),
+                    fila.precioOferta(),
                     fila.stock()));
         }
 
@@ -830,5 +810,34 @@ public class ProductoImportService {
         private int categoriasCreadas;
         private int coloresCreados;
         private int tallasCreadas;
+    }
+
+    private BigDecimal decimalOpcionalNoNegativo(Cell cell, String field, int fila) {
+        String raw = texto(cell);
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        String value = raw.replace(",", ".");
+        try {
+            BigDecimal parsed = new BigDecimal(value);
+            if (parsed.compareTo(BigDecimal.ZERO) < 0) {
+                throw new RuntimeException("Fila " + fila + ": '" + field + "' no puede ser negativo");
+            }
+            return parsed;
+        } catch (NumberFormatException ex) {
+            throw new RuntimeException("Fila " + fila + ": '" + field + "' debe ser numerico");
+        }
+    }
+
+    private void validarPrecioOferta(BigDecimal precio, BigDecimal precioOferta, int fila) {
+        if (precioOferta == null) {
+            return;
+        }
+        if (precioOferta.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new RuntimeException("Fila " + fila + ": 'precioOferta' debe ser mayor a 0");
+        }
+        if (precio == null || precioOferta.compareTo(precio) >= 0) {
+            throw new RuntimeException("Fila " + fila + ": 'precioOferta' debe ser menor a 'precio'");
+        }
     }
 }

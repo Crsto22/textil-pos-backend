@@ -14,6 +14,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import com.sistemapos.sistematextil.model.Empresa;
 import com.sistemapos.sistematextil.repositories.EmpresaRepository;
+import com.sistemapos.sistematextil.util.empresa.EmpresaPublicoResponse;
 
 import lombok.AllArgsConstructor;
 import net.coobird.thumbnailator.Thumbnails;
@@ -35,6 +36,13 @@ public class EmpresaService {
 
     public List<Empresa> listarTodas() {
         return empresaRepository.findAll();
+    }
+
+    public EmpresaPublicoResponse obtenerPublica() {
+        Empresa empresa = empresaRepository.findTopByOrderByIdEmpresaAsc()
+                .orElseThrow(() -> new RuntimeException("No hay empresa registrada"));
+
+        return EmpresaPublicoResponse.fromEntity(empresa);
     }
 
     public Empresa insertar(Empresa empresa) {

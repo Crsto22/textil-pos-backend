@@ -8,7 +8,7 @@ public record VentaDetalleResponse(
         Integer idProducto,
         String nombreProducto,
         String sku,
-        String codigoExterno,
+        Double precioOferta,
         Integer idColor,
         String color,
         Integer idTalla,

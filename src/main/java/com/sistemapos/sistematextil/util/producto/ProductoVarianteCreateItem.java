@@ -17,12 +17,12 @@ public record ProductoVarianteCreateItem(
         @Size(max = 100, message = "El SKU no debe superar 100 caracteres")
         String sku,
 
-        @Size(max = 100, message = "El codigo externo no debe superar 100 caracteres")
-        String codigoExterno,
-
         @NotNull(message = "Ingrese precio")
         @DecimalMin(value = "0.0", inclusive = true, message = "El precio no puede ser negativo")
         Double precio,
+
+        @DecimalMin(value = "0.0", inclusive = false, message = "El precio de oferta debe ser mayor a 0")
+        Double precioOferta,
 
         @NotNull(message = "Ingrese stock")
         @Min(value = 0, message = "El stock no puede ser negativo")

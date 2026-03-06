@@ -1,7 +1,12 @@
 package com.sistemapos.sistematextil.controllers;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Map;
 
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -20,6 +25,7 @@ import com.sistemapos.sistematextil.services.VentaService;
 import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
 import com.sistemapos.sistematextil.util.venta.VentaCreateRequest;
 import com.sistemapos.sistematextil.util.venta.VentaListItemResponse;
+import com.sistemapos.sistematextil.util.venta.VentaReporteResponse;
 import com.sistemapos.sistematextil.util.venta.VentaResponse;
 
 import jakarta.validation.Valid;
@@ -35,13 +41,93 @@ public class VentaController {
     @GetMapping("/listar")
     public ResponseEntity<?> listar(
             Authentication authentication,
+            @RequestParam(name = "q", required = false) String q,
+            @RequestParam(name = "idUsuario", required = false) Integer idUsuario,
+            @RequestParam(name = "tipoComprobante", required = false) String tipoComprobante,
+            @RequestParam(name = "periodo", required = false) String periodo,
+            @RequestParam(name = "fecha", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha,
+            @RequestParam(name = "desde", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate desde,
+            @RequestParam(name = "hasta", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hasta,
+            @RequestParam(name = "idSucursal", required = false) Integer idSucursal,
             @RequestParam(defaultValue = "0") int page) {
         try {
             PagedResponse<VentaListItemResponse> response = ventaService
-                    .listarPaginado(page, obtenerCorreoAutenticado(authentication));
+                    .listarPaginado(
+                            q,
+                            idUsuario,
+                            tipoComprobante,
+                            periodo,
+                            fecha,
+                            desde,
+                            hasta,
+                            idSucursal,
+                            page,
+                            obtenerCorreoAutenticado(authentication));
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al listar ventas" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
+    @GetMapping("/reporte")
+    public ResponseEntity<?> reporte(
+            Authentication authentication,
+            @RequestParam(name = "agrupar", required = false) String agrupar,
+            @RequestParam(name = "periodo", required = false) String periodo,
+            @RequestParam(name = "desde", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate desde,
+            @RequestParam(name = "hasta", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hasta,
+            @RequestParam(name = "idSucursal", required = false) Integer idSucursal,
+            @RequestParam(name = "incluirAnuladas", defaultValue = "false") boolean incluirAnuladas) {
+        try {
+            VentaReporteResponse response = ventaService.obtenerReporteVentas(
+                    agrupar,
+                    periodo,
+                    desde,
+                    hasta,
+                    idSucursal,
+                    incluirAnuladas,
+                    obtenerCorreoAutenticado(authentication));
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al generar reporte de ventas" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
+    @GetMapping(
+            value = "/reporte/excel",
+            produces = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    public ResponseEntity<?> reporteExcel(
+            Authentication authentication,
+            @RequestParam(name = "agrupar", required = false) String agrupar,
+            @RequestParam(name = "periodo", required = false) String periodo,
+            @RequestParam(name = "desde", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate desde,
+            @RequestParam(name = "hasta", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hasta,
+            @RequestParam(name = "idSucursal", required = false) Integer idSucursal,
+            @RequestParam(name = "incluirAnuladas", defaultValue = "false") boolean incluirAnuladas) {
+        try {
+            byte[] archivo = ventaService.exportarReporteVentasExcel(
+                    agrupar,
+                    periodo,
+                    desde,
+                    hasta,
+                    idSucursal,
+                    incluirAnuladas,
+                    obtenerCorreoAutenticado(authentication));
+
+            String ts = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+            String nombreArchivo = "reporte_ventas_" + ts + ".xlsx";
+
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + nombreArchivo + "\"")
+                    .contentType(MediaType.parseMediaType(
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                    .body(archivo);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al exportar reporte de ventas" : e.getMessage();
             HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
             return ResponseEntity.status(status).body(Map.of("message", message));
         }
@@ -56,6 +142,26 @@ public class VentaController {
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al obtener detalle de venta" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
+    @GetMapping(value = "/{id}/comprobante/pdf", produces = MediaType.APPLICATION_PDF_VALUE)
+    public ResponseEntity<?> descargarComprobantePdf(
+            Authentication authentication,
+            @PathVariable Integer id) {
+        try {
+            byte[] archivo = ventaService.generarComprobantePdfA4(id, obtenerCorreoAutenticado(authentication));
+            String ts = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+            String nombreArchivo = "comprobante_venta_" + id + "_" + ts + ".pdf";
+
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + nombreArchivo + "\"")
+                    .contentType(MediaType.APPLICATION_PDF)
+                    .body(archivo);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al generar comprobante PDF" : e.getMessage();
             HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
             return ResponseEntity.status(status).body(Map.of("message", message));
         }

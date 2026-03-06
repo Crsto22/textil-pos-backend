@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS empresa (
   razon_social VARCHAR(150) NOT NULL,
   ruc VARCHAR(11) NOT NULL,
   correo VARCHAR(150) DEFAULT NULL,
+  logo_url VARCHAR(600) NULL,
   activo TINYINT(1) NOT NULL DEFAULT 1,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
@@ -158,8 +159,8 @@ CREATE TABLE producto_variante(
   talla_id INT NOT NULL,
   color_id INT NOT NULL,
   sku VARCHAR(100) NOT NULL,
-  codigo_externo VARCHAR(100),
   precio DECIMAL(10,2) NOT NULL,
+  precio_oferta DECIMAL(10,2),
   stock INT NOT NULL DEFAULT 0,
   estado ENUM('ACTIVO','AGOTADO') NOT NULL DEFAULT 'ACTIVO',
   activo TINYINT(1) NOT NULL DEFAULT 1,
@@ -167,7 +168,6 @@ CREATE TABLE producto_variante(
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   deleted_at DATETIME(6),
   UNIQUE KEY uk_variante_sucursal_sku(sucursal_id,sku),
-  UNIQUE KEY uk_variante_codigo_externo(codigo_externo),
   UNIQUE KEY uk_variante_unica(producto_id,sucursal_id,talla_id,color_id),
   FOREIGN KEY(producto_id) REFERENCES producto(producto_id),
   FOREIGN KEY(sucursal_id) REFERENCES sucursal(id_sucursal),
@@ -261,6 +261,43 @@ DROP TABLE IF EXISTS caja_sesion;
 DROP TABLE IF EXISTS caja;
 
 -- =========================
+-- COMPROBANTE CONFIG
+-- =========================
+CREATE TABLE IF NOT EXISTS comprobante_config (
+  id_comprobante INT(11) NOT NULL AUTO_INCREMENT,
+  id_sucursal INT(11) NOT NULL,
+  tipo_comprobante ENUM('NOTA DE VENTA','BOLETA','FACTURA') NOT NULL,
+  serie VARCHAR(10) NOT NULL,
+  ultimo_correlativo INT(11) NOT NULL DEFAULT 0,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  deleted_at DATETIME(6) DEFAULT NULL,
+  PRIMARY KEY (id_comprobante),
+  UNIQUE KEY uk_comprobante_config_sucursal_tipo (id_sucursal, tipo_comprobante),
+  KEY idx_comprobante_config_lookup (id_sucursal, tipo_comprobante, activo, deleted_at),
+  CONSTRAINT fk_comprobante_config_sucursal
+    FOREIGN KEY (id_sucursal) REFERENCES sucursal (id_sucursal)
+    ON DELETE RESTRICT ON UPDATE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+SET @col_cc_estado := (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'comprobante_config'
+    AND COLUMN_NAME = 'estado'
+);
+SET @sql := IF(
+  @col_cc_estado = 0,
+  'SELECT 1',
+  'ALTER TABLE comprobante_config DROP COLUMN estado'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- =========================
 -- VENTA
 -- =========================
 CREATE TABLE IF NOT EXISTS venta (
@@ -268,9 +305,9 @@ CREATE TABLE IF NOT EXISTS venta (
   id_sucursal INT(11) NOT NULL,
   id_usuario INT(11) NOT NULL,
   id_cliente INT(11) DEFAULT NULL,
-  tipo_comprobante ENUM('TICKET','BOLETA','FACTURA') NOT NULL DEFAULT 'TICKET',
-  serie VARCHAR(10) DEFAULT NULL,
-  correlativo INT(11) DEFAULT NULL,
+  tipo_comprobante ENUM('NOTA DE VENTA','BOLETA','FACTURA') NOT NULL DEFAULT 'NOTA DE VENTA',
+  serie VARCHAR(10) NOT NULL,
+  correlativo INT(11) NOT NULL,
   igv_porcentaje DECIMAL(5,2) NOT NULL DEFAULT 18.00,
   subtotal DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   descuento_total DECIMAL(10,2) NOT NULL DEFAULT 0.00,
@@ -286,6 +323,7 @@ CREATE TABLE IF NOT EXISTS venta (
   KEY idx_venta_sucursal (id_sucursal),
   KEY idx_venta_usuario (id_usuario),
   KEY idx_venta_cliente (id_cliente),
+  UNIQUE KEY uk_venta_numero_comprobante (id_sucursal, tipo_comprobante, serie, correlativo),
   CONSTRAINT fk_venta_sucursal
     FOREIGN KEY (id_sucursal) REFERENCES sucursal (id_sucursal)
     ON DELETE RESTRICT ON UPDATE RESTRICT,
@@ -458,11 +496,132 @@ ON DUPLICATE KEY UPDATE
   activo = VALUES(activo),
   updated_at = CURRENT_TIMESTAMP(6);
 
+INSERT INTO comprobante_config (
+  id_sucursal,
+  tipo_comprobante,
+  serie,
+  ultimo_correlativo,
+  activo,
+  created_at,
+  updated_at,
+  deleted_at
+)
+SELECT
+  s.id_sucursal,
+  t.tipo_comprobante,
+  t.serie,
+  0,
+  1,
+  CURRENT_TIMESTAMP(6),
+  CURRENT_TIMESTAMP(6),
+  NULL
+FROM sucursal s
+JOIN (
+  SELECT 'NOTA DE VENTA' AS tipo_comprobante, 'NV01' AS serie
+  UNION ALL SELECT 'BOLETA', 'B001'
+  UNION ALL SELECT 'FACTURA', 'F001'
+) t
+WHERE s.deleted_at IS NULL
+  AND s.activo = 1
+ON DUPLICATE KEY UPDATE
+  serie = VALUES(serie),
+  activo = VALUES(activo),
+  updated_at = CURRENT_TIMESTAMP(6),
+  deleted_at = NULL;
+
 INSERT INTO metodo_pago_config (nombre, activo) VALUES
   ('EFECTIVO', 1),
   ('YAPE', 1),
   ('PLIN', 1),
   ('TARJETA', 0),
   ('TRANSFERENCIA', 0);
+
+-- =========================
+-- MIGRACION DATOS DE VENTA (SI EXISTEN)
+-- =========================
+UPDATE venta
+SET tipo_comprobante = 'NOTA DE VENTA'
+WHERE tipo_comprobante = 'TICKET' OR tipo_comprobante = '';
+
+UPDATE venta v
+JOIN comprobante_config cc
+  ON cc.id_sucursal = v.id_sucursal
+ AND cc.tipo_comprobante = v.tipo_comprobante
+ AND cc.activo = 1
+ AND cc.deleted_at IS NULL
+SET v.serie = cc.serie
+WHERE v.serie IS NULL OR v.serie = '';
+
+UPDATE venta v
+JOIN (
+  SELECT
+    x.id_venta,
+    COALESCE(m.max_corr, 0) AS max_corr,
+    x.rn
+  FROM (
+    SELECT
+      id_venta,
+      id_sucursal,
+      tipo_comprobante,
+      serie,
+      ROW_NUMBER() OVER (
+        PARTITION BY id_sucursal, tipo_comprobante, serie
+        ORDER BY fecha, id_venta
+      ) AS rn
+    FROM venta
+    WHERE correlativo IS NULL
+  ) x
+  LEFT JOIN (
+    SELECT
+      id_sucursal,
+      tipo_comprobante,
+      serie,
+      MAX(correlativo) AS max_corr
+    FROM venta
+    WHERE correlativo IS NOT NULL
+    GROUP BY id_sucursal, tipo_comprobante, serie
+  ) m
+    ON m.id_sucursal = x.id_sucursal
+   AND m.tipo_comprobante = x.tipo_comprobante
+   AND m.serie = x.serie
+) calc ON calc.id_venta = v.id_venta
+SET v.correlativo = calc.max_corr + calc.rn;
+
+UPDATE comprobante_config cc
+LEFT JOIN (
+  SELECT
+    id_sucursal,
+    tipo_comprobante,
+    serie,
+    COALESCE(MAX(correlativo), 0) AS max_corr
+  FROM venta
+  WHERE deleted_at IS NULL
+  GROUP BY id_sucursal, tipo_comprobante, serie
+) v
+  ON v.id_sucursal = cc.id_sucursal
+ AND v.tipo_comprobante = cc.tipo_comprobante
+ AND v.serie = cc.serie
+SET cc.ultimo_correlativo = COALESCE(v.max_corr, 0),
+    cc.updated_at = CURRENT_TIMESTAMP(6)
+WHERE cc.deleted_at IS NULL;
+
+ALTER TABLE venta MODIFY COLUMN serie VARCHAR(10) NOT NULL;
+ALTER TABLE venta MODIFY COLUMN correlativo INT(11) NOT NULL;
+
+SET @idx_uk_venta_numero := (
+  SELECT COUNT(*)
+  FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'venta'
+    AND INDEX_NAME = 'uk_venta_numero_comprobante'
+);
+SET @sql := IF(
+  @idx_uk_venta_numero = 0,
+  'ALTER TABLE venta ADD UNIQUE KEY uk_venta_numero_comprobante (id_sucursal, tipo_comprobante, serie, correlativo)',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 COMMIT;

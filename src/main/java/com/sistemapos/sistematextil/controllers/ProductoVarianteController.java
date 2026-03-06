@@ -52,7 +52,7 @@ public class ProductoVarianteController {
     public ResponseEntity<?> eliminar(@PathVariable Integer id) {
         try {
             service.eliminar(id);
-            return ResponseEntity.ok(Map.of("message", "Variante eliminada correctamente"));
+            return ResponseEntity.ok(Map.of("message", "Variante eliminada logicamente"));
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al eliminar variante" : e.getMessage();
             HttpStatus status = esNoEncontrada(message)

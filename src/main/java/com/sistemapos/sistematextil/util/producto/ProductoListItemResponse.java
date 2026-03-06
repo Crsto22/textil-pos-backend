@@ -9,7 +9,6 @@ public record ProductoListItemResponse(
         String descripcion,
         String estado,
         LocalDateTime fechaCreacion,
-        String codigoExterno,
         Integer idCategoria,
         String nombreCategoria,
         Integer idSucursal,

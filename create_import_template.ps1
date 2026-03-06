@@ -34,43 +34,43 @@ $headers = @(
     "sku",
     "nombreProducto",
     "descripcion",
-    "codigoExterno",
     "categoriaNombre",
     "colorNombre",
     "colorHex",
     "tallaNombre",
     "precio",
+    "precioOferta",
     "stock",
     "sucursal"
 )
 
 if ($Dataset -eq "nuevos") {
     $rows = @(
-        @("CHO-200-NEG-S","Chompa Oversize","Chompa tejida premium","EXT-CHO-200-NEG-S","Chompas","Negro","#111111","S",149.00,9,"Sucursal Principal"),
-        @("CHO-200-NEG-M","Chompa Oversize","","EXT-CHO-200-NEG-M","Chompas","Negro","#111111","M",149.00,8,"Sucursal Principal"),
-        @("CHO-200-BEI-M","Chompa Oversize","","EXT-CHO-200-BEI-M","Chompas","Beige","#D6C6A5","M",152.00,7,"Sucursal Principal"),
-        @("VES-310-AZU-M","Vestido Aura","Vestido casual de temporada","EXT-VES-310-AZU-M","Vestidos","Azul Cobalto","#0047AB","M",179.90,6,"Sucursal Principal"),
-        @("VES-310-AZU-L","Vestido Aura","","EXT-VES-310-AZU-L","Vestidos","Azul Cobalto","#0047AB","L",179.90,5,"Sucursal Principal"),
-        @("VES-310-ROS-M","Vestido Aura","","EXT-VES-310-ROS-M","Vestidos","Rosa Palo","#E8B4BC","M",182.50,4,"Sucursal Principal"),
-        @("SHU-050-BLA-36","Zapatilla Urbana","Zapatilla ligera unisex","EXT-SHU-050-BLA-36","Calzado","Blanco","#FFFFFF","36",129.00,12,"Sucursal Principal"),
-        @("SHU-050-BLA-37","Zapatilla Urbana","","EXT-SHU-050-BLA-37","Calzado","Blanco","#FFFFFF","37",129.00,11,"Sucursal Principal"),
-        @("SHU-050-GRI-37","Zapatilla Urbana","","EXT-SHU-050-GRI-37","Calzado","Gris Nube","","37",131.00,10,"Sucursal Principal"),
-        @("POL-777-LIL-M","Polo DryFit","Polo deportivo secado rapido","EXT-POL-777-LIL-M","Polos","Lila Vibrante","#B57EDC","M",69.90,20,"Sucursal Principal"),
-        @("POL-777-LIL-L","Polo DryFit","","EXT-POL-777-LIL-L","Polos","Lila Vibrante","#B57EDC","L",69.90,18,"Sucursal Principal"),
-        @("POL-777-VER-M","Polo DryFit","","","Polos","Verde Lima","#32CD32","M",71.50,16,"Sucursal Principal")
+        @("CHO-200-NEG-S","Chompa Oversize","Chompa tejida premium","Chompas","Negro","#111111","S",149.00,129.00,9,"Sucursal Principal"),
+        @("CHO-200-NEG-M","Chompa Oversize","","Chompas","Negro","#111111","M",149.00,129.00,8,"Sucursal Principal"),
+        @("CHO-200-BEI-M","Chompa Oversize","","Chompas","Beige","#D6C6A5","M",152.00,"",7,"Sucursal Principal"),
+        @("VES-310-AZU-M","Vestido Aura","Vestido casual de temporada","Vestidos","Azul Cobalto","#0047AB","M",179.90,169.90,6,"Sucursal Principal"),
+        @("VES-310-AZU-L","Vestido Aura","","Vestidos","Azul Cobalto","#0047AB","L",179.90,169.90,5,"Sucursal Principal"),
+        @("VES-310-ROS-M","Vestido Aura","","Vestidos","Rosa Palo","#E8B4BC","M",182.50,"",4,"Sucursal Principal"),
+        @("SHU-050-BLA-36","Zapatilla Urbana","Zapatilla ligera unisex","Calzado","Blanco","#FFFFFF","36",129.00,119.00,12,"Sucursal Principal"),
+        @("SHU-050-BLA-37","Zapatilla Urbana","","Calzado","Blanco","#FFFFFF","37",129.00,119.00,11,"Sucursal Principal"),
+        @("SHU-050-GRI-37","Zapatilla Urbana","","Calzado","Gris Nube","","37",131.00,"",10,"Sucursal Principal"),
+        @("POL-777-LIL-M","Polo DryFit","Polo deportivo secado rapido","Polos","Lila Vibrante","#B57EDC","M",69.90,59.90,20,"Sucursal Principal"),
+        @("POL-777-LIL-L","Polo DryFit","","Polos","Lila Vibrante","#B57EDC","L",69.90,59.90,18,"Sucursal Principal"),
+        @("POL-777-VER-M","Polo DryFit","","Polos","Verde Lima","#32CD32","M",71.50,"",16,"Sucursal Principal")
     )
 } else {
     $rows = @(
-        @("POL-001-NEG-M","Polera Basica","Polera de algodon peinado","EXT-POL-001-NEG-M","Poleras","Negro","#111111","M",49.90,20,"Sucursal Principal"),
-        @("POL-001-NEG-L","Polera Basica","","EXT-POL-001-NEG-L","Poleras","Negro","#111111","L",49.90,18,"Sucursal Principal"),
-        @("POL-001-BLA-M","Polera Basica","","EXT-POL-001-BLA-M","Poleras","Blanco","#FFFFFF","M",49.90,15,"Sucursal Principal"),
-        @("POL-001-BLA-L","Polera Basica","","EXT-POL-001-BLA-L","Poleras","Blanco","#FFFFFF","L",49.90,12,"Sucursal Principal"),
-        @("JOG-010-GRI-M","Jogger Urban","Jogger fit regular","EXT-JOG-010-GRI-M","Pantalones","Gris","#808080","M",89.00,10,"Sucursal Principal"),
-        @("JOG-010-GRI-L","Jogger Urban","","EXT-JOG-010-GRI-L","Pantalones","Gris","#808080","L",89.00,9,"Sucursal Principal"),
-        @("JOG-010-AZU-M","Jogger Urban","","EXT-JOG-010-AZU-M","Pantalones","Azul Marino","#1B2A49","M",92.00,8,"Sucursal Principal"),
-        @("CAM-022-CRE-M","Camisa Lino","Camisa manga larga de lino","EXT-CAM-022-CRE-M","Camisas","Crema","#F5F5DC","M",129.50,7,"Sucursal Principal"),
-        @("CAM-022-CRE-L","Camisa Lino","","EXT-CAM-022-CRE-L","Camisas","Crema","#F5F5DC","L",129.50,6,"Sucursal Principal"),
-        @("CAM-022-MUS-M","Camisa Lino","","EXT-CAM-022-MUS-M","Camisas","Verde Musgo","","M",132.00,5,"Sucursal Principal")
+        @("POL-001-NEG-M","Polera Basica","Polera de algodon peinado","Poleras","Negro","#111111","M",49.90,39.90,20,"Sucursal Principal"),
+        @("POL-001-NEG-L","Polera Basica","","Poleras","Negro","#111111","L",49.90,39.90,18,"Sucursal Principal"),
+        @("POL-001-BLA-M","Polera Basica","","Poleras","Blanco","#FFFFFF","M",49.90,"",15,"Sucursal Principal"),
+        @("POL-001-BLA-L","Polera Basica","","Poleras","Blanco","#FFFFFF","L",49.90,"",12,"Sucursal Principal"),
+        @("JOG-010-GRI-M","Jogger Urban","Jogger fit regular","Pantalones","Gris","#808080","M",89.00,79.00,10,"Sucursal Principal"),
+        @("JOG-010-GRI-L","Jogger Urban","","Pantalones","Gris","#808080","L",89.00,79.00,9,"Sucursal Principal"),
+        @("JOG-010-AZU-M","Jogger Urban","","Pantalones","Azul Marino","#1B2A49","M",92.00,"",8,"Sucursal Principal"),
+        @("CAM-022-CRE-M","Camisa Lino","Camisa manga larga de lino","Camisas","Crema","#F5F5DC","M",129.50,114.50,7,"Sucursal Principal"),
+        @("CAM-022-CRE-L","Camisa Lino","","Camisas","Crema","#F5F5DC","L",129.50,114.50,6,"Sucursal Principal"),
+        @("CAM-022-MUS-M","Camisa Lino","","Camisas","Verde Musgo","","M",132.00,"",5,"Sucursal Principal")
     )
 }
 
@@ -81,12 +81,12 @@ $objects = foreach ($r in $rows) {
         sku = $r[0]
         nombreProducto = $r[1]
         descripcion = $r[2]
-        codigoExterno = $r[3]
-        categoriaNombre = $r[4]
-        colorNombre = $r[5]
-        colorHex = $r[6]
-        tallaNombre = $r[7]
-        precio = $r[8]
+        categoriaNombre = $r[3]
+        colorNombre = $r[4]
+        colorHex = $r[5]
+        tallaNombre = $r[6]
+        precio = $r[7]
+        precioOferta = $r[8]
         stock = $r[9]
         sucursal = $r[10]
     }
@@ -193,7 +193,7 @@ for ($ri = 0; $ri -lt $allRows.Count; $ri++) {
     for ($ci = 0; $ci -lt $headers.Count; $ci++) {
         $cellRef = "{0}{1}" -f (Get-ColName ($ci + 1)), $excelRow
         $value = $row[$ci]
-        $isNumber = ($ri -gt 0 -and ($ci -eq 8 -or $ci -eq 9))
+        $isNumber = ($ri -gt 0 -and ($ci -eq 7 -or $ci -eq 9 -or ($ci -eq 8 -and $value -ne "" -and $null -ne $value)))
         if ($isNumber) {
             $num = [string]::Format([Globalization.CultureInfo]::InvariantCulture, "{0}", $value)
             [void]$sheet.AppendLine(("      <c r=""{0}""><v>{1}</v></c>" -f $cellRef, $num))

@@ -4,6 +4,7 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
+import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import com.sistemapos.sistematextil.model.Sucursal;
@@ -13,6 +14,7 @@ import com.sistemapos.sistematextil.repositories.UsuarioRepository;
 import com.sistemapos.sistematextil.util.usuario.Rol;
 
 @SpringBootApplication
+@EnableScheduling
 public class SistematextilApplication {
 
 	public static void main(String[] args) {

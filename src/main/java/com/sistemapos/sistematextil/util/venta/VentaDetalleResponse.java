@@ -1,6 +1,7 @@
 package com.sistemapos.sistematextil.util.venta;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 public record VentaDetalleResponse(
         Integer idVentaDetalle,
@@ -9,6 +10,8 @@ public record VentaDetalleResponse(
         String nombreProducto,
         String sku,
         Double precioOferta,
+        LocalDateTime ofertaInicio,
+        LocalDateTime ofertaFin,
         Integer idColor,
         String color,
         Integer idTalla,

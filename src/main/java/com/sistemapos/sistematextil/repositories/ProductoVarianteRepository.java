@@ -1,8 +1,11 @@
 package com.sistemapos.sistematextil.repositories;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -20,6 +23,8 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
     Optional<ProductoVariante> findByIdProductoVariante(Integer idProductoVariante);
 
     Optional<ProductoVariante> findByIdProductoVarianteAndDeletedAtIsNull(Integer idProductoVariante);
+
+    List<ProductoVariante> findByIdProductoVarianteInAndDeletedAtIsNull(List<Integer> idsProductoVariante);
 
     Optional<ProductoVariante> findByIdProductoVarianteAndSucursal_IdSucursal(
             Integer idProductoVariante,
@@ -47,6 +52,10 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
     Optional<ProductoVariante> findFirstByProductoIdProductoOrderByIdProductoVarianteAsc(Integer idProducto);
 
     Optional<ProductoVariante> findFirstByProductoIdProductoAndDeletedAtIsNullOrderByIdProductoVarianteAsc(Integer idProducto);
+
+    List<ProductoVariante> findByPrecioOfertaIsNotNullAndOfertaFinLessThanEqualAndDeletedAtIsNull(LocalDateTime fechaHora);
+
+    Page<ProductoVariante> findByPrecioOfertaIsNotNullAndDeletedAtIsNull(Pageable pageable);
 
     // Metodo optimizado para verificar duplicados sin traer toda la lista a memoria
     boolean existsByProductoIdProductoAndTallaIdTallaAndColorIdColorAndSucursalIdSucursal(
@@ -95,6 +104,8 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
                 v.talla.nombre,
                 v.precio,
                 v.precioOferta,
+                v.ofertaInicio,
+                v.ofertaFin,
                 v.stock,
                 v.estado
             )

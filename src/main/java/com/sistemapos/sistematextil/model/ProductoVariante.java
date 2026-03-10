@@ -47,6 +47,12 @@ public class ProductoVariante {
     @Column(name = "precio_oferta")
     private Double precioOferta;
 
+    @Column(name = "oferta_inicio")
+    private LocalDateTime ofertaInicio;
+
+    @Column(name = "oferta_fin")
+    private LocalDateTime ofertaFin;
+
     @Column(nullable = false)
     private String estado = "ACTIVO";
 

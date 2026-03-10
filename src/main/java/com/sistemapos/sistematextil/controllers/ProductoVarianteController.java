@@ -6,17 +6,24 @@ import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.sistemapos.sistematextil.model.ProductoVariante;
 import com.sistemapos.sistematextil.services.ProductoVarianteService;
+import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
+import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaListItemResponse;
+import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaLoteUpdateRequest;
+import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaUpdateRequest;
 
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
@@ -29,23 +36,60 @@ public class ProductoVarianteController {
     private final ProductoVarianteService service;
 
     @GetMapping("listar")
-    public ResponseEntity<List<ProductoVariante>> listar() {
-        return ResponseEntity.ok(service.listarTodas());
+    public ResponseEntity<?> listar() {
+        try {
+            return ResponseEntity.ok(service.listarTodas());
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al listar variantes" : e.getMessage();
+            return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
+                    .body(Map.of("message", message));
+        }
     }
 
     @GetMapping("producto/{id}")
-    public ResponseEntity<List<ProductoVariante>> listarPorProducto(@PathVariable Integer id) {
-        return ResponseEntity.ok(service.listarPorProducto(id));
+    public ResponseEntity<?> listarPorProducto(@PathVariable Integer id) {
+        try {
+            return ResponseEntity.ok(service.listarPorProducto(id));
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al listar variantes del producto" : e.getMessage();
+            return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
+                    .body(Map.of("message", message));
+        }
+    }
+
+    @GetMapping("ofertas")
+    public ResponseEntity<?> listarConOferta(
+            @RequestParam(defaultValue = "0") int page) {
+        try {
+            PagedResponse<ProductoVarianteOfertaListItemResponse> response = service.listarConOfertaPaginado(page);
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al listar variantes con oferta" : e.getMessage();
+            return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
+                    .body(Map.of("message", message));
+        }
     }
 
     @PostMapping("insertar")
-    public ResponseEntity<ProductoVariante> crear(@Valid @RequestBody ProductoVariante variante) {
-        return new ResponseEntity<>(service.insertar(variante), HttpStatus.CREATED);
+    public ResponseEntity<?> crear(@Valid @RequestBody ProductoVariante variante) {
+        try {
+            return new ResponseEntity<>(service.insertar(variante), HttpStatus.CREATED);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al crear variante" : e.getMessage();
+            return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
+                    .body(Map.of("message", message));
+        }
     }
 
     @PatchMapping("stock/{id}")
-    public ResponseEntity<ProductoVariante> actualizarStock(@PathVariable Integer id, @RequestBody Integer stock) {
-        return ResponseEntity.ok(service.actualizarStock(id, stock));
+    public ResponseEntity<?> actualizarStock(@PathVariable Integer id, @RequestBody Integer stock) {
+        try {
+            return ResponseEntity.ok(service.actualizarStock(id, stock));
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al actualizar stock de variante" : e.getMessage();
+            return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
+                    .body(Map.of("message", message));
+        }
     }
 
     @DeleteMapping("eliminar/{id}")
@@ -63,8 +107,55 @@ public class ProductoVarianteController {
     }
 
     @PatchMapping("precio/{id}")
-    public ResponseEntity<ProductoVariante> actualizarPrecio(@PathVariable Integer id, @RequestBody Double precio) {
-        return ResponseEntity.ok(service.actualizarPrecio(id, precio));
+    public ResponseEntity<?> actualizarPrecio(@PathVariable Integer id, @RequestBody Double precio) {
+        try {
+            return ResponseEntity.ok(service.actualizarPrecio(id, precio));
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al actualizar precio de variante" : e.getMessage();
+            return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
+                    .body(Map.of("message", message));
+        }
+    }
+
+    @PatchMapping("oferta/{id}")
+    public ResponseEntity<?> actualizarOferta(
+            @PathVariable Integer id,
+            @Valid @RequestBody ProductoVarianteOfertaUpdateRequest request) {
+        try {
+            return ResponseEntity.ok(service.actualizarOferta(id, request));
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al actualizar oferta de variante" : e.getMessage();
+            return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
+                    .body(Map.of("message", message));
+        }
+    }
+
+    @PatchMapping("ofertas/lote")
+    public ResponseEntity<?> actualizarOfertasLote(
+            @Valid @RequestBody ProductoVarianteOfertaLoteUpdateRequest request) {
+        try {
+            return ResponseEntity.ok(service.actualizarOfertasLote(request));
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al actualizar ofertas de variantes" : e.getMessage();
+            return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
+                    .body(Map.of("message", message));
+        }
+    }
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<Map<String, String>> handleValidationErrors(MethodArgumentNotValidException ex) {
+        String message = ex.getBindingResult().getFieldErrors().stream()
+                .findFirst()
+                .map(fieldError -> fieldError.getDefaultMessage() != null
+                        ? fieldError.getDefaultMessage()
+                        : "Datos de entrada invalidos")
+                .orElse("Datos de entrada invalidos");
+
+        return ResponseEntity.badRequest().body(Map.of("message", message));
+    }
+
+    private HttpStatus resolverStatus(String message, HttpStatus defaultStatus) {
+        return esNoEncontrada(message) ? HttpStatus.NOT_FOUND : defaultStatus;
     }
 
     private boolean esNoEncontrada(String message) {
@@ -73,5 +164,4 @@ public class ProductoVarianteController {
                 || normalizedMessage.contains("no encontrado")
                 || normalizedMessage.contains("no existe");
     }
-
 }

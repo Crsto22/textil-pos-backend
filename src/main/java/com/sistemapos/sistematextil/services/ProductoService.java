@@ -678,6 +678,8 @@ public class ProductoService {
                 tallaNombre,
                 variante.getPrecio(),
                 variante.getPrecioOferta(),
+                variante.getOfertaInicio(),
+                variante.getOfertaFin(),
                 variante.getStock(),
                 variante.getEstado());
     }
@@ -758,7 +760,13 @@ public class ProductoService {
                     }
                     validarSkuVarianteUnicoPorSucursal(sku, sucursal.getIdSucursal(), idProductoExcluir);
                     Double precioOferta = normalizarPrecioOferta(item.precioOferta());
-                    validarPrecioOferta(item.precio(), precioOferta);
+                    LocalDateTime ofertaInicio = item.ofertaInicio();
+                    LocalDateTime ofertaFin = item.ofertaFin();
+                    validarPrecioOferta(item.precio(), precioOferta, ofertaInicio, ofertaFin);
+                    if (precioOferta == null) {
+                        ofertaInicio = null;
+                        ofertaFin = null;
+                    }
 
                     Color color = coloresCache.computeIfAbsent(item.colorId(), id -> colorService.obtenerPorId(id));
                     if (!"ACTIVO".equalsIgnoreCase(color.getEstado())) {
@@ -776,6 +784,8 @@ public class ProductoService {
                     variante.setTalla(talla);
                     variante.setPrecio(item.precio());
                     variante.setPrecioOferta(precioOferta);
+                    variante.setOfertaInicio(ofertaInicio);
+                    variante.setOfertaFin(ofertaFin);
                     variante.setStock(item.stock());
                     variante.setEstado(ESTADO_VARIANTE_ACTIVA);
                     variante.setActivo(VALOR_ACTIVO);
@@ -949,7 +959,13 @@ public class ProductoService {
                         + "' ya existe en otra variante de este producto y no se puede reasignar");
             }
             Double precioOferta = normalizarPrecioOferta(item.precioOferta());
-            validarPrecioOferta(item.precio(), precioOferta);
+            LocalDateTime ofertaInicio = item.ofertaInicio();
+            LocalDateTime ofertaFin = item.ofertaFin();
+            validarPrecioOferta(item.precio(), precioOferta, ofertaInicio, ofertaFin);
+            if (precioOferta == null) {
+                ofertaInicio = null;
+                ofertaFin = null;
+            }
 
             Color color = coloresCache.computeIfAbsent(item.colorId(), id -> colorService.obtenerPorId(id));
             if (!"ACTIVO".equalsIgnoreCase(color.getEstado())) {
@@ -967,6 +983,8 @@ public class ProductoService {
             destino.setTalla(talla);
             destino.setPrecio(item.precio());
             destino.setPrecioOferta(precioOferta);
+            destino.setOfertaInicio(ofertaInicio);
+            destino.setOfertaFin(ofertaFin);
             destino.setStock(item.stock());
             destino.setEstado(ESTADO_VARIANTE_ACTIVA);
             destino.setActivo(VALOR_ACTIVO);
@@ -1102,6 +1120,8 @@ public class ProductoService {
                             row.sku(),
                             row.precio(),
                             row.precioOferta(),
+                            row.ofertaInicio(),
+                            row.ofertaFin(),
                             row.stock(),
                             row.estado()));
         }
@@ -1130,7 +1150,11 @@ public class ProductoService {
                 continue;
             }
             PrecioRange range = precios.computeIfAbsent(row.productoId(), key -> new PrecioRange());
-            range.acumular(resolverPrecioVigente(row.precio(), row.precioOferta()));
+            range.acumular(resolverPrecioVigente(
+                    row.precio(),
+                    row.precioOferta(),
+                    row.ofertaInicio(),
+                    row.ofertaFin()));
         }
 
         return precios;
@@ -1146,8 +1170,15 @@ public class ProductoService {
         return precioOferta;
     }
 
-    private void validarPrecioOferta(Double precio, Double precioOferta) {
+    private void validarPrecioOferta(
+            Double precio,
+            Double precioOferta,
+            LocalDateTime ofertaInicio,
+            LocalDateTime ofertaFin) {
         if (precioOferta == null) {
+            if (ofertaInicio != null || ofertaFin != null) {
+                throw new RuntimeException("No puede registrar ofertaInicio/ofertaFin sin precioOferta");
+            }
             return;
         }
         if (precio == null) {
@@ -1156,13 +1187,33 @@ public class ProductoService {
         if (precioOferta >= precio) {
             throw new RuntimeException("El precio de oferta debe ser menor al precio regular");
         }
+        if ((ofertaInicio == null) != (ofertaFin == null)) {
+            throw new RuntimeException("Debe enviar ofertaInicio y ofertaFin juntas");
+        }
+        if (ofertaInicio != null && !ofertaFin.isAfter(ofertaInicio)) {
+            throw new RuntimeException("ofertaFin debe ser mayor a ofertaInicio");
+        }
     }
 
-    private Double resolverPrecioVigente(Double precio, Double precioOferta) {
-        if (precioOferta != null && precio != null && precioOferta > 0 && precioOferta < precio) {
+    private Double resolverPrecioVigente(
+            Double precio,
+            Double precioOferta,
+            LocalDateTime ofertaInicio,
+            LocalDateTime ofertaFin) {
+        if (precioOferta == null || precio == null || precioOferta <= 0 || precioOferta >= precio) {
+            return precio;
+        }
+        if (ofertaInicio == null && ofertaFin == null) {
             return precioOferta;
         }
-        return precio;
+        if (ofertaInicio == null || ofertaFin == null) {
+            return precio;
+        }
+        LocalDateTime ahora = LocalDateTime.now();
+        if (ahora.isBefore(ofertaInicio) || ahora.isAfter(ofertaFin)) {
+            return precio;
+        }
+        return precioOferta;
     }
 
     private static class PrecioRange {

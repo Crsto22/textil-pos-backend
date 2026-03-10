@@ -1,8 +1,18 @@
 package com.sistemapos.sistematextil.services;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -10,17 +20,25 @@ import com.sistemapos.sistematextil.model.Color;
 import com.sistemapos.sistematextil.model.Producto;
 import com.sistemapos.sistematextil.model.ProductoVariante;
 import com.sistemapos.sistematextil.model.Talla;
+import com.sistemapos.sistematextil.repositories.ProductoColorImagenRepository;
 import com.sistemapos.sistematextil.repositories.ProductoVarianteRepository;
+import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
+import com.sistemapos.sistematextil.util.producto.ProductoImagenColorRow;
+import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaListItemResponse;
+import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaLoteItemRequest;
+import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaLoteUpdateRequest;
+import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaUpdateRequest;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
-import lombok.AllArgsConstructor;
+import lombok.RequiredArgsConstructor;
 
 @Service
-@AllArgsConstructor
+@RequiredArgsConstructor
 public class ProductoVarianteService {
 
     private final ProductoVarianteRepository repository;
+    private final ProductoColorImagenRepository productoColorImagenRepository;
     private final ProductoService productoService;
     private final TallaService tallaService;
     private final ColorService colorService;
@@ -28,12 +46,44 @@ public class ProductoVarianteService {
     @PersistenceContext
     private final EntityManager entityManager;
 
+    @Value("${application.pagination.default-size:10}")
+    private int defaultPageSize;
+
     public List<ProductoVariante> listarTodas() {
         return repository.findByDeletedAtIsNull();
     }
 
     public List<ProductoVariante> listarPorProducto(Integer idProducto) {
         return repository.findByProductoIdProductoAndDeletedAtIsNull(idProducto);
+    }
+
+    public PagedResponse<ProductoVarianteOfertaListItemResponse> listarConOfertaPaginado(int page) {
+        validarPagina(page);
+        int pageSize = defaultPageSize > 0 ? defaultPageSize : 10;
+        PageRequest pageable = PageRequest.of(page, pageSize, Sort.by("idProductoVariante").ascending());
+        Page<ProductoVariante> variantes = repository.findByPrecioOfertaIsNotNullAndDeletedAtIsNull(pageable);
+        Map<ProductoColorKey, String> imagenes = resolverImagenesPorProductoColor(variantes.getContent());
+        return PagedResponse.fromPage(variantes.map(variante -> toOfertaListItemResponse(variante, imagenes)));
+    }
+
+    @Scheduled(cron = "0 * * * * *")
+    @Transactional
+    public void limpiarOfertasVencidasProgramadas() {
+        LocalDateTime ahora = LocalDateTime.now();
+        List<ProductoVariante> variantesVencidas = repository
+                .findByPrecioOfertaIsNotNullAndOfertaFinLessThanEqualAndDeletedAtIsNull(ahora);
+
+        if (variantesVencidas.isEmpty()) {
+            return;
+        }
+
+        for (ProductoVariante variante : variantesVencidas) {
+            variante.setPrecioOferta(null);
+            variante.setOfertaInicio(null);
+            variante.setOfertaFin(null);
+        }
+
+        repository.saveAll(variantesVencidas);
     }
 
     @Transactional
@@ -64,7 +114,13 @@ public class ProductoVarianteService {
 
         String sku = normalizarRequerido(variante.getSku(), "El SKU de la variante es obligatorio");
         Double precioOferta = normalizarPrecioOferta(variante.getPrecioOferta());
-        validarPrecioOferta(variante.getPrecio(), precioOferta);
+        LocalDateTime ofertaInicio = variante.getOfertaInicio();
+        LocalDateTime ofertaFin = variante.getOfertaFin();
+        validarPrecioOferta(variante.getPrecio(), precioOferta, ofertaInicio, ofertaFin);
+        if (precioOferta == null) {
+            ofertaInicio = null;
+            ofertaFin = null;
+        }
 
         ProductoVariante existente = repository
                 .findByProductoIdProductoAndTallaIdTallaAndColorIdColorAndSucursalIdSucursal(
@@ -100,6 +156,8 @@ public class ProductoVarianteService {
         destino.setSku(sku);
         destino.setPrecio(variante.getPrecio());
         destino.setPrecioOferta(precioOferta);
+        destino.setOfertaInicio(ofertaInicio);
+        destino.setOfertaFin(ofertaFin);
         destino.setStock(variante.getStock());
         destino.setEstado("ACTIVO");
         destino.setActivo("ACTIVO");
@@ -127,9 +185,69 @@ public class ProductoVarianteService {
         if (nuevoPrecio == null || nuevoPrecio < 0) {
             throw new RuntimeException("El precio no puede ser negativo");
         }
-        validarPrecioOferta(nuevoPrecio, variante.getPrecioOferta());
+        validarPrecioOferta(
+                nuevoPrecio,
+                variante.getPrecioOferta(),
+                variante.getOfertaInicio(),
+                variante.getOfertaFin());
         variante.setPrecio(nuevoPrecio);
         return repository.save(variante);
+    }
+
+    public ProductoVariante actualizarOferta(Integer id, ProductoVarianteOfertaUpdateRequest request) {
+        ProductoVariante variante = repository.findByIdProductoVarianteAndDeletedAtIsNull(id)
+                .orElseThrow(() -> new RuntimeException("Variante no encontrada"));
+
+        aplicarOferta(variante, request.precioOferta(), request.ofertaInicio(), request.ofertaFin());
+        return repository.save(variante);
+    }
+
+    @Transactional
+    public List<ProductoVarianteOfertaListItemResponse> actualizarOfertasLote(
+            ProductoVarianteOfertaLoteUpdateRequest request) {
+        Set<Integer> idsUnicos = new HashSet<>();
+        List<Integer> idsSolicitados = new ArrayList<>();
+
+        for (ProductoVarianteOfertaLoteItemRequest item : request.items()) {
+            Integer idProductoVariante = item.idProductoVariante();
+            if (!idsUnicos.add(idProductoVariante)) {
+                throw new RuntimeException(
+                        "No puede repetir la variante con ID " + idProductoVariante + " en la misma actualizacion");
+            }
+            idsSolicitados.add(idProductoVariante);
+        }
+
+        List<ProductoVariante> variantes = repository.findByIdProductoVarianteInAndDeletedAtIsNull(idsSolicitados);
+        if (variantes.size() != idsSolicitados.size()) {
+            Set<Integer> idsEncontrados = variantes.stream()
+                    .map(ProductoVariante::getIdProductoVariante)
+                    .collect(java.util.stream.Collectors.toSet());
+
+            Integer idFaltante = idsSolicitados.stream()
+                    .filter(id -> !idsEncontrados.contains(id))
+                    .findFirst()
+                    .orElse(null);
+
+            throw new RuntimeException("La variante con ID " + idFaltante + " no existe");
+        }
+
+        java.util.Map<Integer, ProductoVariante> variantesPorId = variantes.stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        ProductoVariante::getIdProductoVariante,
+                        variante -> variante));
+
+        List<ProductoVariante> actualizadas = new ArrayList<>();
+        for (ProductoVarianteOfertaLoteItemRequest item : request.items()) {
+            ProductoVariante variante = variantesPorId.get(item.idProductoVariante());
+            aplicarOferta(variante, item.precioOferta(), item.ofertaInicio(), item.ofertaFin());
+            actualizadas.add(variante);
+        }
+
+        repository.saveAll(actualizadas);
+        Map<ProductoColorKey, String> imagenes = resolverImagenesPorProductoColor(actualizadas);
+        return actualizadas.stream()
+                .map(variante -> toOfertaListItemResponse(variante, imagenes))
+                .toList();
     }
 
     public void eliminar(Integer id) {
@@ -167,6 +285,12 @@ public class ProductoVarianteService {
         return trimmed.isEmpty() ? null : trimmed;
     }
 
+    private void validarPagina(int page) {
+        if (page < 0) {
+            throw new RuntimeException("El parametro page debe ser mayor o igual a 0");
+        }
+    }
+
     private Double normalizarPrecioOferta(Double precioOferta) {
         if (precioOferta == null) {
             return null;
@@ -177,8 +301,15 @@ public class ProductoVarianteService {
         return precioOferta;
     }
 
-    private void validarPrecioOferta(Double precio, Double precioOferta) {
+    private void validarPrecioOferta(
+            Double precio,
+            Double precioOferta,
+            LocalDateTime ofertaInicio,
+            LocalDateTime ofertaFin) {
         if (precioOferta == null) {
+            if (ofertaInicio != null || ofertaFin != null) {
+                throw new RuntimeException("No puede registrar ofertaInicio/ofertaFin sin precioOferta");
+            }
             return;
         }
         if (precio == null) {
@@ -187,5 +318,136 @@ public class ProductoVarianteService {
         if (precioOferta >= precio) {
             throw new RuntimeException("El precio de oferta debe ser menor al precio regular");
         }
+        if ((ofertaInicio == null) != (ofertaFin == null)) {
+            throw new RuntimeException("Debe enviar ofertaInicio y ofertaFin juntas");
+        }
+        if (ofertaInicio != null && !ofertaFin.isAfter(ofertaInicio)) {
+            throw new RuntimeException("ofertaFin debe ser mayor a ofertaInicio");
+        }
+    }
+
+    private void aplicarOferta(
+            ProductoVariante variante,
+            Double precioOfertaSolicitado,
+            LocalDateTime ofertaInicioSolicitada,
+            LocalDateTime ofertaFinSolicitada) {
+        Double precioOferta = normalizarPrecioOferta(precioOfertaSolicitado);
+        LocalDateTime ofertaInicio = ofertaInicioSolicitada;
+        LocalDateTime ofertaFin = ofertaFinSolicitada;
+
+        validarPrecioOferta(variante.getPrecio(), precioOferta, ofertaInicio, ofertaFin);
+        if (precioOferta == null) {
+            ofertaInicio = null;
+            ofertaFin = null;
+        }
+
+        variante.setPrecioOferta(precioOferta);
+        variante.setOfertaInicio(ofertaInicio);
+        variante.setOfertaFin(ofertaFin);
+    }
+
+    private Map<ProductoColorKey, String> resolverImagenesPorProductoColor(List<ProductoVariante> variantes) {
+        if (variantes == null || variantes.isEmpty()) {
+            return Map.of();
+        }
+
+        List<Integer> productoIds = variantes.stream()
+                .map(ProductoVariante::getProducto)
+                .filter(java.util.Objects::nonNull)
+                .map(Producto::getIdProducto)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
+
+        if (productoIds.isEmpty()) {
+            return Map.of();
+        }
+
+        List<ProductoImagenColorRow> rows = productoColorImagenRepository.obtenerResumenPorProductos(productoIds);
+        Map<ProductoColorKey, ImagenPick> picks = new HashMap<>();
+
+        for (ProductoImagenColorRow row : rows) {
+            if (row.productoId() == null || row.colorId() == null) {
+                continue;
+            }
+
+            String imageUrl = preferirNoVacio(row.url(), row.urlThumb());
+            if (imageUrl == null) {
+                continue;
+            }
+
+            ProductoColorKey key = new ProductoColorKey(row.productoId(), row.colorId());
+            ImagenPick existing = picks.get(key);
+            boolean rowPrincipal = Boolean.TRUE.equals(row.esPrincipal());
+            int rowOrden = row.orden() == null ? Integer.MAX_VALUE : row.orden();
+
+            if (existing == null || debeReemplazarImagen(existing, rowPrincipal, rowOrden)) {
+                picks.put(key, new ImagenPick(imageUrl, rowOrden, rowPrincipal));
+            }
+        }
+
+        Map<ProductoColorKey, String> result = new HashMap<>();
+        for (Map.Entry<ProductoColorKey, ImagenPick> entry : picks.entrySet()) {
+            result.put(entry.getKey(), entry.getValue().url());
+        }
+        return result;
+    }
+
+    private boolean debeReemplazarImagen(ImagenPick existing, boolean rowPrincipal, int rowOrden) {
+        if (rowPrincipal && !existing.esPrincipal()) {
+            return true;
+        }
+        if (!rowPrincipal && existing.esPrincipal()) {
+            return false;
+        }
+        return rowOrden < existing.orden();
+    }
+
+    private String preferirNoVacio(String primary, String fallback) {
+        String value = normalizar(primary);
+        return value != null ? value : normalizar(fallback);
+    }
+
+    private ProductoVarianteOfertaListItemResponse toOfertaListItemResponse(
+            ProductoVariante variante,
+            Map<ProductoColorKey, String> imagenes) {
+        Integer productoId = variante.getProducto() != null ? variante.getProducto().getIdProducto() : null;
+        String productoNombre = variante.getProducto() != null ? variante.getProducto().getNombre() : null;
+        Integer sucursalId = variante.getSucursal() != null ? variante.getSucursal().getIdSucursal() : null;
+        String sucursalNombre = variante.getSucursal() != null ? variante.getSucursal().getNombre() : null;
+        Integer colorId = variante.getColor() != null ? variante.getColor().getIdColor() : null;
+        String colorNombre = variante.getColor() != null ? variante.getColor().getNombre() : null;
+        String colorHex = variante.getColor() != null ? variante.getColor().getCodigo() : null;
+        Integer tallaId = variante.getTalla() != null ? variante.getTalla().getIdTalla() : null;
+        String tallaNombre = variante.getTalla() != null ? variante.getTalla().getNombre() : null;
+        String imagenUrl = productoId != null && colorId != null
+                ? imagenes.get(new ProductoColorKey(productoId, colorId))
+                : null;
+
+        return new ProductoVarianteOfertaListItemResponse(
+                variante.getIdProductoVariante(),
+                productoId,
+                productoNombre,
+                sucursalId,
+                sucursalNombre,
+                variante.getSku(),
+                colorId,
+                colorNombre,
+                colorHex,
+                tallaId,
+                tallaNombre,
+                variante.getPrecio(),
+                variante.getPrecioOferta(),
+                variante.getOfertaInicio(),
+                variante.getOfertaFin(),
+                imagenUrl,
+                variante.getStock(),
+                variante.getEstado());
+    }
+
+    private record ProductoColorKey(Integer productoId, Integer colorId) {
+    }
+
+    private record ImagenPick(String url, int orden, boolean esPrincipal) {
     }
 }

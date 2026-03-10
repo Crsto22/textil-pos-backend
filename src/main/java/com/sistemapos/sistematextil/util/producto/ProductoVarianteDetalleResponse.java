@@ -1,5 +1,7 @@
 package com.sistemapos.sistematextil.util.producto;
 
+import java.time.LocalDateTime;
+
 public record ProductoVarianteDetalleResponse(
         Integer idProductoVariante,
         String sku,
@@ -10,6 +12,8 @@ public record ProductoVarianteDetalleResponse(
         String tallaNombre,
         Double precio,
         Double precioOferta,
+        LocalDateTime ofertaInicio,
+        LocalDateTime ofertaFin,
         Integer stock,
         String estado
 ) {

@@ -161,6 +161,8 @@ CREATE TABLE producto_variante(
   sku VARCHAR(100) NOT NULL,
   precio DECIMAL(10,2) NOT NULL,
   precio_oferta DECIMAL(10,2),
+  oferta_inicio DATETIME(6),
+  oferta_fin DATETIME(6),
   stock INT NOT NULL DEFAULT 0,
   estado ENUM('ACTIVO','AGOTADO') NOT NULL DEFAULT 'ACTIVO',
   activo TINYINT(1) NOT NULL DEFAULT 1,
@@ -357,6 +359,72 @@ CREATE TABLE IF NOT EXISTS venta_detalle (
     FOREIGN KEY (id_venta) REFERENCES venta (id_venta)
     ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT fk_venta_detalle_variante
+    FOREIGN KEY (id_producto_variante) REFERENCES producto_variante (id_producto_variante)
+    ON DELETE RESTRICT ON UPDATE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- =========================
+-- COTIZACION
+-- =========================
+CREATE TABLE IF NOT EXISTS cotizacion (
+  id_cotizacion INT(11) NOT NULL AUTO_INCREMENT,
+  id_sucursal INT(11) NOT NULL,
+  id_usuario INT(11) NOT NULL,
+  id_cliente INT(11) DEFAULT NULL,
+  serie VARCHAR(10) DEFAULT NULL,
+  correlativo INT(11) DEFAULT NULL,
+  fecha DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  fecha_vencimiento DATETIME(6) DEFAULT NULL,
+  igv_porcentaje DECIMAL(5,2) NOT NULL DEFAULT 18.00,
+  subtotal DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  descuento_total DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  tipo_descuento ENUM('MONTO','PORCENTAJE') DEFAULT NULL,
+  igv DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  total DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  estado ENUM('BORRADOR','ENVIADA','APROBADA','RECHAZADA','VENCIDA','CONVERTIDA') NOT NULL DEFAULT 'BORRADOR',
+  observacion VARCHAR(500) DEFAULT NULL,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  deleted_at DATETIME(6) DEFAULT NULL,
+  PRIMARY KEY (id_cotizacion),
+  KEY idx_cotizacion_sucursal (id_sucursal),
+  KEY idx_cotizacion_usuario (id_usuario),
+  KEY idx_cotizacion_cliente (id_cliente),
+  KEY idx_cotizacion_fecha_vencimiento (fecha_vencimiento),
+  UNIQUE KEY uk_cotizacion_numero (id_sucursal, serie, correlativo),
+  CONSTRAINT fk_cotizacion_sucursal
+    FOREIGN KEY (id_sucursal) REFERENCES sucursal (id_sucursal)
+    ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_cotizacion_usuario
+    FOREIGN KEY (id_usuario) REFERENCES usuario (id_usuario)
+    ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_cotizacion_cliente
+    FOREIGN KEY (id_cliente) REFERENCES cliente (id_cliente)
+    ON DELETE RESTRICT ON UPDATE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- =========================
+-- COTIZACION DETALLE
+-- =========================
+CREATE TABLE IF NOT EXISTS cotizacion_detalle (
+  id_cotizacion_detalle INT(11) NOT NULL AUTO_INCREMENT,
+  id_cotizacion INT(11) NOT NULL,
+  id_producto_variante INT(11) NOT NULL,
+  cantidad INT(11) NOT NULL,
+  precio_unitario DECIMAL(10,2) NOT NULL,
+  descuento DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  subtotal DECIMAL(10,2) NOT NULL,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  deleted_at DATETIME(6) DEFAULT NULL,
+  PRIMARY KEY (id_cotizacion_detalle),
+  KEY idx_cotizacion_detalle_cotizacion (id_cotizacion),
+  KEY idx_cotizacion_detalle_variante (id_producto_variante),
+  CONSTRAINT fk_cotizacion_detalle_cotizacion
+    FOREIGN KEY (id_cotizacion) REFERENCES cotizacion (id_cotizacion)
+    ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_cotizacion_detalle_variante
     FOREIGN KEY (id_producto_variante) REFERENCES producto_variante (id_producto_variante)
     ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;

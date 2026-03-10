@@ -1,5 +1,7 @@
 package com.sistemapos.sistematextil.util.producto;
 
+import java.time.LocalDateTime;
+
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -23,6 +25,10 @@ public record ProductoVarianteCreateItem(
 
         @DecimalMin(value = "0.0", inclusive = false, message = "El precio de oferta debe ser mayor a 0")
         Double precioOferta,
+
+        LocalDateTime ofertaInicio,
+
+        LocalDateTime ofertaFin,
 
         @NotNull(message = "Ingrese stock")
         @Min(value = 0, message = "El stock no puede ser negativo")

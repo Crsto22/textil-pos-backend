@@ -51,6 +51,9 @@ public class Categoria {
     @Column(name = "created_at")
     private LocalDateTime fechaRegistro;
 
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+
     // Relación con Sucursal
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "id_sucursal", nullable = false)

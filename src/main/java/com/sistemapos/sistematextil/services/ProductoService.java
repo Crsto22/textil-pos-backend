@@ -677,6 +677,7 @@ public class ProductoService {
                 tallaId,
                 tallaNombre,
                 variante.getPrecio(),
+                variante.getPrecioMayor(),
                 variante.getPrecioOferta(),
                 variante.getOfertaInicio(),
                 variante.getOfertaFin(),
@@ -759,9 +760,11 @@ public class ProductoService {
                         throw new RuntimeException("No puede repetir SKU dentro del mismo producto");
                     }
                     validarSkuVarianteUnicoPorSucursal(sku, sucursal.getIdSucursal(), idProductoExcluir);
+                    Double precioMayor = normalizarPrecioMayor(item.precioMayor());
                     Double precioOferta = normalizarPrecioOferta(item.precioOferta());
                     LocalDateTime ofertaInicio = item.ofertaInicio();
                     LocalDateTime ofertaFin = item.ofertaFin();
+                    validarPrecioMayor(item.precio(), precioMayor);
                     validarPrecioOferta(item.precio(), precioOferta, ofertaInicio, ofertaFin);
                     if (precioOferta == null) {
                         ofertaInicio = null;
@@ -783,6 +786,7 @@ public class ProductoService {
                     variante.setColor(color);
                     variante.setTalla(talla);
                     variante.setPrecio(item.precio());
+                    variante.setPrecioMayor(precioMayor);
                     variante.setPrecioOferta(precioOferta);
                     variante.setOfertaInicio(ofertaInicio);
                     variante.setOfertaFin(ofertaFin);
@@ -958,9 +962,11 @@ public class ProductoService {
                 throw new RuntimeException("El SKU '" + sku
                         + "' ya existe en otra variante de este producto y no se puede reasignar");
             }
+            Double precioMayor = normalizarPrecioMayor(item.precioMayor());
             Double precioOferta = normalizarPrecioOferta(item.precioOferta());
             LocalDateTime ofertaInicio = item.ofertaInicio();
             LocalDateTime ofertaFin = item.ofertaFin();
+            validarPrecioMayor(item.precio(), precioMayor);
             validarPrecioOferta(item.precio(), precioOferta, ofertaInicio, ofertaFin);
             if (precioOferta == null) {
                 ofertaInicio = null;
@@ -982,6 +988,7 @@ public class ProductoService {
             destino.setColor(color);
             destino.setTalla(talla);
             destino.setPrecio(item.precio());
+            destino.setPrecioMayor(precioMayor);
             destino.setPrecioOferta(precioOferta);
             destino.setOfertaInicio(ofertaInicio);
             destino.setOfertaFin(ofertaFin);
@@ -1119,6 +1126,7 @@ public class ProductoService {
                             row.tallaNombre(),
                             row.sku(),
                             row.precio(),
+                            row.precioMayor(),
                             row.precioOferta(),
                             row.ofertaInicio(),
                             row.ofertaFin(),
@@ -1168,6 +1176,28 @@ public class ProductoService {
             throw new RuntimeException("El precio de oferta debe ser mayor a 0");
         }
         return precioOferta;
+    }
+
+    private Double normalizarPrecioMayor(Double precioMayor) {
+        if (precioMayor == null) {
+            return null;
+        }
+        if (precioMayor <= 0) {
+            throw new RuntimeException("El precio por mayor debe ser mayor a 0");
+        }
+        return precioMayor;
+    }
+
+    private void validarPrecioMayor(Double precio, Double precioMayor) {
+        if (precioMayor == null) {
+            return;
+        }
+        if (precio == null) {
+            throw new RuntimeException("El precio es obligatorio para validar el precio por mayor");
+        }
+        if (precioMayor >= precio) {
+            throw new RuntimeException("El precio por mayor debe ser menor al precio regular");
+        }
     }
 
     private void validarPrecioOferta(
@@ -1237,7 +1267,7 @@ public class ProductoService {
             Producto producto,
             List<ProductoImagenCreateItem> imagenes) {
         if (imagenes == null || imagenes.isEmpty()) {
-            throw new RuntimeException("Ingrese imagenes del producto");
+            return new ArrayList<>();
         }
 
         Map<Integer, List<ProductoImagenCreateItem>> porColor = new HashMap<>();

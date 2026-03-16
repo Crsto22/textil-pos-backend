@@ -12,7 +12,7 @@ public record VentaPagoCreateItem(
         @DecimalMin(value = "0.01", message = "El monto debe ser mayor a 0")
         Double monto,
 
-        @Size(max = 100, message = "La referencia no debe superar 100 caracteres")
-        String referencia
+        @Size(max = 100, message = "El codigo de operacion no debe superar 100 caracteres")
+        String codigoOperacion
 ) {
 }

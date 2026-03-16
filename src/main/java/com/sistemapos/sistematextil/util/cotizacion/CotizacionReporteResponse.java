@@ -30,7 +30,6 @@ public record CotizacionReporteResponse(
     public record DetalleItem(
             Integer idCotizacion,
             LocalDateTime fecha,
-            LocalDateTime fechaVencimiento,
             String serie,
             Integer correlativo,
             String estado,

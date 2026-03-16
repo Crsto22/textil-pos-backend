@@ -55,9 +55,6 @@ public class Cotizacion {
     @Column(nullable = false, updatable = false)
     private LocalDateTime fecha;
 
-    @Column(name = "fecha_vencimiento")
-    private LocalDateTime fechaVencimiento;
-
     @Column(name = "igv_porcentaje", nullable = false, precision = 5, scale = 2)
     private BigDecimal igvPorcentaje;
 
@@ -115,7 +112,7 @@ public class Cotizacion {
             this.total = BigDecimal.ZERO;
         }
         if (this.estado == null || this.estado.isBlank()) {
-            this.estado = "BORRADOR";
+            this.estado = "ACTIVA";
         }
         if (this.activo == null || this.activo.isBlank()) {
             this.activo = "ACTIVO";

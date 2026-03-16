@@ -8,6 +8,7 @@ public record ProductoTallaResumen(
         String nombre,
         String sku,
         Double precio,
+        Double precioMayor,
         Double precioOferta,
         LocalDateTime ofertaInicio,
         LocalDateTime ofertaFin,

@@ -8,6 +8,7 @@ public record VentaDetalleResponse(
         Integer idProductoVariante,
         Integer idProducto,
         String nombreProducto,
+        String descripcion,
         String sku,
         Double precioOferta,
         LocalDateTime ofertaInicio,
@@ -17,8 +18,12 @@ public record VentaDetalleResponse(
         Integer idTalla,
         String talla,
         Integer cantidad,
+        String unidadMedida,
+        String codigoTipoAfectacionIgv,
         BigDecimal precioUnitario,
         BigDecimal descuento,
-        BigDecimal subtotal
+        BigDecimal igvDetalle,
+        BigDecimal subtotal,
+        BigDecimal totalDetalle
 ) {
 }

@@ -46,8 +46,8 @@ public class Pago {
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal monto;
 
-    @Column(length = 100)
-    private String referencia;
+    @Column(name = "codigo_operacion", length = 100)
+    private String codigoOperacion;
 
     @Convert(converter = EstadoActivoConverter.class)
     @Column(name = "activo", nullable = false)

@@ -11,6 +11,7 @@ public record ProductoVarianteDetalleResponse(
         Integer tallaId,
         String tallaNombre,
         Double precio,
+        Double precioMayor,
         Double precioOferta,
         LocalDateTime ofertaInicio,
         LocalDateTime ofertaFin,

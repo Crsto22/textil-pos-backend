@@ -64,10 +64,15 @@ public class SucursalService {
 
         Sucursal sucursal = new Sucursal();
         sucursal.setNombre(nombreNormalizado);
-        sucursal.setDescripcion(request.descripcion());
+        sucursal.setDescripcion(normalizarTexto(request.descripcion()));
         sucursal.setDireccion(request.direccion().trim());
         sucursal.setTelefono(request.telefono().trim());
         sucursal.setCorreo(request.correo().trim());
+        sucursal.setUbigeo(normalizarTexto(request.ubigeo()));
+        sucursal.setDepartamento(normalizarTexto(request.departamento()));
+        sucursal.setProvincia(normalizarTexto(request.provincia()));
+        sucursal.setDistrito(normalizarTexto(request.distrito()));
+        sucursal.setCodigoEstablecimientoSunat(normalizarCodigo(request.codigoEstablecimientoSunat()));
         sucursal.setEstado("ACTIVO");
         sucursal.setFechaCreacion(LocalDateTime.now());
         sucursal.setDeletedAt(null);
@@ -89,10 +94,15 @@ public class SucursalService {
                 .orElseThrow(() -> new RuntimeException("Empresa no encontrada"));
 
         sucursal.setNombre(nombreNormalizado);
-        sucursal.setDescripcion(request.descripcion());
+        sucursal.setDescripcion(normalizarTexto(request.descripcion()));
         sucursal.setDireccion(request.direccion().trim());
         sucursal.setTelefono(request.telefono().trim());
         sucursal.setCorreo(request.correo().trim());
+        sucursal.setUbigeo(normalizarTexto(request.ubigeo()));
+        sucursal.setDepartamento(normalizarTexto(request.departamento()));
+        sucursal.setProvincia(normalizarTexto(request.provincia()));
+        sucursal.setDistrito(normalizarTexto(request.distrito()));
+        sucursal.setCodigoEstablecimientoSunat(normalizarCodigo(request.codigoEstablecimientoSunat()));
         sucursal.setEstado(request.estado().toUpperCase());
         sucursal.setEmpresa(empresa);
 
@@ -150,6 +160,11 @@ public class SucursalService {
                 sucursal.getDireccion(),
                 sucursal.getTelefono(),
                 sucursal.getCorreo(),
+                sucursal.getUbigeo(),
+                sucursal.getDepartamento(),
+                sucursal.getProvincia(),
+                sucursal.getDistrito(),
+                sucursal.getCodigoEstablecimientoSunat(),
                 sucursal.getEstado(),
                 sucursal.getFechaCreacion(),
                 idEmpresa,
@@ -157,5 +172,18 @@ public class SucursalService {
                 usuarios,
                 usuariosTotal,
                 usuariosFaltantes);
+    }
+
+    private String normalizarTexto(String valor) {
+        if (valor == null) {
+            return null;
+        }
+        String normalizado = valor.trim();
+        return normalizado.isEmpty() ? null : normalizado;
+    }
+
+    private String normalizarCodigo(String valor) {
+        String normalizado = normalizarTexto(valor);
+        return normalizado == null ? null : normalizado.toUpperCase();
     }
 }

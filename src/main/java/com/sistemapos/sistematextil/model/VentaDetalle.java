@@ -43,8 +43,17 @@ public class VentaDetalle {
     @JoinColumn(name = "id_producto_variante", nullable = false)
     private ProductoVariante productoVariante;
 
+    @Column(length = 255)
+    private String descripcion;
+
     @Column(nullable = false)
     private Integer cantidad;
+
+    @Column(name = "unidad_medida", nullable = false, length = 3)
+    private String unidadMedida;
+
+    @Column(name = "codigo_tipo_afectacion_igv", nullable = false, length = 2)
+    private String codigoTipoAfectacionIgv;
 
     @Column(name = "precio_unitario", nullable = false, precision = 10, scale = 2)
     private BigDecimal precioUnitario;
@@ -52,8 +61,14 @@ public class VentaDetalle {
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal descuento;
 
+    @Column(name = "igv_detalle", nullable = false, precision = 10, scale = 2)
+    private BigDecimal igvDetalle;
+
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal subtotal;
+
+    @Column(name = "total_detalle", precision = 10, scale = 2)
+    private BigDecimal totalDetalle;
 
     @Convert(converter = EstadoActivoConverter.class)
     @Column(name = "activo", nullable = false)
@@ -77,6 +92,15 @@ public class VentaDetalle {
         this.updatedAt = now;
         if (this.descuento == null) {
             this.descuento = BigDecimal.ZERO;
+        }
+        if (this.unidadMedida == null || this.unidadMedida.isBlank()) {
+            this.unidadMedida = "NIU";
+        }
+        if (this.codigoTipoAfectacionIgv == null || this.codigoTipoAfectacionIgv.isBlank()) {
+            this.codigoTipoAfectacionIgv = "10";
+        }
+        if (this.igvDetalle == null) {
+            this.igvDetalle = BigDecimal.ZERO;
         }
         if (this.activo == null || this.activo.isBlank()) {
             this.activo = "ACTIVO";

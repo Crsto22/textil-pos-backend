@@ -20,6 +20,12 @@ public record VentaCreateRequest(
 
         Integer correlativo,
 
+        @Size(min = 3, max = 3, message = "La moneda debe tener 3 caracteres")
+        String moneda,
+
+        @Size(max = 10, message = "La formaPago no debe superar 10 caracteres")
+        String formaPago,
+
         @DecimalMin(value = "0.00", message = "El igvPorcentaje no puede ser negativo")
         Double igvPorcentaje,
 

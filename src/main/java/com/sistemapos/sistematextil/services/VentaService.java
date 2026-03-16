@@ -8,7 +8,6 @@ import java.io.InputStream;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URI;
-import java.security.MessageDigest;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
 import java.time.DayOfWeek;
@@ -28,7 +27,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.Base64;
 
 import javax.imageio.ImageIO;
 
@@ -44,6 +42,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -63,6 +63,7 @@ import com.lowagie.text.Rectangle;
 import com.lowagie.text.pdf.PdfPCell;
 import com.lowagie.text.pdf.PdfPTable;
 import com.lowagie.text.pdf.PdfWriter;
+import com.sistemapos.sistematextil.events.VentaRegistradaEvent;
 import com.sistemapos.sistematextil.model.Cliente;
 import com.sistemapos.sistematextil.model.ComprobanteConfig;
 import com.sistemapos.sistematextil.model.HistorialStock;
@@ -83,7 +84,11 @@ import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
 import com.sistemapos.sistematextil.repositories.VentaDetalleRepository;
 import com.sistemapos.sistematextil.repositories.VentaRepository;
+import com.sistemapos.sistematextil.util.cliente.TipoDocumento;
 import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
+import com.sistemapos.sistematextil.util.sunat.SunatComprobanteHelper;
+import com.sistemapos.sistematextil.util.sunat.SunatEmissionResult;
+import com.sistemapos.sistematextil.util.sunat.SunatEstado;
 import com.sistemapos.sistematextil.util.usuario.Rol;
 import com.sistemapos.sistematextil.util.venta.VentaCreateRequest;
 import com.sistemapos.sistematextil.util.venta.VentaDetalleCreateItem;
@@ -102,6 +107,8 @@ public class VentaService {
 
     private static final BigDecimal CIEN = BigDecimal.valueOf(100);
     private static final BigDecimal CERO_MONETARIO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+    private static final String CODIGO_IGV_GRAVADO = "10";
+    private static final String CODIGO_IGV_INAFECTO = "30";
     private static final DateTimeFormatter FECHA_HORA_EXCEL = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final VentaRepository ventaRepository;
@@ -114,6 +121,9 @@ public class VentaService {
     private final SucursalRepository sucursalRepository;
     private final ClienteRepository clienteRepository;
     private final HistorialStockRepository historialStockRepository;
+    private final ApplicationEventPublisher applicationEventPublisher;
+    private final SunatEmissionService sunatEmissionService;
+    private final SunatDocumentStorageService sunatDocumentStorageService;
 
     @Value("${application.pagination.default-size:10}")
     private int defaultPageSize;
@@ -226,7 +236,7 @@ public class VentaService {
 
             agregarCabeceraComprobantePdf(document, venta);
             document.add(new Paragraph(" "));
-            agregarDatosClienteComprobantePdf(document, venta);
+            agregarDatosClienteComprobantePdf(document, venta, pagos);
             document.add(new Paragraph(" "));
             agregarDetalleComprobantePdf(document, detalles);
             agregarResumenComprobantePdf(document, venta, pagos);
@@ -240,6 +250,359 @@ public class VentaService {
         }
     }
 
+    public byte[] generarTicket80mm(Integer idVenta, String correoUsuarioAutenticado) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolLectura(usuarioAutenticado);
+
+        Venta venta = obtenerVentaConAlcance(idVenta, usuarioAutenticado);
+        List<VentaDetalle> detalles = ventaDetalleRepository
+                .findByVenta_IdVentaAndDeletedAtIsNullOrderByIdVentaDetalleAsc(venta.getIdVenta());
+        List<Pago> pagos = pagoRepository.findByVenta_IdVentaAndDeletedAtIsNullOrderByIdPagoAsc(venta.getIdVenta());
+
+        float anchoTicket = 226f; // 80mm en puntos (1mm ≈ 2.83pt)
+        float margen = 8f;
+
+        try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            Document document = new Document(new com.lowagie.text.Rectangle(anchoTicket, 1000f), margen, margen, 8f, 8f);
+            PdfWriter writer = PdfWriter.getInstance(document, output);
+            document.open();
+
+            agregarCabeceraTicket(document, venta);
+            agregarSeparadorTicket(document);
+            agregarDatosClienteTicket(document, venta, pagos);
+            agregarSeparadorTicket(document);
+            agregarDetalleTicket(document, detalles);
+            agregarSeparadorTicket(document);
+            agregarResumenTicket(document, venta);
+            agregarSeparadorTicket(document);
+            agregarPieTicket(document, venta);
+
+            // Recortar la altura del documento al contenido real
+            float alturaContenido = writer.getVerticalPosition(true);
+            document.close();
+
+            // Regenerar con altura ajustada
+            float alturaReal = 1000f - alturaContenido + 20f;
+            if (alturaReal < 200f) alturaReal = 200f;
+
+            ByteArrayOutputStream outputFinal = new ByteArrayOutputStream();
+            Document docFinal = new Document(new com.lowagie.text.Rectangle(anchoTicket, alturaReal), margen, margen, 8f, 8f);
+            PdfWriter.getInstance(docFinal, outputFinal);
+            docFinal.open();
+
+            agregarCabeceraTicket(docFinal, venta);
+            agregarSeparadorTicket(docFinal);
+            agregarDatosClienteTicket(docFinal, venta, pagos);
+            agregarSeparadorTicket(docFinal);
+            agregarDetalleTicket(docFinal, detalles);
+            agregarSeparadorTicket(docFinal);
+            agregarResumenTicket(docFinal, venta);
+            agregarSeparadorTicket(docFinal);
+            agregarPieTicket(docFinal, venta);
+
+            docFinal.close();
+            return outputFinal.toByteArray();
+        } catch (IOException | DocumentException e) {
+            throw new RuntimeException("No se pudo generar el ticket");
+        }
+    }
+
+    private void agregarSeparadorTicket(Document document) throws DocumentException {
+        Paragraph sep = new Paragraph("- - - - - - - - - - - - - - - - - - - - - - - - - - - -",
+                fuentePdf(false, 6f, new Color(150, 150, 150)));
+        sep.setAlignment(Element.ALIGN_CENTER);
+        sep.setSpacingBefore(2f);
+        sep.setSpacingAfter(2f);
+        document.add(sep);
+    }
+
+    private void agregarCabeceraTicket(Document document, Venta venta) throws DocumentException {
+        Sucursal sucursal = venta.getSucursal();
+        String nombreEmpresa = sucursal != null && sucursal.getEmpresa() != null
+                ? valorTexto(sucursal.getEmpresa().getNombre()) : "";
+        String razonSocial = sucursal != null && sucursal.getEmpresa() != null
+                ? valorTexto(sucursal.getEmpresa().getRazonSocial()) : "";
+        String ruc = sucursal != null && sucursal.getEmpresa() != null
+                ? valorTexto(sucursal.getEmpresa().getRuc()) : "";
+        String direccion = sucursal != null ? valorTexto(sucursal.getDireccion()) : "";
+        String distrito = sucursal != null ? valorTexto(sucursal.getDistrito()) : "";
+        String provincia = sucursal != null ? valorTexto(sucursal.getProvincia()) : "";
+        String departamento = sucursal != null ? valorTexto(sucursal.getDepartamento()) : "";
+        String telefono = sucursal != null ? valorTexto(sucursal.getTelefono()) : "";
+
+        // Logo o nombre empresa
+        Image logo = cargarLogoEmpresaParaPdf(venta);
+        if (logo != null) {
+            logo.scaleToFit(100f, 40f);
+            logo.setAlignment(Element.ALIGN_CENTER);
+            document.add(logo);
+        } else {
+            String nombreMostrar = !nombreEmpresa.isBlank() ? nombreEmpresa : razonSocial;
+            if (!nombreMostrar.isBlank()) {
+                Paragraph pNombre = new Paragraph(nombreMostrar, fuentePdf(true, 10f));
+                pNombre.setAlignment(Element.ALIGN_CENTER);
+                document.add(pNombre);
+            }
+        }
+
+        if (!razonSocial.isBlank() && !razonSocial.equalsIgnoreCase(nombreEmpresa)) {
+            Paragraph pRazon = new Paragraph(razonSocial, fuentePdf(false, 6.5f));
+            pRazon.setAlignment(Element.ALIGN_CENTER);
+            document.add(pRazon);
+        }
+
+        if (!ruc.isBlank()) {
+            Paragraph pRuc = new Paragraph("RUC: " + ruc, fuentePdf(true, 7.5f));
+            pRuc.setAlignment(Element.ALIGN_CENTER);
+            pRuc.setSpacingBefore(2f);
+            document.add(pRuc);
+        }
+
+        if (!direccion.isBlank()) {
+            String dirCompleta = direccion;
+            String ubicacion = construirUbicacionPdf(distrito, provincia, departamento);
+            if (!ubicacion.isBlank()) dirCompleta += " - " + ubicacion;
+            Paragraph pDir = new Paragraph(dirCompleta, fuentePdf(false, 6f));
+            pDir.setAlignment(Element.ALIGN_CENTER);
+            pDir.setSpacingBefore(1f);
+            document.add(pDir);
+        }
+
+        if (!telefono.isBlank()) {
+            Paragraph pTel = new Paragraph("Tel: " + telefono, fuentePdf(false, 6f));
+            pTel.setAlignment(Element.ALIGN_CENTER);
+            document.add(pTel);
+        }
+
+        // Tipo y numero de comprobante
+        Paragraph pTipo = new Paragraph(tituloComprobanteParaPdf(venta.getTipoComprobante()), fuentePdf(true, 8f));
+        pTipo.setAlignment(Element.ALIGN_CENTER);
+        pTipo.setSpacingBefore(4f);
+        document.add(pTipo);
+
+        Paragraph pNumero = new Paragraph(numeroComprobanteParaPdf(venta), fuentePdf(true, 9f));
+        pNumero.setAlignment(Element.ALIGN_CENTER);
+        pNumero.setSpacingBefore(1f);
+        document.add(pNumero);
+    }
+
+    private void agregarDatosClienteTicket(Document document, Venta venta, List<Pago> pagos) throws DocumentException {
+        Cliente cliente = venta.getCliente();
+        String nombreCliente = cliente != null && !valorTexto(cliente.getNombres()).isBlank()
+                ? valorTexto(cliente.getNombres()) : "CLIENTES VARIOS";
+        String tipoDoc = etiquetaTipoDocumentoPdf(cliente);
+        String nroDocumento = cliente != null && !valorTexto(cliente.getNroDocumento()).isBlank()
+                ? valorTexto(cliente.getNroDocumento()) : "-";
+        String fechaEmision = venta.getFecha() == null ? ""
+                : venta.getFecha().toLocalDate().format(DateTimeFormatter.ofPattern("dd/MM/yyyy"));
+        String horaEmision = venta.getFecha() == null ? ""
+                : venta.getFecha().toLocalTime().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
+        String formaPago = venta.getFormaPago() != null ? venta.getFormaPago() : "CONTADO";
+        String metodoPago = pagos.stream()
+                .map(p -> p.getMetodoPago() != null ? p.getMetodoPago().getNombre() : "")
+                .filter(n -> !n.isBlank()).distinct()
+                .reduce((a, b) -> a + ", " + b).orElse("-");
+        String moneda = normalizarMonedaPdf(venta.getMoneda());
+
+        com.lowagie.text.Font fLabel = fuentePdf(true, 6.5f);
+        com.lowagie.text.Font fValor = fuentePdf(false, 6.5f);
+
+        agregarLineaTicket(document, "F. Emision: " + fechaEmision + "  " + horaEmision, fValor);
+        agregarLineaTicket(document, "Cliente: " + nombreCliente, fValor);
+        agregarLineaTicket(document, tipoDoc + ": " + nroDocumento, fValor);
+        agregarLineaTicket(document, "Moneda: " + moneda, fValor);
+        agregarLineaTicket(document, "F. Pago: " + formaPago + "  |  M. Pago: " + metodoPago, fValor);
+
+        String direccionCliente = cliente != null && !valorTexto(cliente.getDireccion()).isBlank()
+                ? valorTexto(cliente.getDireccion()) : "";
+        if (!direccionCliente.isBlank()) {
+            agregarLineaTicket(document, "Dir: " + direccionCliente, fValor);
+        }
+    }
+
+    private void agregarLineaTicket(Document document, String texto, com.lowagie.text.Font font) throws DocumentException {
+        Paragraph p = new Paragraph(texto, font);
+        p.setAlignment(Element.ALIGN_LEFT);
+        p.setSpacingBefore(1f);
+        document.add(p);
+    }
+
+    private void agregarDetalleTicket(Document document, List<VentaDetalle> detalles) throws DocumentException {
+        com.lowagie.text.Font fHeader = fuentePdf(true, 6.5f);
+        com.lowagie.text.Font fItem = fuentePdf(false, 6.5f);
+
+        // Encabezado: CANT  DESCRIPCION  P.UNIT  DSCTO  IMPORTE
+        PdfPTable header = new PdfPTable(new float[] { 1f, 4.1f, 1.3f, 1.3f, 1.5f });
+        header.setWidthPercentage(100);
+        header.addCell(crearCeldaTicket("CANT", Element.ALIGN_CENTER, fHeader));
+        header.addCell(crearCeldaTicket("DESCRIPCION", Element.ALIGN_LEFT, fHeader));
+        header.addCell(crearCeldaTicket("P.UNIT", Element.ALIGN_RIGHT, fHeader));
+        header.addCell(crearCeldaTicket("DSCTO", Element.ALIGN_RIGHT, fHeader));
+        header.addCell(crearCeldaTicket("IMPORTE", Element.ALIGN_RIGHT, fHeader));
+        document.add(header);
+
+        for (VentaDetalle detalle : detalles) {
+            PdfPTable fila = new PdfPTable(new float[] { 1f, 4.1f, 1.3f, 1.3f, 1.5f });
+            fila.setWidthPercentage(100);
+
+            fila.addCell(crearCeldaTicket(String.valueOf(valorEntero(detalle.getCantidad())), Element.ALIGN_CENTER, fItem));
+            fila.addCell(crearCeldaTicket(descripcionDetalleParaPdf(detalle), Element.ALIGN_LEFT, fItem));
+            fila.addCell(crearCeldaTicket(formatearMonedaPdf(detalle.getPrecioUnitario()), Element.ALIGN_RIGHT, fItem));
+            BigDecimal descuento = detalle.getDescuento() != null ? detalle.getDescuento() : BigDecimal.ZERO;
+            fila.addCell(crearCeldaTicket(formatearMonedaPdf(descuento), Element.ALIGN_RIGHT, fItem));
+            BigDecimal importe = detalle.getTotalDetalle() != null ? detalle.getTotalDetalle() : detalle.getSubtotal();
+            fila.addCell(crearCeldaTicket(formatearMonedaPdf(importe), Element.ALIGN_RIGHT, fItem));
+
+            document.add(fila);
+        }
+    }
+
+    private PdfPCell crearCeldaTicket(String texto, int alineacion, com.lowagie.text.Font font) {
+        PdfPCell cell = new PdfPCell();
+        cell.setBorder(Rectangle.NO_BORDER);
+        cell.setPadding(1.5f);
+        cell.setHorizontalAlignment(alineacion);
+        cell.setVerticalAlignment(Element.ALIGN_MIDDLE);
+        Paragraph p = new Paragraph(valorTexto(texto), font);
+        p.setAlignment(alineacion);
+        cell.addElement(p);
+        return cell;
+    }
+
+    private void agregarResumenTicket(Document document, Venta venta) throws DocumentException {
+        String simbolo = simboloMonedaPdf(venta.getMoneda());
+        com.lowagie.text.Font fNormal = fuentePdf(false, 7f);
+        com.lowagie.text.Font fBold = fuentePdf(true, 7f);
+        com.lowagie.text.Font fTotal = fuentePdf(true, 9f);
+
+        agregarFilaTotalTicket(document, "Subtotal " + simbolo, formatearMonedaPdf(venta.getSubtotal()), fNormal);
+        if (venta.getDescuentoTotal() != null && venta.getDescuentoTotal().compareTo(BigDecimal.ZERO) > 0) {
+            agregarFilaTotalTicket(document, "Descuento Total " + simbolo, "-" + formatearMonedaPdf(venta.getDescuentoTotal()), fNormal);
+        }
+        if (aplicaIgvSegunTipoComprobante(venta.getTipoComprobante())) {
+            agregarFilaTotalTicket(document, "IGV (" + formatearDecimalPdf(venta.getIgvPorcentaje()) + "%) " + simbolo,
+                    formatearMonedaPdf(venta.getIgv()), fNormal);
+        }
+        agregarFilaTotalTicket(document, "TOTAL " + simbolo, formatearMonedaPdf(venta.getTotal()), fTotal);
+
+        String monedaTexto = "PEN".equalsIgnoreCase(valorTexto(venta.getMoneda()).isBlank() ? "PEN" : venta.getMoneda())
+                ? "SOLES" : "DOLARES AMERICANOS";
+        Paragraph son = new Paragraph("Son: " + montoEnLetrasConMoneda(venta.getTotal(), monedaTexto), fuentePdf(false, 6f));
+        son.setSpacingBefore(3f);
+        document.add(son);
+    }
+
+    private void agregarFilaTotalTicket(Document document, String label, String valor, com.lowagie.text.Font font) throws DocumentException {
+        PdfPTable fila = new PdfPTable(new float[] { 5f, 3f });
+        fila.setWidthPercentage(100);
+
+        PdfPCell cLabel = new PdfPCell();
+        cLabel.setBorder(Rectangle.NO_BORDER);
+        cLabel.setPadding(1f);
+        Paragraph pLabel = new Paragraph(label, font);
+        pLabel.setAlignment(Element.ALIGN_RIGHT);
+        cLabel.addElement(pLabel);
+        fila.addCell(cLabel);
+
+        PdfPCell cValor = new PdfPCell();
+        cValor.setBorder(Rectangle.NO_BORDER);
+        cValor.setPadding(1f);
+        Paragraph pValor = new Paragraph(valor, font);
+        pValor.setAlignment(Element.ALIGN_RIGHT);
+        cValor.addElement(pValor);
+        fila.addCell(cValor);
+
+        document.add(fila);
+    }
+
+    private void agregarPieTicket(Document document, Venta venta) throws DocumentException {
+        Color colorGris = new Color(80, 80, 80);
+        boolean esElectronica = requiereComprobanteElectronico(venta.getTipoComprobante());
+
+        // QR centrado
+        Image qr = generarQrComprobantePdf(venta);
+        if (qr != null) {
+            qr.scaleToFit(90f, 90f);
+            qr.setAlignment(Element.ALIGN_CENTER);
+            document.add(qr);
+        }
+
+        // Hash
+        String hashCode = generarHashComprobantePdf(venta);
+        Paragraph hashP = new Paragraph("Hash: " + hashCode, fuentePdf(false, 5.5f, colorGris));
+        hashP.setAlignment(Element.ALIGN_CENTER);
+        hashP.setSpacingBefore(2f);
+        document.add(hashP);
+
+        if (esElectronica) {
+            String tipoTexto = esFacturaPdf(venta) ? "FACTURA ELECTRONICA" : "BOLETA DE VENTA ELECTRONICA";
+            Paragraph rep = new Paragraph("Representacion impresa de la " + tipoTexto,
+                    fuentePdf(true, 5.5f, colorGris));
+            rep.setAlignment(Element.ALIGN_CENTER);
+            rep.setSpacingBefore(3f);
+            document.add(rep);
+
+            Paragraph consulta = new Paragraph("Consulte en: https://e-factura.sunat.gob.pe/",
+                    fuentePdf(false, 5f, colorGris));
+            consulta.setAlignment(Element.ALIGN_CENTER);
+            consulta.setSpacingBefore(1f);
+            document.add(consulta);
+        }
+
+        Paragraph autorizado = new Paragraph("Autorizado mediante Res. de Intendencia",
+                fuentePdf(false, 5f, colorGris));
+        autorizado.setAlignment(Element.ALIGN_CENTER);
+        autorizado.setSpacingBefore(2f);
+        document.add(autorizado);
+
+        Paragraph gracias = new Paragraph("*** GRACIAS POR SU COMPRA ***", fuentePdf(true, 7f));
+        gracias.setAlignment(Element.ALIGN_CENTER);
+        gracias.setSpacingBefore(6f);
+        document.add(gracias);
+    }
+
+    public ArchivoDescargable descargarSunatXml(Integer idVenta, String correoUsuarioAutenticado) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolLectura(usuarioAutenticado);
+
+        Venta venta = obtenerVentaConAlcance(idVenta, usuarioAutenticado);
+        if (!requiereComprobanteElectronico(venta.getTipoComprobante())) {
+            throw new RuntimeException("La venta no requiere archivo XML SUNAT");
+        }
+        if (venta.getSunatXmlKey() == null || venta.getSunatXmlKey().isBlank()) {
+            throw new RuntimeException("La venta aun no tiene XML SUNAT disponible");
+        }
+
+        byte[] contenido = sunatDocumentStorageService.download(venta.getSunatXmlKey());
+        return new ArchivoDescargable(
+                venta.getSunatXmlNombre() != null && !venta.getSunatXmlNombre().isBlank()
+                        ? venta.getSunatXmlNombre()
+                        : SunatComprobanteHelper.construirNombreArchivoXml(venta),
+                MediaType.APPLICATION_XML_VALUE,
+                contenido);
+    }
+
+    public ArchivoDescargable descargarSunatCdr(Integer idVenta, String correoUsuarioAutenticado) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolLectura(usuarioAutenticado);
+
+        Venta venta = obtenerVentaConAlcance(idVenta, usuarioAutenticado);
+        if (!requiereComprobanteElectronico(venta.getTipoComprobante())) {
+            throw new RuntimeException("La venta no requiere archivo CDR SUNAT");
+        }
+        if (venta.getSunatCdrKey() == null || venta.getSunatCdrKey().isBlank()) {
+            throw new RuntimeException("La venta aun no tiene CDR SUNAT disponible");
+        }
+
+        byte[] contenido = sunatDocumentStorageService.download(venta.getSunatCdrKey());
+        return new ArchivoDescargable(
+                venta.getSunatCdrNombre() != null && !venta.getSunatCdrNombre().isBlank()
+                        ? venta.getSunatCdrNombre()
+                        : SunatComprobanteHelper.construirNombreArchivoCdrZip(venta),
+                "application/xml",
+                contenido);
+    }
+
     private void agregarCabeceraComprobantePdf(Document document, Venta venta) throws DocumentException {
         Sucursal sucursal = venta.getSucursal();
         String nombreEmpresa = sucursal != null && sucursal.getEmpresa() != null
@@ -251,262 +614,413 @@ public class VentaService {
         String ruc = sucursal != null && sucursal.getEmpresa() != null
                 ? valorTexto(sucursal.getEmpresa().getRuc())
                 : "";
-
-        Color colorVerde = new Color(0, 100, 0);
-
-        PdfPTable header = new PdfPTable(new float[] { 6.2f, 3f });
-        header.setWidthPercentage(100);
-
-        PdfPTable empresaWrap = new PdfPTable(new float[] { 2.2f, 4.8f });
-        empresaWrap.setWidthPercentage(100);
-
-        PdfPCell logoCell = crearCeldaBase(Rectangle.NO_BORDER, 0f);
-        logoCell.setVerticalAlignment(Element.ALIGN_MIDDLE);
-        logoCell.setPaddingRight(8f);
-        Image logo = cargarLogoEmpresaParaPdf(venta);
-        if (logo != null) {
-            logo.scaleToFit(140f, 60f);
-            logo.setAlignment(Element.ALIGN_CENTER);
-            logoCell.addElement(logo);
-        } else {
-            String nombreMostrar = !nombreEmpresa.isBlank() ? nombreEmpresa : razonSocial;
-            if (!nombreMostrar.isBlank()) {
-                Paragraph nombreFallback = new Paragraph(nombreMostrar, fuentePdf(true, 16f, colorVerde));
-                nombreFallback.setAlignment(Element.ALIGN_CENTER);
-                logoCell.addElement(nombreFallback);
-            }
-        }
-        empresaWrap.addCell(logoCell);
-
-        PdfPCell datosEmpresaCell = crearCeldaBase(Rectangle.NO_BORDER, 0f);
-        datosEmpresaCell.setVerticalAlignment(Element.ALIGN_MIDDLE);
-        datosEmpresaCell.setPaddingTop(4f);
-
-        String nombreMostrarTexto = !nombreEmpresa.isBlank() ? nombreEmpresa : razonSocial;
-        if (!nombreMostrarTexto.isBlank()) {
-            Paragraph pNombre = new Paragraph(nombreMostrarTexto, fuentePdf(true, 14f));
-            pNombre.setAlignment(Element.ALIGN_LEFT);
-            datosEmpresaCell.addElement(pNombre);
-        }
-
-        if (!razonSocial.isBlank() && !razonSocial.equalsIgnoreCase(nombreEmpresa)) {
-            Paragraph pRazon = new Paragraph(razonSocial, fuentePdf(false, 8.5f, new Color(70, 70, 70)));
-            pRazon.setAlignment(Element.ALIGN_LEFT);
-            pRazon.setSpacingBefore(2f);
-            datosEmpresaCell.addElement(pRazon);
-        }
-
+        String direccion = sucursal != null ? valorTexto(sucursal.getDireccion()) : "";
+        String distrito = sucursal != null ? valorTexto(sucursal.getDistrito()) : "";
+        String provincia = sucursal != null ? valorTexto(sucursal.getProvincia()) : "";
+        String departamento = sucursal != null ? valorTexto(sucursal.getDepartamento()) : "";
         String telefono = sucursal != null ? valorTexto(sucursal.getTelefono()) : "";
-        if (!telefono.isBlank()) {
-            Paragraph pTelefono = new Paragraph("Telf: " + telefono, fuentePdf(false, 7.5f, new Color(70, 70, 70)));
-            pTelefono.setAlignment(Element.ALIGN_LEFT);
-            pTelefono.setSpacingBefore(1f);
-            datosEmpresaCell.addElement(pTelefono);
+        String correo = sucursal != null && !valorTexto(sucursal.getCorreo()).isBlank()
+                ? valorTexto(sucursal.getCorreo())
+                : sucursal != null && sucursal.getEmpresa() != null
+                        ? valorTexto(sucursal.getEmpresa().getCorreo())
+                        : "";
+        String direccionCompleta = direccion;
+        String ubicacion = construirUbicacionPdf(distrito, provincia, departamento);
+        if (!direccionCompleta.isBlank() && !ubicacion.isBlank()) {
+            direccionCompleta += " - " + ubicacion;
         }
 
-        String correoEmpresa = sucursal != null && sucursal.getEmpresa() != null
-                ? valorTexto(sucursal.getEmpresa().getCorreo())
-                : "";
-        if (!correoEmpresa.isBlank()) {
-            Paragraph emailEmpresa = new Paragraph("Correo: " + correoEmpresa, fuentePdf(false, 7.5f, new Color(70, 70, 70)));
-            emailEmpresa.setAlignment(Element.ALIGN_LEFT);
-            emailEmpresa.setSpacingBefore(1f);
-            datosEmpresaCell.addElement(emailEmpresa);
-        }
+        Color colorPrimario = new Color(60, 76, 102);
 
-        empresaWrap.addCell(datosEmpresaCell);
+        PdfPTable header = new PdfPTable(new float[] { 6.4f, 3.6f });
+        header.setWidthPercentage(100);
 
         PdfPCell empresaCell = crearCeldaBase(Rectangle.NO_BORDER, 0f);
         empresaCell.setPaddingRight(18f);
-        empresaCell.addElement(empresaWrap);
+        Image logo = cargarLogoEmpresaParaPdf(venta);
+        if (logo != null) {
+            PdfPTable empresaWrap = new PdfPTable(new float[] { 2.2f, 4.2f });
+            empresaWrap.setWidthPercentage(100);
+
+            PdfPCell logoCell = crearCeldaBase(Rectangle.NO_BORDER, 0f);
+            logoCell.setVerticalAlignment(Element.ALIGN_MIDDLE);
+            logoCell.setPaddingRight(8f);
+            logo.scaleToFit(120f, 60f);
+            logo.setAlignment(Element.ALIGN_CENTER);
+            logoCell.addElement(logo);
+            empresaWrap.addCell(logoCell);
+
+            PdfPCell datosEmpresaCell = crearCeldaBase(Rectangle.NO_BORDER, 0f);
+            datosEmpresaCell.setVerticalAlignment(Element.ALIGN_MIDDLE);
+            datosEmpresaCell.setPaddingTop(4f);
+            agregarDatosEmpresaComprobantePdf(
+                    datosEmpresaCell,
+                    nombreEmpresa,
+                    razonSocial,
+                    ruc,
+                    direccionCompleta,
+                    telefono,
+                    correo,
+                    colorPrimario);
+            empresaWrap.addCell(datosEmpresaCell);
+
+            empresaCell.addElement(empresaWrap);
+        } else {
+            agregarDatosEmpresaComprobantePdf(
+                    empresaCell,
+                    nombreEmpresa,
+                    razonSocial,
+                    ruc,
+                    direccionCompleta,
+                    telefono,
+                    correo,
+                    colorPrimario);
+        }
         header.addCell(empresaCell);
 
-        PdfPCell tipoCell = crearCeldaBase(Rectangle.BOX, 9f);
-        tipoCell.setBorderColor(new Color(60, 60, 60));
-        tipoCell.setBorderWidth(1.2f);
+        PdfPCell tipoCell = crearCeldaBase(Rectangle.BOX, 12f);
+        tipoCell.setBorderColor(colorPrimario);
+        tipoCell.setHorizontalAlignment(Element.ALIGN_CENTER);
         tipoCell.setVerticalAlignment(Element.ALIGN_MIDDLE);
-        tipoCell.setPaddingTop(12f);
-        tipoCell.setPaddingBottom(12f);
 
-        if (!ruc.isBlank()) {
-            Paragraph pRuc = new Paragraph("RUC " + ruc, fuentePdf(true, 10f));
-            pRuc.setAlignment(Element.ALIGN_CENTER);
-            tipoCell.addElement(pRuc);
-        }
-
-        Paragraph pTipo = new Paragraph(tituloComprobanteParaPdf(venta.getTipoComprobante()), fuentePdf(true, 10f));
+        Paragraph pTipo = new Paragraph(tituloComprobanteParaPdf(venta.getTipoComprobante()), fuentePdf(true, 15f, colorPrimario));
         pTipo.setAlignment(Element.ALIGN_CENTER);
-        pTipo.setSpacingBefore(3f);
         tipoCell.addElement(pTipo);
 
-        Paragraph pNumero = new Paragraph(numeroComprobanteParaPdf(venta), fuentePdf(true, 14f));
+        Paragraph pNumero = new Paragraph(numeroComprobanteParaPdf(venta), fuentePdf(true, 13f));
         pNumero.setAlignment(Element.ALIGN_CENTER);
-        pNumero.setSpacingBefore(5f);
+        pNumero.setSpacingBefore(6f);
         tipoCell.addElement(pNumero);
 
         header.addCell(tipoCell);
         document.add(header);
     }
 
-    private void agregarDatosClienteComprobantePdf(Document document, Venta venta) throws DocumentException {
+    private void agregarDatosEmpresaComprobantePdf(
+            PdfPCell cell,
+            String nombreEmpresa,
+            String razonSocial,
+            String ruc,
+            String direccion,
+            String telefono,
+            String correo,
+            Color colorPrimario) {
+        String nombreMostrar = !razonSocial.isBlank() ? razonSocial : nombreEmpresa;
+        if (!nombreMostrar.isBlank()) {
+            Paragraph empresa = new Paragraph(nombreMostrar, fuentePdf(true, 14f, colorPrimario));
+            empresa.setAlignment(Element.ALIGN_LEFT);
+            cell.addElement(empresa);
+        }
+        if (!nombreEmpresa.isBlank() && !nombreEmpresa.equalsIgnoreCase(razonSocial)) {
+            Paragraph nombre = new Paragraph(nombreEmpresa, fuentePdf(false, 10f, new Color(70, 70, 70)));
+            nombre.setAlignment(Element.ALIGN_LEFT);
+            nombre.setSpacingBefore(2f);
+            cell.addElement(nombre);
+        }
+        if (!ruc.isBlank()) {
+            Paragraph rucP = new Paragraph("RUC: " + ruc, fuentePdf(false, 10f));
+            rucP.setAlignment(Element.ALIGN_LEFT);
+            rucP.setSpacingBefore(2f);
+            cell.addElement(rucP);
+        }
+        if (!direccion.isBlank()) {
+            Paragraph direccionP = new Paragraph("Direccion: " + direccion, fuentePdf(false, 9.5f));
+            direccionP.setAlignment(Element.ALIGN_LEFT);
+            direccionP.setSpacingBefore(2f);
+            cell.addElement(direccionP);
+        }
+        if (!telefono.isBlank()) {
+            Paragraph telefonoP = new Paragraph("Telefono: " + telefono, fuentePdf(false, 9.5f));
+            telefonoP.setAlignment(Element.ALIGN_LEFT);
+            telefonoP.setSpacingBefore(1f);
+            cell.addElement(telefonoP);
+        }
+        if (!correo.isBlank()) {
+            Paragraph correoP = new Paragraph("Correo: " + correo, fuentePdf(false, 9.5f));
+            correoP.setAlignment(Element.ALIGN_LEFT);
+            correoP.setSpacingBefore(1f);
+            cell.addElement(correoP);
+        }
+    }
+
+    private void agregarDatosClienteComprobantePdf(Document document, Venta venta, List<Pago> pagos) throws DocumentException {
         Cliente cliente = venta.getCliente();
         String nombreCliente = cliente != null && !valorTexto(cliente.getNombres()).isBlank()
                 ? valorTexto(cliente.getNombres())
                 : "CLIENTES VARIOS";
+        String tipoDoc = etiquetaTipoDocumentoPdf(cliente);
         String nroDocumento = cliente != null && !valorTexto(cliente.getNroDocumento()).isBlank()
                 ? valorTexto(cliente.getNroDocumento())
-                : "99999999";
+                : "-";
         String direccionCliente = cliente != null && !valorTexto(cliente.getDireccion()).isBlank()
                 ? valorTexto(cliente.getDireccion())
                 : "";
         String fechaEmision = venta.getFecha() == null
                 ? ""
-                : venta.getFecha().toLocalDate().format(DateTimeFormatter.ISO_LOCAL_DATE);
+                : venta.getFecha().toLocalDate().format(DateTimeFormatter.ofPattern("dd/MM/yyyy"));
+        String horaEmision = venta.getFecha() == null
+                ? ""
+                : venta.getFecha().toLocalTime().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
+        String moneda = normalizarMonedaPdf(venta.getMoneda());
+        String formaPago = venta.getFormaPago() != null ? venta.getFormaPago() : "CONTADO";
+        String estado = valorTexto(venta.getEstado());
+        String metodoPago = pagos.stream()
+                .map(p -> p.getMetodoPago() != null ? p.getMetodoPago().getNombre() : "")
+                .filter(n -> !n.isBlank())
+                .distinct()
+                .reduce((a, b) -> a + ", " + b)
+                .orElse("-");
+        String codigoOperacion = construirCodigosOperacionPagoPdf(pagos);
+        String numeroComprobante = numeroComprobanteParaPdf(venta);
 
-        PdfPTable tabla = new PdfPTable(new float[] { 1.5f, 4.6f, 2.2f, 1.6f });
+        Color colorFondoInfo = new Color(245, 247, 250);
+
+        PdfPTable tabla = new PdfPTable(new float[] { 2.2f, 4.3f, 2f, 2.3f });
         tabla.setWidthPercentage(100);
 
-        agregarFilaInfoComprobantePdf(
+        agregarFilaDatosComprobantePdf(tabla, "Cliente", nombreCliente, "Fecha", fechaEmision, colorFondoInfo);
+        agregarFilaDatosComprobantePdf(tabla, tipoDoc, nroDocumento, "Hora", horaEmision, colorFondoInfo);
+        agregarFilaDatosComprobantePdf(
                 tabla,
-                "Cliente:",
-                ": " + nombreCliente,
-                "Fecha de emision",
-                ": " + fechaEmision);
-        agregarFilaInfoComprobantePdf(
-                tabla,
-                "Nro. Doc.:",
-                ": " + nroDocumento,
-                "",
-                "");
-        if (!direccionCliente.isBlank()) {
-            agregarFilaInfoComprobantePdf(
-                    tabla,
-                    "Direccion:",
-                    ": " + direccionCliente,
-                    "",
-                    "");
+                "Direccion",
+                direccionCliente.isBlank() ? "-" : direccionCliente,
+                "Comprobante",
+                numeroComprobante,
+                colorFondoInfo);
+        agregarFilaDatosComprobantePdf(tabla, "Moneda", moneda, "Forma de pago", formaPago, colorFondoInfo);
+        agregarFilaDatosComprobantePdf(tabla, "Metodo de pago", metodoPago, "Estado", estado.isBlank() ? "-" : estado, colorFondoInfo);
+        if (esFacturaPdf(venta) && !codigoOperacion.isBlank()) {
+            agregarFilaDatosComprobantePdf(tabla, "Codigo de operacion", codigoOperacion, "", "", colorFondoInfo);
         }
 
         document.add(tabla);
     }
 
     private void agregarDetalleComprobantePdf(Document document, List<VentaDetalle> detalles) throws DocumentException {
-        PdfPTable tabla = new PdfPTable(new float[] { 0.8f, 1.2f, 5.4f, 1.2f, 0.9f, 1.3f });
+        PdfPTable tabla = new PdfPTable(new float[] { 0.8f, 5.7f, 1.2f, 1.6f, 1.5f, 1.7f });
         tabla.setWidthPercentage(100);
+        tabla.setHeaderRows(1);
+        tabla.setSpacingBefore(4f);
 
-        agregarHeaderDetalle(tabla, "CANT.");
-        agregarHeaderDetalle(tabla, "COD.");
-        agregarHeaderDetalle(tabla, "DESCRIPCION");
-        agregarHeaderDetalle(tabla, "P.UNIT");
-        agregarHeaderDetalle(tabla, "DTO.");
-        agregarHeaderDetalle(tabla, "TOTAL");
+        Color colorHeaderBg = new Color(60, 76, 102);
 
+        agregarHeaderDetalle(tabla, "Item", Element.ALIGN_CENTER, colorHeaderBg);
+        agregarHeaderDetalle(tabla, "Descripcion", Element.ALIGN_LEFT, colorHeaderBg);
+        agregarHeaderDetalle(tabla, "Cant.", Element.ALIGN_CENTER, colorHeaderBg);
+        agregarHeaderDetalle(tabla, "P. Unit.", Element.ALIGN_RIGHT, colorHeaderBg);
+        agregarHeaderDetalle(tabla, "Dscto.", Element.ALIGN_RIGHT, colorHeaderBg);
+        agregarHeaderDetalle(tabla, "Importe", Element.ALIGN_RIGHT, colorHeaderBg);
+
+        int fila = 1;
         for (VentaDetalle detalle : detalles) {
-            ProductoVariante variante = detalle.getProductoVariante();
-            tabla.addCell(crearCeldaDetallePdf(String.valueOf(valorEntero(detalle.getCantidad())), Element.ALIGN_CENTER));
-            tabla.addCell(crearCeldaDetallePdf(variante != null ? valorTexto(variante.getSku()) : "", Element.ALIGN_CENTER));
-            tabla.addCell(crearCeldaDetallePdf(descripcionDetalleParaPdf(detalle), Element.ALIGN_LEFT));
-            tabla.addCell(crearCeldaDetallePdf(formatearMonedaPdf(detalle.getPrecioUnitario()), Element.ALIGN_RIGHT));
-            tabla.addCell(crearCeldaDetallePdf(formatearMonedaPdf(detalle.getDescuento()), Element.ALIGN_RIGHT));
-            tabla.addCell(crearCeldaDetallePdf(formatearMonedaPdf(detalle.getSubtotal()), Element.ALIGN_RIGHT));
+            Color bgFila = fila % 2 == 0 ? new Color(247, 249, 252) : null;
+            tabla.addCell(crearCeldaDetallePdf(String.valueOf(fila), Element.ALIGN_CENTER, bgFila));
+            tabla.addCell(crearCeldaDetallePdf(descripcionDetalleParaPdf(detalle), Element.ALIGN_LEFT, bgFila));
+            tabla.addCell(crearCeldaDetallePdf(String.valueOf(valorEntero(detalle.getCantidad())), Element.ALIGN_CENTER, bgFila));
+            tabla.addCell(crearCeldaDetallePdf(formatearMonedaPdf(detalle.getPrecioUnitario()), Element.ALIGN_RIGHT, bgFila));
+            BigDecimal descuento = detalle.getDescuento() != null ? detalle.getDescuento() : BigDecimal.ZERO;
+            tabla.addCell(crearCeldaDetallePdf(formatearMonedaPdf(descuento), Element.ALIGN_RIGHT, bgFila));
+            tabla.addCell(crearCeldaDetallePdf(
+                    formatearMonedaPdf(detalle.getTotalDetalle() != null ? detalle.getTotalDetalle() : detalle.getSubtotal()),
+                    Element.ALIGN_RIGHT, bgFila));
+            fila++;
         }
 
         document.add(tabla);
     }
 
     private void agregarResumenComprobantePdf(Document document, Venta venta, List<Pago> pagos) throws DocumentException {
-        PdfPTable totales = new PdfPTable(new float[] { 6.8f, 2.7f, 1.3f });
-        totales.setWidthPercentage(100);
-        totales.setSpacingBefore(0f);
+        PdfPTable totales = new PdfPTable(new float[] { 6.5f, 2.5f });
+        totales.setWidthPercentage(42);
+        totales.setHorizontalAlignment(Element.ALIGN_RIGHT);
+        totales.setSpacingBefore(6f);
 
-        agregarFilaTotalComprobantePdf(totales, "OP. GRAVADAS: S/", formatearMonedaPdf(venta.getSubtotal()));
+        agregarFilaTotalComprobantePdf(totales, "Subtotal", formatearMonedaPdf(venta.getSubtotal()));
         if (venta.getDescuentoTotal() != null && venta.getDescuentoTotal().compareTo(BigDecimal.ZERO) > 0) {
-            agregarFilaTotalComprobantePdf(totales, "DESCUENTO: S/", formatearMonedaPdf(venta.getDescuentoTotal()));
+            agregarFilaTotalComprobantePdf(totales, "Descuento", "-" + formatearMonedaPdf(venta.getDescuentoTotal()));
         }
-        agregarFilaTotalComprobantePdf(totales, "IGV: S/", formatearMonedaPdf(venta.getIgv()));
-        agregarFilaTotalComprobantePdf(totales, "TOTAL A PAGAR: S/", formatearMonedaPdf(venta.getTotal()), true);
+        if (aplicaIgvSegunTipoComprobante(venta.getTipoComprobante())) {
+            agregarFilaTotalComprobantePdf(totales, "IGV (" + formatearDecimalPdf(venta.getIgvPorcentaje()) + "%)",
+                    formatearMonedaPdf(venta.getIgv()));
+        }
+        agregarFilaTotalComprobantePdf(totales, "TOTAL", formatearMonedaPdf(venta.getTotal()), true);
 
         document.add(totales);
 
-        Paragraph son = new Paragraph("Son: " + montoEnLetras(venta.getTotal()), fuentePdf(true, 9.5f));
-        son.setSpacingBefore(10f);
+        String monedaTexto = "PEN".equalsIgnoreCase(valorTexto(venta.getMoneda()).isBlank() ? "PEN" : venta.getMoneda())
+                ? "SOLES" : "DOLARES AMERICANOS";
+        Paragraph son = new Paragraph(
+                "Son: " + montoEnLetrasConMoneda(venta.getTotal(), monedaTexto),
+                fuentePdf(true, 8.5f, new Color(60, 60, 60)));
+        son.setSpacingBefore(8f);
         document.add(son);
     }
 
     private void agregarPieComprobantePdf(Document document, Venta venta, List<Pago> pagos) throws DocumentException {
         String metodoPago = construirTextoPagosPdf(pagos);
-
-        Paragraph infoTitle = new Paragraph("Informacion adicional", fuentePdf(true, 9.5f));
-        infoTitle.setSpacingBefore(10f);
-        document.add(infoTitle);
+        Color colorGris = new Color(100, 100, 100);
+        boolean esElectronica = requiereComprobanteElectronico(venta.getTipoComprobante());
 
         if (!metodoPago.isBlank()) {
-            Paragraph formaPago = new Paragraph("Forma de pago:" + metodoPago, fuentePdf(false, 9f));
-            formaPago.setSpacingBefore(2f);
+            Paragraph formaPago = new Paragraph("Forma de pago: " + metodoPago, fuentePdf(false, 8.5f));
+            formaPago.setSpacingBefore(10f);
             document.add(formaPago);
         }
 
-        PdfPTable pie = new PdfPTable(1);
+        PdfPTable pie = new PdfPTable(new float[] { 3.5f, 6.5f });
         pie.setWidthPercentage(100);
-        pie.setSpacingBefore(12f);
+        pie.setSpacingBefore(14f);
 
         PdfPCell qrCell = crearCeldaBase(Rectangle.NO_BORDER, 0f);
-        qrCell.setHorizontalAlignment(Element.ALIGN_LEFT);
+        qrCell.setVerticalAlignment(Element.ALIGN_TOP);
         Image qr = generarQrComprobantePdf(venta);
         if (qr != null) {
-            qr.scaleToFit(130f, 130f);
+            qr.scaleToFit(120f, 120f);
             qr.setAlignment(Element.ALIGN_LEFT);
             qrCell.addElement(qr);
         }
+        pie.addCell(qrCell);
+
+        PdfPCell infoCell = crearCeldaBase(Rectangle.NO_BORDER, 0f);
+        infoCell.setVerticalAlignment(Element.ALIGN_TOP);
+        infoCell.setPaddingLeft(10f);
 
         String hashCode = generarHashComprobantePdf(venta);
-        Paragraph hashP = new Paragraph("Codigo Hash: " + hashCode, fuentePdf(false, 7f, new Color(80, 80, 80)));
-        hashP.setAlignment(Element.ALIGN_LEFT);
-        hashP.setSpacingBefore(4f);
-        qrCell.addElement(hashP);
+        Paragraph hashP = new Paragraph("Hash: " + hashCode, fuentePdf(false, 7.5f, colorGris));
+        hashP.setSpacingBefore(2f);
+        infoCell.addElement(hashP);
 
-        pie.addCell(qrCell);
+        if (esElectronica) {
+            String tipoTexto = esFacturaPdf(venta) ? "FACTURA ELECTRONICA" : "BOLETA DE VENTA ELECTRONICA";
+            Paragraph rep = new Paragraph(
+                    "Representacion impresa de la " + tipoTexto,
+                    fuentePdf(true, 8f, colorGris));
+            rep.setSpacingBefore(6f);
+            infoCell.addElement(rep);
+
+            Paragraph consulta = new Paragraph(
+                    "Puede consultar su comprobante en: https://e-factura.sunat.gob.pe/",
+                    fuentePdf(false, 7f, colorGris));
+            consulta.setSpacingBefore(3f);
+            infoCell.addElement(consulta);
+        }
+
+        Paragraph autorizado = new Paragraph(
+                "Autorizado mediante Resolucion de Intendencia",
+                fuentePdf(false, 7f, colorGris));
+        autorizado.setSpacingBefore(4f);
+        infoCell.addElement(autorizado);
+
+        pie.addCell(infoCell);
         document.add(pie);
     }
 
-    private void agregarFilaInfoComprobantePdf(
-            PdfPTable tabla,
-            String labelIzquierda,
-            String valorIzquierda,
-            String labelDerecha,
-            String valorDerecha) {
-        tabla.addCell(crearCeldaInfoPdf(labelIzquierda, true, Element.ALIGN_LEFT));
-        tabla.addCell(crearCeldaInfoPdf(valorIzquierda, false, Element.ALIGN_LEFT));
-        tabla.addCell(crearCeldaInfoPdf(labelDerecha, true, Element.ALIGN_LEFT));
-        tabla.addCell(crearCeldaInfoPdf(valorDerecha, false, Element.ALIGN_LEFT));
+    private void agregarFilaDatosComprobantePdf(
+            PdfPTable tabla, String label, String valor,
+            String labelDer, String valorDer, Color bgColor) {
+        tabla.addCell(crearCeldaDatoPdf(label, true, bgColor));
+        tabla.addCell(crearCeldaDatoPdf(valor, false, bgColor));
+        tabla.addCell(crearCeldaDatoPdf(labelDer, true, bgColor));
+        tabla.addCell(crearCeldaDatoPdf(valorDer, false, bgColor));
     }
 
-    private PdfPCell crearCeldaInfoPdf(String texto, boolean bold, int alineacion) {
-        PdfPCell cell = crearCeldaBase(Rectangle.NO_BORDER, 2f);
-        cell.setHorizontalAlignment(alineacion);
-        cell.addElement(new Paragraph(valorTexto(texto), fuentePdf(bold, 9f)));
+    private PdfPCell crearCeldaDatoPdf(String texto, boolean bold, Color bgColor) {
+        PdfPCell cell = crearCeldaBase(Rectangle.NO_BORDER, 5f);
+        cell.setHorizontalAlignment(Element.ALIGN_LEFT);
+        if (bgColor != null) {
+            cell.setBackgroundColor(bgColor);
+        }
+        cell.addElement(new Paragraph(valorTexto(texto), fuentePdf(bold, 9.5f)));
         return cell;
     }
 
-    private void agregarHeaderDetalle(PdfPTable tabla, String texto) {
-        PdfPCell cell = crearCeldaBase(Rectangle.BOX, 4f);
-        cell.setBorderColor(new Color(180, 180, 180));
-        cell.setBackgroundColor(new Color(220, 220, 220));
-        cell.setHorizontalAlignment(Element.ALIGN_CENTER);
+    private void agregarHeaderDetalle(PdfPTable tabla, String texto, int alineacion, Color bgColor) {
+        PdfPCell cell = crearCeldaBase(Rectangle.BOX, 6f);
+        cell.setBackgroundColor(bgColor);
+        cell.setBorderColor(Color.WHITE);
+        cell.setHorizontalAlignment(alineacion);
         cell.setVerticalAlignment(Element.ALIGN_MIDDLE);
         cell.setUseAscender(true);
-        cell.addElement(new Paragraph(texto, fuentePdf(true, 9.5f)));
+        Paragraph paragraph = new Paragraph(texto, fuentePdf(true, 9f, Color.WHITE));
+        paragraph.setAlignment(alineacion);
+        cell.addElement(paragraph);
         tabla.addCell(cell);
     }
 
-    private PdfPCell crearCeldaDetallePdf(String texto, int alineacion) {
-        PdfPCell cell = crearCeldaBase(Rectangle.BOTTOM, 7f);
-        cell.setBorderColor(new Color(150, 150, 150));
+    private PdfPCell crearCeldaDetallePdf(String texto, int alineacion, Color bgColor) {
+        PdfPCell cell = crearCeldaBase(Rectangle.BOX, 5f);
+        cell.setBorderColor(new Color(225, 230, 236));
         cell.setHorizontalAlignment(alineacion);
-        cell.setVerticalAlignment(Element.ALIGN_MIDDLE);
+        cell.setVerticalAlignment(Element.ALIGN_TOP);
         cell.setUseAscender(true);
-        cell.addElement(new Paragraph(valorTexto(texto), fuentePdf(false, 9.5f)));
+        if (bgColor != null) {
+            cell.setBackgroundColor(bgColor);
+        }
+        Paragraph paragraph = new Paragraph(valorTexto(texto), fuentePdf(false, 9f));
+        paragraph.setAlignment(alineacion);
+        cell.addElement(paragraph);
         return cell;
+    }
+
+    private String etiquetaTipoDocumentoPdf(Cliente cliente) {
+        if (cliente == null || cliente.getTipoDocumento() == null) {
+            return "Doc.";
+        }
+        return switch (cliente.getTipoDocumento()) {
+            case RUC -> "RUC";
+            case DNI -> "DNI";
+            case CE -> "C.E.";
+            case SIN_DOC -> "Doc.";
+        };
+    }
+
+    private boolean esFacturaPdf(Venta venta) {
+        return venta.getTipoComprobante() != null
+                && "FACTURA".equalsIgnoreCase(venta.getTipoComprobante().trim());
+    }
+
+    private String simboloMonedaPdf(String moneda) {
+        String m = valorTexto(moneda).toUpperCase(Locale.ROOT);
+        return "USD".equals(m) ? "US$" : "S/";
+    }
+
+    private String normalizarMonedaPdf(String moneda) {
+        String m = valorTexto(moneda).toUpperCase(Locale.ROOT);
+        return switch (m) {
+            case "USD" -> "DOLAR AMERICANO";
+            case "EUR" -> "EURO";
+            default -> "SOL";
+        };
+    }
+
+    private String construirUbicacionPdf(String distrito, String provincia, String departamento) {
+        StringBuilder sb = new StringBuilder();
+        if (!distrito.isBlank()) sb.append(distrito);
+        if (!provincia.isBlank()) {
+            if (!sb.isEmpty()) sb.append(" - ");
+            sb.append(provincia);
+        }
+        if (!departamento.isBlank()) {
+            if (!sb.isEmpty()) sb.append(" - ");
+            sb.append(departamento);
+        }
+        return sb.toString();
+    }
+
+    private String formatearDecimalPdf(BigDecimal valor) {
+        if (valor == null) return "0";
+        BigDecimal stripped = valor.stripTrailingZeros();
+        return stripped.scale() <= 0 ? stripped.toPlainString() : stripped.toPlainString();
+    }
+
+    private String montoEnLetrasConMoneda(BigDecimal monto, String monedaTexto) {
+        BigDecimal valor = monto == null ? BigDecimal.ZERO : monto.abs().setScale(2, RoundingMode.HALF_UP);
+        long entero = valor.longValue();
+        int decimales = valor.remainder(BigDecimal.ONE)
+                .movePointRight(2)
+                .setScale(0, RoundingMode.HALF_UP)
+                .intValue();
+        return convertirNumeroALetras(entero) + " CON " + String.format(Locale.ROOT, "%02d/100", decimales) + " " + monedaTexto;
     }
 
     private void agregarFilaTotalComprobantePdf(PdfPTable tabla, String label, String value) {
@@ -518,21 +1032,24 @@ public class VentaService {
             String label,
             String value,
             boolean resaltar) {
-        com.lowagie.text.Font font = fuentePdf(true, resaltar ? 10f : 9f);
+        com.lowagie.text.Font font = fuentePdf(true, resaltar ? 10.5f : 9.5f);
+        Color fondo = resaltar ? new Color(236, 241, 248) : null;
 
-        PdfPCell spacer = crearCeldaBase(Rectangle.NO_BORDER, 0f);
-        spacer.addElement(new Paragraph("", fuentePdf(false, 1f)));
-        tabla.addCell(spacer);
-
-        PdfPCell cLabel = crearCeldaBase(Rectangle.NO_BORDER, 2f);
+        PdfPCell cLabel = crearCeldaBase(Rectangle.NO_BORDER, 5f);
         cLabel.setHorizontalAlignment(Element.ALIGN_RIGHT);
+        if (fondo != null) {
+            cLabel.setBackgroundColor(fondo);
+        }
         Paragraph pLabel = new Paragraph(label, font);
         pLabel.setAlignment(Element.ALIGN_RIGHT);
         cLabel.addElement(pLabel);
         tabla.addCell(cLabel);
 
-        PdfPCell cValue = crearCeldaBase(Rectangle.NO_BORDER, 2f);
+        PdfPCell cValue = crearCeldaBase(Rectangle.NO_BORDER, 5f);
         cValue.setHorizontalAlignment(Element.ALIGN_RIGHT);
+        if (fondo != null) {
+            cValue.setBackgroundColor(fondo);
+        }
         Paragraph pValue = new Paragraph(value, font);
         pValue.setAlignment(Element.ALIGN_RIGHT);
         cValue.addElement(pValue);
@@ -572,20 +1089,13 @@ public class VentaService {
     }
 
     private String numeroComprobanteParaPdf(Venta venta) {
-        String serie = venta.getSerie() == null ? "" : venta.getSerie().trim();
-        String correlativo = venta.getCorrelativo() == null
-                ? ""
-                : String.format(Locale.ROOT, "%08d", venta.getCorrelativo());
-        if (serie.isBlank()) {
-            return correlativo;
-        }
-        if (correlativo.isBlank()) {
-            return serie;
-        }
-        return serie + "-" + correlativo;
+        return SunatComprobanteHelper.numeroComprobante(venta);
     }
 
     private String descripcionDetalleParaPdf(VentaDetalle detalle) {
+        if (detalle.getDescripcion() != null && !detalle.getDescripcion().isBlank()) {
+            return detalle.getDescripcion().trim();
+        }
         ProductoVariante variante = detalle.getProductoVariante();
         if (variante == null) {
             return "-";
@@ -632,13 +1142,13 @@ public class VentaService {
                 .orElse("");
     }
 
-    private String construirReferenciasPagoPdf(List<Pago> pagos) {
+    private String construirCodigosOperacionPagoPdf(List<Pago> pagos) {
         if (pagos == null || pagos.isEmpty()) {
             return "";
         }
         return pagos.stream()
-                .map(Pago::getReferencia)
-                .filter(ref -> ref != null && !ref.isBlank())
+                .map(Pago::getCodigoOperacion)
+                .filter(codigo -> codigo != null && !codigo.isBlank())
                 .map(String::trim)
                 .distinct()
                 .reduce((a, b) -> a + " | " + b)
@@ -698,59 +1208,14 @@ public class VentaService {
     }
 
     private String construirContenidoQrPdf(Venta venta) {
-        Cliente cliente = venta.getCliente();
-        String rucEmpresa = venta.getSucursal() != null && venta.getSucursal().getEmpresa() != null
-                ? valorTexto(venta.getSucursal().getEmpresa().getRuc())
-                : "";
-        String tipoCliente = cliente != null && cliente.getTipoDocumento() != null
-                ? cliente.getTipoDocumento().name()
-                : "";
-        String nroCliente = cliente != null ? valorTexto(cliente.getNroDocumento()) : "";
-        String fecha = venta.getFecha() == null ? "" : venta.getFecha().toLocalDate().toString();
-
-        return String.join("|",
-                rucEmpresa,
-                codigoTipoComprobantePdf(venta.getTipoComprobante()),
-                valorTexto(venta.getSerie()),
-                venta.getCorrelativo() == null ? "" : String.valueOf(venta.getCorrelativo()),
-                formatearMonedaPdf(venta.getIgv()),
-                formatearMonedaPdf(venta.getTotal()),
-                fecha,
-                codigoTipoDocumentoPdf(tipoCliente),
-                nroCliente);
+        return SunatComprobanteHelper.construirContenidoQr(venta);
     }
 
     private String generarHashComprobantePdf(Venta venta) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(construirContenidoQrPdf(venta).getBytes());
-            return Base64.getEncoder().encodeToString(hash);
-        } catch (Exception ex) {
-            return numeroComprobanteParaPdf(venta);
+        if (venta.getSunatHash() != null && !venta.getSunatHash().isBlank()) {
+            return venta.getSunatHash();
         }
-    }
-
-    private String codigoTipoComprobantePdf(String tipoComprobante) {
-        if (tipoComprobante == null) {
-            return "";
-        }
-        return switch (tipoComprobante.trim().toUpperCase(Locale.ROOT)) {
-            case "FACTURA" -> "01";
-            case "BOLETA" -> "03";
-            default -> "00";
-        };
-    }
-
-    private String codigoTipoDocumentoPdf(String tipoDocumento) {
-        if (tipoDocumento == null) {
-            return "";
-        }
-        return switch (tipoDocumento.trim().toUpperCase(Locale.ROOT)) {
-            case "DNI" -> "1";
-            case "RUC" -> "6";
-            case "CE" -> "4";
-            default -> "0";
-        };
+        return SunatComprobanteHelper.generarHashBase64(construirContenidoQrPdf(venta));
     }
 
     private String montoEnLetras(BigDecimal monto) {
@@ -835,18 +1300,24 @@ public class VentaService {
         validarRolVenta(usuarioAutenticado);
 
         Sucursal sucursalVenta = resolverSucursalParaVenta(request.idSucursal(), usuarioAutenticado);
+        String tipoComprobante = normalizarTipoComprobante(request.tipoComprobante());
+        boolean aplicaIgv = aplicaIgvSegunTipoComprobante(tipoComprobante);
         Cliente cliente = resolverCliente(request.idCliente(), sucursalVenta.getIdSucursal());
+        validarClienteParaComprobanteElectronico(tipoComprobante, cliente);
+        validarEmpresaParaComprobanteElectronico(tipoComprobante, sucursalVenta);
 
         List<DetalleCalculado> detallesCalculados = calcularDetalles(
                 request.detalles(),
-                sucursalVenta.getIdSucursal());
+                sucursalVenta.getIdSucursal(),
+                aplicaIgv);
         TotalesVenta totales = calcularTotales(
                 detallesCalculados,
                 request.descuentoTotal(),
                 request.tipoDescuento(),
-                request.igvPorcentaje());
+                request.igvPorcentaje(),
+                aplicaIgv);
+        List<DetalleCalculado> detallesFinales = aplicarTributosDetalle(detallesCalculados, totales);
         List<PagoCalculado> pagosCalculados = calcularPagos(request.pagos(), totales.total());
-        String tipoComprobante = normalizarTipoComprobante(request.tipoComprobante());
         NumeroComprobante numeroComprobante = asignarNumeroComprobante(
                 sucursalVenta.getIdSucursal(),
                 tipoComprobante);
@@ -858,6 +1329,8 @@ public class VentaService {
         venta.setTipoComprobante(tipoComprobante);
         venta.setSerie(numeroComprobante.serie());
         venta.setCorrelativo(numeroComprobante.correlativo());
+        venta.setMoneda(normalizarMoneda(request.moneda()));
+        venta.setFormaPago(normalizarFormaPago(request.formaPago()));
         venta.setIgvPorcentaje(totales.igvPorcentaje());
         venta.setSubtotal(totales.subtotal());
         venta.setDescuentoTotal(totales.descuentoAplicado());
@@ -870,14 +1343,19 @@ public class VentaService {
         Venta ventaGuardada = ventaRepository.save(venta);
 
         List<VentaDetalle> detallesGuardar = new ArrayList<>();
-        for (DetalleCalculado detalleCalculado : detallesCalculados) {
+        for (DetalleCalculado detalleCalculado : detallesFinales) {
             VentaDetalle detalle = new VentaDetalle();
             detalle.setVenta(ventaGuardada);
             detalle.setProductoVariante(detalleCalculado.variante());
+            detalle.setDescripcion(detalleCalculado.descripcion());
             detalle.setCantidad(detalleCalculado.cantidad());
+            detalle.setUnidadMedida(detalleCalculado.unidadMedida());
+            detalle.setCodigoTipoAfectacionIgv(detalleCalculado.codigoTipoAfectacionIgv());
             detalle.setPrecioUnitario(detalleCalculado.precioUnitario());
             detalle.setDescuento(detalleCalculado.descuento());
+            detalle.setIgvDetalle(detalleCalculado.igvDetalle());
             detalle.setSubtotal(detalleCalculado.subtotal());
+            detalle.setTotalDetalle(detalleCalculado.totalDetalle());
             detalle.setActivo("ACTIVO");
             detallesGuardar.add(detalle);
         }
@@ -889,14 +1367,14 @@ public class VentaService {
             pago.setVenta(ventaGuardada);
             pago.setMetodoPago(pagoCalculado.metodoPago());
             pago.setMonto(pagoCalculado.monto());
-            pago.setReferencia(pagoCalculado.referencia());
+            pago.setCodigoOperacion(pagoCalculado.codigoOperacion());
             pago.setActivo("ACTIVO");
             pagosGuardar.add(pago);
         }
         List<Pago> pagosGuardados = pagoRepository.saveAll(pagosGuardar);
 
         List<HistorialStock> historial = new ArrayList<>();
-        for (DetalleCalculado detalleCalculado : detallesCalculados) {
+        for (DetalleCalculado detalleCalculado : detallesFinales) {
             ProductoVariante variante = detalleCalculado.variante();
             int stockAnterior = valorEntero(variante.getStock());
             int stockNuevo = stockAnterior - detalleCalculado.cantidad();
@@ -914,13 +1392,80 @@ public class VentaService {
             movimiento.setStockNuevo(stockNuevo);
             historial.add(movimiento);
         }
-        productoVarianteRepository.saveAll(detallesCalculados.stream().map(DetalleCalculado::variante).toList());
+        productoVarianteRepository.saveAll(detallesFinales.stream().map(DetalleCalculado::variante).toList());
         historialStockRepository.saveAll(historial);
+
+        if (requiereComprobanteElectronico(tipoComprobante)) {
+            applicationEventPublisher.publishEvent(new VentaRegistradaEvent(ventaGuardada.getIdVenta()));
+        }
 
         return toResponse(ventaGuardada, detallesGuardados, pagosGuardados);
     }
 
-    private List<DetalleCalculado> calcularDetalles(List<VentaDetalleCreateItem> detalles, Integer idSucursalVenta) {
+    @Transactional
+    public void procesarEmisionElectronica(Integer idVenta) {
+        Venta venta = ventaRepository.findByIdVentaAndDeletedAtIsNull(idVenta)
+                .orElseThrow(() -> new RuntimeException("Venta con ID " + idVenta + " no encontrada"));
+
+        if (!requiereComprobanteElectronico(venta.getTipoComprobante())) {
+            if (venta.getSunatEstado() != SunatEstado.NO_APLICA) {
+                venta.setSunatEstado(SunatEstado.NO_APLICA);
+                venta.setSunatMensaje("La venta no requiere emision electronica SUNAT.");
+                ventaRepository.save(venta);
+            }
+            return;
+        }
+
+        List<VentaDetalle> detalles = ventaDetalleRepository
+                .findByVenta_IdVentaAndDeletedAtIsNullOrderByIdVentaDetalleAsc(venta.getIdVenta());
+
+        SunatEmissionResult resultado;
+        try {
+            resultado = sunatEmissionService.emitir(venta, detalles);
+        } catch (RuntimeException e) {
+            resultado = new SunatEmissionResult(
+                    SunatEstado.ERROR,
+                    "EXCEPTION",
+                    e.getMessage() == null ? "Ocurrio un error al emitir el comprobante en SUNAT" : e.getMessage(),
+                    venta.getSunatHash(),
+                    venta.getSunatTicket(),
+                    venta.getSunatXmlNombre(),
+                    venta.getSunatXmlKey(),
+                    venta.getSunatZipNombre(),
+                    venta.getSunatZipKey(),
+                    venta.getSunatCdrNombre(),
+                    venta.getSunatCdrKey(),
+                    venta.getSunatEnviadoAt(),
+                    LocalDateTime.now());
+        }
+        aplicarResultadoSunat(venta, resultado);
+        ventaRepository.save(venta);
+    }
+
+    public VentaResponse reintentarEmisionSunat(Integer idVenta, String correoUsuarioAutenticado) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolVenta(usuarioAutenticado);
+
+        Venta venta = obtenerVentaConAlcance(idVenta, usuarioAutenticado);
+        if (!requiereComprobanteElectronico(venta.getTipoComprobante())) {
+            throw new RuntimeException("La venta no requiere emision electronica SUNAT");
+        }
+
+        procesarEmisionElectronica(venta.getIdVenta());
+
+        Venta ventaActualizada = obtenerVentaConAlcance(idVenta, usuarioAutenticado);
+        List<VentaDetalle> detalles = ventaDetalleRepository
+                .findByVenta_IdVentaAndDeletedAtIsNullOrderByIdVentaDetalleAsc(ventaActualizada.getIdVenta());
+        List<Pago> pagos = pagoRepository
+                .findByVenta_IdVentaAndDeletedAtIsNullOrderByIdPagoAsc(ventaActualizada.getIdVenta());
+
+        return toResponse(ventaActualizada, detalles, pagos);
+    }
+
+    private List<DetalleCalculado> calcularDetalles(
+            List<VentaDetalleCreateItem> detalles,
+            Integer idSucursalVenta,
+            boolean aplicaIgv) {
         if (detalles == null || detalles.isEmpty()) {
             throw new RuntimeException("Ingrese al menos un detalle de venta");
         }
@@ -947,43 +1492,139 @@ public class VentaService {
                 throw new RuntimeException("La variante con ID " + idProductoVariante + " no pertenece a la sucursal de la venta");
             }
 
+            String nombreProducto = descripcionDetalleVenta(null, variante);
+
             if (!"ACTIVO".equalsIgnoreCase(variante.getEstado())) {
-                throw new RuntimeException("La variante con SKU '" + variante.getSku() + "' no esta ACTIVA");
+                throw new RuntimeException("El producto '" + nombreProducto + "' no esta disponible");
             }
 
             int cantidad = item.cantidad();
             int stockActual = valorEntero(variante.getStock());
             if (stockActual < cantidad) {
-                throw new RuntimeException("Stock insuficiente para SKU '" + variante.getSku()
+                throw new RuntimeException("Stock insuficiente para '" + nombreProducto
                         + "'. Disponible: " + stockActual + ", solicitado: " + cantidad);
             }
 
             BigDecimal precioUnitario = item.precioUnitario() == null
                     ? decimalDesdeDouble(precioVigenteVariante(variante))
                     : decimalPositivo(item.precioUnitario(), "precioUnitario");
-            BigDecimal descuento = item.descuento() == null
+                BigDecimal descuentoItem = item.descuento() == null
                     ? BigDecimal.ZERO
                     : decimalNoNegativo(item.descuento(), "descuento");
+                if (descuentoItem.compareTo(BigDecimal.ZERO) > 0) {
+                throw new RuntimeException("No se permite descuento por item; use descuentoTotal global");
+                }
+                BigDecimal descuento = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
 
             BigDecimal totalLinea = precioUnitario.multiply(BigDecimal.valueOf(cantidad)).setScale(2, RoundingMode.HALF_UP);
             if (descuento.compareTo(totalLinea) > 0) {
-                throw new RuntimeException("El descuento de la linea no puede superar el total de la linea para SKU '"
-                        + variante.getSku() + "'");
+                throw new RuntimeException("El descuento no puede superar el total para '"
+                        + nombreProducto + "'");
             }
             BigDecimal subtotal = totalLinea.subtract(descuento).setScale(2, RoundingMode.HALF_UP);
+            String descripcion = descripcionDetalleVenta(item.descripcion(), variante);
+            String unidadMedida = normalizarUnidadMedida(item.unidadMedida());
+            String codigoTipoAfectacionIgv = normalizarCodigoTipoAfectacionIgv(
+                    item.codigoTipoAfectacionIgv(),
+                    aplicaIgv);
 
-            calculados.add(new DetalleCalculado(variante, cantidad, precioUnitario, descuento, subtotal));
+            calculados.add(new DetalleCalculado(
+                    variante,
+                    descripcion,
+                    cantidad,
+                    unidadMedida,
+                    codigoTipoAfectacionIgv,
+                    precioUnitario,
+                    descuento,
+                    subtotal,
+                    BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP),
+                    subtotal));
         }
 
         return calculados;
+    }
+
+    private List<DetalleCalculado> aplicarTributosDetalle(List<DetalleCalculado> detalles, TotalesVenta totales) {
+        BigDecimal subtotalOriginal = detalles.stream()
+            .map(DetalleCalculado::subtotal)
+            .reduce(BigDecimal.ZERO, BigDecimal::add)
+            .setScale(2, RoundingMode.HALF_UP);
+
+        BigDecimal descuentoGlobalPendiente = moneda(totales.descuentoAplicado());
+        BigDecimal subtotalNetoPendiente = moneda(totales.subtotal());
+        BigDecimal igvPendiente = moneda(totales.igv());
+        BigDecimal totalPendiente = moneda(totales.total());
+        List<DetalleCalculado> resultado = new ArrayList<>();
+
+        for (int i = 0; i < detalles.size(); i++) {
+            DetalleCalculado detalle = detalles.get(i);
+            BigDecimal descuentoGlobalAsignado;
+
+            if (i == detalles.size() - 1) {
+            descuentoGlobalAsignado = descuentoGlobalPendiente;
+            } else if (subtotalOriginal.compareTo(BigDecimal.ZERO) == 0) {
+            descuentoGlobalAsignado = CERO_MONETARIO;
+            } else {
+            descuentoGlobalAsignado = detalle.subtotal()
+                .multiply(totales.descuentoAplicado())
+                .divide(subtotalOriginal, 2, RoundingMode.HALF_UP);
+            if (descuentoGlobalAsignado.compareTo(descuentoGlobalPendiente) > 0) {
+                descuentoGlobalAsignado = descuentoGlobalPendiente;
+            }
+            }
+
+            descuentoGlobalPendiente = descuentoGlobalPendiente.subtract(descuentoGlobalAsignado)
+                .setScale(2, RoundingMode.HALF_UP);
+
+            BigDecimal descuentoLineaTotal = detalle.descuento()
+                .add(descuentoGlobalAsignado)
+                .setScale(2, RoundingMode.HALF_UP);
+            BigDecimal totalDetalle;
+            BigDecimal subtotalNeto;
+            BigDecimal igvDetalle;
+
+            if (i == detalles.size() - 1) {
+            totalDetalle = totalPendiente;
+            subtotalNeto = subtotalNetoPendiente;
+            igvDetalle = igvPendiente;
+            } else {
+            totalDetalle = detalle.subtotal()
+                .subtract(descuentoGlobalAsignado)
+                .setScale(2, RoundingMode.HALF_UP);
+            subtotalNeto = calcularBaseSinIgv(
+                totalDetalle,
+                totales.igvPorcentaje(),
+                detalle.codigoTipoAfectacionIgv());
+            igvDetalle = totalDetalle.subtract(subtotalNeto).setScale(2, RoundingMode.HALF_UP);
+
+            totalPendiente = totalPendiente.subtract(totalDetalle).setScale(2, RoundingMode.HALF_UP);
+            subtotalNetoPendiente = subtotalNetoPendiente.subtract(subtotalNeto).setScale(2, RoundingMode.HALF_UP);
+            igvPendiente = igvPendiente.subtract(igvDetalle).setScale(2, RoundingMode.HALF_UP);
+            }
+
+            resultado.add(new DetalleCalculado(
+                    detalle.variante(),
+                    detalle.descripcion(),
+                    detalle.cantidad(),
+                    detalle.unidadMedida(),
+                    detalle.codigoTipoAfectacionIgv(),
+                    detalle.precioUnitario(),
+                descuentoLineaTotal,
+                    subtotalNeto,
+                    igvDetalle,
+                    totalDetalle));
+        }
+
+        return resultado;
     }
 
     private TotalesVenta calcularTotales(
             List<DetalleCalculado> detalles,
             Double descuentoTotalInput,
             String tipoDescuentoInput,
-            Double igvPorcentajeInput) {
-        BigDecimal subtotal = detalles.stream()
+            Double igvPorcentajeInput,
+            boolean aplicaIgv) {
+        BigDecimal totalBase = detalles.stream()
                 .map(DetalleCalculado::subtotal)
                 .reduce(BigDecimal.ZERO, BigDecimal::add)
                 .setScale(2, RoundingMode.HALF_UP);
@@ -998,26 +1639,29 @@ public class VentaService {
             if ("MONTO".equals(tipoDescuento)) {
                 descuentoAplicado = descuentoInput;
             } else {
-                descuentoAplicado = subtotal
+                descuentoAplicado = totalBase
                         .multiply(descuentoInput)
                         .divide(CIEN, 2, RoundingMode.HALF_UP);
             }
         }
 
-        if (descuentoAplicado.compareTo(subtotal) > 0) {
-            throw new RuntimeException("El descuento total no puede superar el subtotal");
+        if (descuentoAplicado.compareTo(totalBase) > 0) {
+            throw new RuntimeException("El descuento total no puede superar el total base de la venta");
         }
 
-        BigDecimal subtotalConDescuento = subtotal.subtract(descuentoAplicado).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal igvPorcentaje = normalizarIgv(igvPorcentajeInput);
-        BigDecimal igv = subtotalConDescuento
-                .multiply(igvPorcentaje)
-                .divide(CIEN, 2, RoundingMode.HALF_UP);
-        BigDecimal total = subtotalConDescuento.add(igv).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal igvPorcentaje = aplicaIgv ? normalizarIgv(igvPorcentajeInput) : CERO_MONETARIO;
+        BigDecimal totalConDescuento = totalBase.subtract(descuentoAplicado).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal subtotal = aplicaIgv
+                ? calcularBaseSinIgv(totalConDescuento, igvPorcentaje, CODIGO_IGV_GRAVADO)
+                : totalConDescuento;
+        BigDecimal igv = aplicaIgv
+                ? totalConDescuento.subtract(subtotal).setScale(2, RoundingMode.HALF_UP)
+                : CERO_MONETARIO;
+        BigDecimal total = totalConDescuento;
 
         return new TotalesVenta(
                 igvPorcentaje,
-                subtotalConDescuento,
+                subtotal,
                 descuentoAplicado.setScale(2, RoundingMode.HALF_UP),
                 tipoDescuento,
                 igv,
@@ -1045,10 +1689,10 @@ public class VentaService {
             }
 
             BigDecimal monto = decimalPositivo(item.monto(), "monto");
-            String referencia = normalizarTexto(item.referencia(), 100);
+            String codigoOperacion = normalizarTexto(item.codigoOperacion(), 100);
             sumaPagos = sumaPagos.add(monto).setScale(2, RoundingMode.HALF_UP);
 
-            calculados.add(new PagoCalculado(metodoPago, monto, referencia));
+            calculados.add(new PagoCalculado(metodoPago, monto, codigoOperacion));
         }
 
         if (sumaPagos.compareTo(totalVenta) != 0) {
@@ -1084,6 +1728,100 @@ public class VentaService {
         }
         return clienteRepository.findByIdClienteAndDeletedAtIsNullAndSucursal_IdSucursal(idCliente, idSucursal)
                 .orElseThrow(() -> new RuntimeException("Cliente no encontrado para la sucursal"));
+    }
+
+    private void validarClienteParaComprobanteElectronico(String tipoComprobante, Cliente cliente) {
+        if (!requiereComprobanteElectronico(tipoComprobante)) {
+            return;
+        }
+        if (cliente == null) {
+            throw new RuntimeException("Cliente obligatorio para emitir " + tipoComprobante + " electronica");
+        }
+        if (cliente.getNombres() == null || cliente.getNombres().isBlank()) {
+            throw new RuntimeException("El cliente debe tener nombres para emitir " + tipoComprobante + " electronica");
+        }
+
+        TipoDocumento tipoDocumento = cliente.getTipoDocumento();
+        String nroDocumento = normalizarTexto(cliente.getNroDocumento(), 20);
+        if ("FACTURA".equals(tipoComprobante)) {
+            if (tipoDocumento != TipoDocumento.RUC) {
+                throw new RuntimeException("La FACTURA electronica requiere un cliente con RUC");
+            }
+            if (nroDocumento == null || nroDocumento.length() != 11) {
+                throw new RuntimeException("La FACTURA electronica requiere RUC de 11 digitos");
+            }
+            return;
+        }
+
+        if (tipoDocumento != null
+                && tipoDocumento != TipoDocumento.SIN_DOC
+                && (nroDocumento == null || nroDocumento.isBlank())) {
+            throw new RuntimeException("La BOLETA electronica requiere numero de documento valido para el cliente");
+        }
+    }
+
+    private void validarEmpresaParaComprobanteElectronico(String tipoComprobante, Sucursal sucursal) {
+        if (!requiereComprobanteElectronico(tipoComprobante)) {
+            return;
+        }
+        if (sucursal == null || sucursal.getEmpresa() == null) {
+            throw new RuntimeException("La sucursal debe estar vinculada a una empresa para emitir comprobantes SUNAT");
+        }
+        String rucEmpresa = normalizarTexto(sucursal.getEmpresa().getRuc(), 11);
+        if (rucEmpresa == null || rucEmpresa.length() != 11) {
+            throw new RuntimeException("La empresa debe tener RUC de 11 digitos para emitir comprobantes SUNAT");
+        }
+        if (normalizarTexto(sucursal.getEmpresa().getRazonSocial(), 150) == null) {
+            throw new RuntimeException("La empresa debe tener razon social para emitir comprobantes SUNAT");
+        }
+    }
+
+    private boolean requiereComprobanteElectronico(String tipoComprobante) {
+        return "BOLETA".equals(tipoComprobante) || "FACTURA".equals(tipoComprobante);
+    }
+
+    private boolean aplicaIgvSegunTipoComprobante(String tipoComprobante) {
+        return requiereComprobanteElectronico(normalizarAliasTipoComprobante(tipoComprobante));
+    }
+
+    private BigDecimal calcularBaseSinIgv(BigDecimal totalConIgv, BigDecimal igvPorcentaje, String codigoTipoAfectacionIgv) {
+        BigDecimal total = moneda(totalConIgv);
+        if (!afectaIgv(codigoTipoAfectacionIgv) || total.compareTo(BigDecimal.ZERO) == 0) {
+            return total;
+        }
+        BigDecimal factor = BigDecimal.ONE.add(moneda(igvPorcentaje).divide(CIEN, 10, RoundingMode.HALF_UP));
+        return total.divide(factor, 2, RoundingMode.HALF_UP);
+    }
+
+    private boolean afectaIgv(String codigoTipoAfectacionIgv) {
+        if (codigoTipoAfectacionIgv == null || codigoTipoAfectacionIgv.isBlank()) {
+            return true;
+        }
+        return codigoTipoAfectacionIgv.startsWith("1");
+    }
+
+    private void aplicarResultadoSunat(Venta venta, SunatEmissionResult resultado) {
+        if (resultado == null) {
+            venta.setSunatEstado(SunatEstado.ERROR);
+            venta.setSunatCodigo("NULL");
+            venta.setSunatMensaje("SUNAT no devolvio respuesta.");
+            venta.setSunatRespondidoAt(LocalDateTime.now());
+            return;
+        }
+
+        venta.setSunatEstado(resultado.estado());
+        venta.setSunatCodigo(normalizarTexto(resultado.codigo(), 20));
+        venta.setSunatMensaje(normalizarTexto(resultado.mensaje(), 500));
+        venta.setSunatHash(normalizarTexto(resultado.hash(), 120));
+        venta.setSunatTicket(normalizarTexto(resultado.ticket(), 120));
+        venta.setSunatXmlNombre(normalizarTexto(resultado.xmlNombre(), 180));
+        venta.setSunatXmlKey(normalizarTexto(resultado.xmlKey(), 600));
+        venta.setSunatZipNombre(normalizarTexto(resultado.zipNombre(), 180));
+        venta.setSunatZipKey(normalizarTexto(resultado.zipKey(), 600));
+        venta.setSunatCdrNombre(normalizarTexto(resultado.cdrNombre(), 180));
+        venta.setSunatCdrKey(normalizarTexto(resultado.cdrKey(), 600));
+        venta.setSunatEnviadoAt(resultado.fechaEnvio());
+        venta.setSunatRespondidoAt(resultado.fechaRespuesta());
     }
 
     private NumeroComprobante asignarNumeroComprobante(Integer idSucursal, String tipoComprobante) {
@@ -1122,8 +1860,10 @@ public class VentaService {
                 venta.getTipoComprobante(),
                 venta.getSerie(),
                 venta.getCorrelativo(),
+                venta.getMoneda(),
                 venta.getTotal(),
                 venta.getEstado(),
+                venta.getSunatEstado(),
                 venta.getCliente() != null ? venta.getCliente().getIdCliente() : null,
                 nombreCliente,
                 venta.getUsuario() != null ? venta.getUsuario().getIdUsuario() : null,
@@ -1148,6 +1888,8 @@ public class VentaService {
                 venta.getTipoComprobante(),
                 venta.getSerie(),
                 venta.getCorrelativo(),
+                venta.getMoneda(),
+                venta.getFormaPago(),
                 venta.getIgvPorcentaje(),
                 venta.getSubtotal(),
                 venta.getDescuentoTotal(),
@@ -1155,6 +1897,16 @@ public class VentaService {
                 venta.getIgv(),
                 venta.getTotal(),
                 venta.getEstado(),
+                venta.getSunatEstado(),
+                venta.getSunatCodigo(),
+                venta.getSunatMensaje(),
+                venta.getSunatHash(),
+                venta.getSunatTicket(),
+                venta.getSunatXmlNombre(),
+                venta.getSunatZipNombre(),
+                venta.getSunatCdrNombre(),
+                venta.getSunatEnviadoAt(),
+                venta.getSunatRespondidoAt(),
                 venta.getCliente() != null ? venta.getCliente().getIdCliente() : null,
                 venta.getCliente() != null ? venta.getCliente().getNombres() : null,
                 venta.getUsuario() != null ? venta.getUsuario().getIdUsuario() : null,
@@ -1172,6 +1924,7 @@ public class VentaService {
                 variante != null ? variante.getIdProductoVariante() : null,
                 variante != null && variante.getProducto() != null ? variante.getProducto().getIdProducto() : null,
                 variante != null && variante.getProducto() != null ? variante.getProducto().getNombre() : null,
+                detalle.getDescripcion(),
                 variante != null ? variante.getSku() : null,
                 variante != null ? variante.getPrecioOferta() : null,
                 variante != null ? variante.getOfertaInicio() : null,
@@ -1181,9 +1934,13 @@ public class VentaService {
                 variante != null && variante.getTalla() != null ? variante.getTalla().getIdTalla() : null,
                 variante != null && variante.getTalla() != null ? variante.getTalla().getNombre() : null,
                 detalle.getCantidad(),
+                detalle.getUnidadMedida(),
+                detalle.getCodigoTipoAfectacionIgv(),
                 detalle.getPrecioUnitario(),
                 detalle.getDescuento(),
-                detalle.getSubtotal());
+                detalle.getIgvDetalle(),
+                detalle.getSubtotal(),
+                detalle.getTotalDetalle());
     }
 
     private VentaPagoResponse toPagoResponse(Pago pago) {
@@ -1193,7 +1950,7 @@ public class VentaService {
                 metodo != null ? metodo.getIdMetodoPago() : null,
                 metodo != null ? metodo.getNombre() : null,
                 pago.getMonto(),
-                pago.getReferencia(),
+                pago.getCodigoOperacion(),
                 pago.getFecha());
     }
 
@@ -1745,7 +2502,7 @@ public class VentaService {
                 "Vendedor",
                 "Sucursal",
                 "MetodoPago",
-                "Referencia",
+                "Codigo de Operacion",
                 "FechaPago",
                 "Monto"
         };
@@ -1770,7 +2527,7 @@ public class VentaService {
                 r.createCell(4).setCellValue(valorTexto(venta.nombreUsuario()));
                 r.createCell(5).setCellValue(valorTexto(venta.nombreSucursal()));
                 r.createCell(6).setCellValue(pago.getMetodoPago() != null ? valorTexto(pago.getMetodoPago().getNombre()) : "");
-                r.createCell(7).setCellValue(valorTexto(pago.getReferencia()));
+                r.createCell(7).setCellValue(valorTexto(pago.getCodigoOperacion()));
                 r.createCell(8).setCellValue(pago.getFecha() == null ? "" : pago.getFecha().format(FECHA_HORA_EXCEL));
                 r.createCell(9).setCellValue(moneda(pago.getMonto()).doubleValue());
                 r.getCell(9).setCellStyle(moneyStyle);
@@ -1919,9 +2676,20 @@ public class VentaService {
         if (tipoComprobante == null || tipoComprobante.isBlank()) {
             return "NOTA DE VENTA";
         }
-        String normalized = tipoComprobante.trim().toUpperCase();
+        String normalized = normalizarAliasTipoComprobante(tipoComprobante);
         validarTipoComprobantePermitido(normalized);
         return normalized;
+    }
+
+    private String normalizarAliasTipoComprobante(String tipoComprobante) {
+        if (tipoComprobante == null || tipoComprobante.isBlank()) {
+            return null;
+        }
+        String normalized = tipoComprobante.trim().toUpperCase(Locale.ROOT);
+        return switch (normalized) {
+            case "TICKET", "TICKET DE VENTA" -> "NOTA DE VENTA";
+            default -> normalized;
+        };
     }
 
     private String normalizarTipoDescuento(String tipoDescuento, BigDecimal descuentoInput) {
@@ -1939,6 +2707,28 @@ public class VentaService {
             throw new RuntimeException("descuentoTotal no puede superar 100 cuando tipoDescuento es PORCENTAJE");
         }
         return normalized;
+    }
+
+    private String normalizarMoneda(String moneda) {
+        if (moneda == null || moneda.isBlank()) {
+            return "PEN";
+        }
+        String normalized = moneda.trim().toUpperCase(Locale.ROOT);
+        if (normalized.length() != 3) {
+            throw new RuntimeException("moneda debe tener 3 caracteres");
+        }
+        return normalized;
+    }
+
+    private String normalizarFormaPago(String formaPago) {
+        if (formaPago == null || formaPago.isBlank()) {
+            return "CONTADO";
+        }
+        String normalized = formaPago.trim().toUpperCase(Locale.ROOT);
+        if ("CREDITO".equals(normalized) || "CRÉDITO".equals(normalized)) {
+            return "CREDITO";
+        }
+        return "CONTADO";
     }
 
     private BigDecimal normalizarIgv(Double igvPorcentaje) {
@@ -2016,6 +2806,60 @@ public class VentaService {
         return trimmed.length() > maxLen ? trimmed.substring(0, maxLen) : trimmed;
     }
 
+    private String normalizarUnidadMedida(String unidadMedida) {
+        if (unidadMedida == null || unidadMedida.isBlank()) {
+            return "NIU";
+        }
+        String normalized = unidadMedida.trim().toUpperCase(Locale.ROOT);
+        if (normalized.length() != 3) {
+            throw new RuntimeException("unidadMedida debe tener 3 caracteres");
+        }
+        return normalized;
+    }
+
+    private String normalizarCodigoTipoAfectacionIgv(String codigo, boolean aplicaIgv) {
+        if (!aplicaIgv) {
+            return CODIGO_IGV_INAFECTO;
+        }
+        if (codigo == null || codigo.isBlank()) {
+            return CODIGO_IGV_GRAVADO;
+        }
+        String normalized = codigo.trim().toUpperCase(Locale.ROOT);
+        if (normalized.length() != 2) {
+            throw new RuntimeException("codigoTipoAfectacionIgv debe tener 2 caracteres");
+        }
+        return normalized;
+    }
+
+    private String descripcionDetalleVenta(String descripcionRequest, ProductoVariante variante) {
+        String descripcion = normalizarTexto(descripcionRequest, 255);
+        if (descripcion != null) {
+            return descripcion;
+        }
+
+        if (variante == null) {
+            return "-";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        if (variante.getProducto() != null && variante.getProducto().getNombre() != null) {
+            sb.append(variante.getProducto().getNombre().trim());
+        }
+        if (variante.getColor() != null && variante.getColor().getNombre() != null) {
+            if (sb.length() > 0) {
+                sb.append(" - ");
+            }
+            sb.append(variante.getColor().getNombre().trim());
+        }
+        if (variante.getTalla() != null && variante.getTalla().getNombre() != null) {
+            if (sb.length() > 0) {
+                sb.append(" / ");
+            }
+            sb.append("Talla ").append(variante.getTalla().getNombre().trim());
+        }
+        return sb.isEmpty() ? "-" : normalizarTexto(sb.toString(), 255);
+    }
+
     private int valorEntero(Integer value) {
         return value == null ? 0 : value;
     }
@@ -2062,7 +2906,7 @@ public class VentaService {
         if (tipoComprobante == null || tipoComprobante.isBlank()) {
             return null;
         }
-        String normalized = tipoComprobante.trim().toUpperCase();
+        String normalized = normalizarAliasTipoComprobante(tipoComprobante);
         validarTipoComprobantePermitido(normalized);
         return normalized;
     }
@@ -2224,16 +3068,21 @@ public class VentaService {
 
     private record DetalleCalculado(
             ProductoVariante variante,
+            String descripcion,
             int cantidad,
+            String unidadMedida,
+            String codigoTipoAfectacionIgv,
             BigDecimal precioUnitario,
             BigDecimal descuento,
-            BigDecimal subtotal) {
+            BigDecimal subtotal,
+            BigDecimal igvDetalle,
+            BigDecimal totalDetalle) {
     }
 
     private record PagoCalculado(
             MetodoPagoConfig metodoPago,
             BigDecimal monto,
-            String referencia) {
+            String codigoOperacion) {
     }
 
     private record TotalesVenta(
@@ -2248,5 +3097,11 @@ public class VentaService {
     private record NumeroComprobante(
             String serie,
             Integer correlativo) {
+    }
+
+    public record ArchivoDescargable(
+            String nombreArchivo,
+            String contentType,
+            byte[] bytes) {
     }
 }

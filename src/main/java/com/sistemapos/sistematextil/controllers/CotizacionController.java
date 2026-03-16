@@ -1,9 +1,12 @@
 package com.sistemapos.sistematextil.controllers;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Map;
 
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -101,6 +104,26 @@ public class CotizacionController {
             return ResponseEntity.ok(cotizacionService.obtenerDetalle(id, obtenerCorreoAutenticado(authentication)));
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al obtener detalle de cotizacion" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
+    @GetMapping(value = "/{id}/comprobante/pdf", produces = MediaType.APPLICATION_PDF_VALUE)
+    public ResponseEntity<?> descargarCotizacionPdf(
+            Authentication authentication,
+            @PathVariable Integer id) {
+        try {
+            byte[] archivo = cotizacionService.generarCotizacionPdfA4(id, obtenerCorreoAutenticado(authentication));
+            String ts = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+            String nombreArchivo = "cotizacion_" + id + "_" + ts + ".pdf";
+
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + nombreArchivo + "\"")
+                    .contentType(MediaType.APPLICATION_PDF)
+                    .body(archivo);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al generar PDF de cotizacion" : e.getMessage();
             HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
             return ResponseEntity.status(status).body(Map.of("message", message));
         }

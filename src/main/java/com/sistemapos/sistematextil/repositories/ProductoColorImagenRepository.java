@@ -14,6 +14,8 @@ public interface ProductoColorImagenRepository extends JpaRepository<ProductoCol
 
     List<ProductoColorImagen> findByProductoIdProducto(Integer idProducto);
 
+    List<ProductoColorImagen> findByProductoIdProductoIn(List<Integer> productoIds);
+
     List<ProductoColorImagen> findByProductoIdProductoAndColorIdColor(Integer idProducto, Integer idColor);
 
     Optional<ProductoColorImagen> findByIdColorImagen(Integer idColorImagen);

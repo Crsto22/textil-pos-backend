@@ -15,6 +15,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -43,6 +44,10 @@ public class ProductoVariante {
     @NotNull(message = "El precio es obligatorio")
     @Min(value = 0, message = "El precio no puede ser negativo")
     private Double precio;
+
+    @DecimalMin(value = "0.0", inclusive = false, message = "El precio por mayor debe ser mayor a 0")
+    @Column(name = "precio_mayor")
+    private Double precioMayor;
 
     @Column(name = "precio_oferta")
     private Double precioOferta;

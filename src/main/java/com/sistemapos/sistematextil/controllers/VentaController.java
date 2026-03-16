@@ -167,6 +167,62 @@ public class VentaController {
         }
     }
 
+    @GetMapping(value = "/{id}/comprobante/ticket", produces = MediaType.APPLICATION_PDF_VALUE)
+    public ResponseEntity<?> descargarTicket(
+            Authentication authentication,
+            @PathVariable Integer id) {
+        try {
+            byte[] archivo = ventaService.generarTicket80mm(id, obtenerCorreoAutenticado(authentication));
+            String ts = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+            String nombreArchivo = "ticket_venta_" + id + "_" + ts + ".pdf";
+
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + nombreArchivo + "\"")
+                    .contentType(MediaType.APPLICATION_PDF)
+                    .body(archivo);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al generar ticket" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
+    @GetMapping(value = "/{id}/sunat/xml", produces = MediaType.APPLICATION_XML_VALUE)
+    public ResponseEntity<?> descargarSunatXml(
+            Authentication authentication,
+            @PathVariable Integer id) {
+        try {
+            VentaService.ArchivoDescargable archivo = ventaService
+                    .descargarSunatXml(id, obtenerCorreoAutenticado(authentication));
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + archivo.nombreArchivo() + "\"")
+                    .contentType(MediaType.APPLICATION_XML)
+                    .body(archivo.bytes());
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al descargar XML SUNAT" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
+    @GetMapping(value = "/{id}/sunat/cdr", produces = MediaType.APPLICATION_XML_VALUE)
+    public ResponseEntity<?> descargarSunatCdr(
+            Authentication authentication,
+            @PathVariable Integer id) {
+        try {
+            VentaService.ArchivoDescargable archivo = ventaService
+                    .descargarSunatCdr(id, obtenerCorreoAutenticado(authentication));
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + archivo.nombreArchivo() + "\"")
+                    .contentType(MediaType.parseMediaType(archivo.contentType()))
+                    .body(archivo.bytes());
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al descargar CDR SUNAT" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
     @PostMapping("/insertar")
     public ResponseEntity<?> insertar(
             Authentication authentication,
@@ -176,6 +232,20 @@ public class VentaController {
             return ResponseEntity.status(HttpStatus.CREATED).body(response);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al registrar venta" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
+    @PostMapping("/{id}/sunat/reintentar")
+    public ResponseEntity<?> reintentarSunat(
+            Authentication authentication,
+            @PathVariable Integer id) {
+        try {
+            VentaResponse response = ventaService.reintentarEmisionSunat(id, obtenerCorreoAutenticado(authentication));
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al reenviar comprobante a SUNAT" : e.getMessage();
             HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
             return ResponseEntity.status(status).body(Map.of("message", message));
         }

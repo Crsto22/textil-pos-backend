@@ -23,6 +23,9 @@ public record ProductoVarianteCreateItem(
         @DecimalMin(value = "0.0", inclusive = true, message = "El precio no puede ser negativo")
         Double precio,
 
+        @DecimalMin(value = "0.0", inclusive = false, message = "El precio por mayor debe ser mayor a 0")
+        Double precioMayor,
+
         @DecimalMin(value = "0.0", inclusive = false, message = "El precio de oferta debe ser mayor a 0")
         Double precioOferta,
 

@@ -6,7 +6,6 @@ import java.time.LocalDateTime;
 public record CotizacionListItemResponse(
         Integer idCotizacion,
         LocalDateTime fecha,
-        LocalDateTime fechaVencimiento,
         String serie,
         Integer correlativo,
         BigDecimal total,

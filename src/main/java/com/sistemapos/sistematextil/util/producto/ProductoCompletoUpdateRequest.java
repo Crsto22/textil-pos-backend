@@ -25,7 +25,6 @@ public record ProductoCompletoUpdateRequest(
         @Valid
         List<ProductoVarianteCreateItem> variantes,
 
-        @NotEmpty(message = "Ingrese imagenes del producto")
         @Valid
         List<ProductoImagenCreateItem> imagenes
 ) {

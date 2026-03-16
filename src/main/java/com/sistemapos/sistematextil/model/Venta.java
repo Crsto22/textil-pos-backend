@@ -4,10 +4,13 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 import com.sistemapos.sistematextil.model.converter.EstadoActivoConverter;
+import com.sistemapos.sistematextil.util.sunat.SunatEstado;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -55,6 +58,12 @@ public class Venta {
 
     private Integer correlativo;
 
+    @Column(nullable = false, length = 3)
+    private String moneda;
+
+    @Column(name = "forma_pago", nullable = false, length = 10)
+    private String formaPago;
+
     @Column(name = "igv_porcentaje", nullable = false, precision = 5, scale = 2)
     private BigDecimal igvPorcentaje;
 
@@ -75,6 +84,46 @@ public class Venta {
 
     @Column(nullable = false, length = 10)
     private String estado;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "sunat_estado", nullable = false, length = 20)
+    private SunatEstado sunatEstado;
+
+    @Column(name = "sunat_codigo", length = 20)
+    private String sunatCodigo;
+
+    @Column(name = "sunat_mensaje", length = 500)
+    private String sunatMensaje;
+
+    @Column(name = "sunat_hash", length = 120)
+    private String sunatHash;
+
+    @Column(name = "sunat_ticket", length = 120)
+    private String sunatTicket;
+
+    @Column(name = "sunat_xml_nombre", length = 180)
+    private String sunatXmlNombre;
+
+    @Column(name = "sunat_xml_key", length = 600)
+    private String sunatXmlKey;
+
+    @Column(name = "sunat_zip_nombre", length = 180)
+    private String sunatZipNombre;
+
+    @Column(name = "sunat_zip_key", length = 600)
+    private String sunatZipKey;
+
+    @Column(name = "sunat_cdr_nombre", length = 180)
+    private String sunatCdrNombre;
+
+    @Column(name = "sunat_cdr_key", length = 600)
+    private String sunatCdrKey;
+
+    @Column(name = "sunat_enviado_at")
+    private LocalDateTime sunatEnviadoAt;
+
+    @Column(name = "sunat_respondido_at")
+    private LocalDateTime sunatRespondidoAt;
 
     @Convert(converter = EstadoActivoConverter.class)
     @Column(name = "activo", nullable = false)
@@ -99,6 +148,12 @@ public class Venta {
         if (this.tipoComprobante == null || this.tipoComprobante.isBlank()) {
             this.tipoComprobante = "NOTA DE VENTA";
         }
+        if (this.moneda == null || this.moneda.isBlank()) {
+            this.moneda = "PEN";
+        }
+        if (this.formaPago == null || this.formaPago.isBlank()) {
+            this.formaPago = "CONTADO";
+        }
         if (this.igvPorcentaje == null) {
             this.igvPorcentaje = BigDecimal.valueOf(18);
         }
@@ -117,6 +172,9 @@ public class Venta {
         if (this.estado == null || this.estado.isBlank()) {
             this.estado = "EMITIDA";
         }
+        if (this.sunatEstado == null) {
+            this.sunatEstado = requiereComprobanteElectronico() ? SunatEstado.PENDIENTE : SunatEstado.NO_APLICA;
+        }
         if (this.activo == null || this.activo.isBlank()) {
             this.activo = "ACTIVO";
         }
@@ -125,5 +183,13 @@ public class Venta {
     @PreUpdate
     protected void onUpdate() {
         this.updatedAt = LocalDateTime.now();
+    }
+
+    private boolean requiereComprobanteElectronico() {
+        if (this.tipoComprobante == null) {
+            return false;
+        }
+        return "BOLETA".equalsIgnoreCase(this.tipoComprobante)
+                || "FACTURA".equalsIgnoreCase(this.tipoComprobante);
     }
 }

@@ -12,31 +12,38 @@ import com.sistemapos.sistematextil.model.Categoria;
 
 public interface CategoriaRepository extends JpaRepository<Categoria, Integer> {
 
-    Page<Categoria> findAllByOrderByIdCategoriaAsc(Pageable pageable);
+    Page<Categoria> findByDeletedAtIsNullAndEstadoOrderByIdCategoriaAsc(String estado, Pageable pageable);
 
-    Page<Categoria> findBySucursal_IdSucursalOrderByIdCategoriaAsc(Integer idSucursal, Pageable pageable);
-
-    Page<Categoria> findByNombreCategoriaContainingIgnoreCaseOrderByIdCategoriaAsc(String nombreCategoria, Pageable pageable);
-
-    Page<Categoria> findBySucursal_IdSucursalAndNombreCategoriaContainingIgnoreCaseOrderByIdCategoriaAsc(
+    Page<Categoria> findBySucursal_IdSucursalAndDeletedAtIsNullAndEstadoOrderByIdCategoriaAsc(
             Integer idSucursal,
+            String estado,
+            Pageable pageable);
+
+    Page<Categoria> findByDeletedAtIsNullAndEstadoAndNombreCategoriaContainingIgnoreCaseOrderByIdCategoriaAsc(
+            String estado,
+            String nombreCategoria,
+            Pageable pageable);
+
+    Page<Categoria> findBySucursal_IdSucursalAndDeletedAtIsNullAndEstadoAndNombreCategoriaContainingIgnoreCaseOrderByIdCategoriaAsc(
+            Integer idSucursal,
+            String estado,
             String nombreCategoria,
             Pageable pageable);
 
     Optional<Categoria> findByIdCategoria(Integer idCategoria);
 
+    Optional<Categoria> findByIdCategoriaAndDeletedAtIsNullAndEstado(Integer idCategoria, String estado);
+
     Optional<Categoria> findByIdCategoriaAndSucursal_IdSucursal(Integer idCategoria, Integer idSucursal);
+
+    Optional<Categoria> findByIdCategoriaAndSucursal_IdSucursalAndDeletedAtIsNullAndEstado(
+            Integer idCategoria,
+            Integer idSucursal,
+            String estado);
 
     Optional<Categoria> findBySucursal_IdSucursalAndNombreCategoriaIgnoreCase(Integer idSucursal, String nombreCategoria);
 
     List<Categoria> findBySucursal_IdSucursal(Integer idSucursal);
-
-    boolean existsBySucursal_IdSucursalAndNombreCategoriaIgnoreCase(Integer idSucursal, String nombreCategoria);
-
-    boolean existsBySucursal_IdSucursalAndNombreCategoriaIgnoreCaseAndIdCategoriaNot(
-            Integer idSucursal,
-            String nombreCategoria,
-            Integer idCategoria);
 
     @Query("SELECT COUNT(p) > 0 FROM Producto p WHERE p.categoria.idCategoria = :idCategoria")
     boolean estaEnUso(Integer idCategoria);

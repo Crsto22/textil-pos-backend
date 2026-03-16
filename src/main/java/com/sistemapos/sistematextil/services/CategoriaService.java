@@ -28,6 +28,9 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class CategoriaService {
 
+    private static final String ESTADO_ACTIVO = "ACTIVO";
+    private static final String ESTADO_INACTIVO = "INACTIVO";
+
     private final CategoriaRepository categoriaRepository;
     private final SucursalRepository sucursalRepository;
     private final UsuarioRepository usuarioRepository;
@@ -42,9 +45,10 @@ public class CategoriaService {
 
         PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idCategoria").ascending());
         Page<Categoria> categorias = esAdministrador(usuarioAutenticado)
-                ? categoriaRepository.findAllByOrderByIdCategoriaAsc(pageable)
-                : categoriaRepository.findBySucursal_IdSucursalOrderByIdCategoriaAsc(
+                ? categoriaRepository.findByDeletedAtIsNullAndEstadoOrderByIdCategoriaAsc(ESTADO_ACTIVO, pageable)
+                : categoriaRepository.findBySucursal_IdSucursalAndDeletedAtIsNullAndEstadoOrderByIdCategoriaAsc(
                         obtenerIdSucursalUsuario(usuarioAutenticado),
+                        ESTADO_ACTIVO,
                         pageable);
 
         return PagedResponse.fromPage(categorias.map(this::toListItemResponse));
@@ -62,9 +66,15 @@ public class CategoriaService {
 
         PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idCategoria").ascending());
         Page<Categoria> categorias = esAdministrador(usuarioAutenticado)
-                ? categoriaRepository.findByNombreCategoriaContainingIgnoreCaseOrderByIdCategoriaAsc(term, pageable)
-                : categoriaRepository.findBySucursal_IdSucursalAndNombreCategoriaContainingIgnoreCaseOrderByIdCategoriaAsc(
+                ? categoriaRepository
+                        .findByDeletedAtIsNullAndEstadoAndNombreCategoriaContainingIgnoreCaseOrderByIdCategoriaAsc(
+                                ESTADO_ACTIVO,
+                                term,
+                                pageable)
+                : categoriaRepository
+                        .findBySucursal_IdSucursalAndDeletedAtIsNullAndEstadoAndNombreCategoriaContainingIgnoreCaseOrderByIdCategoriaAsc(
                         obtenerIdSucursalUsuario(usuarioAutenticado),
+                        ESTADO_ACTIVO,
                         term,
                         pageable);
 
@@ -80,17 +90,35 @@ public class CategoriaService {
         String nombreCategoria = normalizarNombreCategoria(request.nombreCategoria());
         String descripcion = normalizar(request.descripcion());
 
-        if (categoriaRepository.existsBySucursal_IdSucursalAndNombreCategoriaIgnoreCase(
-                sucursal.getIdSucursal(),
-                nombreCategoria)) {
-            throw new RuntimeException("La categoria '" + nombreCategoria + "' ya existe en esta sucursal");
+        Categoria categoriaExistente = categoriaRepository
+                .findBySucursal_IdSucursalAndNombreCategoriaIgnoreCase(sucursal.getIdSucursal(), nombreCategoria)
+                .orElse(null);
+
+        if (categoriaExistente != null) {
+            if (estaDisponible(categoriaExistente)) {
+                throw new RuntimeException("La categoria '" + nombreCategoria + "' ya existe en esta sucursal");
+            }
+
+            categoriaExistente.setSucursal(sucursal);
+            categoriaExistente.setNombreCategoria(nombreCategoria);
+            categoriaExistente.setDescripcion(descripcion);
+            categoriaExistente.setEstado(ESTADO_ACTIVO);
+            categoriaExistente.setDeletedAt(null);
+
+            try {
+                Categoria reactivada = categoriaRepository.save(categoriaExistente);
+                return toListItemResponse(reactivada);
+            } catch (DataIntegrityViolationException e) {
+                throw new RuntimeException("La categoria '" + nombreCategoria + "' ya existe en esta sucursal");
+            }
         }
 
         Categoria categoria = new Categoria();
         categoria.setSucursal(sucursal);
         categoria.setNombreCategoria(nombreCategoria);
         categoria.setDescripcion(descripcion);
-        categoria.setEstado("ACTIVO");
+        categoria.setEstado(ESTADO_ACTIVO);
+        categoria.setDeletedAt(null);
         categoria.setFechaRegistro(LocalDateTime.now());
 
         try {
@@ -115,11 +143,15 @@ public class CategoriaService {
         String nombreCategoria = normalizarNombreCategoria(request.nombreCategoria());
         String descripcion = normalizar(request.descripcion());
 
-        if (categoriaRepository.existsBySucursal_IdSucursalAndNombreCategoriaIgnoreCaseAndIdCategoriaNot(
-                sucursalDestino.getIdSucursal(),
-                nombreCategoria,
-                idCategoria)) {
-            throw new RuntimeException("La categoria '" + nombreCategoria + "' ya existe en esta sucursal");
+        Categoria categoriaConMismoNombre = categoriaRepository
+                .findBySucursal_IdSucursalAndNombreCategoriaIgnoreCase(sucursalDestino.getIdSucursal(), nombreCategoria)
+                .orElse(null);
+        if (categoriaConMismoNombre != null && !categoriaConMismoNombre.getIdCategoria().equals(idCategoria)) {
+            if (estaDisponible(categoriaConMismoNombre)) {
+                throw new RuntimeException("La categoria '" + nombreCategoria + "' ya existe en esta sucursal");
+            }
+            throw new RuntimeException(
+                    "Ya existe una categoria eliminada con el nombre '" + nombreCategoria + "' en esta sucursal");
         }
 
         categoria.setSucursal(sucursalDestino);
@@ -140,26 +172,26 @@ public class CategoriaService {
         validarRolPermitido(usuarioAutenticado);
 
         Categoria categoria = obtenerCategoriaConAlcance(idCategoria, usuarioAutenticado);
-        if (categoriaRepository.estaEnUso(categoria.getIdCategoria())) {
-            throw new RuntimeException("No se puede eliminar la categoria '" + categoria.getNombreCategoria()
-                    + "' porque esta asociada a productos. Te sugiero desactivarla.");
-        }
-
-        categoriaRepository.deleteById(categoria.getIdCategoria());
+        categoria.setEstado(ESTADO_INACTIVO);
+        categoria.setDeletedAt(LocalDateTime.now());
+        categoriaRepository.save(categoria);
     }
 
     public Categoria obtenerPorId(Integer id) {
-        return categoriaRepository.findByIdCategoria(id)
+        return categoriaRepository.findByIdCategoriaAndDeletedAtIsNullAndEstado(id, ESTADO_ACTIVO)
                 .orElseThrow(() -> new RuntimeException("Categoria con ID " + id + " no encontrada"));
     }
 
     private Categoria obtenerCategoriaConAlcance(Integer idCategoria, Usuario usuarioAutenticado) {
         if (esAdministrador(usuarioAutenticado)) {
-            return categoriaRepository.findByIdCategoria(idCategoria)
+            return categoriaRepository.findByIdCategoriaAndDeletedAtIsNullAndEstado(idCategoria, ESTADO_ACTIVO)
                     .orElseThrow(() -> new RuntimeException("Categoria con ID " + idCategoria + " no encontrada"));
         }
         Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
-        return categoriaRepository.findByIdCategoriaAndSucursal_IdSucursal(idCategoria, idSucursalUsuario)
+        return categoriaRepository.findByIdCategoriaAndSucursal_IdSucursalAndDeletedAtIsNullAndEstado(
+                idCategoria,
+                idSucursalUsuario,
+                ESTADO_ACTIVO)
                 .orElseThrow(() -> new RuntimeException("Categoria con ID " + idCategoria + " no encontrada"));
     }
 
@@ -188,7 +220,7 @@ public class CategoriaService {
     private Sucursal obtenerSucursalActiva(Integer idSucursal) {
         Sucursal sucursal = sucursalRepository.findByIdSucursalAndDeletedAtIsNull(idSucursal)
                 .orElseThrow(() -> new RuntimeException("Sucursal no encontrada"));
-        if (!"ACTIVO".equalsIgnoreCase(sucursal.getEstado())) {
+        if (!ESTADO_ACTIVO.equalsIgnoreCase(sucursal.getEstado())) {
             throw new RuntimeException("No se pueden gestionar categorias en una sucursal INACTIVA");
         }
         return sucursal;
@@ -262,5 +294,9 @@ public class CategoriaService {
                 categoria.getFechaRegistro(),
                 idSucursal,
                 nombreSucursal);
+    }
+
+    private boolean estaDisponible(Categoria categoria) {
+        return categoria.getDeletedAt() == null && ESTADO_ACTIVO.equalsIgnoreCase(categoria.getEstado());
     }
 }

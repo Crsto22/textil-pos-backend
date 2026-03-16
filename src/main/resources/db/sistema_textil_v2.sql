@@ -11,16 +11,45 @@ USE sistema_textil;
 CREATE TABLE IF NOT EXISTS empresa (
   id_empresa INT(11) NOT NULL AUTO_INCREMENT,
   nombre VARCHAR(100) NOT NULL,
+  nombre_comercial VARCHAR(150) DEFAULT NULL,
   razon_social VARCHAR(150) NOT NULL,
   ruc VARCHAR(11) NOT NULL,
   correo VARCHAR(150) DEFAULT NULL,
+  telefono VARCHAR(20) DEFAULT NULL,
   logo_url VARCHAR(600) NULL,
+  genera_facturacion_electronica TINYINT(1) NOT NULL DEFAULT 0,
   activo TINYINT(1) NOT NULL DEFAULT 1,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   deleted_at DATETIME(6) DEFAULT NULL,
   PRIMARY KEY (id_empresa),
   UNIQUE KEY uk_empresa_ruc (ruc)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- =========================
+-- SUNAT CONFIG
+-- =========================
+CREATE TABLE IF NOT EXISTS sunat_config (
+  id_sunat_config INT(11) NOT NULL AUTO_INCREMENT,
+  id_empresa INT(11) NOT NULL,
+  ambiente ENUM('BETA','PRODUCCION') NOT NULL DEFAULT 'BETA',
+  usuario_sol VARCHAR(50) NOT NULL,
+  clave_sol VARCHAR(255) NOT NULL,
+  url_bill_service VARCHAR(255) DEFAULT NULL,
+  certificado_url VARCHAR(600) DEFAULT NULL,
+  certificado_password VARCHAR(255) DEFAULT NULL,
+  client_id VARCHAR(255) DEFAULT NULL,
+  client_secret VARCHAR(255) DEFAULT NULL,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  deleted_at DATETIME(6) DEFAULT NULL,
+  PRIMARY KEY (id_sunat_config),
+  UNIQUE KEY uk_sunat_config_empresa_ambiente (id_empresa, ambiente),
+  KEY idx_sunat_config_empresa (id_empresa),
+  CONSTRAINT fk_sunat_config_empresa
+    FOREIGN KEY (id_empresa) REFERENCES empresa (id_empresa)
+    ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- =========================
@@ -34,6 +63,11 @@ CREATE TABLE IF NOT EXISTS sucursal (
   direccion VARCHAR(255) NOT NULL,
   telefono VARCHAR(20) DEFAULT NULL,
   correo VARCHAR(150) DEFAULT NULL,
+  ubigeo VARCHAR(6) DEFAULT NULL,
+  departamento VARCHAR(100) DEFAULT NULL,
+  provincia VARCHAR(100) DEFAULT NULL,
+  distrito VARCHAR(100) DEFAULT NULL,
+  codigo_establecimiento_sunat VARCHAR(4) DEFAULT NULL,
   activo TINYINT(1) NOT NULL DEFAULT 1,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
@@ -160,6 +194,7 @@ CREATE TABLE producto_variante(
   color_id INT NOT NULL,
   sku VARCHAR(100) NOT NULL,
   precio DECIMAL(10,2) NOT NULL,
+  precio_mayor DECIMAL(10,2),
   precio_oferta DECIMAL(10,2),
   oferta_inicio DATETIME(6),
   oferta_fin DATETIME(6),
@@ -176,6 +211,22 @@ CREATE TABLE producto_variante(
   FOREIGN KEY(talla_id) REFERENCES tallas(talla_id),
   FOREIGN KEY(color_id) REFERENCES colores(color_id)
 ) ENGINE=InnoDB;
+
+SET @col_producto_variante_precio_mayor := (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'producto_variante'
+    AND COLUMN_NAME = 'precio_mayor'
+);
+SET @sql := IF(
+  @col_producto_variante_precio_mayor = 0,
+  'ALTER TABLE producto_variante ADD COLUMN precio_mayor DECIMAL(10,2) DEFAULT NULL AFTER precio',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 -- =========================
 -- CLIENTE
@@ -310,6 +361,7 @@ CREATE TABLE IF NOT EXISTS venta (
   tipo_comprobante ENUM('NOTA DE VENTA','BOLETA','FACTURA') NOT NULL DEFAULT 'NOTA DE VENTA',
   serie VARCHAR(10) NOT NULL,
   correlativo INT(11) NOT NULL,
+  moneda CHAR(3) NOT NULL DEFAULT 'PEN',
   igv_porcentaje DECIMAL(5,2) NOT NULL DEFAULT 18.00,
   subtotal DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   descuento_total DECIMAL(10,2) NOT NULL DEFAULT 0.00,
@@ -317,6 +369,19 @@ CREATE TABLE IF NOT EXISTS venta (
   igv DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   total DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   estado ENUM('EMITIDA','ANULADA') NOT NULL DEFAULT 'EMITIDA',
+  sunat_estado VARCHAR(20) NOT NULL DEFAULT 'NO_APLICA',
+  sunat_codigo VARCHAR(20) DEFAULT NULL,
+  sunat_mensaje VARCHAR(500) DEFAULT NULL,
+  sunat_hash VARCHAR(120) DEFAULT NULL,
+  sunat_ticket VARCHAR(120) DEFAULT NULL,
+  sunat_xml_nombre VARCHAR(180) DEFAULT NULL,
+  sunat_xml_key VARCHAR(600) DEFAULT NULL,
+  sunat_zip_nombre VARCHAR(180) DEFAULT NULL,
+  sunat_zip_key VARCHAR(600) DEFAULT NULL,
+  sunat_cdr_nombre VARCHAR(180) DEFAULT NULL,
+  sunat_cdr_key VARCHAR(600) DEFAULT NULL,
+  sunat_enviado_at DATETIME(6) DEFAULT NULL,
+  sunat_respondido_at DATETIME(6) DEFAULT NULL,
   activo TINYINT(1) NOT NULL DEFAULT 1,
   fecha DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
@@ -344,10 +409,15 @@ CREATE TABLE IF NOT EXISTS venta_detalle (
   id_venta_detalle INT(11) NOT NULL AUTO_INCREMENT,
   id_venta INT(11) NOT NULL,
   id_producto_variante INT(11) NOT NULL,
+  descripcion VARCHAR(255) DEFAULT NULL,
   cantidad INT(11) NOT NULL,
+  unidad_medida VARCHAR(3) NOT NULL DEFAULT 'NIU',
+  codigo_tipo_afectacion_igv VARCHAR(2) NOT NULL DEFAULT '10',
   precio_unitario DECIMAL(10,2) NOT NULL,
   descuento DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  igv_detalle DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   subtotal DECIMAL(10,2) NOT NULL,
+  total_detalle DECIMAL(10,2) DEFAULT NULL,
   activo TINYINT(1) NOT NULL DEFAULT 1,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
@@ -374,14 +444,13 @@ CREATE TABLE IF NOT EXISTS cotizacion (
   serie VARCHAR(10) DEFAULT NULL,
   correlativo INT(11) DEFAULT NULL,
   fecha DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  fecha_vencimiento DATETIME(6) DEFAULT NULL,
   igv_porcentaje DECIMAL(5,2) NOT NULL DEFAULT 18.00,
   subtotal DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   descuento_total DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   tipo_descuento ENUM('MONTO','PORCENTAJE') DEFAULT NULL,
   igv DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   total DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-  estado ENUM('BORRADOR','ENVIADA','APROBADA','RECHAZADA','VENCIDA','CONVERTIDA') NOT NULL DEFAULT 'BORRADOR',
+  estado ENUM('ACTIVA','CONVERTIDA') NOT NULL DEFAULT 'ACTIVA',
   observacion VARCHAR(500) DEFAULT NULL,
   activo TINYINT(1) NOT NULL DEFAULT 1,
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
@@ -390,7 +459,6 @@ CREATE TABLE IF NOT EXISTS cotizacion (
   KEY idx_cotizacion_sucursal (id_sucursal),
   KEY idx_cotizacion_usuario (id_usuario),
   KEY idx_cotizacion_cliente (id_cliente),
-  KEY idx_cotizacion_fecha_vencimiento (fecha_vencimiento),
   UNIQUE KEY uk_cotizacion_numero (id_sucursal, serie, correlativo),
   CONSTRAINT fk_cotizacion_sucursal
     FOREIGN KEY (id_sucursal) REFERENCES sucursal (id_sucursal)
@@ -402,6 +470,54 @@ CREATE TABLE IF NOT EXISTS cotizacion (
     FOREIGN KEY (id_cliente) REFERENCES cliente (id_cliente)
     ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+SET @sql := 'ALTER TABLE cotizacion MODIFY COLUMN estado ENUM(''BORRADOR'',''ENVIADA'',''APROBADA'',''RECHAZADA'',''VENCIDA'',''ACTIVA'',''CONVERTIDA'') NOT NULL DEFAULT ''ACTIVA''';
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+UPDATE cotizacion
+SET estado = CASE
+  WHEN UPPER(TRIM(COALESCE(estado, ''))) = 'CONVERTIDA' THEN 'CONVERTIDA'
+  ELSE 'ACTIVA'
+END;
+
+SET @idx_cotizacion_vencimiento := (
+  SELECT COUNT(*)
+  FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'cotizacion'
+    AND INDEX_NAME = 'idx_cotizacion_fecha_vencimiento'
+);
+SET @sql := IF(
+  @idx_cotizacion_vencimiento = 0,
+  'SELECT 1',
+  'ALTER TABLE cotizacion DROP INDEX idx_cotizacion_fecha_vencimiento'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @col_cotizacion_vencimiento := (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'cotizacion'
+    AND COLUMN_NAME = 'fecha_vencimiento'
+);
+SET @sql := IF(
+  @col_cotizacion_vencimiento = 0,
+  'SELECT 1',
+  'ALTER TABLE cotizacion DROP COLUMN fecha_vencimiento'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @sql := 'ALTER TABLE cotizacion MODIFY COLUMN estado ENUM(''ACTIVA'',''CONVERTIDA'') NOT NULL DEFAULT ''ACTIVA''';
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 -- =========================
 -- COTIZACION DETALLE
@@ -451,7 +567,7 @@ CREATE TABLE IF NOT EXISTS pago (
   id_venta INT(11) NOT NULL,
   id_metodo_pago INT(11) NOT NULL,
   monto DECIMAL(10,2) NOT NULL,
-  referencia VARCHAR(100) DEFAULT NULL,
+  codigo_operacion VARCHAR(100) DEFAULT NULL,
   activo TINYINT(1) NOT NULL DEFAULT 1,
   fecha DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
@@ -466,6 +582,33 @@ CREATE TABLE IF NOT EXISTS pago (
     FOREIGN KEY (id_metodo_pago) REFERENCES metodo_pago_config (id_metodo_pago)
     ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+SET @col_pago_codigo_operacion := (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'pago'
+    AND COLUMN_NAME = 'codigo_operacion'
+);
+SET @col_pago_referencia := (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'pago'
+    AND COLUMN_NAME = 'referencia'
+);
+SET @sql := IF(
+  @col_pago_codigo_operacion > 0,
+  'SELECT 1',
+  IF(
+    @col_pago_referencia = 0,
+    'ALTER TABLE pago ADD COLUMN codigo_operacion VARCHAR(100) DEFAULT NULL AFTER monto',
+    'ALTER TABLE pago CHANGE COLUMN referencia codigo_operacion VARCHAR(100) DEFAULT NULL'
+  )
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 -- =========================
 -- HISTORIAL STOCK
@@ -536,23 +679,26 @@ CREATE TABLE IF NOT EXISTS importacion_producto_historial (
 -- DATOS INICIALES MINIMOS (EMPRESA + SUCURSAL)
 -- =========================
 INSERT INTO empresa (
-  id_empresa, nombre, razon_social, ruc, correo, activo, created_at, updated_at, deleted_at
+  id_empresa, nombre, nombre_comercial, razon_social, ruc, correo, telefono, genera_facturacion_electronica, activo, created_at, updated_at, deleted_at
 ) VALUES (
-  1, 'Empresa Demo', 'Empresa Demo S.A.C.', '20123456789', 'empresa@demo.com', 1,
+  1, 'Empresa Demo', 'Empresa Demo', 'Empresa Demo S.A.C.', '20123456789', 'empresa@demo.com', '900000000', 0, 1,
   CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6), NULL
 )
 ON DUPLICATE KEY UPDATE
   nombre = VALUES(nombre),
+  nombre_comercial = VALUES(nombre_comercial),
   razon_social = VALUES(razon_social),
   correo = VALUES(correo),
+  telefono = VALUES(telefono),
+  genera_facturacion_electronica = VALUES(genera_facturacion_electronica),
   activo = VALUES(activo),
   updated_at = CURRENT_TIMESTAMP(6);
 
 INSERT INTO sucursal (
-  id_sucursal, id_empresa, nombre, descripcion, direccion, telefono, correo, activo, created_at, updated_at, deleted_at
+  id_sucursal, id_empresa, nombre, descripcion, direccion, telefono, correo, ubigeo, departamento, provincia, distrito, codigo_establecimiento_sunat, activo, created_at, updated_at, deleted_at
 ) VALUES (
   1, 1, 'Sucursal Principal', 'Sucursal inicial del sistema', 'Direccion principal',
-  '900000000', 'sucursal@demo.com', 1, CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6), NULL
+  '900000000', 'sucursal@demo.com', '150101', 'LIMA', 'LIMA', 'LIMA', '0000', 1, CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6), NULL
 )
 ON DUPLICATE KEY UPDATE
   id_empresa = VALUES(id_empresa),
@@ -561,6 +707,11 @@ ON DUPLICATE KEY UPDATE
   direccion = VALUES(direccion),
   telefono = VALUES(telefono),
   correo = VALUES(correo),
+  ubigeo = VALUES(ubigeo),
+  departamento = VALUES(departamento),
+  provincia = VALUES(provincia),
+  distrito = VALUES(distrito),
+  codigo_establecimiento_sunat = VALUES(codigo_establecimiento_sunat),
   activo = VALUES(activo),
   updated_at = CURRENT_TIMESTAMP(6);
 

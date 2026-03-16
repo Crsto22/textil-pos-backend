@@ -3,8 +3,10 @@ package com.sistemapos.sistematextil.model;
 import java.time.LocalDateTime;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.sistemapos.sistematextil.model.converter.EstadoActivoConverter;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
@@ -14,7 +16,6 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
-import jakarta.persistence.Convert;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -22,7 +23,6 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
-import com.sistemapos.sistematextil.model.converter.EstadoActivoConverter;
 
 @Entity
 @Table(name = "sucursal")
@@ -43,17 +43,31 @@ public class Sucursal {
 
     private String descripcion;
 
-    // NUEVOS CAMPOS
-    @NotBlank(message = "La dirección es obligatoria")
+    @NotBlank(message = "La direccion es obligatoria")
     private String direccion;
 
-    @NotBlank(message = "El teléfono es obligatorio")
-    @Size(min = 7, max = 15, message = "El teléfono debe tener entre 7 y 15 caracteres")
+    @NotBlank(message = "El telefono es obligatorio")
+    @Size(min = 7, max = 15, message = "El telefono debe tener entre 7 y 15 caracteres")
     private String telefono;
 
     @NotBlank(message = "El correo es obligatorio")
-    @Email(message = "Correo no válido")
+    @Email(message = "Correo no valido")
     private String correo;
+
+    @Column(length = 6)
+    private String ubigeo;
+
+    @Column(length = 100)
+    private String departamento;
+
+    @Column(length = 100)
+    private String provincia;
+
+    @Column(length = 100)
+    private String distrito;
+
+    @Column(name = "codigo_establecimiento_sunat", length = 4)
+    private String codigoEstablecimientoSunat;
 
     @Convert(converter = EstadoActivoConverter.class)
     @Column(name = "activo", nullable = false)
@@ -67,7 +81,7 @@ public class Sucursal {
 
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "id_empresa", nullable = false)
-    @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
+    @JsonIgnoreProperties({ "hibernateLazyInitializer", "handler" })
     private Empresa empresa;
 
     @PrePersist
@@ -80,5 +94,4 @@ public class Sucursal {
         }
         this.deletedAt = null;
     }
-
 }

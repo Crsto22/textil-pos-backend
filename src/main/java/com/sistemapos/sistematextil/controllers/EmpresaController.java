@@ -42,22 +42,24 @@ public class EmpresaController {
     }
 
     @GetMapping("listar")
-    public ResponseEntity<List<Empresa>> listarEmpresa() {
-        List<Empresa> empresas = empresaService.listarTodas();
+    public ResponseEntity<List<EmpresaResponse>> listarEmpresa() {
+        List<EmpresaResponse> empresas = empresaService.listarTodas().stream()
+                .map(EmpresaResponse::fromEntity)
+                .toList();
         return ResponseEntity.ok(empresas);
     }
 
     @PostMapping("insertar")
-    public ResponseEntity<Empresa> crearEmpresa(@Valid @RequestBody Empresa empresa) {
+    public ResponseEntity<EmpresaResponse> crearEmpresa(@Valid @RequestBody Empresa empresa) {
         Empresa nuevaEmpresa = empresaService.insertar(empresa);
-        return new ResponseEntity<>(nuevaEmpresa, HttpStatus.CREATED);
+        return new ResponseEntity<>(EmpresaResponse.fromEntity(nuevaEmpresa), HttpStatus.CREATED);
     }
 
     @GetMapping("buscar/{id}")
-    public ResponseEntity<Empresa> obtener(@PathVariable Integer id) {
+    public ResponseEntity<EmpresaResponse> obtener(@PathVariable Integer id) {
         try {
             Empresa empresa = empresaService.obtenerPorId(id);
-            return ResponseEntity.ok(empresa);
+            return ResponseEntity.ok(EmpresaResponse.fromEntity(empresa));
         } catch (RuntimeException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(null);
         }
@@ -86,13 +88,11 @@ public class EmpresaController {
     }
 
     @PutMapping("/{id}/logo")
-public ResponseEntity<Empresa> subirLogo(
-        @PathVariable Integer id,
-        @RequestParam("file") MultipartFile file) throws IOException {
-
-    return ResponseEntity.ok(
-            empresaService.subirLogo(id, file)
-    );
-}
+    public ResponseEntity<EmpresaResponse> subirLogo(
+            @PathVariable Integer id,
+            @RequestParam("file") MultipartFile file) throws IOException {
+        Empresa empresa = empresaService.subirLogo(id, file);
+        return ResponseEntity.ok(EmpresaResponse.fromEntity(empresa));
+    }
 
 }

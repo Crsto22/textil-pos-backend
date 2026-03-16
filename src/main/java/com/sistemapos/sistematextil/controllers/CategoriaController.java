@@ -95,7 +95,7 @@ public class CategoriaController {
     public ResponseEntity<?> eliminar(Authentication authentication, @PathVariable Integer id) {
         try {
             categoriaService.eliminar(id, obtenerCorreoAutenticado(authentication));
-            return ResponseEntity.ok(Map.of("message", "Categoria eliminada correctamente"));
+            return ResponseEntity.ok(Map.of("message", "Categoria eliminada logicamente"));
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al eliminar categoria" : e.getMessage();
             HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);

@@ -7,7 +7,6 @@ import java.util.List;
 public record CotizacionResponse(
         Integer idCotizacion,
         LocalDateTime fecha,
-        LocalDateTime fechaVencimiento,
         String serie,
         Integer correlativo,
         BigDecimal igvPorcentaje,

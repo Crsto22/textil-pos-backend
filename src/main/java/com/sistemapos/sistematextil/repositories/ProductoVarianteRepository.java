@@ -24,6 +24,10 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
 
     Optional<ProductoVariante> findByIdProductoVarianteAndDeletedAtIsNull(Integer idProductoVariante);
 
+    Optional<ProductoVariante> findByIdProductoVarianteAndDeletedAtIsNullAndSucursal_IdSucursal(
+            Integer idProductoVariante,
+            Integer idSucursal);
+
     List<ProductoVariante> findByIdProductoVarianteInAndDeletedAtIsNull(List<Integer> idsProductoVariante);
 
     Optional<ProductoVariante> findByIdProductoVarianteAndSucursal_IdSucursal(
@@ -68,6 +72,13 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
             String sku,
             Integer idProductoVariante);
 
+    boolean existsByProductoIdProductoAndTallaIdTallaAndColorIdColorAndSucursalIdSucursalAndIdProductoVarianteNot(
+            Integer idProducto,
+            Integer idTalla,
+            Integer idColor,
+            Integer idSucursal,
+            Integer idProductoVariante);
+
     @Query("""
             SELECT COUNT(v) > 0
             FROM ProductoVariante v
@@ -103,6 +114,7 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
                 v.talla.idTalla,
                 v.talla.nombre,
                 v.precio,
+                v.precioMayor,
                 v.precioOferta,
                 v.ofertaInicio,
                 v.ofertaFin,
@@ -115,4 +127,49 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
               AND v.deletedAt IS NULL
             """)
     List<ProductoVarianteResumenRow> obtenerResumenPorProductos(@Param("productoIds") List<Integer> productoIds);
+
+    @Query(
+            value = """
+                    SELECT v
+                    FROM ProductoVariante v
+                    JOIN FETCH v.producto p
+                    LEFT JOIN FETCH p.categoria
+                    LEFT JOIN FETCH p.sucursal
+                    LEFT JOIN FETCH v.color
+                    LEFT JOIN FETCH v.talla
+                    WHERE v.deletedAt IS NULL
+                      AND v.activo = true
+                      AND p.estado <> :estadoProductoExcluido
+                      AND (:idSucursal IS NULL OR p.sucursal.idSucursal = :idSucursal)
+                      AND (:idCategoria IS NULL OR p.categoria.idCategoria = :idCategoria)
+                      AND (:idColor IS NULL OR v.color.idColor = :idColor)
+                      AND (
+                            :term IS NULL
+                            OR LOWER(p.nombre) LIKE LOWER(CONCAT('%', :term, '%'))
+                            OR v.sku LIKE CONCAT(:term, '%')
+                      )
+                    """,
+            countQuery = """
+                    SELECT COUNT(v.idProductoVariante)
+                    FROM ProductoVariante v
+                    JOIN v.producto p
+                    WHERE v.deletedAt IS NULL
+                      AND v.activo = true
+                      AND p.estado <> :estadoProductoExcluido
+                      AND (:idSucursal IS NULL OR p.sucursal.idSucursal = :idSucursal)
+                      AND (:idCategoria IS NULL OR p.categoria.idCategoria = :idCategoria)
+                      AND (:idColor IS NULL OR v.color.idColor = :idColor)
+                      AND (
+                            :term IS NULL
+                            OR LOWER(p.nombre) LIKE LOWER(CONCAT('%', :term, '%'))
+                            OR v.sku LIKE CONCAT(:term, '%')
+                      )
+                    """)
+    Page<ProductoVariante> buscarResumenPaginado(
+            @Param("term") String term,
+            @Param("idSucursal") Integer idSucursal,
+            @Param("idCategoria") Integer idCategoria,
+            @Param("idColor") Integer idColor,
+            @Param("estadoProductoExcluido") String estadoProductoExcluido,
+            Pageable pageable);
 }

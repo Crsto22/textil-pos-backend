@@ -6,6 +6,7 @@ import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -13,6 +14,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -21,9 +23,11 @@ import org.springframework.web.bind.annotation.RestController;
 import com.sistemapos.sistematextil.model.ProductoVariante;
 import com.sistemapos.sistematextil.services.ProductoVarianteService;
 import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
+import com.sistemapos.sistematextil.util.producto.ProductoVarianteListadoResumenResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaListItemResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaLoteUpdateRequest;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaUpdateRequest;
+import com.sistemapos.sistematextil.util.producto.ProductoVarianteUpdateRequest;
 
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
@@ -57,6 +61,28 @@ public class ProductoVarianteController {
         }
     }
 
+    @GetMapping("listar-resumen")
+    public ResponseEntity<?> listarResumen(
+            Authentication authentication,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(name = "q", required = false) String q,
+            @RequestParam(name = "idCategoria", required = false) Integer idCategoria,
+            @RequestParam(name = "idColor", required = false) Integer idColor) {
+        try {
+            PagedResponse<ProductoVarianteListadoResumenResponse> response = service.listarResumenPaginado(
+                    q,
+                    page,
+                    idCategoria,
+                    idColor,
+                    obtenerCorreoAutenticado(authentication));
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al listar resumen de variantes" : e.getMessage();
+            return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
+                    .body(Map.of("message", message));
+        }
+    }
+
     @GetMapping("ofertas")
     public ResponseEntity<?> listarConOferta(
             @RequestParam(defaultValue = "0") int page) {
@@ -76,6 +102,20 @@ public class ProductoVarianteController {
             return new ResponseEntity<>(service.insertar(variante), HttpStatus.CREATED);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al crear variante" : e.getMessage();
+            return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
+                    .body(Map.of("message", message));
+        }
+    }
+
+    @PutMapping("actualizar/{id}")
+    public ResponseEntity<?> actualizar(
+            Authentication authentication,
+            @PathVariable Integer id,
+            @Valid @RequestBody ProductoVarianteUpdateRequest request) {
+        try {
+            return ResponseEntity.ok(service.actualizar(id, request, obtenerCorreoAutenticado(authentication)));
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al actualizar variante" : e.getMessage();
             return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
                     .body(Map.of("message", message));
         }
@@ -155,6 +195,11 @@ public class ProductoVarianteController {
     }
 
     private HttpStatus resolverStatus(String message, HttpStatus defaultStatus) {
+        String normalizedMessage = message.toLowerCase();
+        if (normalizedMessage.contains("no autenticado")
+                || normalizedMessage.contains("no tiene permisos")) {
+            return HttpStatus.FORBIDDEN;
+        }
         return esNoEncontrada(message) ? HttpStatus.NOT_FOUND : defaultStatus;
     }
 
@@ -163,5 +208,12 @@ public class ProductoVarianteController {
         return normalizedMessage.contains("no encontrada")
                 || normalizedMessage.contains("no encontrado")
                 || normalizedMessage.contains("no existe");
+    }
+
+    private String obtenerCorreoAutenticado(Authentication authentication) {
+        if (authentication == null || authentication.getName() == null || authentication.getName().isBlank()) {
+            throw new RuntimeException("No autenticado");
+        }
+        return authentication.getName();
     }
 }

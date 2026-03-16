@@ -8,7 +8,7 @@ public record VentaPagoResponse(
         Integer idMetodoPago,
         String metodoPago,
         BigDecimal monto,
-        String referencia,
+        String codigoOperacion,
         LocalDateTime fecha
 ) {
 }

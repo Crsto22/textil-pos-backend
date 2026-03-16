@@ -27,6 +27,21 @@ public record SucursalUpdateRequest(
         @Email(message = "Formato de correo invalido")
         String correo,
 
+        @Pattern(regexp = "^$|\\d{6}", message = "El ubigeo debe tener 6 digitos")
+        String ubigeo,
+
+        @Size(max = 100, message = "El departamento no puede superar 100 caracteres")
+        String departamento,
+
+        @Size(max = 100, message = "La provincia no puede superar 100 caracteres")
+        String provincia,
+
+        @Size(max = 100, message = "El distrito no puede superar 100 caracteres")
+        String distrito,
+
+        @Pattern(regexp = "^$|\\d{4}", message = "El codigoEstablecimientoSunat debe tener 4 digitos")
+        String codigoEstablecimientoSunat,
+
         @NotBlank(message = "Ingrese estado")
         @Pattern(regexp = "ACTIVO|INACTIVO", message = "Estado permitido: ACTIVO o INACTIVO")
         String estado,

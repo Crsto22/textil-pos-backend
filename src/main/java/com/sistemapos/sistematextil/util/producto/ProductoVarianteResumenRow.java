@@ -12,6 +12,7 @@ public record ProductoVarianteResumenRow(
         Integer tallaId,
         String tallaNombre,
         Double precio,
+        Double precioMayor,
         Double precioOferta,
         LocalDateTime ofertaInicio,
         LocalDateTime ofertaFin,

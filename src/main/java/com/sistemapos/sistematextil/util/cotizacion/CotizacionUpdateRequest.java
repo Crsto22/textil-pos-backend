@@ -1,6 +1,5 @@
 package com.sistemapos.sistematextil.util.cotizacion;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 import jakarta.validation.Valid;
@@ -18,8 +17,6 @@ public record CotizacionUpdateRequest(
 
         Integer correlativo,
 
-        LocalDateTime fechaVencimiento,
-
         @DecimalMin(value = "0.00", message = "El igvPorcentaje no puede ser negativo")
         Double igvPorcentaje,
 
@@ -28,9 +25,6 @@ public record CotizacionUpdateRequest(
 
         @Size(max = 10, message = "El tipoDescuento no debe superar 10 caracteres")
         String tipoDescuento,
-
-        @Size(max = 20, message = "El estado no debe superar 20 caracteres")
-        String estado,
 
         @Size(max = 500, message = "La observacion no debe superar 500 caracteres")
         String observacion,

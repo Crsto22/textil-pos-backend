@@ -1,11 +1,20 @@
 package com.sistemapos.sistematextil.services;
 
+import java.awt.Color;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.net.URI;
+import java.text.DecimalFormat;
+import java.text.DecimalFormatSymbols;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -18,6 +27,8 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.time.temporal.WeekFields;
 
+import javax.imageio.ImageIO;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -25,6 +36,19 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.lowagie.text.Document;
+import com.lowagie.text.DocumentException;
+import com.lowagie.text.Element;
+import com.lowagie.text.Font;
+import com.lowagie.text.FontFactory;
+import com.lowagie.text.Image;
+import com.lowagie.text.PageSize;
+import com.lowagie.text.Paragraph;
+import com.lowagie.text.Phrase;
+import com.lowagie.text.Rectangle;
+import com.lowagie.text.pdf.PdfPCell;
+import com.lowagie.text.pdf.PdfPTable;
+import com.lowagie.text.pdf.PdfWriter;
 import com.sistemapos.sistematextil.model.Cliente;
 import com.sistemapos.sistematextil.model.Cotizacion;
 import com.sistemapos.sistematextil.model.CotizacionDetalle;
@@ -149,6 +173,37 @@ public class CotizacionService {
         return toResponse(cotizacion, detalles);
     }
 
+    public byte[] generarCotizacionPdfA4(Integer idCotizacion, String correoUsuarioAutenticado) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolLectura(usuarioAutenticado);
+
+        Cotizacion cotizacion = obtenerCotizacionConAlcance(idCotizacion, usuarioAutenticado);
+        List<CotizacionDetalle> detalles = cotizacionDetalleRepository
+                .findByCotizacion_IdCotizacionAndDeletedAtIsNullOrderByIdCotizacionDetalleAsc(cotizacion.getIdCotizacion());
+
+        try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            Document document = new Document(PageSize.A4, 40f, 40f, 36f, 36f);
+            PdfWriter.getInstance(document, output);
+            document.open();
+
+            agregarCabeceraCotizacionPdf(document, cotizacion);
+            document.add(new Paragraph(" "));
+            agregarDatosClienteCotizacionPdf(document, cotizacion);
+            document.add(new Paragraph(" "));
+            agregarPresentacionCotizacionPdf(document);
+            document.add(new Paragraph(" "));
+            agregarDetalleCotizacionPdf(document, detalles);
+            document.add(new Paragraph(" "));
+            agregarResumenCotizacionPdf(document, cotizacion);
+            agregarPieCotizacionPdf(document, cotizacion);
+
+            document.close();
+            return output.toByteArray();
+        } catch (DocumentException | IOException e) {
+            throw new RuntimeException("No se pudo generar el PDF de la cotizacion");
+        }
+    }
+
     @Transactional
     public CotizacionResponse insertar(CotizacionCreateRequest request, String correoUsuarioAutenticado) {
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
@@ -173,14 +228,13 @@ public class CotizacionService {
         cotizacion.setCliente(cliente);
         cotizacion.setSerie(numeroCotizacion.serie());
         cotizacion.setCorrelativo(numeroCotizacion.correlativo());
-        cotizacion.setFechaVencimiento(request.fechaVencimiento());
         cotizacion.setIgvPorcentaje(totales.igvPorcentaje());
         cotizacion.setSubtotal(totales.subtotal());
         cotizacion.setDescuentoTotal(totales.descuentoAplicado());
         cotizacion.setTipoDescuento(totales.tipoDescuento());
         cotizacion.setIgv(totales.igv());
         cotizacion.setTotal(totales.total());
-        cotizacion.setEstado(normalizarEstadoCotizacion(request.estado(), "BORRADOR"));
+        cotizacion.setEstado("ACTIVA");
         cotizacion.setObservacion(normalizarTexto(request.observacion(), 500));
         cotizacion.setActivo("ACTIVO");
 
@@ -219,14 +273,12 @@ public class CotizacionService {
         cotizacion.setCliente(cliente);
         cotizacion.setSerie(numeroCotizacion.serie());
         cotizacion.setCorrelativo(numeroCotizacion.correlativo());
-        cotizacion.setFechaVencimiento(request.fechaVencimiento());
         cotizacion.setIgvPorcentaje(totales.igvPorcentaje());
         cotizacion.setSubtotal(totales.subtotal());
         cotizacion.setDescuentoTotal(totales.descuentoAplicado());
         cotizacion.setTipoDescuento(totales.tipoDescuento());
         cotizacion.setIgv(totales.igv());
         cotizacion.setTotal(totales.total());
-        cotizacion.setEstado(normalizarEstadoCotizacion(request.estado(), cotizacion.getEstado()));
         cotizacion.setObservacion(normalizarTexto(request.observacion(), 500));
         cotizacion.setActivo("ACTIVO");
 
@@ -284,20 +336,46 @@ public class CotizacionService {
             throw new RuntimeException("La cotizacion no tiene detalles para convertir");
         }
 
+        BigDecimal igvPorcentaje = cotizacion.getIgvPorcentaje() == null
+                ? BigDecimal.valueOf(18)
+                : cotizacion.getIgvPorcentaje();
+        BigDecimal factorIgv = BigDecimal.ONE.add(
+                igvPorcentaje.divide(CIEN, 6, RoundingMode.HALF_UP));
+
         List<VentaDetalleCreateItem> detallesVenta = detalles.stream()
-                .map(detalle -> new VentaDetalleCreateItem(
-                        detalle.getProductoVariante().getIdProductoVariante(),
-                        detalle.getCantidad(),
-                        detalle.getPrecioUnitario() == null ? null : detalle.getPrecioUnitario().doubleValue(),
-                        detalle.getDescuento() == null ? null : detalle.getDescuento().doubleValue()))
+                .map(detalle -> {
+                    Double precioConIgv = detalle.getPrecioUnitario() == null
+                            ? null
+                            : detalle.getPrecioUnitario()
+                                    .multiply(factorIgv)
+                                    .setScale(2, RoundingMode.HALF_UP)
+                                    .doubleValue();
+                    Double descuentoConIgv = detalle.getDescuento() == null
+                                    || detalle.getDescuento().compareTo(BigDecimal.ZERO) == 0
+                            ? (detalle.getDescuento() == null ? null : 0.0)
+                            : detalle.getDescuento()
+                                    .multiply(factorIgv)
+                                    .setScale(2, RoundingMode.HALF_UP)
+                                    .doubleValue();
+                    return new VentaDetalleCreateItem(
+                            detalle.getProductoVariante().getIdProductoVariante(),
+                            null,
+                            detalle.getCantidad(),
+                            null,
+                            null,
+                            precioConIgv,
+                            descuentoConIgv);
+                })
                 .toList();
 
-        DescuentoConversionVenta descuentoConversion = resolverDescuentoParaVenta(cotizacion);
+        DescuentoConversionVenta descuentoConversion = resolverDescuentoParaVenta(cotizacion, factorIgv);
 
         VentaCreateRequest ventaRequest = new VentaCreateRequest(
                 cotizacion.getSucursal() != null ? cotizacion.getSucursal().getIdSucursal() : null,
                 cotizacion.getCliente() != null ? cotizacion.getCliente().getIdCliente() : null,
                 request.tipoComprobante(),
+                null,
+                null,
                 null,
                 null,
                 cotizacion.getIgvPorcentaje() == null ? null : cotizacion.getIgvPorcentaje().doubleValue(),
@@ -689,7 +767,6 @@ public class CotizacionService {
             detalleCotizaciones.add(new CotizacionReporteResponse.DetalleItem(
                     cotizacion.getIdCotizacion(),
                     cotizacion.getFecha(),
-                    cotizacion.getFechaVencimiento(),
                     cotizacion.getSerie(),
                     cotizacion.getCorrelativo(),
                     cotizacion.getEstado(),
@@ -753,7 +830,6 @@ public class CotizacionService {
         return new CotizacionListItemResponse(
                 cotizacion.getIdCotizacion(),
                 cotizacion.getFecha(),
-                cotizacion.getFechaVencimiento(),
                 cotizacion.getSerie(),
                 cotizacion.getCorrelativo(),
                 cotizacion.getTotal(),
@@ -775,7 +851,6 @@ public class CotizacionService {
         return new CotizacionResponse(
                 cotizacion.getIdCotizacion(),
                 cotizacion.getFecha(),
-                cotizacion.getFechaVencimiento(),
                 cotizacion.getSerie(),
                 cotizacion.getCorrelativo(),
                 cotizacion.getIgvPorcentaje(),
@@ -793,6 +868,421 @@ public class CotizacionService {
                 cotizacion.getSucursal() != null ? cotizacion.getSucursal().getIdSucursal() : null,
                 cotizacion.getSucursal() != null ? cotizacion.getSucursal().getNombre() : null,
                 detalleResponses);
+    }
+
+    private void agregarCabeceraCotizacionPdf(Document document, Cotizacion cotizacion) throws DocumentException {
+        Sucursal sucursal = cotizacion.getSucursal();
+        String nombreEmpresa = sucursal != null && sucursal.getEmpresa() != null
+                ? valorTexto(sucursal.getEmpresa().getNombre())
+                : "";
+        String razonSocial = sucursal != null && sucursal.getEmpresa() != null
+                ? valorTexto(sucursal.getEmpresa().getRazonSocial())
+                : "";
+        String ruc = sucursal != null && sucursal.getEmpresa() != null
+                ? valorTexto(sucursal.getEmpresa().getRuc())
+                : "";
+        String direccion = sucursal != null ? valorTexto(sucursal.getDireccion()) : "";
+        String telefono = sucursal != null ? valorTexto(sucursal.getTelefono()) : "";
+        String correo = sucursal != null ? valorTexto(sucursal.getCorreo()) : "";
+        Color colorPrimario = new Color(60, 76, 102);
+
+        PdfPTable header = new PdfPTable(new float[] { 6.4f, 3.6f });
+        header.setWidthPercentage(100);
+
+        PdfPCell empresaCell = crearCeldaBaseCotizacion(Rectangle.NO_BORDER, 0f);
+        empresaCell.setPaddingRight(18f);
+
+        Image logo = cargarLogoEmpresaParaPdf(cotizacion);
+        if (logo != null) {
+            PdfPTable empresaWrap = new PdfPTable(new float[] { 2.2f, 4.2f });
+            empresaWrap.setWidthPercentage(100);
+
+            PdfPCell logoCell = crearCeldaBaseCotizacion(Rectangle.NO_BORDER, 0f);
+            logoCell.setVerticalAlignment(Element.ALIGN_MIDDLE);
+            logoCell.setPaddingRight(8f);
+            logo.scaleToFit(120f, 60f);
+            logo.setAlignment(Element.ALIGN_CENTER);
+            logoCell.addElement(logo);
+            empresaWrap.addCell(logoCell);
+
+            PdfPCell datosEmpresaCell = crearCeldaBaseCotizacion(Rectangle.NO_BORDER, 0f);
+            datosEmpresaCell.setVerticalAlignment(Element.ALIGN_MIDDLE);
+            datosEmpresaCell.setPaddingTop(4f);
+            agregarDatosEmpresaCotizacionPdf(
+                    datosEmpresaCell,
+                    nombreEmpresa,
+                    razonSocial,
+                    ruc,
+                    direccion,
+                    telefono,
+                    correo,
+                    colorPrimario);
+            empresaWrap.addCell(datosEmpresaCell);
+
+            empresaCell.addElement(empresaWrap);
+        } else {
+            agregarDatosEmpresaCotizacionPdf(
+                    empresaCell,
+                    nombreEmpresa,
+                    razonSocial,
+                    ruc,
+                    direccion,
+                    telefono,
+                    correo,
+                    colorPrimario);
+        }
+        header.addCell(empresaCell);
+
+        PdfPCell documentoCell = crearCeldaBaseCotizacion(Rectangle.BOX, 12f);
+        documentoCell.setBorderColor(colorPrimario);
+        documentoCell.setHorizontalAlignment(Element.ALIGN_CENTER);
+        documentoCell.setVerticalAlignment(Element.ALIGN_MIDDLE);
+
+        Paragraph titulo = new Paragraph("COTIZACION", fuenteCotizacion(true, 15f, colorPrimario));
+        titulo.setAlignment(Element.ALIGN_CENTER);
+        documentoCell.addElement(titulo);
+
+        Paragraph numero = new Paragraph(numeroCotizacionPdf(cotizacion), fuenteCotizacion(true, 13f));
+        numero.setAlignment(Element.ALIGN_CENTER);
+        numero.setSpacingBefore(6f);
+        documentoCell.addElement(numero);
+
+        header.addCell(documentoCell);
+        document.add(header);
+    }
+
+    private void agregarDatosEmpresaCotizacionPdf(
+            PdfPCell cell,
+            String nombreEmpresa,
+            String razonSocial,
+            String ruc,
+            String direccion,
+            String telefono,
+            String correo,
+            Color colorPrimario) {
+        String nombreMostrar = !razonSocial.isBlank() ? razonSocial : nombreEmpresa;
+        if (!nombreMostrar.isBlank()) {
+            Paragraph empresa = new Paragraph(nombreMostrar, fuenteCotizacion(true, 14f, colorPrimario));
+            empresa.setAlignment(Element.ALIGN_LEFT);
+            cell.addElement(empresa);
+        }
+        if (!nombreEmpresa.isBlank() && !nombreEmpresa.equalsIgnoreCase(razonSocial)) {
+            Paragraph nombre = new Paragraph(nombreEmpresa, fuenteCotizacion(false, 10f, new Color(70, 70, 70)));
+            nombre.setAlignment(Element.ALIGN_LEFT);
+            nombre.setSpacingBefore(2f);
+            cell.addElement(nombre);
+        }
+        if (!ruc.isBlank()) {
+            Paragraph rucP = new Paragraph("RUC: " + ruc, fuenteCotizacion(false, 10f));
+            rucP.setAlignment(Element.ALIGN_LEFT);
+            rucP.setSpacingBefore(2f);
+            cell.addElement(rucP);
+        }
+        if (!direccion.isBlank()) {
+            Paragraph direccionP = new Paragraph("Direccion: " + direccion, fuenteCotizacion(false, 9.5f));
+            direccionP.setAlignment(Element.ALIGN_LEFT);
+            direccionP.setSpacingBefore(2f);
+            cell.addElement(direccionP);
+        }
+        if (!telefono.isBlank()) {
+            Paragraph telefonoP = new Paragraph("Telefono: " + telefono, fuenteCotizacion(false, 9.5f));
+            telefonoP.setAlignment(Element.ALIGN_LEFT);
+            telefonoP.setSpacingBefore(1f);
+            cell.addElement(telefonoP);
+        }
+        if (!correo.isBlank()) {
+            Paragraph correoP = new Paragraph("Correo: " + correo, fuenteCotizacion(false, 9.5f));
+            correoP.setAlignment(Element.ALIGN_LEFT);
+            correoP.setSpacingBefore(1f);
+            cell.addElement(correoP);
+        }
+    }
+
+    private void agregarDatosClienteCotizacionPdf(Document document, Cotizacion cotizacion) throws DocumentException {
+        Cliente cliente = cotizacion.getCliente();
+        String nombreCliente = cliente != null && !valorTexto(cliente.getNombres()).isBlank()
+                ? valorTexto(cliente.getNombres())
+                : "CLIENTE NO REGISTRADO";
+        String documento = cliente != null && !valorTexto(cliente.getNroDocumento()).isBlank()
+                ? valorTexto(cliente.getNroDocumento())
+                : "-";
+        String direccionCliente = cliente != null && !valorTexto(cliente.getDireccion()).isBlank()
+                ? valorTexto(cliente.getDireccion())
+                : "-";
+        String fecha = formatearFechaCotizacionPdf(cotizacion.getFecha());
+        String asesor = valorTexto(nombreUsuario(cotizacion.getUsuario()));
+        String estado = valorTexto(cotizacion.getEstado());
+
+        PdfPTable tabla = new PdfPTable(new float[] { 2f, 4.5f, 1.7f, 1.8f });
+        tabla.setWidthPercentage(100);
+
+        agregarFilaDatoCotizacionPdf(tabla, "Cliente", nombreCliente, "Fecha", fecha);
+        agregarFilaDatoCotizacionPdf(tabla, "Documento", documento, "Estado", estado.isBlank() ? "-" : estado);
+        agregarFilaDatoCotizacionPdf(tabla, "Direccion", direccionCliente, "Cotizacion", numeroCotizacionPdf(cotizacion));
+        agregarFilaDatoCotizacionPdf(tabla, "Asesor", asesor.isBlank() ? "-" : asesor, "", "");
+
+        document.add(tabla);
+    }
+
+    private void agregarPresentacionCotizacionPdf(Document document) throws DocumentException {
+        Paragraph presente = new Paragraph("Presente.-", fuenteCotizacion(false, 11f));
+        presente.setSpacingBefore(2f);
+        document.add(presente);
+
+        Paragraph introduccion = new Paragraph(
+                "Le(s) hacemos llegar nuestra Cotizacion de acuerdo a los productos solicitados:",
+                fuenteCotizacion(false, 11f));
+        introduccion.setSpacingBefore(8f);
+        introduccion.setLeading(16f);
+        document.add(introduccion);
+    }
+
+    private void agregarDetalleCotizacionPdf(Document document, List<CotizacionDetalle> detalles) throws DocumentException {
+        PdfPTable tabla = new PdfPTable(new float[] { 0.8f, 5.7f, 1.2f, 1.6f, 1.5f, 1.7f });
+        tabla.setWidthPercentage(100);
+        tabla.setHeaderRows(1);
+        tabla.setSpacingBefore(4f);
+
+        Color colorHeader = new Color(60, 76, 102);
+        tabla.addCell(crearCeldaHeaderCotizacion("Item", Element.ALIGN_CENTER, colorHeader));
+        tabla.addCell(crearCeldaHeaderCotizacion("Descripcion", Element.ALIGN_LEFT, colorHeader));
+        tabla.addCell(crearCeldaHeaderCotizacion("Cant.", Element.ALIGN_CENTER, colorHeader));
+        tabla.addCell(crearCeldaHeaderCotizacion("P. Unit.", Element.ALIGN_RIGHT, colorHeader));
+        tabla.addCell(crearCeldaHeaderCotizacion("Dscto.", Element.ALIGN_RIGHT, colorHeader));
+        tabla.addCell(crearCeldaHeaderCotizacion("Importe", Element.ALIGN_RIGHT, colorHeader));
+
+        int fila = 1;
+        for (CotizacionDetalle detalle : detalles) {
+            Color fondo = fila % 2 == 0 ? new Color(247, 249, 252) : null;
+            tabla.addCell(crearCeldaDetalleCotizacion(String.valueOf(fila), Element.ALIGN_CENTER, fondo));
+            tabla.addCell(crearCeldaDetalleCotizacion(descripcionDetalleCotizacionPdf(detalle), Element.ALIGN_LEFT, fondo));
+            tabla.addCell(crearCeldaDetalleCotizacion(String.valueOf(valorEntero(detalle.getCantidad())), Element.ALIGN_CENTER, fondo));
+            tabla.addCell(crearCeldaDetalleCotizacion(formatearMonedaCotizacionPdf(detalle.getPrecioUnitario()), Element.ALIGN_RIGHT, fondo));
+            tabla.addCell(crearCeldaDetalleCotizacion(formatearMonedaCotizacionPdf(detalle.getDescuento()), Element.ALIGN_RIGHT, fondo));
+            tabla.addCell(crearCeldaDetalleCotizacion(formatearMonedaCotizacionPdf(detalle.getSubtotal()), Element.ALIGN_RIGHT, fondo));
+            fila++;
+        }
+
+        document.add(tabla);
+    }
+
+    private void agregarResumenCotizacionPdf(Document document, Cotizacion cotizacion) throws DocumentException {
+        PdfPTable resumen = new PdfPTable(new float[] { 6.5f, 2.5f });
+        resumen.setWidthPercentage(42);
+        resumen.setHorizontalAlignment(Element.ALIGN_RIGHT);
+        resumen.setSpacingBefore(6f);
+
+        agregarFilaResumenCotizacionPdf(resumen, "Subtotal", formatearMonedaCotizacionPdf(cotizacion.getSubtotal()), false);
+        if (cotizacion.getDescuentoTotal() != null && cotizacion.getDescuentoTotal().compareTo(BigDecimal.ZERO) > 0) {
+            agregarFilaResumenCotizacionPdf(
+                    resumen,
+                    "Descuento",
+                    "-" + formatearMonedaCotizacionPdf(cotizacion.getDescuentoTotal()),
+                    false);
+        }
+        agregarFilaResumenCotizacionPdf(
+                resumen,
+                "IGV (" + formatearDecimalCotizacionPdf(cotizacion.getIgvPorcentaje()) + "%)",
+                formatearMonedaCotizacionPdf(cotizacion.getIgv()),
+                false);
+        agregarFilaResumenCotizacionPdf(resumen, "TOTAL", formatearMonedaCotizacionPdf(cotizacion.getTotal()), true);
+
+        document.add(resumen);
+    }
+
+    private void agregarPieCotizacionPdf(Document document, Cotizacion cotizacion) throws DocumentException {
+        String observacion = valorTexto(cotizacion.getObservacion());
+
+        if (!observacion.isBlank()) {
+            Paragraph observacionTitulo = new Paragraph("Observaciones:", fuenteCotizacion(true, 10.5f));
+            observacionTitulo.setSpacingBefore(12f);
+            document.add(observacionTitulo);
+
+            Paragraph observacionTexto = new Paragraph(observacion, fuenteCotizacion(false, 10f));
+            observacionTexto.setLeading(15f);
+            document.add(observacionTexto);
+        }
+
+        Paragraph cierre = new Paragraph("Gracias por su preferencia.", fuenteCotizacion(true, 11f, new Color(60, 76, 102)));
+        cierre.setSpacingBefore(18f);
+        cierre.setAlignment(Element.ALIGN_LEFT);
+        document.add(cierre);
+    }
+
+    private void agregarFilaDatoCotizacionPdf(PdfPTable tabla, String label1, String value1, String label2, String value2) {
+        Color fondo = new Color(245, 247, 250);
+        tabla.addCell(crearCeldaDatoCotizacion(label1, true, fondo));
+        tabla.addCell(crearCeldaDatoCotizacion(value1, false, fondo));
+        tabla.addCell(crearCeldaDatoCotizacion(label2, true, fondo));
+        tabla.addCell(crearCeldaDatoCotizacion(value2, false, fondo));
+    }
+
+    private void agregarFilaResumenCotizacionPdf(
+            PdfPTable tabla,
+            String label,
+            String value,
+            boolean destacado) {
+        Font labelFont = fuenteCotizacion(destacado, destacado ? 10.5f : 9.5f);
+        Font valueFont = fuenteCotizacion(destacado, destacado ? 10.5f : 9.5f);
+        Color fondo = destacado ? new Color(236, 241, 248) : null;
+
+        PdfPCell labelCell = new PdfPCell(new Phrase(label, labelFont));
+        labelCell.setBorder(Rectangle.NO_BORDER);
+        labelCell.setHorizontalAlignment(Element.ALIGN_RIGHT);
+        labelCell.setPadding(5f);
+        if (fondo != null) {
+            labelCell.setBackgroundColor(fondo);
+        }
+        tabla.addCell(labelCell);
+
+        PdfPCell valueCell = new PdfPCell(new Phrase(value, valueFont));
+        valueCell.setBorder(Rectangle.NO_BORDER);
+        valueCell.setHorizontalAlignment(Element.ALIGN_RIGHT);
+        valueCell.setPadding(5f);
+        if (fondo != null) {
+            valueCell.setBackgroundColor(fondo);
+        }
+        tabla.addCell(valueCell);
+    }
+
+    private PdfPCell crearCeldaHeaderCotizacion(String texto, int alignment, Color backgroundColor) {
+        PdfPCell cell = new PdfPCell(new Phrase(valorTexto(texto), fuenteCotizacion(true, 9f, Color.WHITE)));
+        cell.setHorizontalAlignment(alignment);
+        cell.setVerticalAlignment(Element.ALIGN_MIDDLE);
+        cell.setPadding(6f);
+        cell.setBackgroundColor(backgroundColor);
+        cell.setBorderColor(Color.WHITE);
+        return cell;
+    }
+
+    private PdfPCell crearCeldaDetalleCotizacion(String texto, int alignment, Color backgroundColor) {
+        PdfPCell cell = new PdfPCell(new Phrase(valorTexto(texto), fuenteCotizacion(false, 9f)));
+        cell.setHorizontalAlignment(alignment);
+        cell.setVerticalAlignment(Element.ALIGN_TOP);
+        cell.setPadding(5f);
+        cell.setBorderColor(new Color(225, 230, 236));
+        if (backgroundColor != null) {
+            cell.setBackgroundColor(backgroundColor);
+        }
+        return cell;
+    }
+
+    private PdfPCell crearCeldaDatoCotizacion(String texto, boolean label, Color backgroundColor) {
+        PdfPCell cell = new PdfPCell(new Phrase(valorTexto(texto), fuenteCotizacion(label, 9.5f)));
+        cell.setBorder(Rectangle.NO_BORDER);
+        cell.setPadding(5f);
+        if (backgroundColor != null) {
+            cell.setBackgroundColor(backgroundColor);
+        }
+        return cell;
+    }
+
+    private PdfPCell crearCeldaBaseCotizacion(int border, float padding) {
+        PdfPCell cell = new PdfPCell();
+        cell.setBorder(border);
+        cell.setPadding(padding);
+        return cell;
+    }
+
+    private Image cargarLogoEmpresaParaPdf(Cotizacion cotizacion) {
+        String logoUrl = cotizacion != null
+                && cotizacion.getSucursal() != null
+                && cotizacion.getSucursal().getEmpresa() != null
+                        ? cotizacion.getSucursal().getEmpresa().getLogoUrl()
+                        : null;
+        if (logoUrl == null || logoUrl.isBlank()) {
+            return null;
+        }
+
+        ImageIO.scanForPlugins();
+
+        try (InputStream stream = URI.create(logoUrl).toURL().openStream()) {
+            BufferedImage buffered = ImageIO.read(stream);
+            if (buffered != null) {
+                ByteArrayOutputStream png = new ByteArrayOutputStream();
+                ImageIO.write(buffered, "png", png);
+                Image image = Image.getInstance(png.toByteArray());
+                image.setAlignment(Element.ALIGN_LEFT);
+                return image;
+            }
+        } catch (Exception ex) {
+            return null;
+        }
+
+        return null;
+    }
+
+    private Font fuenteCotizacion(boolean bold, float size) {
+        return fuenteCotizacion(bold, size, Color.BLACK);
+    }
+
+    private Font fuenteCotizacion(boolean bold, float size, Color color) {
+        return FontFactory.getFont(
+                FontFactory.HELVETICA,
+                size,
+                bold ? Font.BOLD : Font.NORMAL,
+                color);
+    }
+
+    private String numeroCotizacionPdf(Cotizacion cotizacion) {
+        if (cotizacion == null) {
+            return "-";
+        }
+        String serie = valorTexto(cotizacion.getSerie());
+        Integer correlativo = cotizacion.getCorrelativo();
+        if (serie.isBlank() && correlativo == null) {
+            return "-";
+        }
+        return serie + "-" + String.format("%06d", correlativo == null ? 0 : correlativo);
+    }
+
+    private String descripcionDetalleCotizacionPdf(CotizacionDetalle detalle) {
+        if (detalle == null || detalle.getProductoVariante() == null) {
+            return "-";
+        }
+
+        ProductoVariante variante = detalle.getProductoVariante();
+        List<String> partes = new ArrayList<>();
+        if (variante.getProducto() != null && variante.getProducto().getNombre() != null) {
+            partes.add(variante.getProducto().getNombre().trim());
+        }
+        if (variante.getSku() != null && !variante.getSku().isBlank()) {
+            partes.add("SKU: " + variante.getSku().trim());
+        }
+        if (variante.getColor() != null && variante.getColor().getNombre() != null) {
+            partes.add("Color: " + variante.getColor().getNombre().trim());
+        }
+        if (variante.getTalla() != null && variante.getTalla().getNombre() != null) {
+            partes.add("Talla: " + variante.getTalla().getNombre().trim());
+        }
+        return partes.isEmpty() ? "-" : String.join(" | ", partes);
+    }
+
+    private String formatearMonedaCotizacionPdf(BigDecimal monto) {
+        BigDecimal normalizado = moneda(monto);
+        DecimalFormatSymbols symbols = DecimalFormatSymbols.getInstance(Locale.US);
+        DecimalFormat format = new DecimalFormat("0.00", symbols);
+        return format.format(normalizado);
+    }
+
+    private String formatearDecimalCotizacionPdf(BigDecimal valor) {
+        if (valor == null) {
+            return "0.00";
+        }
+        DecimalFormatSymbols symbols = DecimalFormatSymbols.getInstance(Locale.US);
+        DecimalFormat format = new DecimalFormat("0.##", symbols);
+        return format.format(valor);
+    }
+
+    private String formatearFechaCotizacionPdf(LocalDateTime fecha) {
+        if (fecha == null) {
+            return "";
+        }
+        return fecha.format(DateTimeFormatter.ofPattern("dd/MM/yyyy"));
+    }
+
+    private String valorTexto(String value) {
+        return value == null ? "" : value.trim();
     }
 
     private CotizacionDetalleResponse toDetalleResponse(CotizacionDetalle detalle) {
@@ -835,7 +1325,7 @@ public class CotizacionService {
         if ("CONVERTIDA".equals(estado)) {
             throw new RuntimeException("La cotizacion ya fue convertida a venta");
         }
-        if ("RECHAZADA".equals(estado) || "VENCIDA".equals(estado)) {
+        if (!"ACTIVA".equals(estado)) {
             throw new RuntimeException("La cotizacion no puede convertirse a venta en su estado actual");
         }
     }
@@ -872,13 +1362,9 @@ public class CotizacionService {
             return defaultValue;
         }
         String normalized = estado.trim().toUpperCase(Locale.ROOT);
-        if (!"BORRADOR".equals(normalized)
-                && !"ENVIADA".equals(normalized)
-                && !"APROBADA".equals(normalized)
-                && !"RECHAZADA".equals(normalized)
-                && !"VENCIDA".equals(normalized)
+        if (!"ACTIVA".equals(normalized)
                 && !"CONVERTIDA".equals(normalized)) {
-            throw new RuntimeException("estado permitido: BORRADOR, ENVIADA, APROBADA, RECHAZADA, VENCIDA o CONVERTIDA");
+            throw new RuntimeException("estado permitido: ACTIVA o CONVERTIDA");
         }
         return normalized;
     }
@@ -1221,7 +1707,7 @@ public class CotizacionService {
         return completo.isEmpty() ? usuario.getCorreo() : completo;
     }
 
-    private DescuentoConversionVenta resolverDescuentoParaVenta(Cotizacion cotizacion) {
+    private DescuentoConversionVenta resolverDescuentoParaVenta(Cotizacion cotizacion, BigDecimal factorIgv) {
         if (cotizacion == null || cotizacion.getDescuentoTotal() == null) {
             return new DescuentoConversionVenta(null, null);
         }
@@ -1233,14 +1719,17 @@ public class CotizacionService {
 
         String tipoDescuento = cotizacion.getTipoDescuento();
         if (tipoDescuento == null || tipoDescuento.isBlank()) {
-            return new DescuentoConversionVenta(descuento.doubleValue(), "MONTO");
+            BigDecimal descuentoConIgv = descuento.multiply(factorIgv).setScale(2, RoundingMode.HALF_UP);
+            return new DescuentoConversionVenta(descuentoConIgv.doubleValue(), "MONTO");
         }
 
         String tipoNormalizado = tipoDescuento.trim().toUpperCase(Locale.ROOT);
         if ("PORCENTAJE".equals(tipoNormalizado)) {
-            return new DescuentoConversionVenta(descuento.doubleValue(), "MONTO");
+            BigDecimal descuentoConIgv = descuento.multiply(factorIgv).setScale(2, RoundingMode.HALF_UP);
+            return new DescuentoConversionVenta(descuentoConIgv.doubleValue(), "MONTO");
         }
-        return new DescuentoConversionVenta(descuento.doubleValue(), tipoNormalizado);
+        BigDecimal descuentoConIgv = descuento.multiply(factorIgv).setScale(2, RoundingMode.HALF_UP);
+        return new DescuentoConversionVenta(descuentoConIgv.doubleValue(), tipoNormalizado);
     }
 
     private BigDecimal promedio(BigDecimal montoTotal, long cantidadCotizaciones) {

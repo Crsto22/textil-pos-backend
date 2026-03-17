@@ -126,7 +126,8 @@ public class ClienteService {
                     .orElseThrow(() -> new RuntimeException("Cliente con ID " + idCliente + " no encontrado"));
         }
 
-        if (esVentas(usuarioAutenticado) && !idSucursalUsuario.equals(request.idSucursal())) {
+        if (esVentas(usuarioAutenticado)
+            && (idSucursalUsuario == null || !idSucursalUsuario.equals(request.idSucursal()))) {
             throw new RuntimeException("No tiene permisos para mover clientes a otra sucursal");
         }
 

@@ -52,10 +52,11 @@ public class ProductoController {
             Authentication authentication,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(name = "idCategoria", required = false) Integer idCategoria,
-            @RequestParam(name = "idColor", required = false) Integer idColor) {
+            @RequestParam(name = "idColor", required = false) Integer idColor,
+            @RequestParam(name = "conOferta", required = false) Boolean conOferta) {
         try {
             PagedResponse<ProductoListItemResponse> response = productoService
-                    .listarPaginado(page, idCategoria, idColor, obtenerCorreoAutenticado(authentication));
+                    .listarPaginado(page, idCategoria, idColor, conOferta, obtenerCorreoAutenticado(authentication));
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al listar productos" : e.getMessage();
@@ -69,10 +70,11 @@ public class ProductoController {
             Authentication authentication,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(name = "idCategoria", required = false) Integer idCategoria,
-            @RequestParam(name = "idColor", required = false) Integer idColor) {
+            @RequestParam(name = "idColor", required = false) Integer idColor,
+            @RequestParam(name = "conOferta", required = false) Boolean conOferta) {
         try {
             PagedResponse<ProductoListadoResumenResponse> response = productoService
-                    .listarResumenPaginado(page, idCategoria, idColor, obtenerCorreoAutenticado(authentication));
+                    .listarResumenPaginado(page, idCategoria, idColor, conOferta, obtenerCorreoAutenticado(authentication));
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al listar productos" : e.getMessage();
@@ -87,10 +89,11 @@ public class ProductoController {
             @RequestParam(name = "q", required = false) String q,
             @RequestParam(name = "idCategoria", required = false) Integer idCategoria,
             @RequestParam(name = "idColor", required = false) Integer idColor,
+            @RequestParam(name = "conOferta", required = false) Boolean conOferta,
             @RequestParam(defaultValue = "0") int page) {
         try {
             PagedResponse<ProductoListadoResumenResponse> response = productoService
-                    .buscarPaginado(q, page, idCategoria, idColor, obtenerCorreoAutenticado(authentication));
+                    .buscarPaginado(q, page, idCategoria, idColor, conOferta, obtenerCorreoAutenticado(authentication));
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al buscar productos" : e.getMessage();

@@ -22,48 +22,37 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
-@Table(name = "sunat_config")
+@Table(name = "comunicacion_baja_detalle")
 @NoArgsConstructor
 @AllArgsConstructor
 @Getter
 @Setter
-public class SunatConfig {
+public class ComunicacionBajaDetalle {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "id_sunat_config")
-    private Integer idSunatConfig;
+    @Column(name = "id_baja_detalle")
+    private Integer idBajaDetalle;
 
     @ManyToOne(fetch = FetchType.EAGER)
-    @JoinColumn(name = "id_empresa", nullable = false)
-    private Empresa empresa;
+    @JoinColumn(name = "id_baja", nullable = false)
+    private ComunicacionBaja comunicacionBaja;
 
-    @Column(nullable = false, length = 20)
-    private String ambiente;
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "id_venta", nullable = false)
+    private Venta venta;
 
-    @Column(name = "usuario_sol", nullable = false, length = 50)
-    private String usuarioSol;
+    @Column(name = "tipo_comprobante", nullable = false, length = 20)
+    private String tipoComprobante;
 
-    @Column(name = "clave_sol", nullable = false, length = 255)
-    private String claveSol;
+    @Column(nullable = false, length = 10)
+    private String serie;
 
-    @Column(name = "url_bill_service", length = 255)
-    private String urlBillService;
+    @Column(nullable = false)
+    private Integer correlativo;
 
-    @Column(name = "url_consulta_ticket", length = 255)
-    private String urlConsultaTicket;
-
-    @Column(name = "certificado_url", length = 600)
-    private String certificadoUrl;
-
-    @Column(name = "certificado_password", length = 255)
-    private String certificadoPassword;
-
-    @Column(name = "client_id", length = 255)
-    private String clientId;
-
-    @Column(name = "client_secret", length = 255)
-    private String clientSecret;
+    @Column(nullable = false, length = 255)
+    private String motivo;
 
     @Convert(converter = EstadoActivoConverter.class)
     @Column(name = "activo", nullable = false)
@@ -85,9 +74,6 @@ public class SunatConfig {
             this.createdAt = now;
         }
         this.updatedAt = now;
-        if (this.ambiente == null || this.ambiente.isBlank()) {
-            this.ambiente = "BETA";
-        }
         if (this.activo == null || this.activo.isBlank()) {
             this.activo = "ACTIVO";
         }

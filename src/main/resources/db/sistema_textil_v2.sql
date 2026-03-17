@@ -368,7 +368,11 @@ CREATE TABLE IF NOT EXISTS venta (
   tipo_descuento ENUM('MONTO','PORCENTAJE') DEFAULT NULL,
   igv DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   total DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-  estado ENUM('EMITIDA','ANULADA') NOT NULL DEFAULT 'EMITIDA',
+  estado ENUM('EMITIDA','ANULACION_PENDIENTE','ANULADA') NOT NULL DEFAULT 'EMITIDA',
+  anulacion_tipo VARCHAR(30) DEFAULT NULL,
+  anulacion_motivo VARCHAR(255) DEFAULT NULL,
+  anulacion_fecha DATETIME(6) DEFAULT NULL,
+  id_usuario_anulacion INT(11) DEFAULT NULL,
   sunat_estado VARCHAR(20) NOT NULL DEFAULT 'NO_APLICA',
   sunat_codigo VARCHAR(20) DEFAULT NULL,
   sunat_mensaje VARCHAR(500) DEFAULT NULL,
@@ -396,6 +400,9 @@ CREATE TABLE IF NOT EXISTS venta (
     ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT fk_venta_usuario
     FOREIGN KEY (id_usuario) REFERENCES usuario (id_usuario)
+    ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_venta_usuario_anulacion
+    FOREIGN KEY (id_usuario_anulacion) REFERENCES usuario (id_usuario)
     ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT fk_venta_cliente
     FOREIGN KEY (id_cliente) REFERENCES cliente (id_cliente)
@@ -826,6 +833,87 @@ WHERE cc.deleted_at IS NULL;
 
 ALTER TABLE venta MODIFY COLUMN serie VARCHAR(10) NOT NULL;
 ALTER TABLE venta MODIFY COLUMN correlativo INT(11) NOT NULL;
+ALTER TABLE venta MODIFY COLUMN estado ENUM('EMITIDA','ANULACION_PENDIENTE','ANULADA') NOT NULL DEFAULT 'EMITIDA';
+
+SET @col_venta_anulacion_tipo := (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'venta'
+    AND COLUMN_NAME = 'anulacion_tipo'
+);
+SET @sql := IF(
+  @col_venta_anulacion_tipo = 0,
+  'ALTER TABLE venta ADD COLUMN anulacion_tipo VARCHAR(30) DEFAULT NULL AFTER estado',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @col_venta_anulacion_motivo := (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'venta'
+    AND COLUMN_NAME = 'anulacion_motivo'
+);
+SET @sql := IF(
+  @col_venta_anulacion_motivo = 0,
+  'ALTER TABLE venta ADD COLUMN anulacion_motivo VARCHAR(255) DEFAULT NULL AFTER anulacion_tipo',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @col_venta_anulacion_fecha := (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'venta'
+    AND COLUMN_NAME = 'anulacion_fecha'
+);
+SET @sql := IF(
+  @col_venta_anulacion_fecha = 0,
+  'ALTER TABLE venta ADD COLUMN anulacion_fecha DATETIME(6) DEFAULT NULL AFTER anulacion_motivo',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @col_venta_id_usuario_anulacion := (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'venta'
+    AND COLUMN_NAME = 'id_usuario_anulacion'
+);
+SET @sql := IF(
+  @col_venta_id_usuario_anulacion = 0,
+  'ALTER TABLE venta ADD COLUMN id_usuario_anulacion INT(11) DEFAULT NULL AFTER anulacion_fecha',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @fk_venta_usuario_anulacion := (
+  SELECT COUNT(*)
+  FROM information_schema.REFERENTIAL_CONSTRAINTS
+  WHERE CONSTRAINT_SCHEMA = DATABASE()
+    AND CONSTRAINT_NAME = 'fk_venta_usuario_anulacion'
+    AND TABLE_NAME = 'venta'
+);
+SET @sql := IF(
+  @fk_venta_usuario_anulacion = 0,
+  'ALTER TABLE venta ADD CONSTRAINT fk_venta_usuario_anulacion FOREIGN KEY (id_usuario_anulacion) REFERENCES usuario (id_usuario) ON DELETE RESTRICT ON UPDATE RESTRICT',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 SET @idx_uk_venta_numero := (
   SELECT COUNT(*)

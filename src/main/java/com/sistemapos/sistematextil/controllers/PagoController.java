@@ -110,7 +110,7 @@ public class PagoController {
                     obtenerCorreoAutenticado(authentication));
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
-            String message = e.getMessage() == null ? "Error al actualizar código de operación" : e.getMessage();
+            String message = e.getMessage() == null ? "Error al actualizar codigo de operacion" : e.getMessage();
             HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
             return ResponseEntity.status(status).body(Map.of("message", message));
         }

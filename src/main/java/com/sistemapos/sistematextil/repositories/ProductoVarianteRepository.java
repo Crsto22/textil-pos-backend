@@ -148,6 +148,10 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
                             OR LOWER(p.nombre) LIKE LOWER(CONCAT('%', :term, '%'))
                             OR v.sku LIKE CONCAT(:term, '%')
                       )
+                      AND (
+                            :conOferta IS NULL
+                            OR (:conOferta = true AND v.precioOferta IS NOT NULL AND (v.ofertaInicio IS NULL OR v.ofertaInicio <= CURRENT_TIMESTAMP) AND (v.ofertaFin IS NULL OR v.ofertaFin >= CURRENT_TIMESTAMP))
+                      )
                     """,
             countQuery = """
                     SELECT COUNT(v.idProductoVariante)
@@ -164,12 +168,17 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
                             OR LOWER(p.nombre) LIKE LOWER(CONCAT('%', :term, '%'))
                             OR v.sku LIKE CONCAT(:term, '%')
                       )
+                      AND (
+                            :conOferta IS NULL
+                            OR (:conOferta = true AND v.precioOferta IS NOT NULL AND (v.ofertaInicio IS NULL OR v.ofertaInicio <= CURRENT_TIMESTAMP) AND (v.ofertaFin IS NULL OR v.ofertaFin >= CURRENT_TIMESTAMP))
+                      )
                     """)
     Page<ProductoVariante> buscarResumenPaginado(
             @Param("term") String term,
             @Param("idSucursal") Integer idSucursal,
             @Param("idCategoria") Integer idCategoria,
             @Param("idColor") Integer idColor,
+            @Param("conOferta") Boolean conOferta,
             @Param("estadoProductoExcluido") String estadoProductoExcluido,
             Pageable pageable);
 }

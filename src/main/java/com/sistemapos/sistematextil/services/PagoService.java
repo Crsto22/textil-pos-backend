@@ -5,7 +5,6 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.math.BigDecimal;
 import java.net.URI;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -133,13 +132,14 @@ public class PagoService {
 
         Sucursal sucursalCabecera = resolverSucursalCabeceraReporte(usuarioAutenticado, filtros.idSucursal(), pagos);
         Usuario usuarioFiltro = resolverUsuarioFiltroReporte(filtros.idUsuario(), pagos);
+        Usuario usuarioReporte = esVentas(usuarioAutenticado) ? usuarioAutenticado : usuarioFiltro;
 
         try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             Document document = new Document(PageSize.A4, 30f, 30f, 28f, 28f);
             PdfWriter.getInstance(document, output);
             document.open();
 
-            agregarCabeceraReportePdf(document, sucursalCabecera, pagos.size(), filtros, usuarioFiltro);
+            agregarCabeceraReportePdf(document, sucursalCabecera, pagos.size(), filtros, usuarioReporte);
             document.add(new Paragraph(" "));
             agregarTablaReportePdf(document, pagos);
 
@@ -240,7 +240,7 @@ public class PagoService {
 
         String termNormalizado = normalizarTerminoBusqueda(term);
         Integer idVentaFiltro = normalizarIdPositivo(idVenta, "idVenta");
-        Integer idUsuarioFiltro = normalizarIdPositivo(idUsuario, "idUsuario");
+        Integer idUsuarioFiltro = resolverIdUsuarioListado(usuarioAutenticado, idUsuario);
         Integer idMetodoPagoFiltro = normalizarIdPositivo(idMetodoPago, "idMetodoPago");
         Integer idSucursalFiltro = resolverIdSucursalListado(usuarioAutenticado, idSucursal);
         RangoFechas rango = resolverRangoFechas(desde, hasta);
@@ -268,8 +268,7 @@ public class PagoService {
 
     private void validarRolLectura(Usuario usuario) {
         if (usuario.getRol() != Rol.ADMINISTRADOR
-                && usuario.getRol() != Rol.VENTAS
-                && usuario.getRol() != Rol.ALMACEN) {
+                && usuario.getRol() != Rol.VENTAS) {
             throw new RuntimeException("El usuario autenticado no tiene permisos para consultar pagos");
         }
     }
@@ -312,6 +311,10 @@ public class PagoService {
         return usuario.getRol() == Rol.ADMINISTRADOR;
     }
 
+    private boolean esVentas(Usuario usuario) {
+        return usuario.getRol() == Rol.VENTAS;
+    }
+
     private String nombreUsuario(Usuario usuario) {
         if (usuario == null) {
             return null;
@@ -338,6 +341,22 @@ public class PagoService {
             throw new RuntimeException(field + " debe ser mayor a 0");
         }
         return value;
+    }
+
+    private Integer resolverIdUsuarioListado(Usuario usuarioAutenticado, Integer idUsuarioRequest) {
+        Integer idUsuarioFiltro = normalizarIdPositivo(idUsuarioRequest, "idUsuario");
+        if (!esVentas(usuarioAutenticado)) {
+            return idUsuarioFiltro;
+        }
+
+        Integer idUsuarioAutenticado = usuarioAutenticado.getIdUsuario();
+        if (idUsuarioAutenticado == null || idUsuarioAutenticado <= 0) {
+            throw new RuntimeException("El usuario autenticado no tiene identificador valido");
+        }
+        if (idUsuarioFiltro != null && !idUsuarioAutenticado.equals(idUsuarioFiltro)) {
+            throw new RuntimeException("El usuario autenticado no tiene permisos para filtrar por otro usuario");
+        }
+        return idUsuarioAutenticado;
     }
 
     private RangoFechas resolverRangoFechas(LocalDate desde, LocalDate hasta) {
@@ -455,6 +474,11 @@ public class PagoService {
             infoCell.addElement(new Paragraph(
                     "Usuario filtrado: " + textoUsuarioFiltrado(filtros.idUsuario(), usuarioFiltro),
                     fuentePdf(false, 9f)));
+        }
+        if (usuarioFiltro != null) {
+            infoCell.addElement(new Paragraph(
+                "Usuario reporte: " + nombreUsuario(usuarioFiltro),
+                fuentePdf(false, 9f)));
         }
         header.addCell(infoCell);
 

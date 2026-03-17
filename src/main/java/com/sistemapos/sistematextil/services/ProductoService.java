@@ -83,6 +83,7 @@ public class ProductoService {
             int page,
             Integer idCategoria,
             Integer idColor,
+            Boolean conOferta,
             String correoUsuarioAutenticado) {
         validarPagina(page);
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
@@ -95,6 +96,7 @@ public class ProductoService {
                 idSucursalFiltro,
                 idCategoria,
                 idColor,
+                conOferta,
                 ESTADO_PRODUCTO_ARCHIVADO,
                 pageable);
 
@@ -108,6 +110,7 @@ public class ProductoService {
             int page,
             Integer idCategoria,
             Integer idColor,
+            Boolean conOferta,
             String correoUsuarioAutenticado) {
         validarPagina(page);
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
@@ -115,7 +118,7 @@ public class ProductoService {
 
         String term = normalizar(q);
         if (term == null) {
-            return listarResumenPaginado(page, idCategoria, idColor, correoUsuarioAutenticado);
+            return listarResumenPaginado(page, idCategoria, idColor, conOferta, correoUsuarioAutenticado);
         }
 
         Integer idSucursalFiltro = esAdministrador(usuarioAutenticado) ? null : obtenerIdSucursalUsuario(usuarioAutenticado);
@@ -125,6 +128,7 @@ public class ProductoService {
                 idSucursalFiltro,
                 idCategoria,
                 idColor,
+                conOferta,
                 ESTADO_PRODUCTO_ARCHIVADO,
                 pageable);
 
@@ -171,6 +175,7 @@ public class ProductoService {
             int page,
             Integer idCategoria,
             Integer idColor,
+            Boolean conOferta,
             String correoUsuarioAutenticado) {
         validarPagina(page);
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
@@ -183,6 +188,7 @@ public class ProductoService {
                 idSucursalFiltro,
                 idCategoria,
                 idColor,
+                conOferta,
                 ESTADO_PRODUCTO_ARCHIVADO,
                 pageable);
 
@@ -298,6 +304,7 @@ public class ProductoService {
             String correoUsuarioAutenticado) {
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
         validarRolPermitido(usuarioAutenticado);
+        validarRolEdicionProducto(usuarioAutenticado);
 
         Producto producto = obtenerProductoConAlcance(idProducto, usuarioAutenticado);
         Sucursal sucursalDestino = resolverSucursalParaActualizacion(producto, request.idSucursal(), usuarioAutenticado);
@@ -359,6 +366,7 @@ public class ProductoService {
             String correoUsuarioAutenticado) {
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
         validarRolPermitido(usuarioAutenticado);
+        validarRolEdicionProducto(usuarioAutenticado);
 
         Producto producto = obtenerProductoConAlcance(idProducto, usuarioAutenticado);
         Sucursal sucursalDestino = resolverSucursalParaActualizacion(producto, request.idSucursal(), usuarioAutenticado);
@@ -389,6 +397,7 @@ public class ProductoService {
     public void eliminar(Integer idProducto, String correoUsuarioAutenticado) {
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
         validarRolPermitido(usuarioAutenticado);
+        validarRolEdicionProducto(usuarioAutenticado);
 
         Producto producto = obtenerProductoConAlcance(idProducto, usuarioAutenticado);
         producto.setEstado(ESTADO_PRODUCTO_ARCHIVADO);
@@ -550,6 +559,12 @@ public class ProductoService {
                 && usuario.getRol() != Rol.VENTAS
                 && usuario.getRol() != Rol.ALMACEN) {
             throw new RuntimeException("El usuario autenticado no tiene permisos para gestionar productos");
+        }
+    }
+
+    private void validarRolEdicionProducto(Usuario usuario) {
+        if (usuario.getRol() == Rol.VENTAS) {
+            throw new RuntimeException("El usuario autenticado no tiene permisos para editar o eliminar productos");
         }
     }
 
@@ -1220,7 +1235,7 @@ public class ProductoService {
         if ((ofertaInicio == null) != (ofertaFin == null)) {
             throw new RuntimeException("Debe enviar ofertaInicio y ofertaFin juntas");
         }
-        if (ofertaInicio != null && !ofertaFin.isAfter(ofertaInicio)) {
+        if (ofertaInicio != null && ofertaFin != null && !ofertaFin.isAfter(ofertaInicio)) {
             throw new RuntimeException("ofertaFin debe ser mayor a ofertaInicio");
         }
     }

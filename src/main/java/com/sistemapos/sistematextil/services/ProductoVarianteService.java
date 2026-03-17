@@ -72,6 +72,7 @@ public class ProductoVarianteService {
             int page,
             Integer idCategoria,
             Integer idColor,
+            Boolean conOferta,
             String correoUsuarioAutenticado) {
         validarPagina(page);
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
@@ -85,6 +86,7 @@ public class ProductoVarianteService {
                 idSucursalFiltro,
                 idCategoria,
                 idColor,
+                conOferta,
                 ESTADO_PRODUCTO_ARCHIVADO,
                 pageable);
         Map<ProductoColorKey, ImagenDetalleGroup> imagenes = resolverImagenesDetallePorProductoColor(variantes.getContent());
@@ -499,7 +501,7 @@ public class ProductoVarianteService {
         if ((ofertaInicio == null) != (ofertaFin == null)) {
             throw new RuntimeException("Debe enviar ofertaInicio y ofertaFin juntas");
         }
-        if (ofertaInicio != null && !ofertaFin.isAfter(ofertaInicio)) {
+        if (ofertaInicio != null && ofertaFin != null && !ofertaFin.isAfter(ofertaInicio)) {
             throw new RuntimeException("ofertaFin debe ser mayor a ofertaInicio");
         }
     }

@@ -20,9 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.sistemapos.sistematextil.services.ClienteService;
 import com.sistemapos.sistematextil.util.cliente.ClienteCreateRequest;
-import com.sistemapos.sistematextil.util.cliente.ClienteListItemResponse;
 import com.sistemapos.sistematextil.util.cliente.ClienteUpdateRequest;
-import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
 
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;

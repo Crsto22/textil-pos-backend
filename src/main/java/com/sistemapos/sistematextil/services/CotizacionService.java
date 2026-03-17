@@ -115,7 +115,7 @@ public class CotizacionService {
         validarRolLectura(usuarioAutenticado);
 
         String termNormalizado = normalizarTerminoBusqueda(term);
-        Integer idUsuarioFiltro = normalizarIdUsuarioFiltro(idUsuario);
+        Integer idUsuarioFiltro = resolverIdUsuarioListado(usuarioAutenticado, idUsuario);
         String estadoFiltro = normalizarEstadoCotizacionFiltro(estado);
         RangoFechas rangoFechasFiltro = resolverRangoFechasListado(periodo, fecha, desde, hasta);
         LocalDateTime fechaInicioFiltro = rangoFechasFiltro == null ? null : rangoFechasFiltro.desde().atStartOfDay();
@@ -350,10 +350,11 @@ public class CotizacionService {
                                     .multiply(factorIgv)
                                     .setScale(2, RoundingMode.HALF_UP)
                                     .doubleValue();
-                    Double descuentoConIgv = detalle.getDescuento() == null
-                                    || detalle.getDescuento().compareTo(BigDecimal.ZERO) == 0
-                            ? (detalle.getDescuento() == null ? null : 0.0)
-                            : detalle.getDescuento()
+                    BigDecimal descuentoDetalle = detalle.getDescuento();
+                    Double descuentoConIgv = descuentoDetalle == null
+                            || descuentoDetalle.compareTo(BigDecimal.ZERO) == 0
+                        ? (descuentoDetalle == null ? null : 0.0)
+                        : descuentoDetalle
                                     .multiply(factorIgv)
                                     .setScale(2, RoundingMode.HALF_UP)
                                     .doubleValue();
@@ -1489,6 +1490,22 @@ public class CotizacionService {
         return idUsuario;
     }
 
+    private Integer resolverIdUsuarioListado(Usuario usuarioAutenticado, Integer idUsuarioRequest) {
+        Integer idUsuarioFiltro = normalizarIdUsuarioFiltro(idUsuarioRequest);
+        if (!esVentas(usuarioAutenticado)) {
+            return idUsuarioFiltro;
+        }
+
+        Integer idUsuarioAutenticado = usuarioAutenticado.getIdUsuario();
+        if (idUsuarioAutenticado == null || idUsuarioAutenticado <= 0) {
+            throw new RuntimeException("El usuario autenticado no tiene identificador valido");
+        }
+        if (idUsuarioFiltro != null && !idUsuarioAutenticado.equals(idUsuarioFiltro)) {
+            throw new RuntimeException("El usuario autenticado no tiene permisos para filtrar por otro usuario");
+        }
+        return idUsuarioAutenticado;
+    }
+
     private Integer resolverIdSucursalListado(Usuario usuarioAutenticado, Integer idSucursalRequest) {
         if (esAdministrador(usuarioAutenticado)) {
             if (idSucursalRequest == null) {
@@ -1591,8 +1608,7 @@ public class CotizacionService {
 
     private void validarRolLectura(Usuario usuario) {
         if (usuario.getRol() != Rol.ADMINISTRADOR
-                && usuario.getRol() != Rol.VENTAS
-                && usuario.getRol() != Rol.ALMACEN) {
+                && usuario.getRol() != Rol.VENTAS) {
             throw new RuntimeException("El usuario autenticado no tiene permisos para consultar cotizaciones");
         }
     }
@@ -1606,6 +1622,10 @@ public class CotizacionService {
 
     private boolean esAdministrador(Usuario usuario) {
         return usuario.getRol() == Rol.ADMINISTRADOR;
+    }
+
+    private boolean esVentas(Usuario usuario) {
+        return usuario.getRol() == Rol.VENTAS;
     }
 
     private Integer obtenerIdSucursalUsuario(Usuario usuario) {

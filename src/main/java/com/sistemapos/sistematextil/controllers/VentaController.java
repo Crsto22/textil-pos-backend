@@ -98,6 +98,41 @@ public class VentaController {
     }
 
     @GetMapping(
+            value = "/reporte/pdf",
+            produces = MediaType.APPLICATION_PDF_VALUE)
+    public ResponseEntity<?> reportePdf(
+            Authentication authentication,
+            @RequestParam(name = "agrupar", required = false) String agrupar,
+            @RequestParam(name = "periodo", required = false) String periodo,
+            @RequestParam(name = "desde", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate desde,
+            @RequestParam(name = "hasta", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hasta,
+            @RequestParam(name = "idSucursal", required = false) Integer idSucursal,
+            @RequestParam(name = "incluirAnuladas", defaultValue = "false") boolean incluirAnuladas) {
+        try {
+            byte[] archivo = ventaService.exportarReportePdfVentas(
+                    agrupar,
+                    periodo,
+                    desde,
+                    hasta,
+                    idSucursal,
+                    incluirAnuladas,
+                    obtenerCorreoAutenticado(authentication));
+
+            String ts = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+            String nombreArchivo = "reporte_ventas_" + ts + ".pdf";
+
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + nombreArchivo + "\"")
+                    .contentType(MediaType.APPLICATION_PDF)
+                    .body(archivo);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al exportar reporte de ventas PDF" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
+    @GetMapping(
             value = "/reporte/excel",
             produces = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     public ResponseEntity<?> reporteExcel(

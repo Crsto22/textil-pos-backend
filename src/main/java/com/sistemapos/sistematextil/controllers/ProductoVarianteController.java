@@ -1,6 +1,5 @@
 package com.sistemapos.sistematextil.controllers;
 
-import java.util.List;
 import java.util.Map;
 
 import org.springframework.http.HttpStatus;
@@ -67,13 +66,15 @@ public class ProductoVarianteController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(name = "q", required = false) String q,
             @RequestParam(name = "idCategoria", required = false) Integer idCategoria,
-            @RequestParam(name = "idColor", required = false) Integer idColor) {
+            @RequestParam(name = "idColor", required = false) Integer idColor,
+            @RequestParam(name = "conOferta", required = false) Boolean conOferta) {
         try {
             PagedResponse<ProductoVarianteListadoResumenResponse> response = service.listarResumenPaginado(
                     q,
                     page,
                     idCategoria,
                     idColor,
+                    conOferta,
                     obtenerCorreoAutenticado(authentication));
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {

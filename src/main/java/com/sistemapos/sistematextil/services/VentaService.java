@@ -143,7 +143,7 @@ public class VentaService {
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
         validarRolLectura(usuarioAutenticado);
         String termNormalizado = normalizarTerminoBusqueda(term);
-        Integer idUsuarioFiltro = normalizarIdUsuarioFiltro(idUsuario);
+        Integer idUsuarioFiltro = resolverIdUsuarioListado(usuarioAutenticado, idUsuario);
         String tipoComprobanteFiltro = normalizarTipoComprobanteFiltro(tipoComprobante);
         RangoFechas rangoFechasFiltro = resolverRangoFechasListado(periodo, fecha, desde, hasta);
         LocalDateTime fechaInicioFiltro = rangoFechasFiltro == null ? null : rangoFechasFiltro.desde().atStartOfDay();
@@ -206,6 +206,33 @@ public class VentaService {
                 incluirAnuladas,
                 correoUsuarioAutenticado);
         return construirExcelReporteVentas(reporte);
+    }
+
+    public byte[] exportarReportePdfVentas(
+            String agrupar,
+            String periodo,
+            LocalDate desde,
+            LocalDate hasta,
+            Integer idSucursal,
+            boolean incluirAnuladas,
+            String correoUsuarioAutenticado) {
+        VentaReporteResponse reporte = obtenerReporteVentas(
+                agrupar,
+                periodo,
+                desde,
+                hasta,
+                idSucursal,
+                incluirAnuladas,
+                correoUsuarioAutenticado);
+        List<Integer> ventaIds = reporte.detalleVentas().stream()
+                .map(VentaReporteResponse.DetalleItem::idVenta)
+                .filter(id -> id != null)
+                .toList();
+        List<VentaDetalle> detallesVenta = ventaIds.isEmpty()
+                ? List.of()
+                : ventaDetalleRepository.findActivosByVentaIds(ventaIds);
+        Map<Integer, List<VentaDetalle>> detallesPorVenta = agruparDetallesPorVenta(detallesVenta);
+        return construirPdfReporteVentas(reporte, detallesPorVenta);
     }
 
     public VentaResponse obtenerDetalle(Integer idVenta, String correoUsuarioAutenticado) {
@@ -404,7 +431,6 @@ public class VentaService {
                 .reduce((a, b) -> a + ", " + b).orElse("-");
         String moneda = normalizarMonedaPdf(venta.getMoneda());
 
-        com.lowagie.text.Font fLabel = fuentePdf(true, 6.5f);
         com.lowagie.text.Font fValor = fuentePdf(false, 6.5f);
 
         agregarLineaTicket(document, "F. Emision: " + fechaEmision + "  " + horaEmision, fValor);
@@ -472,7 +498,6 @@ public class VentaService {
     private void agregarResumenTicket(Document document, Venta venta) throws DocumentException {
         String simbolo = simboloMonedaPdf(venta.getMoneda());
         com.lowagie.text.Font fNormal = fuentePdf(false, 7f);
-        com.lowagie.text.Font fBold = fuentePdf(true, 7f);
         com.lowagie.text.Font fTotal = fuentePdf(true, 9f);
 
         agregarFilaTotalTicket(document, "Subtotal " + simbolo, formatearMonedaPdf(venta.getSubtotal()), fNormal);
@@ -2128,7 +2153,9 @@ public class VentaService {
             }
 
             Integer idCliente = venta.getCliente() != null ? venta.getCliente().getIdCliente() : null;
-            String nombreCliente = venta.getCliente() != null ? venta.getCliente().getNombres() : "SIN CLIENTE";
+            String telefonoCliente = venta.getCliente() != null && venta.getCliente().getTelefono() != null && !venta.getCliente().getTelefono().isBlank()
+                    ? " - " + venta.getCliente().getTelefono() : "";
+            String nombreCliente = (venta.getCliente() != null ? venta.getCliente().getNombres() : "SIN CLIENTE") + telefonoCliente;
             String claveCliente = idCliente == null ? "SIN_CLIENTE" : "ID_" + idCliente;
             AcumuladoCliente clienteActual = acumuladoPorCliente.get(claveCliente);
             if (clienteActual == null) {
@@ -2240,11 +2267,8 @@ public class VentaService {
             Map<Integer, List<VentaDetalle>> detallesPorVenta = agruparDetallesPorVenta(detallesVenta);
             Map<Integer, List<Pago>> pagosPorVenta = agruparPagosPorVenta(pagosVenta);
 
-            construirHojaResumen(workbook, reporte, headerStyle, moneyStyle);
             construirHojaDetalle(workbook, reporte, detallesPorVenta, pagosPorVenta, headerStyle, moneyStyle);
             construirHojaDetalleItems(workbook, reporte, detallesPorVenta, headerStyle, moneyStyle);
-            construirHojaPagos(workbook, reporte, pagosPorVenta, headerStyle, moneyStyle);
-            construirHojaClientes(workbook, reporte, headerStyle, moneyStyle);
 
             workbook.write(output);
             return output.toByteArray();
@@ -2253,87 +2277,7 @@ public class VentaService {
         }
     }
 
-    private void construirHojaResumen(
-            Workbook workbook,
-            VentaReporteResponse reporte,
-            CellStyle headerStyle,
-            CellStyle moneyStyle) {
-        Sheet sheet = workbook.createSheet("Resumen");
-        int rowIdx = 0;
 
-        Row titulo = sheet.createRow(rowIdx++);
-        titulo.createCell(0).setCellValue("Reporte de Ventas");
-
-        Row generado = sheet.createRow(rowIdx++);
-        generado.createCell(0).setCellValue("Generado");
-        generado.createCell(1).setCellValue(LocalDateTime.now().format(FECHA_HORA_EXCEL));
-
-        Row agrupacion = sheet.createRow(rowIdx++);
-        agrupacion.createCell(0).setCellValue("Agrupacion");
-        agrupacion.createCell(1).setCellValue(reporte.agrupacion());
-
-        Row periodo = sheet.createRow(rowIdx++);
-        periodo.createCell(0).setCellValue("Periodo filtro");
-        periodo.createCell(1).setCellValue(reporte.periodoFiltro());
-
-        Row rango = sheet.createRow(rowIdx++);
-        rango.createCell(0).setCellValue("Rango");
-        rango.createCell(1).setCellValue(reporte.desde() + " a " + reporte.hasta());
-
-        Row sucursal = sheet.createRow(rowIdx++);
-        sucursal.createCell(0).setCellValue("Sucursal");
-        sucursal.createCell(1).setCellValue(reporte.nombreSucursal());
-
-        Row estadoFiltro = sheet.createRow(rowIdx++);
-        estadoFiltro.createCell(0).setCellValue("Incluye anuladas");
-        estadoFiltro.createCell(1).setCellValue(reporte.incluirAnuladas() ? "SI" : "NO");
-
-        rowIdx++;
-        Row h = sheet.createRow(rowIdx++);
-        h.createCell(0).setCellValue("Indicador");
-        h.createCell(1).setCellValue("Valor");
-        h.getCell(0).setCellStyle(headerStyle);
-        h.getCell(1).setCellStyle(headerStyle);
-
-        Row total = sheet.createRow(rowIdx++);
-        total.createCell(0).setCellValue("Monto total");
-        total.createCell(1).setCellValue(reporte.montoTotal().doubleValue());
-        total.getCell(1).setCellStyle(moneyStyle);
-
-        Row cantidad = sheet.createRow(rowIdx++);
-        cantidad.createCell(0).setCellValue("Cantidad ventas");
-        cantidad.createCell(1).setCellValue(reporte.cantidadVentas());
-
-        Row ticket = sheet.createRow(rowIdx++);
-        ticket.createCell(0).setCellValue("Ticket promedio");
-        ticket.createCell(1).setCellValue(reporte.ticketPromedio().doubleValue());
-        ticket.getCell(1).setCellStyle(moneyStyle);
-
-        rowIdx++;
-        Row hp = sheet.createRow(rowIdx++);
-        hp.createCell(0).setCellValue("Periodo");
-        hp.createCell(1).setCellValue("Cantidad Ventas");
-        hp.createCell(2).setCellValue("Monto Total");
-        hp.createCell(3).setCellValue("Ticket Promedio");
-        hp.getCell(0).setCellStyle(headerStyle);
-        hp.getCell(1).setCellStyle(headerStyle);
-        hp.getCell(2).setCellStyle(headerStyle);
-        hp.getCell(3).setCellStyle(headerStyle);
-
-        for (VentaReporteResponse.PeriodoItem item : reporte.periodos()) {
-            Row r = sheet.createRow(rowIdx++);
-            r.createCell(0).setCellValue(item.periodo());
-            r.createCell(1).setCellValue(item.cantidadVentas());
-            r.createCell(2).setCellValue(item.montoTotal().doubleValue());
-            r.createCell(3).setCellValue(item.ticketPromedio().doubleValue());
-            r.getCell(2).setCellStyle(moneyStyle);
-            r.getCell(3).setCellStyle(moneyStyle);
-        }
-
-        for (int i = 0; i <= 3; i++) {
-            sheet.autoSizeColumn(i);
-        }
-    }
 
     private void construirHojaDetalle(
             Workbook workbook,
@@ -2419,18 +2363,14 @@ public class VentaService {
         String[] headers = {
                 "Comprobante",
                 "FechaVenta",
-                "EstadoVenta",
+                "Estado",
                 "Cliente",
-                "Vendedor",
-                "Sucursal",
                 "Producto",
-                "SKU",
                 "Color",
                 "Talla",
                 "Cantidad",
                 "PrecioUnitario",
-                "DescuentoLinea",
-                "SubtotalLinea"
+                "Total"
         };
         for (int i = 0; i < headers.length; i++) {
             h.createCell(i).setCellValue(headers[i]);
@@ -2451,93 +2391,30 @@ public class VentaService {
                 r.createCell(1).setCellValue(venta.fecha() == null ? "" : venta.fecha().format(FECHA_HORA_EXCEL));
                 r.createCell(2).setCellValue(valorTexto(venta.estado()));
                 r.createCell(3).setCellValue(valorTexto(venta.nombreCliente()));
-                r.createCell(4).setCellValue(valorTexto(venta.nombreUsuario()));
-                r.createCell(5).setCellValue(valorTexto(venta.nombreSucursal()));
-                r.createCell(6).setCellValue(variante != null && variante.getProducto() != null
+                r.createCell(4).setCellValue(variante != null && variante.getProducto() != null
                         ? valorTexto(variante.getProducto().getNombre())
-                        : "");
-                r.createCell(7).setCellValue(variante != null ? valorTexto(variante.getSku()) : "");
-                r.createCell(8).setCellValue(variante != null && variante.getColor() != null
+                        : valorTexto(detalle.getDescripcion()));
+                r.createCell(5).setCellValue(variante != null && variante.getColor() != null
                         ? valorTexto(variante.getColor().getNombre())
                         : "");
-                r.createCell(9).setCellValue(variante != null && variante.getTalla() != null
+                r.createCell(6).setCellValue(variante != null && variante.getTalla() != null
                         ? valorTexto(variante.getTalla().getNombre())
                         : "");
-                r.createCell(10).setCellValue(detalle.getCantidad() == null ? 0 : detalle.getCantidad());
-                r.createCell(11).setCellValue(moneda(detalle.getPrecioUnitario()).doubleValue());
-                r.createCell(12).setCellValue(moneda(detalle.getDescuento()).doubleValue());
-                r.createCell(13).setCellValue(moneda(detalle.getSubtotal()).doubleValue());
-                r.getCell(11).setCellStyle(moneyStyle);
-                r.getCell(12).setCellStyle(moneyStyle);
-                r.getCell(13).setCellStyle(moneyStyle);
-                totalItems = totalItems.add(moneda(detalle.getSubtotal())).setScale(2, RoundingMode.HALF_UP);
-            }
-        }
-
-        Row total = sheet.createRow(rowIdx);
-        total.createCell(0).setCellValue("TOTAL SUBTOTAL ITEMS");
-        total.createCell(13).setCellValue(totalItems.doubleValue());
-        total.getCell(13).setCellStyle(moneyStyle);
-
-        for (int i = 0; i <= 13; i++) {
-            sheet.autoSizeColumn(i);
-        }
-    }
-
-    private void construirHojaPagos(
-            Workbook workbook,
-            VentaReporteResponse reporte,
-            Map<Integer, List<Pago>> pagosPorVenta,
-            CellStyle headerStyle,
-            CellStyle moneyStyle) {
-        Sheet sheet = workbook.createSheet("Pagos Venta");
-        int rowIdx = 0;
-
-        Row h = sheet.createRow(rowIdx++);
-        String[] headers = {
-                "Comprobante",
-                "FechaVenta",
-                "EstadoVenta",
-                "Cliente",
-                "Vendedor",
-                "Sucursal",
-                "MetodoPago",
-                "Codigo de Operacion",
-                "FechaPago",
-                "Monto"
-        };
-        for (int i = 0; i < headers.length; i++) {
-            h.createCell(i).setCellValue(headers[i]);
-            h.getCell(i).setCellStyle(headerStyle);
-        }
-
-        BigDecimal totalPagos = CERO_MONETARIO;
-        for (VentaReporteResponse.DetalleItem venta : reporte.detalleVentas()) {
-            Integer idVenta = venta.idVenta();
-            if (idVenta == null) {
-                continue;
-            }
-            List<Pago> pagosVenta = pagosPorVenta.getOrDefault(idVenta, List.of());
-            for (Pago pago : pagosVenta) {
-                Row r = sheet.createRow(rowIdx++);
-                r.createCell(0).setCellValue(comprobanteTexto(venta));
-                r.createCell(1).setCellValue(venta.fecha() == null ? "" : venta.fecha().format(FECHA_HORA_EXCEL));
-                r.createCell(2).setCellValue(valorTexto(venta.estado()));
-                r.createCell(3).setCellValue(valorTexto(venta.nombreCliente()));
-                r.createCell(4).setCellValue(valorTexto(venta.nombreUsuario()));
-                r.createCell(5).setCellValue(valorTexto(venta.nombreSucursal()));
-                r.createCell(6).setCellValue(pago.getMetodoPago() != null ? valorTexto(pago.getMetodoPago().getNombre()) : "");
-                r.createCell(7).setCellValue(valorTexto(pago.getCodigoOperacion()));
-                r.createCell(8).setCellValue(pago.getFecha() == null ? "" : pago.getFecha().format(FECHA_HORA_EXCEL));
-                r.createCell(9).setCellValue(moneda(pago.getMonto()).doubleValue());
+                r.createCell(7).setCellValue(detalle.getCantidad() == null ? 0 : detalle.getCantidad());
+                r.createCell(8).setCellValue(moneda(detalle.getPrecioUnitario()).doubleValue());
+                BigDecimal totalLinea = detalle.getTotalDetalle() != null
+                        ? detalle.getTotalDetalle()
+                        : moneda(detalle.getSubtotal());
+                r.createCell(9).setCellValue(moneda(totalLinea).doubleValue());
+                r.getCell(8).setCellStyle(moneyStyle);
                 r.getCell(9).setCellStyle(moneyStyle);
-                totalPagos = totalPagos.add(moneda(pago.getMonto())).setScale(2, RoundingMode.HALF_UP);
+                totalItems = totalItems.add(moneda(totalLinea)).setScale(2, RoundingMode.HALF_UP);
             }
         }
 
         Row total = sheet.createRow(rowIdx);
-        total.createCell(0).setCellValue("TOTAL PAGOS");
-        total.createCell(9).setCellValue(totalPagos.doubleValue());
+        total.createCell(0).setCellValue("TOTAL");
+        total.createCell(9).setCellValue(totalItems.doubleValue());
         total.getCell(9).setCellStyle(moneyStyle);
 
         for (int i = 0; i <= 9; i++) {
@@ -2545,42 +2422,171 @@ public class VentaService {
         }
     }
 
-    private void construirHojaClientes(
-            Workbook workbook,
+
+
+    // ─── PDF Reporte de Ventas ────────────────────────────────────────────────
+
+    private static final Color[] COLORES_COMPROBANTE_PDF = {
+            new Color(232, 240, 254),  // celeste claro
+            null                       // sin color
+    };
+
+    private byte[] construirPdfReporteVentas(
             VentaReporteResponse reporte,
-            CellStyle headerStyle,
-            CellStyle moneyStyle) {
-        Sheet sheet = workbook.createSheet("Resumen Clientes");
-        int rowIdx = 0;
+            Map<Integer, List<VentaDetalle>> detallesPorVenta) {
+        try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            Document document = new Document(PageSize.A4.rotate(), 30f, 30f, 30f, 30f);
+            PdfWriter.getInstance(document, output);
+            document.open();
 
-        Row h = sheet.createRow(rowIdx++);
-        h.createCell(0).setCellValue("Cliente");
-        h.createCell(1).setCellValue("Cantidad Ventas");
-        h.createCell(2).setCellValue("Monto Total");
-        h.createCell(3).setCellValue("Ticket Promedio");
-        h.getCell(0).setCellStyle(headerStyle);
-        h.getCell(1).setCellStyle(headerStyle);
-        h.getCell(2).setCellStyle(headerStyle);
-        h.getCell(3).setCellStyle(headerStyle);
+            agregarEncabezadoReportePdf(document, reporte);
+            document.add(new Paragraph(" "));
+            agregarTablaItemsReportePdf(document, reporte, detallesPorVenta);
+            agregarPieTotalReportePdf(document, reporte);
 
-        for (VentaReporteResponse.ClienteItem item : reporte.clientes()) {
-            Row r = sheet.createRow(rowIdx++);
-            r.createCell(0).setCellValue(valorTexto(item.nombreCliente()));
-            r.createCell(1).setCellValue(item.cantidadVentas());
-            r.createCell(2).setCellValue(moneda(item.montoTotal()).doubleValue());
-            r.createCell(3).setCellValue(moneda(item.ticketPromedio()).doubleValue());
-            r.getCell(2).setCellStyle(moneyStyle);
-            r.getCell(3).setCellStyle(moneyStyle);
+            document.close();
+            return output.toByteArray();
+        } catch (IOException | DocumentException e) {
+            throw new RuntimeException("No se pudo generar el PDF del reporte de ventas");
+        }
+    }
+
+    private void agregarEncabezadoReportePdf(Document document, VentaReporteResponse reporte)
+            throws DocumentException {
+        Color colorPrimario = new Color(60, 76, 102);
+
+        Paragraph titulo = new Paragraph("REPORTE DE VENTAS", fuentePdf(true, 16f, colorPrimario));
+        titulo.setAlignment(Element.ALIGN_CENTER);
+        document.add(titulo);
+
+        String sucursalTexto = reporte.nombreSucursal() != null && !reporte.nombreSucursal().isBlank()
+                ? reporte.nombreSucursal() : "TODAS";
+        Paragraph sucursal = new Paragraph("Sucursal: " + sucursalTexto, fuentePdf(true, 11f));
+        sucursal.setAlignment(Element.ALIGN_CENTER);
+        sucursal.setSpacingBefore(4f);
+        document.add(sucursal);
+
+        String rango = (reporte.desde() != null ? reporte.desde().format(DateTimeFormatter.ofPattern("dd/MM/yyyy")) : "-")
+                + " al "
+                + (reporte.hasta() != null ? reporte.hasta().format(DateTimeFormatter.ofPattern("dd/MM/yyyy")) : "-");
+        Paragraph fechas = new Paragraph("Periodo: " + rango, fuentePdf(false, 9.5f));
+        fechas.setAlignment(Element.ALIGN_CENTER);
+        fechas.setSpacingBefore(2f);
+        document.add(fechas);
+
+        String generado = "Generado: " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"));
+        Paragraph gen = new Paragraph(generado, fuentePdf(false, 8.5f, new Color(120, 120, 120)));
+        gen.setAlignment(Element.ALIGN_CENTER);
+        gen.setSpacingBefore(2f);
+        document.add(gen);
+    }
+
+    private void agregarTablaItemsReportePdf(
+            Document document,
+            VentaReporteResponse reporte,
+            Map<Integer, List<VentaDetalle>> detallesPorVenta) throws DocumentException {
+        Color colorHeaderBg = new Color(60, 76, 102);
+
+        // columnas: Comprobante | FechaVenta | Estado | Cliente | Producto | Color | Talla | Cantidad | P.Unit | Total
+        PdfPTable tabla = new PdfPTable(new float[] { 2.8f, 2.2f, 1.6f, 2.8f, 3.2f, 1.5f, 1.2f, 1.2f, 1.6f, 1.6f });
+        tabla.setWidthPercentage(100);
+        tabla.setHeaderRows(1);
+        tabla.setSpacingBefore(6f);
+
+        String[] headers = { "Comprobante", "Fecha Venta", "Estado", "Cliente",
+                "Producto", "Color", "Talla", "Cant.", "P. Unit.", "Total" };
+        int[] aligns = { Element.ALIGN_LEFT, Element.ALIGN_CENTER, Element.ALIGN_CENTER,
+                Element.ALIGN_LEFT, Element.ALIGN_LEFT, Element.ALIGN_CENTER,
+                Element.ALIGN_CENTER, Element.ALIGN_CENTER, Element.ALIGN_RIGHT, Element.ALIGN_RIGHT };
+        for (int i = 0; i < headers.length; i++) {
+            agregarHeaderDetalle(tabla, headers[i], aligns[i], colorHeaderBg);
         }
 
-        Row total = sheet.createRow(rowIdx);
-        total.createCell(0).setCellValue("TOTAL");
-        total.createCell(2).setCellValue(moneda(reporte.montoTotal()).doubleValue());
-        total.getCell(2).setCellStyle(moneyStyle);
+        int colorIdx = 0;
+        Map<Integer, Integer> colorPorVenta = new java.util.LinkedHashMap<>();
 
-        for (int i = 0; i <= 3; i++) {
-            sheet.autoSizeColumn(i);
+        // Primero asignar colores por comprobante (en orden de aparición)
+        for (VentaReporteResponse.DetalleItem ventaItem : reporte.detalleVentas()) {
+            Integer idVenta = ventaItem.idVenta();
+            if (idVenta != null && !colorPorVenta.containsKey(idVenta)) {
+                colorPorVenta.put(idVenta, colorIdx % COLORES_COMPROBANTE_PDF.length);
+                colorIdx++;
+            }
         }
+
+        DateTimeFormatter fmtFecha = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
+
+        for (VentaReporteResponse.DetalleItem ventaItem : reporte.detalleVentas()) {
+            Integer idVenta = ventaItem.idVenta();
+            if (idVenta == null) continue;
+
+            List<VentaDetalle> itemsVenta = detallesPorVenta.getOrDefault(idVenta, List.of());
+            int colorIndex = colorPorVenta.getOrDefault(idVenta, 0);
+            Color bgFila = COLORES_COMPROBANTE_PDF[colorIndex];
+
+            for (VentaDetalle detalle : itemsVenta) {
+                ProductoVariante variante = detalle.getProductoVariante();
+
+                String comprobante = comprobanteTexto(ventaItem);
+                String fechaVenta = ventaItem.fecha() != null ? ventaItem.fecha().format(fmtFecha) : "-";
+                String estado = valorTexto(ventaItem.estado());
+                String cliente = valorTexto(ventaItem.nombreCliente());
+                String producto = variante != null && variante.getProducto() != null
+                        ? valorTexto(variante.getProducto().getNombre())
+                        : valorTexto(detalle.getDescripcion());
+                String color = variante != null && variante.getColor() != null
+                        ? valorTexto(variante.getColor().getNombre()) : "-";
+                String talla = variante != null && variante.getTalla() != null
+                        ? valorTexto(variante.getTalla().getNombre()) : "-";
+                String cantidad = String.valueOf(detalle.getCantidad() == null ? 0 : detalle.getCantidad());
+                String precioUnit = formatearMonedaPdf(detalle.getPrecioUnitario());
+                BigDecimal totalLinea = detalle.getTotalDetalle() != null
+                        ? detalle.getTotalDetalle() : detalle.getSubtotal();
+                String totalStr = formatearMonedaPdf(totalLinea);
+
+                tabla.addCell(crearCeldaReportePdf(comprobante, Element.ALIGN_LEFT, bgFila));
+                tabla.addCell(crearCeldaReportePdf(fechaVenta, Element.ALIGN_CENTER, bgFila));
+                tabla.addCell(crearCeldaReportePdf(estado, Element.ALIGN_CENTER, bgFila));
+                tabla.addCell(crearCeldaReportePdf(cliente, Element.ALIGN_LEFT, bgFila));
+                tabla.addCell(crearCeldaReportePdf(producto, Element.ALIGN_LEFT, bgFila));
+                tabla.addCell(crearCeldaReportePdf(color, Element.ALIGN_CENTER, bgFila));
+                tabla.addCell(crearCeldaReportePdf(talla, Element.ALIGN_CENTER, bgFila));
+                tabla.addCell(crearCeldaReportePdf(cantidad, Element.ALIGN_CENTER, bgFila));
+                tabla.addCell(crearCeldaReportePdf(precioUnit, Element.ALIGN_RIGHT, bgFila));
+                tabla.addCell(crearCeldaReportePdf(totalStr, Element.ALIGN_RIGHT, bgFila));
+            }
+        }
+
+        document.add(tabla);
+    }
+
+    private void agregarPieTotalReportePdf(Document document, VentaReporteResponse reporte)
+            throws DocumentException {
+        Color colorPrimario = new Color(60, 76, 102);
+        String totalFormateado = formatearMonedaPdf(reporte.montoTotal());
+        String ventas = String.valueOf(reporte.cantidadVentas());
+
+        Paragraph p = new Paragraph(
+                String.format("Total de Ventas: S/ %s   |   Cantidad de Comprobantes: %s", totalFormateado, ventas),
+                fuentePdf(true, 10.5f, colorPrimario));
+        p.setAlignment(Element.ALIGN_RIGHT);
+        p.setSpacingBefore(10f);
+        document.add(p);
+    }
+
+    private PdfPCell crearCeldaReportePdf(String texto, int alineacion, Color bgColor) {
+        PdfPCell cell = crearCeldaBase(Rectangle.BOX, 4.5f);
+        cell.setBorderColor(new Color(200, 210, 225));
+        cell.setHorizontalAlignment(alineacion);
+        cell.setVerticalAlignment(Element.ALIGN_MIDDLE);
+        cell.setUseAscender(true);
+        if (bgColor != null) {
+            cell.setBackgroundColor(bgColor);
+        }
+        Paragraph paragraph = new Paragraph(valorTexto(texto), fuentePdf(false, 8.5f));
+        paragraph.setAlignment(alineacion);
+        cell.addElement(paragraph);
+        return cell;
     }
 
     private Map<Integer, List<VentaDetalle>> agruparDetallesPorVenta(List<VentaDetalle> detallesVenta) {
@@ -2882,6 +2888,22 @@ public class VentaService {
         return idUsuario;
     }
 
+    private Integer resolverIdUsuarioListado(Usuario usuarioAutenticado, Integer idUsuarioRequest) {
+        Integer idUsuarioFiltro = normalizarIdUsuarioFiltro(idUsuarioRequest);
+        if (!esVentas(usuarioAutenticado)) {
+            return idUsuarioFiltro;
+        }
+
+        Integer idUsuarioAutenticado = usuarioAutenticado.getIdUsuario();
+        if (idUsuarioAutenticado == null || idUsuarioAutenticado <= 0) {
+            throw new RuntimeException("El usuario autenticado no tiene identificador valido");
+        }
+        if (idUsuarioFiltro != null && !idUsuarioAutenticado.equals(idUsuarioFiltro)) {
+            throw new RuntimeException("El usuario autenticado no tiene permisos para filtrar por otro usuario");
+        }
+        return idUsuarioAutenticado;
+    }
+
     private Integer resolverIdSucursalListado(Usuario usuarioAutenticado, Integer idSucursalRequest) {
         if (esAdministrador(usuarioAutenticado)) {
             if (idSucursalRequest == null) {
@@ -3001,8 +3023,7 @@ public class VentaService {
 
     private void validarRolLectura(Usuario usuario) {
         if (usuario.getRol() != Rol.ADMINISTRADOR
-                && usuario.getRol() != Rol.VENTAS
-                && usuario.getRol() != Rol.ALMACEN) {
+                && usuario.getRol() != Rol.VENTAS) {
             throw new RuntimeException("El usuario autenticado no tiene permisos para consultar ventas");
         }
     }
@@ -3016,6 +3037,10 @@ public class VentaService {
 
     private boolean esAdministrador(Usuario usuario) {
         return usuario.getRol() == Rol.ADMINISTRADOR;
+    }
+
+    private boolean esVentas(Usuario usuario) {
+        return usuario.getRol() == Rol.VENTAS;
     }
 
     private Integer obtenerIdSucursalUsuario(Usuario usuario) {

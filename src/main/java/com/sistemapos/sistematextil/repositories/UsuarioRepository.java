@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import com.sistemapos.sistematextil.model.Usuario;
+import com.sistemapos.sistematextil.repositories.projection.SucursalUsuarioResumenProjection;
 import com.sistemapos.sistematextil.util.usuario.Rol;
 
 
@@ -46,7 +47,10 @@ public interface UsuarioRepository extends JpaRepository <Usuario, Integer>{
     long countBySucursalIdSucursalAndDeletedAtIsNullAndEstado(Integer idSucursal, String estado);
 
     @Query(value = """
-            SELECT CONCAT(u.nombre, ' ', u.apellido)
+            SELECT
+              u.id_usuario AS idUsuario,
+              CONCAT(u.nombre, ' ', u.apellido) AS nombreCompleto,
+              u.foto_perfil_url AS fotoPerfilUrl
             FROM usuario u
             WHERE u.id_sucursal = :idSucursal
               AND u.deleted_at IS NULL
@@ -54,5 +58,6 @@ public interface UsuarioRepository extends JpaRepository <Usuario, Integer>{
             ORDER BY RAND()
             LIMIT 5
             """, nativeQuery = true)
-    List<String> findTop5NombresCompletosRandomBySucursal(@Param("idSucursal") Integer idSucursal);
+    List<SucursalUsuarioResumenProjection> findUsuariosResumenRandomBySucursal(
+            @Param("idSucursal") Integer idSucursal);
 }

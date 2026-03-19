@@ -131,6 +131,7 @@ public class VentaService {
     public PagedResponse<VentaListItemResponse> listarPaginado(
             String term,
             Integer idUsuario,
+            Integer idCliente,
             String tipoComprobante,
             String periodo,
             LocalDate fecha,
@@ -153,11 +154,13 @@ public class VentaService {
 
         PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idVenta").descending());
         Integer idSucursalFiltro = resolverIdSucursalListado(usuarioAutenticado, idSucursal);
+        Integer idClienteFiltro = resolverIdClienteFiltro(usuarioAutenticado, idCliente, idSucursalFiltro);
 
         Page<Venta> ventas = ventaRepository.buscarConFiltros(
                 termNormalizado,
                 idSucursalFiltro,
                 idUsuarioFiltro,
+                idClienteFiltro,
                 tipoComprobanteFiltro,
                 fechaInicioFiltro,
                 fechaFinExclusiveFiltro,
@@ -172,6 +175,7 @@ public class VentaService {
             LocalDate desde,
             LocalDate hasta,
             Integer idSucursal,
+            Integer idCliente,
             boolean incluirAnuladas,
             String correoUsuarioAutenticado) {
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
@@ -183,7 +187,8 @@ public class VentaService {
                 periodo,
                 desde,
                 hasta,
-                idSucursal);
+                idSucursal,
+                idCliente);
         List<Venta> ventas = buscarVentasParaReporte(filtro, incluirAnuladas);
 
         return construirReporteVentas(ventas, filtro, incluirAnuladas);
@@ -195,6 +200,7 @@ public class VentaService {
             LocalDate desde,
             LocalDate hasta,
             Integer idSucursal,
+            Integer idCliente,
             boolean incluirAnuladas,
             String correoUsuarioAutenticado) {
         VentaReporteResponse reporte = obtenerReporteVentas(
@@ -203,6 +209,7 @@ public class VentaService {
                 desde,
                 hasta,
                 idSucursal,
+                idCliente,
                 incluirAnuladas,
                 correoUsuarioAutenticado);
         return construirExcelReporteVentas(reporte);
@@ -214,6 +221,7 @@ public class VentaService {
             LocalDate desde,
             LocalDate hasta,
             Integer idSucursal,
+            Integer idCliente,
             boolean incluirAnuladas,
             String correoUsuarioAutenticado) {
         VentaReporteResponse reporte = obtenerReporteVentas(
@@ -222,6 +230,7 @@ public class VentaService {
                 desde,
                 hasta,
                 idSucursal,
+                idCliente,
                 incluirAnuladas,
                 correoUsuarioAutenticado);
         List<Integer> ventaIds = reporte.detalleVentas().stream()
@@ -1985,7 +1994,8 @@ public class VentaService {
             String periodo,
             LocalDate desde,
             LocalDate hasta,
-            Integer idSucursalRequest) {
+            Integer idSucursalRequest,
+            Integer idClienteRequest) {
         AgrupacionReporte agrupacion = normalizarAgrupacionReporte(agrupar);
         PeriodoFiltro periodoFiltro = normalizarPeriodoFiltro(periodo);
         RangoFechas rango = resolverRangoFechas(periodoFiltro, desde, hasta);
@@ -2010,13 +2020,16 @@ public class VentaService {
             nombreSucursalFiltro = sucursal.getNombre();
         }
 
+        Integer idClienteFiltro = resolverIdClienteFiltro(usuarioAutenticado, idClienteRequest, idSucursalFiltro);
+
         return new FiltroReporteVentas(
                 agrupacion,
                 periodoFiltro,
                 rango.desde(),
                 rango.hasta(),
                 idSucursalFiltro,
-                nombreSucursalFiltro);
+                nombreSucursalFiltro,
+                idClienteFiltro);
     }
 
     private AgrupacionReporte normalizarAgrupacionReporte(String agrupar) {
@@ -2086,32 +2099,13 @@ public class VentaService {
     private List<Venta> buscarVentasParaReporte(FiltroReporteVentas filtro, boolean incluirAnuladas) {
         LocalDateTime fechaInicio = filtro.desde().atStartOfDay();
         LocalDateTime fechaFinExclusive = filtro.hasta().plusDays(1).atStartOfDay();
-
-        if (incluirAnuladas) {
-            if (filtro.idSucursal() == null) {
-                return ventaRepository.findByDeletedAtIsNullAndFechaGreaterThanEqualAndFechaLessThanOrderByFechaAsc(
-                        fechaInicio,
-                        fechaFinExclusive);
-            }
-            return ventaRepository
-                    .findByDeletedAtIsNullAndSucursal_IdSucursalAndFechaGreaterThanEqualAndFechaLessThanOrderByFechaAsc(
-                            filtro.idSucursal(),
-                            fechaInicio,
-                            fechaFinExclusive);
-        }
-
-        if (filtro.idSucursal() == null) {
-            return ventaRepository.findByDeletedAtIsNullAndEstadoAndFechaGreaterThanEqualAndFechaLessThanOrderByFechaAsc(
-                    "EMITIDA",
-                    fechaInicio,
-                    fechaFinExclusive);
-        }
-        return ventaRepository
-                .findByDeletedAtIsNullAndSucursal_IdSucursalAndEstadoAndFechaGreaterThanEqualAndFechaLessThanOrderByFechaAsc(
-                        filtro.idSucursal(),
-                        "EMITIDA",
-                        fechaInicio,
-                        fechaFinExclusive);
+        String estadoFiltro = incluirAnuladas ? null : "EMITIDA";
+        return ventaRepository.buscarParaReporte(
+                filtro.idSucursal(),
+                filtro.idCliente(),
+                estadoFiltro,
+                fechaInicio,
+                fechaFinExclusive);
     }
 
     private VentaReporteResponse construirReporteVentas(
@@ -2904,6 +2898,32 @@ public class VentaService {
         return idUsuarioAutenticado;
     }
 
+    private Integer resolverIdClienteFiltro(
+            Usuario usuarioAutenticado,
+            Integer idClienteRequest,
+            Integer idSucursalFiltro) {
+        if (idClienteRequest == null) {
+            return null;
+        }
+        if (idClienteRequest <= 0) {
+            throw new RuntimeException("idCliente debe ser mayor a 0");
+        }
+
+        if (esAdministrador(usuarioAutenticado) && idSucursalFiltro == null) {
+            return clienteRepository.findByIdClienteAndDeletedAtIsNull(idClienteRequest)
+                    .map(Cliente::getIdCliente)
+                    .orElseThrow(() -> new RuntimeException("Cliente no encontrado"));
+        }
+
+        Integer idSucursalCliente = idSucursalFiltro != null
+                ? idSucursalFiltro
+                : obtenerIdSucursalUsuario(usuarioAutenticado);
+        return clienteRepository
+                .findByIdClienteAndDeletedAtIsNullAndSucursal_IdSucursal(idClienteRequest, idSucursalCliente)
+                .map(Cliente::getIdCliente)
+                .orElseThrow(() -> new RuntimeException("Cliente no encontrado"));
+    }
+
     private Integer resolverIdSucursalListado(Usuario usuarioAutenticado, Integer idSucursalRequest) {
         if (esAdministrador(usuarioAutenticado)) {
             if (idSucursalRequest == null) {
@@ -3075,7 +3095,8 @@ public class VentaService {
             LocalDate desde,
             LocalDate hasta,
             Integer idSucursal,
-            String nombreSucursal) {
+            String nombreSucursal,
+            Integer idCliente) {
     }
 
     private record AcumuladoPeriodo(

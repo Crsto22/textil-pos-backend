@@ -1,6 +1,7 @@
 package com.sistemapos.sistematextil.services;
 
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -9,6 +10,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+
+import org.apache.poi.ss.usermodel.CellStyle;
+import org.apache.poi.ss.usermodel.DataFormat;
+import org.apache.poi.ss.usermodel.Font;
+import org.apache.poi.ss.usermodel.HorizontalAlignment;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -27,6 +39,7 @@ import com.sistemapos.sistematextil.repositories.ProductoVarianteRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
 import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoImagenColorRow;
+import com.sistemapos.sistematextil.util.producto.ProductoVarianteDisponibleExcelRow;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteListadoResumenResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaListItemResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaLoteItemRequest;
@@ -45,6 +58,7 @@ import lombok.RequiredArgsConstructor;
 public class ProductoVarianteService {
 
     private static final String ESTADO_PRODUCTO_ARCHIVADO = "ARCHIVADO";
+    private static final DateTimeFormatter FECHA_HORA_EXCEL = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final ProductoVarianteRepository repository;
     private final ProductoColorImagenRepository productoColorImagenRepository;
@@ -100,6 +114,25 @@ public class ProductoVarianteService {
         Page<ProductoVariante> variantes = repository.findByPrecioOfertaIsNotNullAndDeletedAtIsNull(pageable);
         Map<ProductoColorKey, String> imagenes = resolverImagenesPorProductoColor(variantes.getContent());
         return PagedResponse.fromPage(variantes.map(variante -> toOfertaListItemResponse(variante, imagenes)));
+    }
+
+    public byte[] exportarDisponiblesExcel(String correoUsuarioAutenticado) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolPermitido(usuarioAutenticado);
+
+        Integer idSucursalFiltro = esAdministrador(usuarioAutenticado)
+                ? null
+                : obtenerIdSucursalUsuario(usuarioAutenticado);
+
+        List<ProductoVarianteDisponibleExcelRow> filasConStock = repository.listarDisponiblesParaReporte(
+                idSucursalFiltro,
+                ESTADO_PRODUCTO_ARCHIVADO);
+
+        List<ProductoVarianteDisponibleExcelRow> filasSinStock = repository.listarSinStockParaReporte(
+            idSucursalFiltro,
+            ESTADO_PRODUCTO_ARCHIVADO);
+
+        return construirExcelDisponibles(filasConStock, filasSinStock);
     }
 
     @Scheduled(cron = "0 * * * * *")
@@ -447,6 +480,120 @@ public class ProductoVarianteService {
         if (page < 0) {
             throw new RuntimeException("El parametro page debe ser mayor o igual a 0");
         }
+    }
+
+    private byte[] construirExcelDisponibles(
+            List<ProductoVarianteDisponibleExcelRow> filasConStock,
+            List<ProductoVarianteDisponibleExcelRow> filasSinStock) {
+        try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            CellStyle headerStyle = crearEstiloHeader(workbook);
+            CellStyle moneyStyle = crearEstiloMoneda(workbook);
+
+            construirHojaReporteStock(
+                    workbook,
+                    "Productos Disponibles",
+                    filasConStock,
+                    headerStyle,
+                    moneyStyle);
+            construirHojaReporteStock(
+                    workbook,
+                    "Productos Sin Stock",
+                    filasSinStock,
+                    headerStyle,
+                    moneyStyle);
+
+            workbook.write(output);
+            return output.toByteArray();
+        } catch (IOException e) {
+            throw new RuntimeException("No se pudo generar el Excel de productos disponibles");
+        }
+    }
+
+    private void construirHojaReporteStock(
+            Workbook workbook,
+            String nombreHoja,
+            List<ProductoVarianteDisponibleExcelRow> filas,
+            CellStyle headerStyle,
+            CellStyle moneyStyle) {
+        Sheet sheet = workbook.createSheet(nombreHoja);
+        String[] headers = {
+                "ID Variante",
+                "SKU",
+                "Producto",
+                "Categoria",
+                "Sucursal",
+                "Color",
+                "Talla",
+                "Stock",
+                "Precio",
+                "Precio Mayor",
+                "Precio Oferta",
+                "Precio Vigente",
+                "Estado",
+                "Oferta Inicio",
+                "Oferta Fin"
+        };
+
+        Row headerRow = sheet.createRow(0);
+        for (int i = 0; i < headers.length; i++) {
+            headerRow.createCell(i).setCellValue(headers[i]);
+            headerRow.getCell(i).setCellStyle(headerStyle);
+        }
+
+        int rowIdx = 1;
+        for (ProductoVarianteDisponibleExcelRow fila : filas) {
+            Row row = sheet.createRow(rowIdx++);
+            Double precioVigente = resolverPrecioVigente(
+                    fila.precio(),
+                    fila.precioOferta(),
+                    fila.ofertaInicio(),
+                    fila.ofertaFin());
+            row.createCell(0).setCellValue(fila.idProductoVariante() == null ? 0 : fila.idProductoVariante());
+            row.createCell(1).setCellValue(valorTexto(fila.sku()));
+            row.createCell(2).setCellValue(valorTexto(fila.productoNombre()));
+            row.createCell(3).setCellValue(valorTexto(fila.categoriaNombre()));
+            row.createCell(4).setCellValue(valorTexto(fila.sucursalNombre()));
+            row.createCell(5).setCellValue(valorTexto(fila.colorNombre()));
+            row.createCell(6).setCellValue(valorTexto(fila.tallaNombre()));
+            row.createCell(7).setCellValue(fila.stock() == null ? 0 : fila.stock());
+            row.createCell(8).setCellValue(fila.precio() == null ? 0 : fila.precio());
+            row.createCell(9).setCellValue(fila.precioMayor() == null ? 0 : fila.precioMayor());
+            row.createCell(10).setCellValue(fila.precioOferta() == null ? 0 : fila.precioOferta());
+            row.createCell(11).setCellValue(precioVigente == null ? 0 : precioVigente);
+            row.createCell(12).setCellValue(valorTexto(fila.estado()));
+            row.createCell(13).setCellValue(
+                    fila.ofertaInicio() == null ? "" : fila.ofertaInicio().format(FECHA_HORA_EXCEL));
+            row.createCell(14).setCellValue(fila.ofertaFin() == null ? "" : fila.ofertaFin().format(FECHA_HORA_EXCEL));
+
+            row.getCell(8).setCellStyle(moneyStyle);
+            row.getCell(9).setCellStyle(moneyStyle);
+            row.getCell(10).setCellStyle(moneyStyle);
+            row.getCell(11).setCellStyle(moneyStyle);
+        }
+
+        for (int i = 0; i < headers.length; i++) {
+            sheet.autoSizeColumn(i);
+        }
+    }
+
+    private CellStyle crearEstiloHeader(Workbook workbook) {
+        CellStyle style = workbook.createCellStyle();
+        Font font = workbook.createFont();
+        font.setBold(true);
+        style.setFont(font);
+        style.setAlignment(HorizontalAlignment.CENTER);
+        return style;
+    }
+
+    private CellStyle crearEstiloMoneda(Workbook workbook) {
+        CellStyle style = workbook.createCellStyle();
+        DataFormat format = workbook.createDataFormat();
+        style.setDataFormat(format.getFormat("#,##0.00"));
+        return style;
+    }
+
+    private String valorTexto(String value) {
+        return value == null ? "" : value;
     }
 
     private Double normalizarPrecioOferta(Double precioOferta) {

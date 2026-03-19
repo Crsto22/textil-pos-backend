@@ -43,6 +43,7 @@ public class VentaController {
             Authentication authentication,
             @RequestParam(name = "q", required = false) String q,
             @RequestParam(name = "idUsuario", required = false) Integer idUsuario,
+            @RequestParam(name = "idCliente", required = false) Integer idCliente,
             @RequestParam(name = "tipoComprobante", required = false) String tipoComprobante,
             @RequestParam(name = "periodo", required = false) String periodo,
             @RequestParam(name = "fecha", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha,
@@ -55,6 +56,7 @@ public class VentaController {
                     .listarPaginado(
                             q,
                             idUsuario,
+                            idCliente,
                             tipoComprobante,
                             periodo,
                             fecha,
@@ -79,6 +81,7 @@ public class VentaController {
             @RequestParam(name = "desde", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate desde,
             @RequestParam(name = "hasta", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hasta,
             @RequestParam(name = "idSucursal", required = false) Integer idSucursal,
+            @RequestParam(name = "idCliente", required = false) Integer idCliente,
             @RequestParam(name = "incluirAnuladas", defaultValue = "false") boolean incluirAnuladas) {
         try {
             VentaReporteResponse response = ventaService.obtenerReporteVentas(
@@ -87,6 +90,7 @@ public class VentaController {
                     desde,
                     hasta,
                     idSucursal,
+                    idCliente,
                     incluirAnuladas,
                     obtenerCorreoAutenticado(authentication));
             return ResponseEntity.ok(response);
@@ -107,6 +111,7 @@ public class VentaController {
             @RequestParam(name = "desde", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate desde,
             @RequestParam(name = "hasta", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hasta,
             @RequestParam(name = "idSucursal", required = false) Integer idSucursal,
+            @RequestParam(name = "idCliente", required = false) Integer idCliente,
             @RequestParam(name = "incluirAnuladas", defaultValue = "false") boolean incluirAnuladas) {
         try {
             byte[] archivo = ventaService.exportarReportePdfVentas(
@@ -115,6 +120,7 @@ public class VentaController {
                     desde,
                     hasta,
                     idSucursal,
+                    idCliente,
                     incluirAnuladas,
                     obtenerCorreoAutenticado(authentication));
 
@@ -142,6 +148,7 @@ public class VentaController {
             @RequestParam(name = "desde", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate desde,
             @RequestParam(name = "hasta", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hasta,
             @RequestParam(name = "idSucursal", required = false) Integer idSucursal,
+            @RequestParam(name = "idCliente", required = false) Integer idCliente,
             @RequestParam(name = "incluirAnuladas", defaultValue = "false") boolean incluirAnuladas) {
         try {
             byte[] archivo = ventaService.exportarReporteVentasExcel(
@@ -150,6 +157,7 @@ public class VentaController {
                     desde,
                     hasta,
                     idSucursal,
+                    idCliente,
                     incluirAnuladas,
                     obtenerCorreoAutenticado(authentication));
 

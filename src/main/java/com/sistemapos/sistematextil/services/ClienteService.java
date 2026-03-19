@@ -1,6 +1,8 @@
 package com.sistemapos.sistematextil.services;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
@@ -12,10 +14,14 @@ import org.springframework.transaction.annotation.Transactional;
 import com.sistemapos.sistematextil.model.Cliente;
 import com.sistemapos.sistematextil.model.Sucursal;
 import com.sistemapos.sistematextil.model.Usuario;
+import com.sistemapos.sistematextil.model.Venta;
 import com.sistemapos.sistematextil.repositories.ClienteRepository;
 import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
+import com.sistemapos.sistematextil.repositories.VentaRepository;
+import com.sistemapos.sistematextil.util.cliente.ClienteCompraResumenResponse;
 import com.sistemapos.sistematextil.util.cliente.ClienteCreateRequest;
+import com.sistemapos.sistematextil.util.cliente.ClienteDetalleResponse;
 import com.sistemapos.sistematextil.util.cliente.ClienteListItemResponse;
 import com.sistemapos.sistematextil.util.cliente.ClienteUpdateRequest;
 import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
@@ -31,6 +37,7 @@ public class ClienteService {
     private final ClienteRepository clienteRepository;
     private final SucursalRepository sucursalRepository;
     private final UsuarioRepository usuarioRepository;
+    private final VentaRepository ventaRepository;
 
     @Value("${application.pagination.default-size:10}")
     private int defaultPageSize;
@@ -76,6 +83,23 @@ public class ClienteService {
         return PagedResponse.fromPage(clientes);
     }
 
+    public ClienteDetalleResponse obtenerDetalle(Integer idCliente, String correoUsuarioAutenticado) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolPermitido(usuarioAutenticado);
+
+        Cliente cliente = obtenerClienteConAcceso(idCliente, usuarioAutenticado);
+        long comprasTotales = ventaRepository.countByClienteIdClienteAndDeletedAtIsNullAndEstado(idCliente, "EMITIDA");
+        BigDecimal montoTotalCompras = valorMonetarioSeguro(
+                ventaRepository.sumarTotalPorClienteYEstado(idCliente, "EMITIDA"));
+        List<ClienteCompraResumenResponse> ultimasCompras = ventaRepository
+                .findTop3ByClienteIdClienteAndDeletedAtIsNullAndEstadoOrderByFechaDesc(idCliente, "EMITIDA")
+                .stream()
+                .map(this::toCompraResumenResponse)
+                .toList();
+
+        return toDetalleResponse(cliente, comprasTotales, montoTotalCompras, ultimasCompras);
+    }
+
     @Transactional
     public ClienteListItemResponse insertar(ClienteCreateRequest request, String correoUsuarioAutenticado) {
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
@@ -115,16 +139,11 @@ public class ClienteService {
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
         validarRolPermitido(usuarioAutenticado);
 
-        Cliente cliente;
         Integer idSucursalUsuario = null;
-        if (esAdministrador(usuarioAutenticado)) {
-            cliente = clienteRepository.findByIdClienteAndDeletedAtIsNull(idCliente)
-                    .orElseThrow(() -> new RuntimeException("Cliente con ID " + idCliente + " no encontrado"));
-        } else {
+        if (esVentas(usuarioAutenticado)) {
             idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
-            cliente = clienteRepository.findByIdClienteAndDeletedAtIsNullAndSucursal_IdSucursal(idCliente, idSucursalUsuario)
-                    .orElseThrow(() -> new RuntimeException("Cliente con ID " + idCliente + " no encontrado"));
         }
+        Cliente cliente = obtenerClienteConAcceso(idCliente, usuarioAutenticado);
 
         if (esVentas(usuarioAutenticado)
             && (idSucursalUsuario == null || !idSucursalUsuario.equals(request.idSucursal()))) {
@@ -154,15 +173,7 @@ public class ClienteService {
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
         validarRolPermitido(usuarioAutenticado);
 
-        Cliente cliente;
-        if (esAdministrador(usuarioAutenticado)) {
-            cliente = clienteRepository.findByIdClienteAndDeletedAtIsNull(idCliente)
-                    .orElseThrow(() -> new RuntimeException("Cliente con ID " + idCliente + " no encontrado o ya eliminado"));
-        } else {
-            Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
-            cliente = clienteRepository.findByIdClienteAndDeletedAtIsNullAndSucursal_IdSucursal(idCliente, idSucursalUsuario)
-                    .orElseThrow(() -> new RuntimeException("Cliente con ID " + idCliente + " no encontrado o ya eliminado"));
-        }
+        Cliente cliente = obtenerClienteConAcceso(idCliente, usuarioAutenticado);
 
         cliente.setEstado("INACTIVO");
         cliente.setDeletedAt(LocalDateTime.now());
@@ -196,6 +207,17 @@ public class ClienteService {
 
     private boolean esVentas(Usuario usuario) {
         return usuario.getRol() == Rol.VENTAS;
+    }
+
+    private Cliente obtenerClienteConAcceso(Integer idCliente, Usuario usuarioAutenticado) {
+        if (esAdministrador(usuarioAutenticado)) {
+            return clienteRepository.findByIdClienteAndDeletedAtIsNull(idCliente)
+                    .orElseThrow(() -> new RuntimeException("Cliente con ID " + idCliente + " no encontrado"));
+        }
+
+        Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
+        return clienteRepository.findByIdClienteAndDeletedAtIsNullAndSucursal_IdSucursal(idCliente, idSucursalUsuario)
+                .orElseThrow(() -> new RuntimeException("Cliente con ID " + idCliente + " no encontrado"));
     }
 
     private String normalizarYValidarDocumento(TipoDocumento tipoDocumento, String nroDocumento) {
@@ -257,5 +279,55 @@ public class ClienteService {
                 nombreSucursal,
                 idUsuarioCreacion,
                 nombreUsuarioCreacion);
+    }
+
+    private ClienteDetalleResponse toDetalleResponse(
+            Cliente cliente,
+            long comprasTotales,
+            BigDecimal montoTotalCompras,
+            List<ClienteCompraResumenResponse> ultimasCompras) {
+        Integer idSucursal = cliente.getSucursal() != null ? cliente.getSucursal().getIdSucursal() : null;
+        String nombreSucursal = cliente.getSucursal() != null ? cliente.getSucursal().getNombre() : null;
+
+        Integer idUsuarioCreacion = cliente.getUsuarioCreacion() != null ? cliente.getUsuarioCreacion().getIdUsuario() : null;
+        String nombreUsuarioCreacion = null;
+        if (cliente.getUsuarioCreacion() != null) {
+            nombreUsuarioCreacion = cliente.getUsuarioCreacion().getNombre() + " "
+                    + cliente.getUsuarioCreacion().getApellido();
+        }
+
+        return new ClienteDetalleResponse(
+                cliente.getIdCliente(),
+                cliente.getTipoDocumento() != null ? cliente.getTipoDocumento().name() : null,
+                cliente.getNroDocumento(),
+                cliente.getNombres(),
+                cliente.getTelefono(),
+                cliente.getCorreo(),
+                cliente.getDireccion(),
+                cliente.getEstado(),
+                cliente.getFechaCreacion(),
+                idSucursal,
+                nombreSucursal,
+                idUsuarioCreacion,
+                nombreUsuarioCreacion,
+                comprasTotales,
+                valorMonetarioSeguro(montoTotalCompras),
+                ultimasCompras);
+    }
+
+    private ClienteCompraResumenResponse toCompraResumenResponse(Venta venta) {
+        return new ClienteCompraResumenResponse(
+                venta.getIdVenta(),
+                venta.getFecha(),
+                venta.getTipoComprobante(),
+                venta.getSerie(),
+                venta.getCorrelativo(),
+                venta.getMoneda(),
+                valorMonetarioSeguro(venta.getTotal()),
+                venta.getEstado());
+    }
+
+    private BigDecimal valorMonetarioSeguro(BigDecimal value) {
+        return value != null ? value : BigDecimal.ZERO;
     }
 }

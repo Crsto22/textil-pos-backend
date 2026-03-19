@@ -3,6 +3,8 @@ package com.sistemapos.sistematextil.repositories;
 import java.util.List;
 import java.util.Optional;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -17,11 +19,33 @@ public interface ComprobanteConfigRepository extends JpaRepository<ComprobanteCo
             WHERE c.deletedAt IS NULL
               AND (:activo IS NULL OR c.activo = :activo)
               AND (:idSucursal IS NULL OR c.sucursal.idSucursal = :idSucursal)
+              AND (:habilitadoVenta IS NULL OR c.habilitadoVenta = :habilitadoVenta)
             ORDER BY c.idComprobante ASC
             """)
     List<ComprobanteConfig> buscar(
             @Param("activo") String activo,
-            @Param("idSucursal") Integer idSucursal);
+            @Param("idSucursal") Integer idSucursal,
+            @Param("habilitadoVenta") Boolean habilitadoVenta);
+
+    @Query("""
+            SELECT c
+            FROM ComprobanteConfig c
+            WHERE c.deletedAt IS NULL
+              AND (:term IS NULL
+                   OR UPPER(c.tipoComprobante) LIKE CONCAT('%', UPPER(:term), '%')
+                   OR UPPER(c.serie) LIKE CONCAT('%', UPPER(:term), '%')
+                   OR UPPER(c.sucursal.nombre) LIKE CONCAT('%', UPPER(:term), '%'))
+              AND (:activo IS NULL OR c.activo = :activo)
+              AND (:idSucursal IS NULL OR c.sucursal.idSucursal = :idSucursal)
+              AND (:habilitadoVenta IS NULL OR c.habilitadoVenta = :habilitadoVenta)
+            ORDER BY c.idComprobante ASC
+            """)
+    Page<ComprobanteConfig> buscarPaginado(
+            @Param("term") String term,
+            @Param("activo") String activo,
+            @Param("idSucursal") Integer idSucursal,
+            @Param("habilitadoVenta") Boolean habilitadoVenta,
+            Pageable pageable);
 
     Optional<ComprobanteConfig> findByIdComprobanteAndDeletedAtIsNull(Integer idComprobante);
 

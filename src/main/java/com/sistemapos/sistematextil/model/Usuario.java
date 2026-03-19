@@ -71,6 +71,9 @@ public class Usuario {
     @Column(nullable = false)
     private String password;
 
+    @Column(name = "foto_perfil_url", length = 500)
+    private String fotoPerfilUrl;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     @NotNull(message = "Ingrese rol")

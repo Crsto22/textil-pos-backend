@@ -47,6 +47,9 @@ public class ComprobanteConfig {
     @Column(name = "ultimo_correlativo", nullable = false)
     private Integer ultimoCorrelativo;
 
+    @Column(name = "habilitado_venta", nullable = false)
+    private Boolean habilitadoVenta;
+
     @Convert(converter = EstadoActivoConverter.class)
     @Column(name = "activo", nullable = false)
     private String activo;
@@ -72,6 +75,11 @@ public class ComprobanteConfig {
         }
         if (this.activo == null || this.activo.isBlank()) {
             this.activo = "ACTIVO";
+        }
+        if (this.habilitadoVenta == null) {
+            this.habilitadoVenta = "NOTA DE VENTA".equals(this.tipoComprobante)
+                    || "BOLETA".equals(this.tipoComprobante)
+                    || "FACTURA".equals(this.tipoComprobante);
         }
     }
 

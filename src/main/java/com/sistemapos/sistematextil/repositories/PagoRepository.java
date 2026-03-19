@@ -14,6 +14,29 @@ import com.sistemapos.sistematextil.model.Pago;
 
 public interface PagoRepository extends JpaRepository<Pago, Integer> {
 
+                                @Query(
+                                                                                                value = """
+                                                                                                                                                                SELECT mp.nombre AS metodo_pago, COALESCE(SUM(p.monto), 0) AS monto
+                                                                                                                                                                FROM pago p
+                                                                                                                                                                JOIN venta v ON v.id_venta = p.id_venta
+                                                                                                                                                                JOIN metodo_pago_config mp ON mp.id_metodo_pago = p.id_metodo_pago
+                                                                                                                                                                WHERE p.deleted_at IS NULL
+                                                                                                                                                                        AND v.deleted_at IS NULL
+                                                                                                                                                                        AND v.estado = 'EMITIDA'
+                                                                                                                                                                        AND (:idSucursal IS NULL OR v.id_sucursal = :idSucursal)
+                                                                                                                                                                        AND (:idUsuario IS NULL OR v.id_usuario = :idUsuario)
+                                                                                                                                                                        AND (:fechaInicio IS NULL OR v.fecha >= :fechaInicio)
+                                                                                                                                                                        AND (:fechaFinExclusive IS NULL OR v.fecha < :fechaFinExclusive)
+                                                                                                                                                                GROUP BY mp.nombre
+                                                                                                                                                                ORDER BY monto DESC
+                                                                                                                                                                """,
+                                                                                                nativeQuery = true)
+                                List<Object[]> obtenerIngresosPorMetodoPago(
+                                                                                                @Param("idSucursal") Integer idSucursal,
+                                                                                                @Param("idUsuario") Integer idUsuario,
+                                                                                                @Param("fechaInicio") LocalDateTime fechaInicio,
+                                                                                                @Param("fechaFinExclusive") LocalDateTime fechaFinExclusive);
+
         @Query("""
                         SELECT p
                         FROM Pago p

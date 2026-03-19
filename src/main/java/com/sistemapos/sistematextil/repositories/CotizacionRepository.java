@@ -15,6 +15,22 @@ import com.sistemapos.sistematextil.model.Cotizacion;
 public interface CotizacionRepository extends JpaRepository<Cotizacion, Integer> {
 
     @Query("""
+            SELECT COUNT(c)
+            FROM Cotizacion c
+            WHERE c.deletedAt IS NULL
+              AND c.estado = 'ACTIVA'
+              AND (:idSucursal IS NULL OR c.sucursal.idSucursal = :idSucursal)
+              AND (:idUsuario IS NULL OR c.usuario.idUsuario = :idUsuario)
+              AND (:fechaInicio IS NULL OR c.fecha >= :fechaInicio)
+              AND (:fechaFinExclusive IS NULL OR c.fecha < :fechaFinExclusive)
+            """)
+    long contarCotizacionesAbiertas(
+            @Param("idSucursal") Integer idSucursal,
+            @Param("idUsuario") Integer idUsuario,
+            @Param("fechaInicio") LocalDateTime fechaInicio,
+            @Param("fechaFinExclusive") LocalDateTime fechaFinExclusive);
+
+    @Query("""
             SELECT c
             FROM Cotizacion c
             LEFT JOIN c.cliente cl

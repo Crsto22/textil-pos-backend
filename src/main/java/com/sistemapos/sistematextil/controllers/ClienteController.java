@@ -57,6 +57,17 @@ public class ClienteController {
         }
     }
 
+    @GetMapping("/detalle/{id}")
+    public ResponseEntity<?> obtenerDetalle(Authentication authentication, @PathVariable Integer id) {
+        try {
+            return ResponseEntity.ok(clienteService.obtenerDetalle(id, obtenerCorreoAutenticado(authentication)));
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al obtener detalle del cliente" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
     @PostMapping("/insertar")
     public ResponseEntity<?> crear(Authentication authentication, @Valid @RequestBody ClienteCreateRequest request) {
         try {

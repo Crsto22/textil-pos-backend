@@ -9,6 +9,7 @@ public record UsuarioListItemResponse(
         String dni,
         String telefono,
         String correo,
+        String fotoPerfilUrl,
         String rol,
         String estado,
         LocalDateTime fechaCreacion,

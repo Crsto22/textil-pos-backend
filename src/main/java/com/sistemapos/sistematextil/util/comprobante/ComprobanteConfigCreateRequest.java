@@ -21,7 +21,10 @@ public record ComprobanteConfigCreateRequest(
         @Min(value = 0, message = "ultimoCorrelativo no puede ser negativo")
         Integer ultimoCorrelativo,
 
-        @Pattern(regexp = "ACTIVO|INACTIVO", message = "activo permitido: ACTIVO o INACTIVO")
+        @Pattern(
+                regexp = "ACTIVO|INACTIVO",
+                flags = Pattern.Flag.CASE_INSENSITIVE,
+                message = "activo permitido: ACTIVO o INACTIVO")
         String activo
 ) {
 }

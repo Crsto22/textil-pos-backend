@@ -12,6 +12,7 @@ public record AuthenticationResponse(
     String correo,
     String dni,
     String telefono,
+    String fotoPerfilUrl,
     String rol,
     LocalDateTime fechaCreacion,
     Integer idSucursal,

@@ -11,6 +11,7 @@ public record ComprobanteConfigResponse(
         Integer ultimoCorrelativo,
         Integer siguienteCorrelativo,
         String activo,
+        Boolean habilitadoVenta,
         LocalDateTime createdAt,
         LocalDateTime updatedAt,
         LocalDateTime deletedAt

@@ -155,6 +155,7 @@ public class UsuarioService {
                 usuario.getDni(),
                 usuario.getTelefono(),
                 usuario.getCorreo(),
+                usuario.getFotoPerfilUrl(),
                 usuario.getRol().name(),
                 usuario.getEstado(),
                 usuario.getFechaCreacion(),

@@ -16,9 +16,11 @@ import com.sistemapos.sistematextil.model.Sucursal;
 import com.sistemapos.sistematextil.repositories.EmpresaRepository;
 import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
+import com.sistemapos.sistematextil.repositories.projection.SucursalUsuarioResumenProjection;
 import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
 import com.sistemapos.sistematextil.util.sucursal.SucursalCreateRequest;
 import com.sistemapos.sistematextil.util.sucursal.SucursalListItemResponse;
+import com.sistemapos.sistematextil.util.sucursal.SucursalUsuarioResumenResponse;
 import com.sistemapos.sistematextil.util.sucursal.SucursalUpdateRequest;
 
 import lombok.RequiredArgsConstructor;
@@ -145,9 +147,14 @@ public class SucursalService {
         Integer idSucursal = sucursal.getIdSucursal();
         Integer idEmpresa = sucursal.getEmpresa() != null ? sucursal.getEmpresa().getIdEmpresa() : null;
         String nombreEmpresa = sucursal.getEmpresa() != null ? sucursal.getEmpresa().getNombre() : null;
-        List<String> usuarios = idSucursal != null
-                ? usuarioRepository.findTop5NombresCompletosRandomBySucursal(idSucursal)
+        List<SucursalUsuarioResumenResponse> usuariosDetalle = idSucursal != null
+                ? usuarioRepository.findUsuariosResumenRandomBySucursal(idSucursal).stream()
+                        .map(this::toUsuarioResumenResponse)
+                        .toList()
                 : Collections.emptyList();
+        List<String> usuarios = usuariosDetalle.stream()
+                .map(SucursalUsuarioResumenResponse::nombreCompleto)
+                .toList();
         long usuariosTotal = idSucursal != null
                 ? usuarioRepository.countBySucursalIdSucursalAndDeletedAtIsNullAndEstado(idSucursal, "ACTIVO")
                 : 0L;
@@ -170,8 +177,16 @@ public class SucursalService {
                 idEmpresa,
                 nombreEmpresa,
                 usuarios,
+                usuariosDetalle,
                 usuariosTotal,
                 usuariosFaltantes);
+    }
+
+    private SucursalUsuarioResumenResponse toUsuarioResumenResponse(SucursalUsuarioResumenProjection projection) {
+        return new SucursalUsuarioResumenResponse(
+                projection.getIdUsuario(),
+                projection.getNombreCompleto(),
+                projection.getFotoPerfilUrl());
     }
 
     private String normalizarTexto(String valor) {

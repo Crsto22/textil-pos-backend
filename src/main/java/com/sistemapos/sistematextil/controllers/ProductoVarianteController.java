@@ -1,7 +1,10 @@
 package com.sistemapos.sistematextil.controllers;
 
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Map;
 
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -79,6 +82,27 @@ public class ProductoVarianteController {
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al listar resumen de variantes" : e.getMessage();
+            return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
+                    .body(Map.of("message", message));
+        }
+    }
+
+    @GetMapping(
+            value = "reporte/excel",
+            produces = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    public ResponseEntity<?> reporteExcelDisponibles(Authentication authentication) {
+        try {
+            byte[] archivo = service.exportarDisponiblesExcel(obtenerCorreoAutenticado(authentication));
+            String ts = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+            String nombreArchivo = "productos_disponibles_" + ts + ".xlsx";
+
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + nombreArchivo + "\"")
+                    .contentType(MediaType.parseMediaType(
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                    .body(archivo);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al exportar productos disponibles" : e.getMessage();
             return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
                     .body(Map.of("message", message));
         }

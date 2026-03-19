@@ -4,17 +4,22 @@ import java.util.Map;
 
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.Authentication;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.DisabledException;
+import org.springframework.security.core.Authentication;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.CookieValue;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import com.sistemapos.sistematextil.config.CookieUtil;
 import com.sistemapos.sistematextil.services.AuthenticationService;
@@ -36,7 +41,6 @@ public class AuthenticationController {
     private final AuthenticationService authenticationService;
     private final CookieUtil cookieUtil;
 
-    // ── POST /api/auth/registro ──
     @PostMapping("/registro")
     public ResponseEntity<?> registrar(@Valid @RequestBody RegisterRequest request) {
         try {
@@ -48,10 +52,6 @@ public class AuthenticationController {
         }
     }
 
-    // ── POST /api/auth/autenticarse ──
-    // Body JSON: { "email": "...", "password": "..." }
-    // Respuesta 200: Set-Cookie refresh_token (HttpOnly) + body con access_token y datos del usuario
-    // Respuesta 401: { "message": "Correo o contraseña incorrectos" }
     @PostMapping("/autenticarse")
     public ResponseEntity<?> autenticarse(@Valid @RequestBody AuthenticationRequest request) {
         try {
@@ -66,17 +66,13 @@ public class AuthenticationController {
                     .body(Map.of("message", "Usuario inactivo"));
         } catch (BadCredentialsException e) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(Map.of("message", "Correo o contraseña incorrectos"));
+                    .body(Map.of("message", "Correo o contrasena incorrectos"));
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("message", "Error al autenticar: " + e.getMessage()));
         }
     }
 
-    // ── POST /api/auth/refresh ──
-    // Sin body. Lee refresh_token desde cookie HttpOnly.
-    // Respuesta 200: nuevo access_token + rota refresh_token (nueva cookie)
-    // Respuesta 401: { "message": "Refresh token inválido o expirado" }
     @PostMapping("/refresh")
     public ResponseEntity<?> refresh(
             @CookieValue(name = "refresh_token", required = false) String refreshToken) {
@@ -88,22 +84,17 @@ public class AuthenticationController {
 
             RefreshResult result = authenticationService.refresh(refreshToken);
 
-            // Rotar cookie con el nuevo refresh token
             return ResponseEntity.ok()
                     .header(HttpHeaders.SET_COOKIE, cookieUtil.createRefreshTokenCookie(result.refreshToken()).toString())
                     .body(Map.of("access_token", result.accessToken()));
 
         } catch (Exception e) {
-            // Si falla, borrar cookie corrupta
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .header(HttpHeaders.SET_COOKIE, cookieUtil.deleteRefreshTokenCookie().toString())
-                    .body(Map.of("message", "Refresh token inválido o expirado"));
+                    .body(Map.of("message", "Refresh token invalido o expirado"));
         }
     }
 
-    // ── POST /api/auth/logout ──
-    // Sin body. Borra cookie refresh_token.
-    // Respuesta 200: { "ok": true }
     @PostMapping("/logout")
     public ResponseEntity<?> logout() {
         return ResponseEntity.ok()
@@ -111,42 +102,76 @@ public class AuthenticationController {
                 .body(Map.of("ok", true));
     }
 
-    // GET /api/auth/me
-    // Requiere Authorization: Bearer <access_token>
     @GetMapping("/me")
     public ResponseEntity<?> me(Authentication authentication) {
         try {
-            if (authentication == null || authentication.getName() == null || authentication.getName().isBlank()) {
-                return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                        .body(Map.of("message", "No autenticado"));
-            }
-            String email = authentication.getName();
-            return ResponseEntity.ok(authenticationService.me(email));
+            return ResponseEntity.ok(authenticationService.me(obtenerCorreoAutenticado(authentication)));
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al obtener usuario autenticado" : e.getMessage();
-            HttpStatus status = message.toLowerCase().contains("no encontrado")
-                    ? HttpStatus.NOT_FOUND
-                    : HttpStatus.BAD_REQUEST;
-            return ResponseEntity.status(status).body(Map.of("message", message));
+            return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
+                    .body(Map.of("message", message));
         }
     }
 
-    // POST /api/auth/cambiar-password
-    // Requiere Authorization: Bearer <access_token>
     @PostMapping("/cambiar-password")
     public ResponseEntity<?> cambiarPassword(
             Authentication authentication,
             @Valid @RequestBody ChangePasswordRequest request) {
         try {
-            String email = authentication.getName();
-            String mensaje = authenticationService.changePassword(email, request);
+            String mensaje = authenticationService.changePassword(obtenerCorreoAutenticado(authentication), request);
             return ResponseEntity.ok(Map.of("message", mensaje));
         } catch (BadCredentialsException e) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body(Map.of("message", e.getMessage()));
         } catch (RuntimeException e) {
-            return ResponseEntity.badRequest()
-                    .body(Map.of("message", e.getMessage()));
+            String message = e.getMessage() == null ? "Error al cambiar contrasena" : e.getMessage();
+            return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
+                    .body(Map.of("message", message));
         }
+    }
+
+    @PutMapping(value = "/foto-perfil", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<?> actualizarFotoPerfil(
+            Authentication authentication,
+            @RequestParam("file") MultipartFile file) {
+        try {
+            return ResponseEntity.ok(authenticationService.actualizarFotoPerfil(
+                    obtenerCorreoAutenticado(authentication),
+                    file));
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al actualizar foto de perfil" : e.getMessage();
+            return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
+                    .body(Map.of("message", message));
+        }
+    }
+
+    @DeleteMapping("/foto-perfil")
+    public ResponseEntity<?> eliminarFotoPerfil(Authentication authentication) {
+        try {
+            return ResponseEntity.ok(authenticationService.eliminarFotoPerfil(
+                    obtenerCorreoAutenticado(authentication)));
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al eliminar foto de perfil" : e.getMessage();
+            return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
+                    .body(Map.of("message", message));
+        }
+    }
+
+    private String obtenerCorreoAutenticado(Authentication authentication) {
+        if (authentication == null || authentication.getName() == null || authentication.getName().isBlank()) {
+            throw new RuntimeException("No autenticado");
+        }
+        return authentication.getName();
+    }
+
+    private HttpStatus resolverStatus(String message, HttpStatus defaultStatus) {
+        String normalizedMessage = message.toLowerCase();
+        if (normalizedMessage.contains("no encontrado")) {
+            return HttpStatus.NOT_FOUND;
+        }
+        if (normalizedMessage.contains("no autenticado")) {
+            return HttpStatus.UNAUTHORIZED;
+        }
+        return defaultStatus;
     }
 }

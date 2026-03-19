@@ -20,6 +20,7 @@ public record SucursalListItemResponse(
         Integer idEmpresa,
         String nombreEmpresa,
         List<String> usuarios,
+        List<SucursalUsuarioResumenResponse> usuariosDetalle,
         Long usuariosTotal,
         Long usuariosFaltantes
 ) {

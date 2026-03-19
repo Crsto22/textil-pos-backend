@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS usuario (
   dni VARCHAR(8) NOT NULL,
   telefono VARCHAR(15) NOT NULL,
   password VARCHAR(255) NOT NULL,
+  foto_perfil_url VARCHAR(500) DEFAULT NULL,
   rol ENUM('ADMINISTRADOR','VENTAS','ALMACEN') NOT NULL,
   activo TINYINT(1) NOT NULL DEFAULT 1,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -319,9 +320,10 @@ DROP TABLE IF EXISTS caja;
 CREATE TABLE IF NOT EXISTS comprobante_config (
   id_comprobante INT(11) NOT NULL AUTO_INCREMENT,
   id_sucursal INT(11) NOT NULL,
-  tipo_comprobante ENUM('NOTA DE VENTA','BOLETA','FACTURA') NOT NULL,
+  tipo_comprobante ENUM('NOTA DE VENTA','BOLETA','FACTURA','NOTA_CREDITO_BOLETA','NOTA_CREDITO_FACTURA') NOT NULL,
   serie VARCHAR(10) NOT NULL,
   ultimo_correlativo INT(11) NOT NULL DEFAULT 0,
+  habilitado_venta TINYINT(1) NOT NULL DEFAULT 1,
   activo TINYINT(1) NOT NULL DEFAULT 1,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
@@ -349,6 +351,31 @@ SET @sql := IF(
 PREPARE stmt FROM @sql;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
+
+SET @col_cc_habilitado_venta := (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'comprobante_config'
+    AND COLUMN_NAME = 'habilitado_venta'
+);
+SET @sql := IF(
+  @col_cc_habilitado_venta = 0,
+  'ALTER TABLE comprobante_config ADD COLUMN habilitado_venta TINYINT(1) NOT NULL DEFAULT 1 AFTER ultimo_correlativo',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+ALTER TABLE comprobante_config
+MODIFY COLUMN tipo_comprobante ENUM('NOTA DE VENTA','BOLETA','FACTURA','NOTA_CREDITO_BOLETA','NOTA_CREDITO_FACTURA') NOT NULL;
+
+UPDATE comprobante_config
+SET habilitado_venta = CASE
+  WHEN tipo_comprobante IN ('NOTA DE VENTA', 'BOLETA', 'FACTURA') THEN 1
+  ELSE 0
+END;
 
 -- =========================
 -- VENTA
@@ -727,6 +754,7 @@ INSERT INTO comprobante_config (
   tipo_comprobante,
   serie,
   ultimo_correlativo,
+  habilitado_venta,
   activo,
   created_at,
   updated_at,
@@ -737,20 +765,24 @@ SELECT
   t.tipo_comprobante,
   t.serie,
   0,
+  t.habilitado_venta,
   1,
   CURRENT_TIMESTAMP(6),
   CURRENT_TIMESTAMP(6),
   NULL
 FROM sucursal s
 JOIN (
-  SELECT 'NOTA DE VENTA' AS tipo_comprobante, 'NV01' AS serie
-  UNION ALL SELECT 'BOLETA', 'B001'
-  UNION ALL SELECT 'FACTURA', 'F001'
+  SELECT 'NOTA DE VENTA' AS tipo_comprobante, 'NV01' AS serie, 1 AS habilitado_venta
+  UNION ALL SELECT 'BOLETA', 'B001', 1
+  UNION ALL SELECT 'FACTURA', 'F001', 1
+  UNION ALL SELECT 'NOTA_CREDITO_BOLETA', 'BC01', 0
+  UNION ALL SELECT 'NOTA_CREDITO_FACTURA', 'FC01', 0
 ) t
 WHERE s.deleted_at IS NULL
   AND s.activo = 1
 ON DUPLICATE KEY UPDATE
   serie = VALUES(serie),
+  habilitado_venta = VALUES(habilitado_venta),
   activo = VALUES(activo),
   updated_at = CURRENT_TIMESTAMP(6),
   deleted_at = NULL;
@@ -925,6 +957,22 @@ SET @idx_uk_venta_numero := (
 SET @sql := IF(
   @idx_uk_venta_numero = 0,
   'ALTER TABLE venta ADD UNIQUE KEY uk_venta_numero_comprobante (id_sucursal, tipo_comprobante, serie, correlativo)',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @col_usuario_foto_perfil_url := (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'usuario'
+    AND COLUMN_NAME = 'foto_perfil_url'
+);
+SET @sql := IF(
+  @col_usuario_foto_perfil_url = 0,
+  'ALTER TABLE usuario ADD COLUMN foto_perfil_url VARCHAR(500) DEFAULT NULL AFTER password',
   'SELECT 1'
 );
 PREPARE stmt FROM @sql;

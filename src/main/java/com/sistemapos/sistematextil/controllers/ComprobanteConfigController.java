@@ -6,7 +6,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
-import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -34,13 +33,49 @@ public class ComprobanteConfigController {
     @GetMapping
     public ResponseEntity<?> listar(
             @RequestParam(name = "activo", required = false) String activo,
-            @RequestParam(name = "idSucursal", required = false) Integer idSucursal) {
+            @RequestParam(name = "idSucursal", required = false) Integer idSucursal,
+            @RequestParam(name = "habilitadoVenta", required = false) Boolean habilitadoVenta) {
         try {
-            return ResponseEntity.ok(comprobanteConfigService.listar(activo, idSucursal));
+            return ResponseEntity.ok(comprobanteConfigService.listar(activo, idSucursal, habilitadoVenta));
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al listar comprobantes" : e.getMessage();
             return ResponseEntity.badRequest().body(Map.of("message", message));
         }
+    }
+
+    @GetMapping("/listar")
+    public ResponseEntity<?> listarPaginado(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(name = "activo", required = false) String activo,
+            @RequestParam(name = "idSucursal", required = false) Integer idSucursal,
+            @RequestParam(name = "habilitadoVenta", required = false) Boolean habilitadoVenta) {
+        try {
+            return ResponseEntity.ok(comprobanteConfigService.listarPaginado(page, activo, idSucursal, habilitadoVenta));
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al listar comprobantes" : e.getMessage();
+            return ResponseEntity.badRequest().body(Map.of("message", message));
+        }
+    }
+
+    @GetMapping("/buscar")
+    public ResponseEntity<?> buscar(
+            @RequestParam(name = "q", required = false) String q,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(name = "activo", required = false) String activo,
+            @RequestParam(name = "idSucursal", required = false) Integer idSucursal,
+            @RequestParam(name = "habilitadoVenta", required = false) Boolean habilitadoVenta) {
+        try {
+            return ResponseEntity.ok(
+                    comprobanteConfigService.buscarPaginado(q, page, activo, idSucursal, habilitadoVenta));
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al buscar comprobantes" : e.getMessage();
+            return ResponseEntity.badRequest().body(Map.of("message", message));
+        }
+    }
+
+    @GetMapping("/detalle/{id}")
+    public ResponseEntity<?> obtenerDetalle(@PathVariable Integer id) {
+        return obtener(id);
     }
 
     @GetMapping("/{id}")
@@ -49,21 +84,31 @@ public class ComprobanteConfigController {
             return ResponseEntity.ok(comprobanteConfigService.obtener(id));
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al obtener comprobante" : e.getMessage();
-            HttpStatus status = message.toLowerCase().contains("no encontrado")
-                    ? HttpStatus.NOT_FOUND
-                    : HttpStatus.BAD_REQUEST;
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
             return ResponseEntity.status(status).body(Map.of("message", message));
         }
+    }
+
+    @PostMapping("/insertar")
+    public ResponseEntity<?> insertar(@Valid @RequestBody ComprobanteConfigCreateRequest request) {
+        return crear(request);
     }
 
     @PostMapping
     public ResponseEntity<?> crear(@Valid @RequestBody ComprobanteConfigCreateRequest request) {
         try {
-            return ResponseEntity.status(HttpStatus.CREATED).body(comprobanteConfigService.crear(request));
+            return ResponseEntity.status(HttpStatus.CREATED).body(comprobanteConfigService.insertar(request));
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al crear comprobante" : e.getMessage();
             return ResponseEntity.badRequest().body(Map.of("message", message));
         }
+    }
+
+    @PutMapping("/actualizar/{id}")
+    public ResponseEntity<?> actualizarDesdeArquitectura(
+            @PathVariable Integer id,
+            @Valid @RequestBody ComprobanteConfigUpdateRequest request) {
+        return actualizar(id, request);
     }
 
     @PutMapping("/{id}")
@@ -74,23 +119,7 @@ public class ComprobanteConfigController {
             return ResponseEntity.ok(comprobanteConfigService.actualizar(id, request));
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al actualizar comprobante" : e.getMessage();
-            HttpStatus status = message.toLowerCase().contains("no encontrado")
-                    ? HttpStatus.NOT_FOUND
-                    : HttpStatus.BAD_REQUEST;
-            return ResponseEntity.status(status).body(Map.of("message", message));
-        }
-    }
-
-    @DeleteMapping("/{id}")
-    public ResponseEntity<?> eliminar(@PathVariable Integer id) {
-        try {
-            comprobanteConfigService.eliminarLogico(id);
-            return ResponseEntity.ok(Map.of("message", "Comprobante eliminado logicamente"));
-        } catch (RuntimeException e) {
-            String message = e.getMessage() == null ? "Error al eliminar comprobante" : e.getMessage();
-            HttpStatus status = message.toLowerCase().contains("no encontrado")
-                    ? HttpStatus.NOT_FOUND
-                    : HttpStatus.BAD_REQUEST;
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
             return ResponseEntity.status(status).body(Map.of("message", message));
         }
     }
@@ -105,5 +134,14 @@ public class ComprobanteConfigController {
                 .orElse("Datos de entrada invalidos");
 
         return ResponseEntity.badRequest().body(Map.of("message", message));
+    }
+
+    private HttpStatus resolverStatus(String message, HttpStatus defaultStatus) {
+        String messageLower = message.toLowerCase();
+        if (messageLower.contains("no encontrado")
+                || messageLower.contains("no encontrada")) {
+            return HttpStatus.NOT_FOUND;
+        }
+        return defaultStatus;
     }
 }

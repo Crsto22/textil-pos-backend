@@ -41,9 +41,9 @@ public class Cliente {
     private Integer idCliente;
 
     @ManyToOne(fetch = FetchType.EAGER)
-    @JoinColumn(name = "id_sucursal", nullable = false)
-    @JsonIgnoreProperties({"hibernateLazyInitializer", "handler", "empresa"})
-    private Sucursal sucursal;
+    @JoinColumn(name = "id_empresa", nullable = false)
+    @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
+    private Empresa empresa;
 
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "id_usuario_creacion", nullable = false)

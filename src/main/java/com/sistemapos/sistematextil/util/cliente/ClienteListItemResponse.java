@@ -12,8 +12,8 @@ public record ClienteListItemResponse(
         String direccion,
         String estado,
         LocalDateTime fechaCreacion,
-        Integer idSucursal,
-        String nombreSucursal,
+        Integer idEmpresa,
+        String nombreEmpresa,
         Integer idUsuarioCreacion,
         String nombreUsuarioCreacion
 ) {

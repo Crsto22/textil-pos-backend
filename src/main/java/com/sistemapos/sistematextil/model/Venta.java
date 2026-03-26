@@ -85,14 +85,14 @@ public class Venta {
     @Column(nullable = false, length = 10)
     private String estado;
 
-    @Column(name = "anulacion_tipo", length = 30)
-    private String anulacionTipo;
+    @Column(name = "tipo_anulacion", length = 20)
+    private String tipoAnulacion;
 
-    @Column(name = "anulacion_motivo", length = 255)
-    private String anulacionMotivo;
+    @Column(name = "motivo_anulacion", length = 255)
+    private String motivoAnulacion;
 
-    @Column(name = "anulacion_fecha")
-    private LocalDateTime anulacionFecha;
+    @Column(name = "anulado_at")
+    private LocalDateTime anuladoAt;
 
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "id_usuario_anulacion")

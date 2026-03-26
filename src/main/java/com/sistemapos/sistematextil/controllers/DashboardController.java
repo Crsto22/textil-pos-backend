@@ -25,9 +25,13 @@ public class DashboardController {
     @GetMapping
     public ResponseEntity<?> obtenerDashboard(
             Authentication authentication,
-            @RequestParam(name = "filtro", required = false) String filtro) {
+            @RequestParam(name = "filtro", required = false) String filtro,
+            @RequestParam(name = "idSucursal", required = false) Integer idSucursal) {
         try {
-            return ResponseEntity.ok(dashboardService.obtenerDashboard(filtro, obtenerCorreoAutenticado(authentication)));
+            return ResponseEntity.ok(dashboardService.obtenerDashboard(
+                    filtro,
+                    idSucursal,
+                    obtenerCorreoAutenticado(authentication)));
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al obtener dashboard" : e.getMessage();
             HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);

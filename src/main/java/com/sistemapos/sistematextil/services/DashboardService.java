@@ -5,7 +5,9 @@ import java.math.RoundingMode;
 import java.sql.Date;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -13,10 +15,12 @@ import java.util.Map;
 
 import org.springframework.stereotype.Service;
 
+import com.sistemapos.sistematextil.model.Sucursal;
 import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.repositories.CotizacionRepository;
 import com.sistemapos.sistematextil.repositories.PagoRepository;
 import com.sistemapos.sistematextil.repositories.ProductoVarianteRepository;
+import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
 import com.sistemapos.sistematextil.repositories.VentaDetalleRepository;
 import com.sistemapos.sistematextil.repositories.VentaRepository;
@@ -44,40 +48,53 @@ public class DashboardService {
     private final PagoRepository pagoRepository;
     private final CotizacionRepository cotizacionRepository;
     private final ProductoVarianteRepository productoVarianteRepository;
+    private final SucursalRepository sucursalRepository;
 
-    public Object obtenerDashboard(String filtro, String correoUsuarioAutenticado) {
+    public Object obtenerDashboard(String filtro, Integer idSucursalRequest, String correoUsuarioAutenticado) {
         Usuario usuario = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        Integer idSucursal = resolverIdSucursalFiltro(usuario, idSucursalRequest);
 
         return switch (usuario.getRol()) {
-            case ADMINISTRADOR -> construirDashboardAdmin(usuario, filtro);
-            case VENTAS -> construirDashboardVentas(usuario, filtro);
-            case ALMACEN -> construirDashboardAlmacen(usuario);
+            case ADMINISTRADOR -> construirDashboardAdmin(usuario, filtro, idSucursal);
+            case VENTAS -> construirDashboardVentas(usuario, filtro, idSucursal);
+            case ALMACEN -> construirDashboardAlmacen(usuario, idSucursal);
         };
     }
 
-    private DashboardAdminResponse construirDashboardAdmin(Usuario usuario, String filtro) {
+    private DashboardAdminResponse construirDashboardAdmin(Usuario usuario, String filtro, Integer idSucursal) {
         RangoFechas rango = resolverRangoFechas(filtro);
-        Integer idSucursal = resolverIdSucursalSegunRol(usuario);
+        String nombreSucursal = resolverNombreSucursal(idSucursal);
+        LocalDateTime desde = rango.desde().atStartOfDay();
+        LocalDateTime hastaExclusiva = rango.hastaExclusiva();
+        LocalDate hoy = LocalDate.now();
+        LocalDateTime inicioDia = hoy.atStartOfDay();
+        LocalDateTime finDiaExclusive = hoy.plusDays(1).atStartOfDay();
+        YearMonth mesActual = YearMonth.from(hoy);
+        LocalDateTime inicioMes = mesActual.atDay(1).atStartOfDay();
+        LocalDateTime finMesExclusive = mesActual.plusMonths(1).atDay(1).atStartOfDay();
 
         BigDecimal ventasTotales = asegurarMoneda(
-                ventaRepository.sumarTotalEmitido(idSucursal, null, rango.desde().atStartOfDay(), rango.hastaExclusiva()));
-        long productosVendidos = ventaDetalleRepository.sumarCantidadVendida(
-                idSucursal,
-                null,
-                rango.desde().atStartOfDay(),
-                rango.hastaExclusiva());
+                ventaRepository.sumarTotalEmitido(idSucursal, null, desde, hastaExclusiva));
+        long productosVendidos = ventaDetalleRepository.sumarCantidadVendida(idSucursal, null, desde, hastaExclusiva);
         long ticketsEmitidos = ventaRepository.contarTicketsEmitidos(
                 idSucursal,
                 null,
-                rango.desde().atStartOfDay(),
-                rango.hastaExclusiva());
+                desde,
+                hastaExclusiva);
+        long variantesVendidas = ventaDetalleRepository.contarVariantesVendidas(idSucursal, null, desde, hastaExclusiva);
+        BigDecimal ventasDelDia = asegurarMoneda(
+                ventaRepository.sumarTotalEmitido(idSucursal, null, inicioDia, finDiaExclusive));
+        BigDecimal ventasDelMes = asegurarMoneda(
+                ventaRepository.sumarTotalEmitido(idSucursal, null, inicioMes, finMesExclusive));
+        BigDecimal ticketPromedio = asegurarMoneda(
+                ventaRepository.promedioVentaEmitida(idSucursal, null, desde, hastaExclusiva));
 
         List<DashboardIngresoMetodoPagoItem> ingresosPorMetodoPago = mapIngresosPorMetodo(
                 pagoRepository.obtenerIngresosPorMetodoPago(
                         idSucursal,
                         null,
-                        rango.desde().atStartOfDay(),
-                        rango.hastaExclusiva()));
+                        desde,
+                        hastaExclusiva));
 
         List<DashboardSerieItem> ventasPorFecha = construirSerieContinua(
                 rango.desde(),
@@ -85,32 +102,67 @@ public class DashboardService {
                 ventaRepository.obtenerVentasPorFecha(
                         idSucursal,
                         null,
-                        rango.desde().atStartOfDay(),
-                        rango.hastaExclusiva()));
+                        desde,
+                        hastaExclusiva));
 
         List<DashboardTopProductoItem> topProductosMasVendidos = mapTopProductos(
                 ventaDetalleRepository.obtenerTopProductosVendidos(
                         idSucursal,
                         null,
-                        rango.desde().atStartOfDay(),
-                        rango.hastaExclusiva()));
+                        desde,
+                        hastaExclusiva));
+
+        List<DashboardAdminResponse.ComprobanteTipoItem> comprobantesPorTipo = construirComprobantesPorTipo(
+                ventaRepository.obtenerVentasPorTipoComprobanteResumen(idSucursal, desde, hastaExclusiva));
+        List<DashboardAdminResponse.EstadoVentaItem> distribucionPorEstado = construirDistribucionPorEstado(
+                ventaRepository.obtenerDistribucionPorEstadoResumen(idSucursal, desde, hastaExclusiva));
+        List<DashboardAdminResponse.SucursalVentaItem> ventasPorSucursal = mapVentasPorSucursal(
+                ventaRepository.obtenerVentasPorSucursalResumen(idSucursal, desde, hastaExclusiva));
+
+        long comprobantesAnulados = obtenerCantidadPorEstado(distribucionPorEstado, "ANULADA");
+        BigDecimal montoAnulado = obtenerMontoPorEstado(distribucionPorEstado, "ANULADA");
+        long variantesAgotadas = productoVarianteRepository.contarVariantesAgotadas(idSucursal);
+        long stockBajo = productoVarianteRepository.contarStockBajo(idSucursal, UMBRAL_STOCK_BAJO);
+        List<DashboardStockCeroItem> agotados = limitarStockCritico(
+                mapStockCero(productoVarianteRepository.listarReposicionUrgente(idSucursal)));
+        List<DashboardStockCeroItem> prontosAgotarse = limitarStockCritico(
+                mapStockCero(productoVarianteRepository.listarStockBajoResumen(idSucursal, UMBRAL_STOCK_BAJO)));
 
         return new DashboardAdminResponse(
                 "ADMIN",
                 rango.filtroAplicado(),
+                idSucursal,
+                nombreSucursal,
                 rango.desde(),
                 rango.hasta(),
                 ventasTotales,
                 productosVendidos,
                 ticketsEmitidos,
+                new DashboardAdminResponse.KpiResumen(
+                        ventasTotales,
+                        ventasDelDia,
+                        ventasDelMes,
+                        ticketPromedio,
+                        ticketsEmitidos,
+                        comprobantesAnulados,
+                        montoAnulado,
+                        productosVendidos,
+                        variantesVendidas),
                 ingresosPorMetodoPago,
                 ventasPorFecha,
-                topProductosMasVendidos);
+                topProductosMasVendidos,
+                comprobantesPorTipo,
+                distribucionPorEstado,
+                ventasPorSucursal,
+                new DashboardAdminResponse.StockCriticoResumen(
+                        variantesAgotadas,
+                        stockBajo,
+                        agotados,
+                        prontosAgotarse));
     }
 
-    private DashboardVentasResponse construirDashboardVentas(Usuario usuario, String filtro) {
+    private DashboardVentasResponse construirDashboardVentas(Usuario usuario, String filtro, Integer idSucursal) {
         RangoFechas rango = resolverRangoFechas(filtro);
-        Integer idSucursal = resolverIdSucursalSegunRol(usuario);
         Integer idUsuario = usuario.getIdUsuario();
 
         BigDecimal misVentasTotales = asegurarMoneda(
@@ -168,8 +220,7 @@ public class DashboardService {
                 topProductosMasVendidosGenerales);
     }
 
-    private DashboardAlmacenResponse construirDashboardAlmacen(Usuario usuario) {
-        Integer idSucursal = resolverIdSucursalSegunRol(usuario);
+    private DashboardAlmacenResponse construirDashboardAlmacen(Usuario usuario, Integer idSucursal) {
 
         long variantesAgotadas = productoVarianteRepository.contarVariantesAgotadas(idSucursal);
         long stockBajo = productoVarianteRepository.contarStockBajo(idSucursal, UMBRAL_STOCK_BAJO);
@@ -201,14 +252,38 @@ public class DashboardService {
                 .orElseThrow(() -> new RuntimeException("Usuario autenticado no encontrado"));
     }
 
-    private Integer resolverIdSucursalSegunRol(Usuario usuario) {
+    private Integer resolverIdSucursalFiltro(Usuario usuario, Integer idSucursalRequest) {
         if (usuario.getRol() == Rol.ADMINISTRADOR) {
-            return null;
+            if (idSucursalRequest == null) {
+                return null;
+            }
+            return obtenerSucursalActiva(idSucursalRequest).getIdSucursal();
         }
+
+        Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuario);
+        if (idSucursalRequest != null && !idSucursalRequest.equals(idSucursalUsuario)) {
+            throw new RuntimeException("El usuario autenticado no tiene permisos para consultar otra sucursal");
+        }
+        return idSucursalUsuario;
+    }
+
+    private Integer obtenerIdSucursalUsuario(Usuario usuario) {
         if (usuario.getSucursal() == null || usuario.getSucursal().getIdSucursal() == null) {
             throw new RuntimeException("El usuario autenticado no tiene sucursal asignada");
         }
         return usuario.getSucursal().getIdSucursal();
+    }
+
+    private String resolverNombreSucursal(Integer idSucursal) {
+        if (idSucursal == null) {
+            return "TODAS";
+        }
+        return obtenerSucursalActiva(idSucursal).getNombre();
+    }
+
+    private Sucursal obtenerSucursalActiva(Integer idSucursal) {
+        return sucursalRepository.findByIdSucursalAndDeletedAtIsNull(idSucursal)
+                .orElseThrow(() -> new RuntimeException("Sucursal no encontrada"));
     }
 
     private RangoFechas resolverRangoFechas(String filtro) {
@@ -257,8 +332,51 @@ public class DashboardService {
         List<DashboardIngresoMetodoPagoItem> items = new ArrayList<>();
         for (Object[] row : rows) {
             String metodo = row[0] == null ? "SIN_METODO" : row[0].toString();
-            BigDecimal monto = asegurarMoneda((BigDecimal) row[1]);
+            BigDecimal monto = toBigDecimal(row[1]);
             items.add(new DashboardIngresoMetodoPagoItem(metodo, monto));
+        }
+        return items;
+    }
+
+    private List<DashboardAdminResponse.ComprobanteTipoItem> construirComprobantesPorTipo(List<Object[]> rows) {
+        LinkedHashMap<String, DashboardAdminResponse.ComprobanteTipoItem> items = new LinkedHashMap<>();
+        items.put("NOTA DE VENTA", new DashboardAdminResponse.ComprobanteTipoItem("NOTA DE VENTA", 0L, CERO_MONETARIO));
+        items.put("BOLETA", new DashboardAdminResponse.ComprobanteTipoItem("BOLETA", 0L, CERO_MONETARIO));
+        items.put("FACTURA", new DashboardAdminResponse.ComprobanteTipoItem("FACTURA", 0L, CERO_MONETARIO));
+
+        for (Object[] row : rows) {
+            String tipoComprobante = row[0] == null ? "SIN_TIPO" : row[0].toString();
+            items.put(tipoComprobante, new DashboardAdminResponse.ComprobanteTipoItem(
+                    tipoComprobante,
+                    toLong(row[1]),
+                    toBigDecimal(row[2])));
+        }
+        return new ArrayList<>(items.values());
+    }
+
+    private List<DashboardAdminResponse.EstadoVentaItem> construirDistribucionPorEstado(List<Object[]> rows) {
+        LinkedHashMap<String, DashboardAdminResponse.EstadoVentaItem> items = new LinkedHashMap<>();
+        items.put("EMITIDA", new DashboardAdminResponse.EstadoVentaItem("EMITIDA", 0L, CERO_MONETARIO));
+        items.put("ANULADA", new DashboardAdminResponse.EstadoVentaItem("ANULADA", 0L, CERO_MONETARIO));
+
+        for (Object[] row : rows) {
+            String estado = row[0] == null ? "SIN_ESTADO" : row[0].toString();
+            items.put(estado, new DashboardAdminResponse.EstadoVentaItem(
+                    estado,
+                    toLong(row[1]),
+                    toBigDecimal(row[2])));
+        }
+        return new ArrayList<>(items.values());
+    }
+
+    private List<DashboardAdminResponse.SucursalVentaItem> mapVentasPorSucursal(List<Object[]> rows) {
+        List<DashboardAdminResponse.SucursalVentaItem> items = new ArrayList<>();
+        for (Object[] row : rows) {
+            items.add(new DashboardAdminResponse.SucursalVentaItem(
+                    toInteger(row[0]),
+                    row[1] == null ? "-" : row[1].toString(),
+                    toLong(row[2]),
+                    toBigDecimal(row[3])));
         }
         return items;
     }
@@ -290,6 +408,15 @@ public class DashboardService {
         return items;
     }
 
+    private List<DashboardStockCeroItem> limitarStockCritico(List<DashboardStockCeroItem> items) {
+        return items.stream()
+                .sorted(Comparator
+                        .comparing((DashboardStockCeroItem item) -> item.stock() == null ? Integer.MAX_VALUE : item.stock())
+                        .thenComparing(DashboardStockCeroItem::producto, Comparator.nullsLast(String::compareToIgnoreCase)))
+                .limit(10)
+                .toList();
+    }
+
     private List<DashboardSerieItem> construirSerieContinua(LocalDate desde, LocalDate hasta, List<Object[]> rows) {
         Map<LocalDate, BigDecimal> montosPorFecha = new LinkedHashMap<>();
         LocalDate cursor = desde;
@@ -300,7 +427,7 @@ public class DashboardService {
 
         for (Object[] row : rows) {
             LocalDate fecha = toLocalDate(row[0]);
-            BigDecimal monto = asegurarMoneda((BigDecimal) row[1]);
+            BigDecimal monto = toBigDecimal(row[1]);
             if (fecha != null && montosPorFecha.containsKey(fecha)) {
                 montosPorFecha.put(fecha, monto);
             }
@@ -318,6 +445,35 @@ public class DashboardService {
             return CERO_MONETARIO;
         }
         return valor.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal toBigDecimal(Object value) {
+        if (value == null) {
+            return CERO_MONETARIO;
+        }
+        if (value instanceof BigDecimal bigDecimal) {
+            return asegurarMoneda(bigDecimal);
+        }
+        if (value instanceof Number number) {
+            return asegurarMoneda(BigDecimal.valueOf(number.doubleValue()));
+        }
+        return asegurarMoneda(new BigDecimal(value.toString()));
+    }
+
+    private long obtenerCantidadPorEstado(List<DashboardAdminResponse.EstadoVentaItem> items, String estado) {
+        return items.stream()
+                .filter(item -> estado.equalsIgnoreCase(item.estado()))
+                .findFirst()
+                .map(DashboardAdminResponse.EstadoVentaItem::cantidadComprobantes)
+                .orElse(0L);
+    }
+
+    private BigDecimal obtenerMontoPorEstado(List<DashboardAdminResponse.EstadoVentaItem> items, String estado) {
+        return items.stream()
+                .filter(item -> estado.equalsIgnoreCase(item.estado()))
+                .findFirst()
+                .map(DashboardAdminResponse.EstadoVentaItem::montoTotal)
+                .orElse(CERO_MONETARIO);
     }
 
     private Integer toInteger(Object value) {

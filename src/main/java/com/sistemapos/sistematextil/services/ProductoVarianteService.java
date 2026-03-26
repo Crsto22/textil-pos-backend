@@ -33,9 +33,11 @@ import com.sistemapos.sistematextil.model.Color;
 import com.sistemapos.sistematextil.model.Producto;
 import com.sistemapos.sistematextil.model.ProductoColorImagen;
 import com.sistemapos.sistematextil.model.ProductoVariante;
+import com.sistemapos.sistematextil.model.Sucursal;
 import com.sistemapos.sistematextil.model.Talla;
 import com.sistemapos.sistematextil.repositories.ProductoColorImagenRepository;
 import com.sistemapos.sistematextil.repositories.ProductoVarianteRepository;
+import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
 import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoImagenColorRow;
@@ -65,6 +67,7 @@ public class ProductoVarianteService {
     private final ProductoService productoService;
     private final TallaService tallaService;
     private final ColorService colorService;
+    private final SucursalRepository sucursalRepository;
     private final UsuarioRepository usuarioRepository;
 
     @PersistenceContext
@@ -73,12 +76,18 @@ public class ProductoVarianteService {
     @Value("${application.pagination.default-size:10}")
     private int defaultPageSize;
 
-    public List<ProductoVariante> listarTodas() {
-        return repository.findByDeletedAtIsNull();
+    public List<ProductoVariante> listarTodas(Integer idSucursal) {
+        Integer idSucursalFiltro = normalizarIdSucursalFiltro(idSucursal);
+        return idSucursalFiltro == null
+                ? repository.findByDeletedAtIsNull()
+                : repository.findByDeletedAtIsNullAndSucursal_IdSucursal(idSucursalFiltro);
     }
 
-    public List<ProductoVariante> listarPorProducto(Integer idProducto) {
-        return repository.findByProductoIdProductoAndDeletedAtIsNull(idProducto);
+    public List<ProductoVariante> listarPorProducto(Integer idProducto, Integer idSucursal) {
+        Integer idSucursalFiltro = normalizarIdSucursalFiltro(idSucursal);
+        return idSucursalFiltro == null
+                ? repository.findByProductoIdProductoAndDeletedAtIsNull(idProducto)
+                : repository.findByProductoIdProductoAndDeletedAtIsNullAndSucursal_IdSucursal(idProducto, idSucursalFiltro);
     }
 
     public PagedResponse<ProductoVarianteListadoResumenResponse> listarResumenPaginado(
@@ -87,13 +96,14 @@ public class ProductoVarianteService {
             Integer idCategoria,
             Integer idColor,
             Boolean conOferta,
+            Integer idSucursal,
             String correoUsuarioAutenticado) {
         validarPagina(page);
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
         validarRolPermitido(usuarioAutenticado);
         String term = normalizar(q);
         int pageSize = defaultPageSize > 0 ? defaultPageSize : 10;
-        Integer idSucursalFiltro = esAdministrador(usuarioAutenticado) ? null : obtenerIdSucursalUsuario(usuarioAutenticado);
+        Integer idSucursalFiltro = resolverIdSucursalFiltro(usuarioAutenticado, idSucursal);
         PageRequest pageable = PageRequest.of(page, pageSize, Sort.by("idProductoVariante").ascending());
         Page<ProductoVariante> variantes = repository.buscarResumenPaginado(
                 term,
@@ -107,22 +117,25 @@ public class ProductoVarianteService {
         return PagedResponse.fromPage(variantes.map(variante -> toListadoResumenResponse(variante, imagenes)));
     }
 
-    public PagedResponse<ProductoVarianteOfertaListItemResponse> listarConOfertaPaginado(int page) {
+    public PagedResponse<ProductoVarianteOfertaListItemResponse> listarConOfertaPaginado(int page, Integer idSucursal) {
         validarPagina(page);
         int pageSize = defaultPageSize > 0 ? defaultPageSize : 10;
         PageRequest pageable = PageRequest.of(page, pageSize, Sort.by("idProductoVariante").ascending());
-        Page<ProductoVariante> variantes = repository.findByPrecioOfertaIsNotNullAndDeletedAtIsNull(pageable);
+        Integer idSucursalFiltro = normalizarIdSucursalFiltro(idSucursal);
+        Page<ProductoVariante> variantes = idSucursalFiltro == null
+                ? repository.findByPrecioOfertaIsNotNullAndDeletedAtIsNull(pageable)
+                : repository.findByPrecioOfertaIsNotNullAndDeletedAtIsNullAndSucursal_IdSucursal(
+                        idSucursalFiltro,
+                        pageable);
         Map<ProductoColorKey, String> imagenes = resolverImagenesPorProductoColor(variantes.getContent());
         return PagedResponse.fromPage(variantes.map(variante -> toOfertaListItemResponse(variante, imagenes)));
     }
 
-    public byte[] exportarDisponiblesExcel(String correoUsuarioAutenticado) {
+    public byte[] exportarDisponiblesExcel(String correoUsuarioAutenticado, Integer idSucursal) {
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
         validarRolPermitido(usuarioAutenticado);
 
-        Integer idSucursalFiltro = esAdministrador(usuarioAutenticado)
-                ? null
-                : obtenerIdSucursalUsuario(usuarioAutenticado);
+        Integer idSucursalFiltro = resolverIdSucursalFiltro(usuarioAutenticado, idSucursal);
 
         List<ProductoVarianteDisponibleExcelRow> filasConStock = repository.listarDisponiblesParaReporte(
                 idSucursalFiltro,
@@ -182,6 +195,7 @@ public class ProductoVarianteService {
         }
 
         String sku = normalizarRequerido(variante.getSku(), "El SKU de la variante es obligatorio");
+        String codigoBarras = normalizar(variante.getCodigoBarras());
         Double precioMayor = normalizarPrecioMayor(variante.getPrecioMayor());
         Double precioOferta = normalizarPrecioOferta(variante.getPrecioOferta());
         LocalDateTime ofertaInicio = variante.getOfertaInicio();
@@ -211,6 +225,16 @@ public class ProductoVarianteService {
             throw new RuntimeException("El SKU '" + sku + "' ya existe en esta sucursal");
         }
 
+        boolean codigoBarrasDuplicado = codigoBarras != null && (existente == null
+                ? repository.existsBySucursalIdSucursalAndCodigoBarras(variante.getSucursal().getIdSucursal(), codigoBarras)
+                : repository.existsBySucursalIdSucursalAndCodigoBarrasAndIdProductoVarianteNot(
+                        variante.getSucursal().getIdSucursal(),
+                        codigoBarras,
+                        existente.getIdProductoVariante()));
+        if (codigoBarrasDuplicado) {
+            throw new RuntimeException("El codigo de barras '" + codigoBarras + "' ya existe en esta sucursal");
+        }
+
         ProductoVariante destino;
         if (existente != null) {
             if ("ACTIVO".equalsIgnoreCase(existente.getActivo()) && existente.getDeletedAt() == null) {
@@ -225,6 +249,7 @@ public class ProductoVarianteService {
         destino.setTalla(talla);
         destino.setColor(color);
         destino.setSku(sku);
+        destino.setCodigoBarras(codigoBarras);
         destino.setPrecio(variante.getPrecio());
         destino.setPrecioMayor(precioMayor);
         destino.setPrecioOferta(precioOferta);
@@ -298,8 +323,16 @@ public class ProductoVarianteService {
         }
 
         String sku = normalizarRequerido(request.sku(), "El SKU es obligatorio");
+        String codigoBarras = normalizar(request.codigoBarras());
         if (repository.existsBySucursalIdSucursalAndSkuAndIdProductoVarianteNot(idSucursal, sku, id)) {
             throw new RuntimeException("El SKU '" + sku + "' ya existe en esta sucursal");
+        }
+        if (codigoBarras != null
+                && repository.existsBySucursalIdSucursalAndCodigoBarrasAndIdProductoVarianteNot(
+                        idSucursal,
+                        codigoBarras,
+                        id)) {
+            throw new RuntimeException("El codigo de barras '" + codigoBarras + "' ya existe en esta sucursal");
         }
 
         boolean combinacionDuplicada = repository
@@ -328,6 +361,7 @@ public class ProductoVarianteService {
         variante.setColor(color);
         variante.setTalla(talla);
         variante.setSku(sku);
+        variante.setCodigoBarras(codigoBarras);
         variante.setPrecio(request.precio());
         variante.setPrecioMayor(precioMayor);
         variante.setPrecioOferta(precioOferta);
@@ -451,6 +485,33 @@ public class ProductoVarianteService {
         return usuario.getSucursal().getIdSucursal();
     }
 
+    private Integer resolverIdSucursalFiltro(Usuario usuarioAutenticado, Integer idSucursalRequest) {
+        if (esAdministrador(usuarioAutenticado)) {
+            return normalizarIdSucursalFiltro(idSucursalRequest);
+        }
+
+        Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
+        if (idSucursalRequest != null && !idSucursalUsuario.equals(idSucursalRequest)) {
+            throw new RuntimeException("No tiene permisos para consultar otra sucursal");
+        }
+        return idSucursalUsuario;
+    }
+
+    private Integer normalizarIdSucursalFiltro(Integer idSucursalRequest) {
+        if (idSucursalRequest == null) {
+            return null;
+        }
+        if (idSucursalRequest <= 0) {
+            throw new RuntimeException("idSucursal debe ser mayor a 0");
+        }
+        return obtenerSucursalValidaParaFiltro(idSucursalRequest).getIdSucursal();
+    }
+
+    private Sucursal obtenerSucursalValidaParaFiltro(Integer idSucursal) {
+        return sucursalRepository.findByIdSucursalAndDeletedAtIsNull(idSucursal)
+                .orElseThrow(() -> new RuntimeException("Sucursal no encontrada"));
+    }
+
     private ProductoVariante obtenerVarianteConAlcance(Integer idProductoVariante, Usuario usuarioAutenticado) {
         if (esAdministrador(usuarioAutenticado)) {
             return repository.findByIdProductoVarianteAndDeletedAtIsNull(idProductoVariante)
@@ -519,6 +580,7 @@ public class ProductoVarianteService {
         String[] headers = {
                 "ID Variante",
                 "SKU",
+                "Codigo de Barras",
                 "Producto",
                 "Categoria",
                 "Sucursal",
@@ -550,25 +612,26 @@ public class ProductoVarianteService {
                     fila.ofertaFin());
             row.createCell(0).setCellValue(fila.idProductoVariante() == null ? 0 : fila.idProductoVariante());
             row.createCell(1).setCellValue(valorTexto(fila.sku()));
-            row.createCell(2).setCellValue(valorTexto(fila.productoNombre()));
-            row.createCell(3).setCellValue(valorTexto(fila.categoriaNombre()));
-            row.createCell(4).setCellValue(valorTexto(fila.sucursalNombre()));
-            row.createCell(5).setCellValue(valorTexto(fila.colorNombre()));
-            row.createCell(6).setCellValue(valorTexto(fila.tallaNombre()));
-            row.createCell(7).setCellValue(fila.stock() == null ? 0 : fila.stock());
-            row.createCell(8).setCellValue(fila.precio() == null ? 0 : fila.precio());
-            row.createCell(9).setCellValue(fila.precioMayor() == null ? 0 : fila.precioMayor());
-            row.createCell(10).setCellValue(fila.precioOferta() == null ? 0 : fila.precioOferta());
-            row.createCell(11).setCellValue(precioVigente == null ? 0 : precioVigente);
-            row.createCell(12).setCellValue(valorTexto(fila.estado()));
-            row.createCell(13).setCellValue(
+            row.createCell(2).setCellValue(valorTexto(fila.codigoBarras()));
+            row.createCell(3).setCellValue(valorTexto(fila.productoNombre()));
+            row.createCell(4).setCellValue(valorTexto(fila.categoriaNombre()));
+            row.createCell(5).setCellValue(valorTexto(fila.sucursalNombre()));
+            row.createCell(6).setCellValue(valorTexto(fila.colorNombre()));
+            row.createCell(7).setCellValue(valorTexto(fila.tallaNombre()));
+            row.createCell(8).setCellValue(fila.stock() == null ? 0 : fila.stock());
+            row.createCell(9).setCellValue(fila.precio() == null ? 0 : fila.precio());
+            row.createCell(10).setCellValue(fila.precioMayor() == null ? 0 : fila.precioMayor());
+            row.createCell(11).setCellValue(fila.precioOferta() == null ? 0 : fila.precioOferta());
+            row.createCell(12).setCellValue(precioVigente == null ? 0 : precioVigente);
+            row.createCell(13).setCellValue(valorTexto(fila.estado()));
+            row.createCell(14).setCellValue(
                     fila.ofertaInicio() == null ? "" : fila.ofertaInicio().format(FECHA_HORA_EXCEL));
-            row.createCell(14).setCellValue(fila.ofertaFin() == null ? "" : fila.ofertaFin().format(FECHA_HORA_EXCEL));
+            row.createCell(15).setCellValue(fila.ofertaFin() == null ? "" : fila.ofertaFin().format(FECHA_HORA_EXCEL));
 
-            row.getCell(8).setCellStyle(moneyStyle);
             row.getCell(9).setCellStyle(moneyStyle);
             row.getCell(10).setCellStyle(moneyStyle);
             row.getCell(11).setCellStyle(moneyStyle);
+            row.getCell(12).setCellStyle(moneyStyle);
         }
 
         for (int i = 0; i < headers.length; i++) {
@@ -851,6 +914,7 @@ public class ProductoVarianteService {
         return new ProductoVarianteListadoResumenResponse(
                 variante.getIdProductoVariante(),
                 variante.getSku(),
+                variante.getCodigoBarras(),
                 variante.getEstado(),
                 variante.getStock(),
                 variante.getPrecio(),
@@ -914,6 +978,7 @@ public class ProductoVarianteService {
                 sucursalId,
                 sucursalNombre,
                 variante.getSku(),
+                variante.getCodigoBarras(),
                 colorId,
                 colorNombre,
                 colorHex,

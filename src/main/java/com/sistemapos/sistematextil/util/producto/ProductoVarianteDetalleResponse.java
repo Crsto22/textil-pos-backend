@@ -5,6 +5,7 @@ import java.time.LocalDateTime;
 public record ProductoVarianteDetalleResponse(
         Integer idProductoVariante,
         String sku,
+        String codigoBarras,
         Integer colorId,
         String colorNombre,
         String colorHex,

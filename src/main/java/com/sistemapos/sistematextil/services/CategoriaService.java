@@ -38,34 +38,43 @@ public class CategoriaService {
     @Value("${application.pagination.default-size:10}")
     private int defaultPageSize;
 
-    public PagedResponse<CategoriaListItemResponse> listarPaginado(int page, String correoUsuarioAutenticado) {
+    public PagedResponse<CategoriaListItemResponse> listarPaginado(
+            int page,
+            Integer idSucursal,
+            String correoUsuarioAutenticado) {
         validarPagina(page);
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
-        validarRolPermitido(usuarioAutenticado);
+        validarRolLecturaPermitido(usuarioAutenticado);
 
         PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idCategoria").ascending());
-        Page<Categoria> categorias = esAdministrador(usuarioAutenticado)
+        Integer idSucursalFiltro = resolverIdSucursalFiltroListado(usuarioAutenticado, idSucursal);
+        Page<Categoria> categorias = idSucursalFiltro == null
                 ? categoriaRepository.findByDeletedAtIsNullAndEstadoOrderByIdCategoriaAsc(ESTADO_ACTIVO, pageable)
                 : categoriaRepository.findBySucursal_IdSucursalAndDeletedAtIsNullAndEstadoOrderByIdCategoriaAsc(
-                        obtenerIdSucursalUsuario(usuarioAutenticado),
+                        idSucursalFiltro,
                         ESTADO_ACTIVO,
                         pageable);
 
         return PagedResponse.fromPage(categorias.map(this::toListItemResponse));
     }
 
-    public PagedResponse<CategoriaListItemResponse> buscarPaginado(String q, int page, String correoUsuarioAutenticado) {
+    public PagedResponse<CategoriaListItemResponse> buscarPaginado(
+            String q,
+            int page,
+            Integer idSucursal,
+            String correoUsuarioAutenticado) {
         validarPagina(page);
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
-        validarRolPermitido(usuarioAutenticado);
+        validarRolLecturaPermitido(usuarioAutenticado);
 
         String term = normalizar(q);
         if (term == null) {
-            return listarPaginado(page, correoUsuarioAutenticado);
+            return listarPaginado(page, idSucursal, correoUsuarioAutenticado);
         }
 
         PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idCategoria").ascending());
-        Page<Categoria> categorias = esAdministrador(usuarioAutenticado)
+        Integer idSucursalFiltro = resolverIdSucursalFiltroListado(usuarioAutenticado, idSucursal);
+        Page<Categoria> categorias = idSucursalFiltro == null
                 ? categoriaRepository
                         .findByDeletedAtIsNullAndEstadoAndNombreCategoriaContainingIgnoreCaseOrderByIdCategoriaAsc(
                                 ESTADO_ACTIVO,
@@ -73,10 +82,10 @@ public class CategoriaService {
                                 pageable)
                 : categoriaRepository
                         .findBySucursal_IdSucursalAndDeletedAtIsNullAndEstadoAndNombreCategoriaContainingIgnoreCaseOrderByIdCategoriaAsc(
-                        obtenerIdSucursalUsuario(usuarioAutenticado),
-                        ESTADO_ACTIVO,
-                        term,
-                        pageable);
+                                idSucursalFiltro,
+                                ESTADO_ACTIVO,
+                                term,
+                                pageable);
 
         return PagedResponse.fromPage(categorias.map(this::toListItemResponse));
     }
@@ -84,7 +93,7 @@ public class CategoriaService {
     @Transactional
     public CategoriaListItemResponse insertar(CategoriaCreateRequest request, String correoUsuarioAutenticado) {
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
-        validarRolPermitido(usuarioAutenticado);
+        validarRolEdicionPermitido(usuarioAutenticado);
 
         Sucursal sucursal = resolverSucursalParaEscritura(request.idSucursal(), usuarioAutenticado);
         String nombreCategoria = normalizarNombreCategoria(request.nombreCategoria());
@@ -135,7 +144,7 @@ public class CategoriaService {
             CategoriaUpdateRequest request,
             String correoUsuarioAutenticado) {
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
-        validarRolPermitido(usuarioAutenticado);
+        validarRolEdicionPermitido(usuarioAutenticado);
 
         Categoria categoria = obtenerCategoriaConAlcance(idCategoria, usuarioAutenticado);
         Sucursal sucursalDestino = resolverSucursalParaActualizacion(categoria, request.idSucursal(), usuarioAutenticado);
@@ -169,7 +178,7 @@ public class CategoriaService {
     @Transactional
     public void eliminar(Integer idCategoria, String correoUsuarioAutenticado) {
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
-        validarRolPermitido(usuarioAutenticado);
+        validarRolEdicionPermitido(usuarioAutenticado);
 
         Categoria categoria = obtenerCategoriaConAlcance(idCategoria, usuarioAutenticado);
         categoria.setEstado(ESTADO_INACTIVO);
@@ -233,6 +242,23 @@ public class CategoriaService {
         return idSucursalRequest;
     }
 
+    private Integer resolverIdSucursalFiltroListado(Usuario usuarioAutenticado, Integer idSucursalRequest) {
+        if (esAdministrador(usuarioAutenticado)) {
+            if (idSucursalRequest == null) {
+                return null;
+            }
+            return sucursalRepository.findByIdSucursalAndDeletedAtIsNull(idSucursalRequest)
+                    .orElseThrow(() -> new RuntimeException("Sucursal no encontrada"))
+                    .getIdSucursal();
+        }
+
+        Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
+        if (idSucursalRequest != null && !idSucursalUsuario.equals(idSucursalRequest)) {
+            throw new RuntimeException("No tiene permisos para consultar otra sucursal");
+        }
+        return idSucursalUsuario;
+    }
+
     private Usuario obtenerUsuarioAutenticado(String correoUsuarioAutenticado) {
         if (correoUsuarioAutenticado == null || correoUsuarioAutenticado.isBlank()) {
             throw new RuntimeException("No autenticado");
@@ -248,11 +274,18 @@ public class CategoriaService {
         return usuario.getSucursal().getIdSucursal();
     }
 
-    private void validarRolPermitido(Usuario usuario) {
+    private void validarRolLecturaPermitido(Usuario usuario) {
         if (usuario.getRol() != Rol.ADMINISTRADOR
                 && usuario.getRol() != Rol.VENTAS
                 && usuario.getRol() != Rol.ALMACEN) {
-            throw new RuntimeException("El usuario autenticado no tiene permisos para gestionar categorias");
+            throw new RuntimeException("El usuario autenticado no tiene permisos para consultar categorias");
+        }
+    }
+
+    private void validarRolEdicionPermitido(Usuario usuario) {
+        if (usuario.getRol() != Rol.ADMINISTRADOR
+                && usuario.getRol() != Rol.ALMACEN) {
+            throw new RuntimeException("El usuario autenticado no tiene permisos para editar categorias");
         }
     }
 

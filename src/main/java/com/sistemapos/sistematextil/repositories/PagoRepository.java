@@ -49,6 +49,7 @@ public interface PagoRepository extends JpaRepository<Pago, Integer> {
                           AND (:idUsuario IS NULL OR v.usuario.idUsuario = :idUsuario)
                           AND (:idMetodoPago IS NULL OR mp.idMetodoPago = :idMetodoPago)
                           AND (:idSucursal IS NULL OR v.sucursal.idSucursal = :idSucursal)
+                          AND (:estadoVenta IS NULL OR UPPER(v.estado) = :estadoVenta)
                           AND (:fechaInicio IS NULL OR p.fecha >= :fechaInicio)
                           AND (:fechaFinExclusive IS NULL OR p.fecha < :fechaFinExclusive)
                           AND (
@@ -72,6 +73,7 @@ public interface PagoRepository extends JpaRepository<Pago, Integer> {
                         @Param("idUsuario") Integer idUsuario,
                         @Param("idMetodoPago") Integer idMetodoPago,
                         @Param("idSucursal") Integer idSucursal,
+                        @Param("estadoVenta") String estadoVenta,
                         @Param("fechaInicio") LocalDateTime fechaInicio,
                         @Param("fechaFinExclusive") LocalDateTime fechaFinExclusive,
                         Pageable pageable);
@@ -88,6 +90,7 @@ public interface PagoRepository extends JpaRepository<Pago, Integer> {
                           AND (:idUsuario IS NULL OR v.usuario.idUsuario = :idUsuario)
                           AND (:idMetodoPago IS NULL OR mp.idMetodoPago = :idMetodoPago)
                           AND (:idSucursal IS NULL OR v.sucursal.idSucursal = :idSucursal)
+                          AND (:estadoVenta IS NULL OR UPPER(v.estado) = :estadoVenta)
                           AND (:fechaInicio IS NULL OR p.fecha >= :fechaInicio)
                           AND (:fechaFinExclusive IS NULL OR p.fecha < :fechaFinExclusive)
                           AND (
@@ -112,6 +115,7 @@ public interface PagoRepository extends JpaRepository<Pago, Integer> {
                         @Param("idUsuario") Integer idUsuario,
                         @Param("idMetodoPago") Integer idMetodoPago,
                         @Param("idSucursal") Integer idSucursal,
+                        @Param("estadoVenta") String estadoVenta,
                         @Param("fechaInicio") LocalDateTime fechaInicio,
                         @Param("fechaFinExclusive") LocalDateTime fechaFinExclusive);
 

@@ -9,6 +9,7 @@ import java.util.Locale;
 import java.util.StringJoiner;
 
 import com.sistemapos.sistematextil.model.Cliente;
+import com.sistemapos.sistematextil.model.NotaCredito;
 import com.sistemapos.sistematextil.model.Venta;
 import com.sistemapos.sistematextil.model.VentaDetalle;
 import com.sistemapos.sistematextil.util.cliente.TipoDocumento;
@@ -39,9 +40,45 @@ public final class SunatComprobanteHelper {
                 nroCliente);
     }
 
+    public static String construirContenidoQr(NotaCredito notaCredito) {
+        Cliente cliente = notaCredito.getCliente();
+        String rucEmpresa = notaCredito.getSucursal() != null && notaCredito.getSucursal().getEmpresa() != null
+                ? valorTexto(notaCredito.getSucursal().getEmpresa().getRuc())
+                : "";
+        TipoDocumento tipoDocumento = cliente != null ? cliente.getTipoDocumento() : null;
+        String nroCliente = cliente != null ? valorTexto(cliente.getNroDocumento()) : "";
+        String fecha = notaCredito.getFecha() == null ? "" : notaCredito.getFecha().toLocalDate().toString();
+
+        return String.join("|",
+                rucEmpresa,
+                codigoTipoComprobante(notaCredito.getTipoComprobante()),
+                valorTexto(notaCredito.getSerie()),
+                notaCredito.getCorrelativo() == null ? "" : String.valueOf(notaCredito.getCorrelativo()),
+                valorTexto(notaCredito.getIgv()),
+                valorTexto(notaCredito.getTotal()),
+                fecha,
+                codigoTipoDocumento(tipoDocumento),
+                nroCliente);
+    }
+
     public static String construirCadenaResumen(Venta venta, List<VentaDetalle> detalles) {
         StringJoiner joiner = new StringJoiner("|");
         joiner.add(construirContenidoQr(venta));
+
+        detalles.stream()
+                .sorted(Comparator.comparing(SunatComprobanteHelper::ordenDetalle))
+                .forEach(detalle -> joiner.add(String.join(":",
+                        detalle.getProductoVariante() != null ? valorTexto(detalle.getProductoVariante().getSku()) : "",
+                        detalle.getCantidad() == null ? "" : String.valueOf(detalle.getCantidad()),
+                        valorTexto(detalle.getPrecioUnitario()),
+                        valorTexto(detalle.getSubtotal()))));
+
+        return joiner.toString();
+    }
+
+    public static String construirCadenaResumen(NotaCredito notaCredito, List<com.sistemapos.sistematextil.model.NotaCreditoDetalle> detalles) {
+        StringJoiner joiner = new StringJoiner("|");
+        joiner.add(construirContenidoQr(notaCredito));
 
         detalles.stream()
                 .sorted(Comparator.comparing(SunatComprobanteHelper::ordenDetalle))
@@ -71,6 +108,7 @@ public final class SunatComprobanteHelper {
         return switch (tipoComprobante.trim().toUpperCase(Locale.ROOT)) {
             case "FACTURA" -> "01";
             case "BOLETA" -> "03";
+            case "NOTA_CREDITO_BOLETA", "NOTA_CREDITO_FACTURA", "NOTA DE CREDITO", "NOTA DE CRÉDITO" -> "07";
             default -> "00";
         };
     }
@@ -99,6 +137,18 @@ public final class SunatComprobanteHelper {
         return "R-" + construirBaseNombreArchivo(venta) + ".xml";
     }
 
+    public static String construirNombreArchivoXml(NotaCredito notaCredito) {
+        return construirBaseNombreArchivo(notaCredito) + ".xml";
+    }
+
+    public static String construirNombreArchivoZip(NotaCredito notaCredito) {
+        return construirBaseNombreArchivo(notaCredito) + ".zip";
+    }
+
+    public static String construirNombreArchivoCdrZip(NotaCredito notaCredito) {
+        return "R-" + construirBaseNombreArchivo(notaCredito) + ".xml";
+    }
+
     public static String carpetaTipoComprobante(Venta venta) {
         if (venta == null || venta.getTipoComprobante() == null) {
             return "comprobante";
@@ -110,6 +160,13 @@ public final class SunatComprobanteHelper {
         };
     }
 
+    public static String carpetaTipoComprobante(NotaCredito notaCredito) {
+        if (notaCredito == null) {
+            return "nota-credito";
+        }
+        return "nota-credito";
+    }
+
     private static String construirBaseNombreArchivo(Venta venta) {
         String ruc = venta.getSucursal() != null && venta.getSucursal().getEmpresa() != null
                 ? valorTexto(venta.getSucursal().getEmpresa().getRuc())
@@ -117,6 +174,13 @@ public final class SunatComprobanteHelper {
         return ruc + "-"
                 + codigoTipoComprobante(venta.getTipoComprobante()) + "-"
                 + numeroComprobante(venta);
+    }
+
+    private static String construirBaseNombreArchivo(NotaCredito notaCredito) {
+        String ruc = notaCredito.getSucursal() != null && notaCredito.getSucursal().getEmpresa() != null
+                ? valorTexto(notaCredito.getSucursal().getEmpresa().getRuc())
+                : "SINRUC";
+        return ruc + "-07-" + numeroComprobante(notaCredito);
     }
 
     public static String numeroComprobante(Venta venta) {
@@ -133,11 +197,29 @@ public final class SunatComprobanteHelper {
         return serie + "-" + correlativo;
     }
 
+    public static String numeroComprobante(NotaCredito notaCredito) {
+        String serie = notaCredito.getSerie() == null ? "" : notaCredito.getSerie().trim();
+        String correlativo = notaCredito.getCorrelativo() == null
+                ? ""
+                : String.format(Locale.ROOT, "%08d", notaCredito.getCorrelativo());
+        if (serie.isBlank()) {
+            return correlativo;
+        }
+        if (correlativo.isBlank()) {
+            return serie;
+        }
+        return serie + "-" + correlativo;
+    }
+
     private static String valorTexto(Object valor) {
         return valor == null ? "" : String.valueOf(valor);
     }
 
     private static Integer ordenDetalle(VentaDetalle detalle) {
         return detalle.getIdVentaDetalle() == null ? Integer.MAX_VALUE : detalle.getIdVentaDetalle();
+    }
+
+    private static Integer ordenDetalle(com.sistemapos.sistematextil.model.NotaCreditoDetalle detalle) {
+        return detalle.getIdNotaCreditoDetalle() == null ? Integer.MAX_VALUE : detalle.getIdNotaCreditoDetalle();
     }
 }

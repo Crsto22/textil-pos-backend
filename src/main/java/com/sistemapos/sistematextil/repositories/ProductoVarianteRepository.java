@@ -69,11 +69,35 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
             """)
     List<Object[]> listarReposicionUrgente(@Param("idSucursal") Integer idSucursal);
 
+    @Query("""
+            SELECT v.idProductoVariante,
+                   v.producto.nombre,
+                   v.color.nombre,
+                   v.talla.nombre,
+                   v.stock,
+                   v.sku
+            FROM ProductoVariante v
+            WHERE v.deletedAt IS NULL
+              AND v.stock > 0
+              AND v.stock < :umbral
+              AND (:idSucursal IS NULL OR v.sucursal.idSucursal = :idSucursal)
+            ORDER BY v.stock ASC, v.producto.nombre ASC, v.color.nombre ASC, v.talla.nombre ASC
+            """)
+    List<Object[]> listarStockBajoResumen(
+            @Param("idSucursal") Integer idSucursal,
+            @Param("umbral") Integer umbral);
+
     List<ProductoVariante> findByDeletedAtIsNull();
+
+    List<ProductoVariante> findByDeletedAtIsNullAndSucursal_IdSucursal(Integer idSucursal);
 
     List<ProductoVariante> findByProductoIdProducto(Integer idProducto);
 
     List<ProductoVariante> findByProductoIdProductoAndDeletedAtIsNull(Integer idProducto);
+
+    List<ProductoVariante> findByProductoIdProductoAndDeletedAtIsNullAndSucursal_IdSucursal(
+            Integer idProducto,
+            Integer idSucursal);
 
     Optional<ProductoVariante> findByIdProductoVariante(Integer idProductoVariante);
 
@@ -116,6 +140,10 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
 
     Page<ProductoVariante> findByPrecioOfertaIsNotNullAndDeletedAtIsNull(Pageable pageable);
 
+    Page<ProductoVariante> findByPrecioOfertaIsNotNullAndDeletedAtIsNullAndSucursal_IdSucursal(
+            Integer idSucursal,
+            Pageable pageable);
+
     // Metodo optimizado para verificar duplicados sin traer toda la lista a memoria
     boolean existsByProductoIdProductoAndTallaIdTallaAndColorIdColorAndSucursalIdSucursal(
             Integer idProducto, Integer idTalla, Integer idColor, Integer idSucursal);
@@ -125,6 +153,13 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
     boolean existsBySucursalIdSucursalAndSkuAndIdProductoVarianteNot(
             Integer idSucursal,
             String sku,
+            Integer idProductoVariante);
+
+    boolean existsBySucursalIdSucursalAndCodigoBarras(Integer idSucursal, String codigoBarras);
+
+    boolean existsBySucursalIdSucursalAndCodigoBarrasAndIdProductoVarianteNot(
+            Integer idSucursal,
+            String codigoBarras,
             Integer idProductoVariante);
 
     boolean existsByProductoIdProductoAndTallaIdTallaAndColorIdColorAndSucursalIdSucursalAndIdProductoVarianteNot(
@@ -149,6 +184,18 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
     @Query("""
             SELECT COUNT(v) > 0
             FROM ProductoVariante v
+            WHERE v.sucursal.idSucursal = :idSucursal
+              AND v.codigoBarras = :codigoBarras
+              AND (:idProductoExcluir IS NULL OR v.producto.idProducto <> :idProductoExcluir)
+            """)
+    boolean existsCodigoBarrasEnSucursalParaOtroProducto(
+            @Param("idSucursal") Integer idSucursal,
+            @Param("codigoBarras") String codigoBarras,
+            @Param("idProductoExcluir") Integer idProductoExcluir);
+
+    @Query("""
+            SELECT COUNT(v) > 0
+            FROM ProductoVariante v
             WHERE v.producto.idProducto = :idProducto
               AND v.color.idColor = :idColor
               AND v.activo = true
@@ -159,10 +206,38 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
             @Param("idColor") Integer idColor);
 
     @Query("""
+            SELECT COUNT(v)
+            FROM ProductoVariante v
+            JOIN v.producto p
+            WHERE v.deletedAt IS NULL
+              AND v.activo = true
+              AND p.estado <> :estadoProductoExcluido
+              AND (:idSucursal IS NULL OR v.sucursal.idSucursal = :idSucursal)
+            """)
+    long contarVariantesActivasParaReporte(
+            @Param("idSucursal") Integer idSucursal,
+            @Param("estadoProductoExcluido") String estadoProductoExcluido);
+
+    @Query("""
+            SELECT COUNT(v)
+            FROM ProductoVariante v
+            JOIN v.producto p
+            WHERE v.deletedAt IS NULL
+              AND v.activo = true
+              AND p.estado <> :estadoProductoExcluido
+              AND v.stock <= 0
+              AND (:idSucursal IS NULL OR v.sucursal.idSucursal = :idSucursal)
+            """)
+    long contarVariantesSinStockParaReporte(
+            @Param("idSucursal") Integer idSucursal,
+            @Param("estadoProductoExcluido") String estadoProductoExcluido);
+
+    @Query("""
             SELECT new com.sistemapos.sistematextil.util.producto.ProductoVarianteResumenRow(
                 v.producto.idProducto,
                 v.idProductoVariante,
                 v.sku,
+                v.codigoBarras,
                 v.color.idColor,
                 v.color.nombre,
                 v.color.codigo,
@@ -202,6 +277,7 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
                             :term IS NULL
                             OR LOWER(p.nombre) LIKE LOWER(CONCAT('%', :term, '%'))
                             OR v.sku LIKE CONCAT(:term, '%')
+                            OR v.codigoBarras LIKE CONCAT(:term, '%')
                       )
                       AND (
                             :conOferta IS NULL
@@ -222,6 +298,7 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
                             :term IS NULL
                             OR LOWER(p.nombre) LIKE LOWER(CONCAT('%', :term, '%'))
                             OR v.sku LIKE CONCAT(:term, '%')
+                            OR v.codigoBarras LIKE CONCAT(:term, '%')
                       )
                       AND (
                             :conOferta IS NULL
@@ -241,6 +318,7 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
             SELECT new com.sistemapos.sistematextil.util.producto.ProductoVarianteDisponibleExcelRow(
                 v.idProductoVariante,
                 v.sku,
+                v.codigoBarras,
                 p.nombre,
                 p.categoria.nombreCategoria,
                 p.sucursal.nombre,
@@ -271,6 +349,7 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
             SELECT new com.sistemapos.sistematextil.util.producto.ProductoVarianteDisponibleExcelRow(
                 v.idProductoVariante,
                 v.sku,
+                v.codigoBarras,
                 p.nombre,
                 p.categoria.nombreCategoria,
                 p.sucursal.nombre,

@@ -19,6 +19,9 @@ public record ProductoVarianteUpdateRequest(
         @Size(max = 100, message = "El SKU no debe superar 100 caracteres")
         String sku,
 
+        @Size(max = 100, message = "El codigo de barras no debe superar 100 caracteres")
+        String codigoBarras,
+
         @NotNull(message = "Ingrese precio")
         @DecimalMin(value = "0.0", inclusive = true, message = "El precio no puede ser negativo")
         Double precio,

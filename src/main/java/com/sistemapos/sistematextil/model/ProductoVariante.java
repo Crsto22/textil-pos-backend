@@ -19,6 +19,7 @@ import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -71,6 +72,10 @@ public class ProductoVariante {
     @NotBlank(message = "El SKU es obligatorio")
     @Column(name = "sku", nullable = false, length = 100)
     private String sku;
+
+    @Size(max = 100, message = "El codigo de barras no debe superar 100 caracteres")
+    @Column(name = "codigo_barras", length = 100)
+    private String codigoBarras;
 
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "producto_id", nullable = false)

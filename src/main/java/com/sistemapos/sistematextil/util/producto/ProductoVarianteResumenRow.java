@@ -6,6 +6,7 @@ public record ProductoVarianteResumenRow(
         Integer productoId,
         Integer varianteId,
         String sku,
+        String codigoBarras,
         Integer colorId,
         String colorNombre,
         String colorHex,

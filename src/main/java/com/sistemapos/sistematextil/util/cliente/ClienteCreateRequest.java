@@ -7,8 +7,7 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 public record ClienteCreateRequest(
-        @NotNull(message = "Ingrese idSucursal")
-        Integer idSucursal,
+        Integer idEmpresa,
 
         @NotNull(message = "Ingrese tipo de documento")
         TipoDocumento tipoDocumento,

@@ -49,11 +49,35 @@ public interface ComprobanteConfigRepository extends JpaRepository<ComprobanteCo
 
     Optional<ComprobanteConfig> findByIdComprobanteAndDeletedAtIsNull(Integer idComprobante);
 
-    Optional<ComprobanteConfig> findBySucursal_IdSucursalAndTipoComprobante(Integer idSucursal, String tipoComprobante);
+    Optional<ComprobanteConfig> findBySucursal_IdSucursalAndTipoComprobanteAndSerie(
+            Integer idSucursal,
+            String tipoComprobante,
+            String serie);
 
-    Optional<ComprobanteConfig> findBySucursal_IdSucursalAndTipoComprobanteAndDeletedAtIsNull(
+    Optional<ComprobanteConfig> findFirstBySucursal_IdSucursalAndTipoComprobanteAndDeletedAtIsNullOrderByIdComprobanteDesc(
             Integer idSucursal,
             String tipoComprobante);
+
+    @Query(
+            value = """
+                    SELECT MAX(CAST(SUBSTRING(serie, 4) AS UNSIGNED))
+                    FROM comprobante_config
+                    WHERE tipo_comprobante = :tipoComprobante
+                      AND UPPER(serie) REGEXP '^COT[0-9]+$'
+                    """,
+            nativeQuery = true)
+    Integer obtenerMaxSufijoSerieCotizacion(@Param("tipoComprobante") String tipoComprobante);
+
+    long countBySucursal_IdSucursalAndTipoComprobanteAndActivoAndDeletedAtIsNull(
+            Integer idSucursal,
+            String tipoComprobante,
+            String activo);
+
+    long countBySucursal_IdSucursalAndTipoComprobanteAndActivoAndDeletedAtIsNullAndIdComprobanteNot(
+            Integer idSucursal,
+            String tipoComprobante,
+            String activo,
+            Integer idComprobante);
 
     @Query(
             value = """
@@ -63,6 +87,7 @@ public interface ComprobanteConfigRepository extends JpaRepository<ComprobanteCo
                       AND tipo_comprobante = :tipoComprobante
                       AND activo = 1
                       AND deleted_at IS NULL
+                    ORDER BY id_comprobante DESC
                     LIMIT 1
                     FOR UPDATE
                     """,

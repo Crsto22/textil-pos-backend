@@ -43,6 +43,10 @@ public class NotaCreditoDetalle {
     @JoinColumn(name = "id_producto_variante", nullable = false)
     private ProductoVariante productoVariante;
 
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "id_venta_detalle_ref")
+    private VentaDetalle ventaDetalleReferencia;
+
     @Column(length = 255)
     private String descripcion;
 

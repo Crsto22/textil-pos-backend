@@ -35,10 +35,13 @@ public class CategoriaController {
     private final CategoriaService categoriaService;
 
     @GetMapping("/listar")
-    public ResponseEntity<?> listar(Authentication authentication, @RequestParam(defaultValue = "0") int page) {
+    public ResponseEntity<?> listar(
+            Authentication authentication,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(name = "idSucursal", required = false) Integer idSucursal) {
         try {
             PagedResponse<CategoriaListItemResponse> response = categoriaService
-                    .listarPaginado(page, obtenerCorreoAutenticado(authentication));
+                    .listarPaginado(page, idSucursal, obtenerCorreoAutenticado(authentication));
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al listar categorias" : e.getMessage();
@@ -51,10 +54,11 @@ public class CategoriaController {
     public ResponseEntity<?> buscar(
             Authentication authentication,
             @RequestParam(name = "q", required = false) String q,
-            @RequestParam(defaultValue = "0") int page) {
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(name = "idSucursal", required = false) Integer idSucursal) {
         try {
             PagedResponse<CategoriaListItemResponse> response = categoriaService
-                    .buscarPaginado(q, page, obtenerCorreoAutenticado(authentication));
+                    .buscarPaginado(q, page, idSucursal, obtenerCorreoAutenticado(authentication));
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al buscar categorias" : e.getMessage();

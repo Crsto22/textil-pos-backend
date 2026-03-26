@@ -42,6 +42,7 @@ public class PagoController {
             @RequestParam(name = "idUsuario", required = false) Integer idUsuario,
             @RequestParam(name = "idMetodoPago", required = false) Integer idMetodoPago,
             @RequestParam(name = "idSucursal", required = false) Integer idSucursal,
+            @RequestParam(name = "estadoVenta", required = false) String estadoVenta,
             @RequestParam(name = "desde", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate desde,
             @RequestParam(name = "hasta", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hasta,
             @RequestParam(defaultValue = "0") int page) {
@@ -52,6 +53,7 @@ public class PagoController {
                     idUsuario,
                     idMetodoPago,
                     idSucursal,
+                    estadoVenta,
                     desde,
                     hasta,
                     page,
@@ -72,6 +74,7 @@ public class PagoController {
             @RequestParam(name = "idUsuario", required = false) Integer idUsuario,
             @RequestParam(name = "idMetodoPago", required = false) Integer idMetodoPago,
             @RequestParam(name = "idSucursal", required = false) Integer idSucursal,
+            @RequestParam(name = "estadoVenta", required = false) String estadoVenta,
             @RequestParam(name = "desde", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate desde,
             @RequestParam(name = "hasta", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hasta) {
         try {
@@ -81,6 +84,7 @@ public class PagoController {
                     idUsuario,
                     idMetodoPago,
                     idSucursal,
+                    estadoVenta,
                     desde,
                     hasta,
                     obtenerCorreoAutenticado(authentication));

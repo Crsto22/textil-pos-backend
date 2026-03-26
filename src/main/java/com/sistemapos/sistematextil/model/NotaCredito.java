@@ -4,10 +4,13 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 import com.sistemapos.sistematextil.model.converter.EstadoActivoConverter;
+import com.sistemapos.sistematextil.util.sunat.SunatEstado;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -96,8 +99,9 @@ public class NotaCredito {
     @Column(nullable = false, length = 20)
     private String estado;
 
+    @Enumerated(EnumType.STRING)
     @Column(name = "sunat_estado", nullable = false, length = 20)
-    private String sunatEstado;
+    private SunatEstado sunatEstado;
 
     @Column(name = "sunat_codigo", length = 20)
     private String sunatCodigo;
@@ -167,8 +171,8 @@ public class NotaCredito {
         if (this.estado == null || this.estado.isBlank()) {
             this.estado = "EMITIDA";
         }
-        if (this.sunatEstado == null || this.sunatEstado.isBlank()) {
-            this.sunatEstado = "PENDIENTE";
+        if (this.sunatEstado == null) {
+            this.sunatEstado = SunatEstado.PENDIENTE;
         }
         if (this.stockDevuelto == null) {
             this.stockDevuelto = false;

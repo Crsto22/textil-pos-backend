@@ -36,3 +36,8 @@ build/
 .env
 .env.*
 !.env.example
+
+# Local runtime and temporary files
+.tmp*/
+storage/
+--help

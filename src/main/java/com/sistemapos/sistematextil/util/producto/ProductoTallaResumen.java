@@ -7,6 +7,7 @@ public record ProductoTallaResumen(
         Integer tallaId,
         String nombre,
         String sku,
+        String codigoBarras,
         Double precio,
         Double precioMayor,
         Double precioOferta,

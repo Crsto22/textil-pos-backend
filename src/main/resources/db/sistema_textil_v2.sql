@@ -194,6 +194,7 @@ CREATE TABLE producto_variante(
   talla_id INT NOT NULL,
   color_id INT NOT NULL,
   sku VARCHAR(100) NOT NULL,
+  codigo_barras VARCHAR(100),
   precio DECIMAL(10,2) NOT NULL,
   precio_mayor DECIMAL(10,2),
   precio_oferta DECIMAL(10,2),
@@ -206,6 +207,7 @@ CREATE TABLE producto_variante(
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   deleted_at DATETIME(6),
   UNIQUE KEY uk_variante_sucursal_sku(sucursal_id,sku),
+  UNIQUE KEY uk_variante_sucursal_codigo_barras(sucursal_id,codigo_barras),
   UNIQUE KEY uk_variante_unica(producto_id,sucursal_id,talla_id,color_id),
   FOREIGN KEY(producto_id) REFERENCES producto(producto_id),
   FOREIGN KEY(sucursal_id) REFERENCES sucursal(id_sucursal),
@@ -229,12 +231,44 @@ PREPARE stmt FROM @sql;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
+SET @col_producto_variante_codigo_barras := (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'producto_variante'
+    AND COLUMN_NAME = 'codigo_barras'
+);
+SET @sql := IF(
+  @col_producto_variante_codigo_barras = 0,
+  'ALTER TABLE producto_variante ADD COLUMN codigo_barras VARCHAR(100) DEFAULT NULL AFTER sku',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @idx_producto_variante_codigo_barras := (
+  SELECT COUNT(*)
+  FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'producto_variante'
+    AND INDEX_NAME = 'uk_variante_sucursal_codigo_barras'
+);
+SET @sql := IF(
+  @idx_producto_variante_codigo_barras = 0,
+  'ALTER TABLE producto_variante ADD UNIQUE KEY uk_variante_sucursal_codigo_barras (sucursal_id, codigo_barras)',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
 -- =========================
 -- CLIENTE
 -- =========================
 CREATE TABLE IF NOT EXISTS cliente (
   id_cliente INT(11) NOT NULL AUTO_INCREMENT,
-  id_sucursal INT(11) NOT NULL,
+  id_empresa INT(11) NOT NULL,
   id_usuario_creacion INT(11) NOT NULL,
   tipo_documento ENUM('DNI','RUC','CE','SIN_DOC') NOT NULL DEFAULT 'SIN_DOC',
   nro_documento VARCHAR(20) DEFAULT NULL,
@@ -247,11 +281,11 @@ CREATE TABLE IF NOT EXISTS cliente (
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   deleted_at DATETIME(6) DEFAULT NULL,
   PRIMARY KEY (id_cliente),
-  KEY idx_cliente_sucursal (id_sucursal),
+  KEY idx_cliente_empresa (id_empresa),
   KEY idx_cliente_doc (tipo_documento, nro_documento),
   KEY idx_cliente_usuario_creacion (id_usuario_creacion),
-  CONSTRAINT fk_cliente_sucursal
-    FOREIGN KEY (id_sucursal) REFERENCES sucursal (id_sucursal)
+  CONSTRAINT fk_cliente_empresa
+    FOREIGN KEY (id_empresa) REFERENCES empresa (id_empresa)
     ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT fk_cliente_usuario_creacion
     FOREIGN KEY (id_usuario_creacion) REFERENCES usuario (id_usuario)
@@ -320,7 +354,7 @@ DROP TABLE IF EXISTS caja;
 CREATE TABLE IF NOT EXISTS comprobante_config (
   id_comprobante INT(11) NOT NULL AUTO_INCREMENT,
   id_sucursal INT(11) NOT NULL,
-  tipo_comprobante ENUM('NOTA DE VENTA','BOLETA','FACTURA','NOTA_CREDITO_BOLETA','NOTA_CREDITO_FACTURA') NOT NULL,
+  tipo_comprobante ENUM('NOTA DE VENTA','BOLETA','FACTURA','NOTA_CREDITO_BOLETA','NOTA_CREDITO_FACTURA','COTIZACION') NOT NULL,
   serie VARCHAR(10) NOT NULL,
   ultimo_correlativo INT(11) NOT NULL DEFAULT 0,
   habilitado_venta TINYINT(1) NOT NULL DEFAULT 1,
@@ -329,7 +363,7 @@ CREATE TABLE IF NOT EXISTS comprobante_config (
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   deleted_at DATETIME(6) DEFAULT NULL,
   PRIMARY KEY (id_comprobante),
-  UNIQUE KEY uk_comprobante_config_sucursal_tipo (id_sucursal, tipo_comprobante),
+  UNIQUE KEY uk_comprobante_config_sucursal_tipo_serie (id_sucursal, tipo_comprobante, serie),
   KEY idx_comprobante_config_lookup (id_sucursal, tipo_comprobante, activo, deleted_at),
   CONSTRAINT fk_comprobante_config_sucursal
     FOREIGN KEY (id_sucursal) REFERENCES sucursal (id_sucursal)
@@ -368,8 +402,40 @@ PREPARE stmt FROM @sql;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
+SET @idx_cc_old_unique := (
+  SELECT COUNT(*)
+  FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'comprobante_config'
+    AND INDEX_NAME = 'uk_comprobante_config_sucursal_tipo'
+);
+SET @sql := IF(
+  @idx_cc_old_unique = 0,
+  'SELECT 1',
+  'ALTER TABLE comprobante_config DROP INDEX uk_comprobante_config_sucursal_tipo'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @idx_cc_unique_tipo_serie := (
+  SELECT COUNT(*)
+  FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'comprobante_config'
+    AND INDEX_NAME = 'uk_comprobante_config_sucursal_tipo_serie'
+);
+SET @sql := IF(
+  @idx_cc_unique_tipo_serie = 0,
+  'ALTER TABLE comprobante_config ADD UNIQUE KEY uk_comprobante_config_sucursal_tipo_serie (id_sucursal, tipo_comprobante, serie)',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
 ALTER TABLE comprobante_config
-MODIFY COLUMN tipo_comprobante ENUM('NOTA DE VENTA','BOLETA','FACTURA','NOTA_CREDITO_BOLETA','NOTA_CREDITO_FACTURA') NOT NULL;
+MODIFY COLUMN tipo_comprobante ENUM('NOTA DE VENTA','BOLETA','FACTURA','NOTA_CREDITO_BOLETA','NOTA_CREDITO_FACTURA','COTIZACION') NOT NULL;
 
 UPDATE comprobante_config
 SET habilitado_venta = CASE
@@ -389,16 +455,17 @@ CREATE TABLE IF NOT EXISTS venta (
   serie VARCHAR(10) NOT NULL,
   correlativo INT(11) NOT NULL,
   moneda CHAR(3) NOT NULL DEFAULT 'PEN',
+  forma_pago VARCHAR(10) NOT NULL DEFAULT 'CONTADO',
   igv_porcentaje DECIMAL(5,2) NOT NULL DEFAULT 18.00,
   subtotal DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   descuento_total DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   tipo_descuento ENUM('MONTO','PORCENTAJE') DEFAULT NULL,
   igv DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   total DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-  estado ENUM('EMITIDA','ANULACION_PENDIENTE','ANULADA') NOT NULL DEFAULT 'EMITIDA',
-  anulacion_tipo VARCHAR(30) DEFAULT NULL,
-  anulacion_motivo VARCHAR(255) DEFAULT NULL,
-  anulacion_fecha DATETIME(6) DEFAULT NULL,
+  estado ENUM('EMITIDA','ANULADA','NC_EMITIDA') NOT NULL DEFAULT 'EMITIDA',
+  tipo_anulacion VARCHAR(20) DEFAULT NULL,
+  motivo_anulacion VARCHAR(255) DEFAULT NULL,
+  anulado_at DATETIME(6) DEFAULT NULL,
   id_usuario_anulacion INT(11) DEFAULT NULL,
   sunat_estado VARCHAR(20) NOT NULL DEFAULT 'NO_APLICA',
   sunat_codigo VARCHAR(20) DEFAULT NULL,
@@ -464,6 +531,105 @@ CREATE TABLE IF NOT EXISTS venta_detalle (
     ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT fk_venta_detalle_variante
     FOREIGN KEY (id_producto_variante) REFERENCES producto_variante (id_producto_variante)
+    ON DELETE RESTRICT ON UPDATE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- =========================
+-- NOTA DE CREDITO
+-- =========================
+CREATE TABLE IF NOT EXISTS nota_credito (
+  id_nota_credito INT(11) NOT NULL AUTO_INCREMENT,
+  id_venta_referencia INT(11) NOT NULL,
+  id_sucursal INT(11) NOT NULL,
+  id_usuario INT(11) NOT NULL,
+  id_cliente INT(11) DEFAULT NULL,
+  tipo_comprobante VARCHAR(20) NOT NULL,
+  serie VARCHAR(10) NOT NULL,
+  correlativo INT(11) NOT NULL,
+  moneda CHAR(3) NOT NULL DEFAULT 'PEN',
+  codigo_motivo VARCHAR(5) NOT NULL,
+  descripcion_motivo VARCHAR(255) NOT NULL,
+  tipo_documento_ref VARCHAR(2) NOT NULL,
+  serie_ref VARCHAR(10) NOT NULL,
+  correlativo_ref INT(11) NOT NULL,
+  igv_porcentaje DECIMAL(5,2) NOT NULL DEFAULT 18.00,
+  subtotal DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  descuento_total DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  igv DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  total DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  estado VARCHAR(20) NOT NULL DEFAULT 'EMITIDA',
+  sunat_estado VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE',
+  sunat_codigo VARCHAR(20) DEFAULT NULL,
+  sunat_mensaje VARCHAR(500) DEFAULT NULL,
+  sunat_hash VARCHAR(120) DEFAULT NULL,
+  sunat_ticket VARCHAR(120) DEFAULT NULL,
+  sunat_xml_nombre VARCHAR(180) DEFAULT NULL,
+  sunat_xml_key VARCHAR(600) DEFAULT NULL,
+  sunat_zip_nombre VARCHAR(180) DEFAULT NULL,
+  sunat_zip_key VARCHAR(600) DEFAULT NULL,
+  sunat_cdr_nombre VARCHAR(180) DEFAULT NULL,
+  sunat_cdr_key VARCHAR(600) DEFAULT NULL,
+  sunat_enviado_at DATETIME(6) DEFAULT NULL,
+  sunat_respondido_at DATETIME(6) DEFAULT NULL,
+  stock_devuelto TINYINT(1) NOT NULL DEFAULT 0,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  fecha DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  deleted_at DATETIME(6) DEFAULT NULL,
+  PRIMARY KEY (id_nota_credito),
+  KEY idx_nota_credito_venta_ref (id_venta_referencia),
+  KEY idx_nota_credito_sucursal (id_sucursal),
+  KEY idx_nota_credito_usuario (id_usuario),
+  KEY idx_nota_credito_cliente (id_cliente),
+  UNIQUE KEY uk_nota_credito_numero_comprobante (id_sucursal, tipo_comprobante, serie, correlativo),
+  CONSTRAINT fk_nc_venta_ref
+    FOREIGN KEY (id_venta_referencia) REFERENCES venta (id_venta)
+    ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_nc_sucursal
+    FOREIGN KEY (id_sucursal) REFERENCES sucursal (id_sucursal)
+    ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_nc_usuario
+    FOREIGN KEY (id_usuario) REFERENCES usuario (id_usuario)
+    ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_nc_cliente
+    FOREIGN KEY (id_cliente) REFERENCES cliente (id_cliente)
+    ON DELETE RESTRICT ON UPDATE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- =========================
+-- NOTA DE CREDITO DETALLE
+-- =========================
+CREATE TABLE IF NOT EXISTS nota_credito_detalle (
+  id_nota_credito_detalle INT(11) NOT NULL AUTO_INCREMENT,
+  id_nota_credito INT(11) NOT NULL,
+  id_producto_variante INT(11) NOT NULL,
+  id_venta_detalle_ref INT(11) DEFAULT NULL,
+  descripcion VARCHAR(255) DEFAULT NULL,
+  cantidad INT(11) NOT NULL,
+  unidad_medida VARCHAR(3) NOT NULL DEFAULT 'NIU',
+  codigo_tipo_afectacion_igv VARCHAR(2) NOT NULL DEFAULT '10',
+  precio_unitario DECIMAL(10,2) NOT NULL,
+  descuento DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  igv_detalle DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  subtotal DECIMAL(10,2) NOT NULL,
+  total_detalle DECIMAL(10,2) DEFAULT NULL,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  deleted_at DATETIME(6) DEFAULT NULL,
+  PRIMARY KEY (id_nota_credito_detalle),
+  KEY idx_ncd_nota_credito (id_nota_credito),
+  KEY idx_ncd_producto_variante (id_producto_variante),
+  KEY idx_ncd_venta_detalle_ref (id_venta_detalle_ref),
+  CONSTRAINT fk_ncd_nota_credito
+    FOREIGN KEY (id_nota_credito) REFERENCES nota_credito (id_nota_credito)
+    ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_ncd_producto_variante
+    FOREIGN KEY (id_producto_variante) REFERENCES producto_variante (id_producto_variante)
+    ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_ncd_venta_detalle_ref
+    FOREIGN KEY (id_venta_detalle_ref) REFERENCES venta_detalle (id_venta_detalle)
     ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -749,6 +915,31 @@ ON DUPLICATE KEY UPDATE
   activo = VALUES(activo),
   updated_at = CURRENT_TIMESTAMP(6);
 
+UPDATE cotizacion
+SET serie = CONCAT('COT', LPAD(id_sucursal, 2, '0'))
+WHERE serie IS NULL
+   OR TRIM(serie) = ''
+   OR UPPER(TRIM(serie)) = 'COT';
+
+UPDATE comprobante_config cc
+SET cc.serie = CONCAT('COT', LPAD(cc.id_sucursal, 2, '0'))
+WHERE cc.tipo_comprobante = 'COTIZACION'
+  AND cc.deleted_at IS NULL
+  AND (
+    cc.serie IS NULL
+    OR TRIM(cc.serie) = ''
+    OR UPPER(TRIM(cc.serie)) = 'COT'
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM comprobante_config cc2
+    WHERE cc2.id_sucursal = cc.id_sucursal
+      AND cc2.tipo_comprobante = 'COTIZACION'
+      AND cc2.deleted_at IS NULL
+      AND cc2.id_comprobante <> cc.id_comprobante
+      AND cc2.serie = CONCAT('COT', LPAD(cc.id_sucursal, 2, '0'))
+  );
+
 INSERT INTO comprobante_config (
   id_sucursal,
   tipo_comprobante,
@@ -763,7 +954,10 @@ INSERT INTO comprobante_config (
 SELECT
   s.id_sucursal,
   t.tipo_comprobante,
-  t.serie,
+  CASE
+    WHEN t.tipo_comprobante = 'COTIZACION' THEN CONCAT('COT', LPAD(s.id_sucursal, 2, '0'))
+    ELSE t.serie
+  END,
   0,
   t.habilitado_venta,
   1,
@@ -777,6 +971,7 @@ JOIN (
   UNION ALL SELECT 'FACTURA', 'F001', 1
   UNION ALL SELECT 'NOTA_CREDITO_BOLETA', 'BC01', 0
   UNION ALL SELECT 'NOTA_CREDITO_FACTURA', 'FC01', 0
+  UNION ALL SELECT 'COTIZACION', 'COT', 0
 ) t
 WHERE s.deleted_at IS NULL
   AND s.activo = 1
@@ -801,12 +996,24 @@ UPDATE venta
 SET tipo_comprobante = 'NOTA DE VENTA'
 WHERE tipo_comprobante = 'TICKET' OR tipo_comprobante = '';
 
+DROP TABLE IF EXISTS comunicacion_baja_detalle;
+DROP TABLE IF EXISTS comunicacion_baja;
+
 UPDATE venta v
-JOIN comprobante_config cc
+JOIN (
+  SELECT cc1.id_sucursal, cc1.tipo_comprobante, cc1.serie
+  FROM comprobante_config cc1
+  JOIN (
+    SELECT id_sucursal, tipo_comprobante, MAX(id_comprobante) AS id_comprobante
+    FROM comprobante_config
+    WHERE activo = 1
+      AND deleted_at IS NULL
+    GROUP BY id_sucursal, tipo_comprobante
+  ) ultimo
+    ON ultimo.id_comprobante = cc1.id_comprobante
+) cc
   ON cc.id_sucursal = v.id_sucursal
  AND cc.tipo_comprobante = v.tipo_comprobante
- AND cc.activo = 1
- AND cc.deleted_at IS NULL
 SET v.serie = cc.serie
 WHERE v.serie IS NULL OR v.serie = '';
 
@@ -863,84 +1070,38 @@ SET cc.ultimo_correlativo = COALESCE(v.max_corr, 0),
     cc.updated_at = CURRENT_TIMESTAMP(6)
 WHERE cc.deleted_at IS NULL;
 
+UPDATE comprobante_config cc
+LEFT JOIN (
+  SELECT
+    id_sucursal,
+    COALESCE(NULLIF(TRIM(serie), ''), CONCAT('COT', LPAD(id_sucursal, 2, '0'))) AS serie_normalizada,
+    COALESCE(MAX(correlativo), 0) AS max_corr
+  FROM cotizacion
+  WHERE deleted_at IS NULL
+  GROUP BY id_sucursal, COALESCE(NULLIF(TRIM(serie), ''), CONCAT('COT', LPAD(id_sucursal, 2, '0')))
+) c
+  ON c.id_sucursal = cc.id_sucursal
+ AND c.serie_normalizada = cc.serie
+SET cc.ultimo_correlativo = GREATEST(COALESCE(cc.ultimo_correlativo, 0), COALESCE(c.max_corr, 0)),
+    cc.habilitado_venta = 0,
+    cc.updated_at = CURRENT_TIMESTAMP(6)
+WHERE cc.deleted_at IS NULL
+  AND cc.tipo_comprobante = 'COTIZACION';
+
 ALTER TABLE venta MODIFY COLUMN serie VARCHAR(10) NOT NULL;
 ALTER TABLE venta MODIFY COLUMN correlativo INT(11) NOT NULL;
-ALTER TABLE venta MODIFY COLUMN estado ENUM('EMITIDA','ANULACION_PENDIENTE','ANULADA') NOT NULL DEFAULT 'EMITIDA';
+ALTER TABLE venta MODIFY COLUMN estado ENUM('EMITIDA','ANULADA','NC_EMITIDA') NOT NULL DEFAULT 'EMITIDA';
 
-SET @col_venta_anulacion_tipo := (
+SET @idx_uk_nota_credito_numero := (
   SELECT COUNT(*)
-  FROM information_schema.COLUMNS
+  FROM information_schema.STATISTICS
   WHERE TABLE_SCHEMA = DATABASE()
-    AND TABLE_NAME = 'venta'
-    AND COLUMN_NAME = 'anulacion_tipo'
+    AND TABLE_NAME = 'nota_credito'
+    AND INDEX_NAME = 'uk_nota_credito_numero_comprobante'
 );
 SET @sql := IF(
-  @col_venta_anulacion_tipo = 0,
-  'ALTER TABLE venta ADD COLUMN anulacion_tipo VARCHAR(30) DEFAULT NULL AFTER estado',
-  'SELECT 1'
-);
-PREPARE stmt FROM @sql;
-EXECUTE stmt;
-DEALLOCATE PREPARE stmt;
-
-SET @col_venta_anulacion_motivo := (
-  SELECT COUNT(*)
-  FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE()
-    AND TABLE_NAME = 'venta'
-    AND COLUMN_NAME = 'anulacion_motivo'
-);
-SET @sql := IF(
-  @col_venta_anulacion_motivo = 0,
-  'ALTER TABLE venta ADD COLUMN anulacion_motivo VARCHAR(255) DEFAULT NULL AFTER anulacion_tipo',
-  'SELECT 1'
-);
-PREPARE stmt FROM @sql;
-EXECUTE stmt;
-DEALLOCATE PREPARE stmt;
-
-SET @col_venta_anulacion_fecha := (
-  SELECT COUNT(*)
-  FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE()
-    AND TABLE_NAME = 'venta'
-    AND COLUMN_NAME = 'anulacion_fecha'
-);
-SET @sql := IF(
-  @col_venta_anulacion_fecha = 0,
-  'ALTER TABLE venta ADD COLUMN anulacion_fecha DATETIME(6) DEFAULT NULL AFTER anulacion_motivo',
-  'SELECT 1'
-);
-PREPARE stmt FROM @sql;
-EXECUTE stmt;
-DEALLOCATE PREPARE stmt;
-
-SET @col_venta_id_usuario_anulacion := (
-  SELECT COUNT(*)
-  FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE()
-    AND TABLE_NAME = 'venta'
-    AND COLUMN_NAME = 'id_usuario_anulacion'
-);
-SET @sql := IF(
-  @col_venta_id_usuario_anulacion = 0,
-  'ALTER TABLE venta ADD COLUMN id_usuario_anulacion INT(11) DEFAULT NULL AFTER anulacion_fecha',
-  'SELECT 1'
-);
-PREPARE stmt FROM @sql;
-EXECUTE stmt;
-DEALLOCATE PREPARE stmt;
-
-SET @fk_venta_usuario_anulacion := (
-  SELECT COUNT(*)
-  FROM information_schema.REFERENTIAL_CONSTRAINTS
-  WHERE CONSTRAINT_SCHEMA = DATABASE()
-    AND CONSTRAINT_NAME = 'fk_venta_usuario_anulacion'
-    AND TABLE_NAME = 'venta'
-);
-SET @sql := IF(
-  @fk_venta_usuario_anulacion = 0,
-  'ALTER TABLE venta ADD CONSTRAINT fk_venta_usuario_anulacion FOREIGN KEY (id_usuario_anulacion) REFERENCES usuario (id_usuario) ON DELETE RESTRICT ON UPDATE RESTRICT',
+  @idx_uk_nota_credito_numero = 0,
+  'ALTER TABLE nota_credito ADD UNIQUE KEY uk_nota_credito_numero_comprobante (id_sucursal, tipo_comprobante, serie, correlativo)',
   'SELECT 1'
 );
 PREPARE stmt FROM @sql;
@@ -978,5 +1139,141 @@ SET @sql := IF(
 PREPARE stmt FROM @sql;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
+SET @col_venta_forma_pago := (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'venta'
+    AND COLUMN_NAME = 'forma_pago'
+);
+SET @sql := IF(
+  @col_venta_forma_pago = 0,
+  'ALTER TABLE venta ADD COLUMN forma_pago VARCHAR(10) NOT NULL DEFAULT ''CONTADO'' AFTER moneda',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @col_venta_tipo_anulacion := (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'venta'
+    AND COLUMN_NAME = 'tipo_anulacion'
+);
+SET @col_venta_anulacion_tipo := (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'venta'
+    AND COLUMN_NAME = 'anulacion_tipo'
+);
+SET @sql := IF(
+  @col_venta_tipo_anulacion > 0,
+  'SELECT 1',
+  IF(
+    @col_venta_anulacion_tipo > 0,
+    'ALTER TABLE venta CHANGE COLUMN anulacion_tipo tipo_anulacion VARCHAR(20) DEFAULT NULL',
+    'ALTER TABLE venta ADD COLUMN tipo_anulacion VARCHAR(20) DEFAULT NULL AFTER estado'
+  )
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @col_venta_motivo_anulacion := (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'venta'
+    AND COLUMN_NAME = 'motivo_anulacion'
+);
+SET @col_venta_anulacion_motivo := (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'venta'
+    AND COLUMN_NAME = 'anulacion_motivo'
+);
+SET @sql := IF(
+  @col_venta_motivo_anulacion > 0,
+  'SELECT 1',
+  IF(
+    @col_venta_anulacion_motivo > 0,
+    'ALTER TABLE venta CHANGE COLUMN anulacion_motivo motivo_anulacion VARCHAR(255) DEFAULT NULL',
+    'ALTER TABLE venta ADD COLUMN motivo_anulacion VARCHAR(255) DEFAULT NULL AFTER tipo_anulacion'
+  )
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @col_venta_anulado_at := (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'venta'
+    AND COLUMN_NAME = 'anulado_at'
+);
+SET @col_venta_anulacion_fecha := (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'venta'
+    AND COLUMN_NAME = 'anulacion_fecha'
+);
+SET @sql := IF(
+  @col_venta_anulado_at > 0,
+  'SELECT 1',
+  IF(
+    @col_venta_anulacion_fecha > 0,
+    'ALTER TABLE venta CHANGE COLUMN anulacion_fecha anulado_at DATETIME(6) DEFAULT NULL',
+    'ALTER TABLE venta ADD COLUMN anulado_at DATETIME(6) DEFAULT NULL AFTER motivo_anulacion'
+  )
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @col_venta_id_usuario_anulacion := (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'venta'
+    AND COLUMN_NAME = 'id_usuario_anulacion'
+);
+SET @sql := IF(
+  @col_venta_id_usuario_anulacion = 0,
+  'ALTER TABLE venta ADD COLUMN id_usuario_anulacion INT(11) DEFAULT NULL AFTER anulado_at',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @fk_venta_usuario_anulacion := (
+  SELECT COUNT(*)
+  FROM information_schema.REFERENTIAL_CONSTRAINTS
+  WHERE CONSTRAINT_SCHEMA = DATABASE()
+    AND CONSTRAINT_NAME = 'fk_venta_usuario_anulacion'
+    AND TABLE_NAME = 'venta'
+);
+SET @sql := IF(
+  @fk_venta_usuario_anulacion = 0,
+  'ALTER TABLE venta ADD CONSTRAINT fk_venta_usuario_anulacion FOREIGN KEY (id_usuario_anulacion) REFERENCES usuario (id_usuario) ON DELETE RESTRICT ON UPDATE RESTRICT',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+UPDATE venta
+SET estado = 'ANULADA'
+WHERE estado = 'ANULACION_PENDIENTE';
+
+UPDATE venta
+SET estado = 'ANULADA'
+WHERE estado = 'NC_EMITIDA';
 
 COMMIT;

@@ -83,6 +83,73 @@ public interface VentaRepository extends JpaRepository<Venta, Integer> {
             @Param("fechaInicio") LocalDateTime fechaInicio,
             @Param("fechaFinExclusive") LocalDateTime fechaFinExclusive);
 
+    @Query(
+            value = """
+                    SELECT
+                      v.tipo_comprobante,
+                      COALESCE(SUM(CASE WHEN v.estado = 'EMITIDA' THEN 1 ELSE 0 END), 0) AS cantidad_emitida,
+                      COALESCE(SUM(CASE WHEN v.estado = 'EMITIDA' THEN v.total ELSE 0 END), 0) AS monto_emitido
+                    FROM venta v
+                    WHERE v.deleted_at IS NULL
+                      AND (:idSucursal IS NULL OR v.id_sucursal = :idSucursal)
+                      AND (:fechaInicio IS NULL OR v.fecha >= :fechaInicio)
+                      AND (:fechaFinExclusive IS NULL OR v.fecha < :fechaFinExclusive)
+                    GROUP BY v.tipo_comprobante
+                    HAVING COALESCE(SUM(CASE WHEN v.estado = 'EMITIDA' THEN 1 ELSE 0 END), 0) > 0
+                        OR COALESCE(SUM(CASE WHEN v.estado = 'EMITIDA' THEN v.total ELSE 0 END), 0) > 0
+                    ORDER BY monto_emitido DESC, cantidad_emitida DESC, v.tipo_comprobante ASC
+                    """,
+            nativeQuery = true)
+    List<Object[]> obtenerVentasPorTipoComprobanteResumen(
+            @Param("idSucursal") Integer idSucursal,
+            @Param("fechaInicio") LocalDateTime fechaInicio,
+            @Param("fechaFinExclusive") LocalDateTime fechaFinExclusive);
+
+    @Query(
+            value = """
+                    SELECT
+                      v.estado,
+                      COUNT(*) AS cantidad_comprobantes,
+                      COALESCE(SUM(v.total), 0) AS monto_total
+                    FROM venta v
+                    WHERE v.deleted_at IS NULL
+                      AND v.estado IN ('EMITIDA', 'ANULADA')
+                      AND (:idSucursal IS NULL OR v.id_sucursal = :idSucursal)
+                      AND (:fechaInicio IS NULL OR v.fecha >= :fechaInicio)
+                      AND (:fechaFinExclusive IS NULL OR v.fecha < :fechaFinExclusive)
+                    GROUP BY v.estado
+                    ORDER BY cantidad_comprobantes DESC, v.estado ASC
+                    """,
+            nativeQuery = true)
+    List<Object[]> obtenerDistribucionPorEstadoResumen(
+            @Param("idSucursal") Integer idSucursal,
+            @Param("fechaInicio") LocalDateTime fechaInicio,
+            @Param("fechaFinExclusive") LocalDateTime fechaFinExclusive);
+
+    @Query(
+            value = """
+                    SELECT
+                      s.id_sucursal,
+                      s.nombre,
+                      COALESCE(SUM(CASE WHEN v.estado = 'EMITIDA' THEN 1 ELSE 0 END), 0) AS cantidad_emitida,
+                      COALESCE(SUM(CASE WHEN v.estado = 'EMITIDA' THEN v.total ELSE 0 END), 0) AS monto_emitido
+                    FROM sucursal s
+                    LEFT JOIN venta v
+                      ON v.id_sucursal = s.id_sucursal
+                     AND v.deleted_at IS NULL
+                     AND (:fechaInicio IS NULL OR v.fecha >= :fechaInicio)
+                     AND (:fechaFinExclusive IS NULL OR v.fecha < :fechaFinExclusive)
+                    WHERE s.deleted_at IS NULL
+                      AND (:idSucursal IS NULL OR s.id_sucursal = :idSucursal)
+                    GROUP BY s.id_sucursal, s.nombre
+                    ORDER BY monto_emitido DESC, cantidad_emitida DESC, s.nombre ASC
+                    """,
+            nativeQuery = true)
+    List<Object[]> obtenerVentasPorSucursalResumen(
+            @Param("idSucursal") Integer idSucursal,
+            @Param("fechaInicio") LocalDateTime fechaInicio,
+            @Param("fechaFinExclusive") LocalDateTime fechaFinExclusive);
+
     @Query("""
             SELECT v
             FROM Venta v
@@ -153,6 +220,33 @@ public interface VentaRepository extends JpaRepository<Venta, Integer> {
     Optional<Venta> findByIdVentaAndDeletedAtIsNull(Integer idVenta);
 
     Optional<Venta> findByIdVentaAndDeletedAtIsNullAndSucursal_IdSucursal(Integer idVenta, Integer idSucursal);
+
+    @Query(
+            value = """
+                    SELECT *
+                    FROM venta
+                    WHERE id_venta = :idVenta
+                      AND deleted_at IS NULL
+                    LIMIT 1
+                    FOR UPDATE
+                    """,
+            nativeQuery = true)
+    Optional<Venta> findByIdVentaForUpdate(@Param("idVenta") Integer idVenta);
+
+    @Query(
+            value = """
+                    SELECT *
+                    FROM venta
+                    WHERE id_venta = :idVenta
+                      AND id_sucursal = :idSucursal
+                      AND deleted_at IS NULL
+                    LIMIT 1
+                    FOR UPDATE
+                    """,
+            nativeQuery = true)
+    Optional<Venta> findByIdVentaAndSucursalForUpdate(
+            @Param("idVenta") Integer idVenta,
+            @Param("idSucursal") Integer idSucursal);
 
     @Query("""
             SELECT COALESCE(MAX(v.correlativo), 0)

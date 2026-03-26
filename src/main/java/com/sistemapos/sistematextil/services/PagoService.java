@@ -9,8 +9,10 @@ import java.net.URI;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 import javax.imageio.ImageIO;
 
@@ -52,6 +54,7 @@ public class PagoService {
 
     private static final DateTimeFormatter FECHA_HORA_PDF = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
     private static final DateTimeFormatter FECHA_PDF = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+    private static final Set<String> ESTADOS_VENTA_PERMITIDOS = Set.of("EMITIDA", "ANULADA", "NC_EMITIDA");
 
     private final PagoRepository pagoRepository;
     private final UsuarioRepository usuarioRepository;
@@ -66,6 +69,7 @@ public class PagoService {
             Integer idUsuario,
             Integer idMetodoPago,
             Integer idSucursal,
+            String estadoVenta,
             LocalDate desde,
             LocalDate hasta,
             int page,
@@ -79,6 +83,7 @@ public class PagoService {
                 idUsuario,
                 idMetodoPago,
                 idSucursal,
+                estadoVenta,
                 desde,
                 hasta);
 
@@ -94,6 +99,7 @@ public class PagoService {
                 filtros.idUsuario(),
                 filtros.idMetodoPago(),
                 filtros.idSucursal(),
+                filtros.estadoVenta(),
                 filtros.fechaInicio(),
                 filtros.fechaFinExclusive(),
                 pageable);
@@ -107,6 +113,7 @@ public class PagoService {
             Integer idUsuario,
             Integer idMetodoPago,
             Integer idSucursal,
+            String estadoVenta,
             LocalDate desde,
             LocalDate hasta,
             String correoUsuarioAutenticado) {
@@ -118,6 +125,7 @@ public class PagoService {
                 idUsuario,
                 idMetodoPago,
                 idSucursal,
+                estadoVenta,
                 desde,
                 hasta);
 
@@ -127,6 +135,7 @@ public class PagoService {
                 filtros.idUsuario(),
                 filtros.idMetodoPago(),
                 filtros.idSucursal(),
+                filtros.estadoVenta(),
                 filtros.fechaInicio(),
                 filtros.fechaFinExclusive());
 
@@ -207,6 +216,7 @@ public class PagoService {
         String nombreSucursal = pago.getVenta() != null && pago.getVenta().getSucursal() != null
                 ? pago.getVenta().getSucursal().getNombre()
                 : null;
+        String estadoVenta = pago.getVenta() != null ? pago.getVenta().getEstado() : null;
 
         return new PagoListItemResponse(
                 pago.getIdPago(),
@@ -224,7 +234,8 @@ public class PagoService {
                 idUsuario,
                 nombreUsuario,
                 idSucursal,
-                nombreSucursal);
+                nombreSucursal,
+                estadoVenta);
     }
 
     private PagoFiltros prepararFiltros(
@@ -234,6 +245,7 @@ public class PagoService {
             Integer idUsuario,
             Integer idMetodoPago,
             Integer idSucursal,
+            String estadoVenta,
             LocalDate desde,
             LocalDate hasta) {
         validarRolLectura(usuarioAutenticado);
@@ -243,6 +255,7 @@ public class PagoService {
         Integer idUsuarioFiltro = resolverIdUsuarioListado(usuarioAutenticado, idUsuario);
         Integer idMetodoPagoFiltro = normalizarIdPositivo(idMetodoPago, "idMetodoPago");
         Integer idSucursalFiltro = resolverIdSucursalListado(usuarioAutenticado, idSucursal);
+        String estadoVentaFiltro = normalizarEstadoVenta(estadoVenta);
         RangoFechas rango = resolverRangoFechas(desde, hasta);
         LocalDateTime fechaInicio = rango == null ? null : rango.desde().atStartOfDay();
         LocalDateTime fechaFinExclusive = rango == null ? null : rango.hasta().plusDays(1).atStartOfDay();
@@ -253,9 +266,28 @@ public class PagoService {
                 idUsuarioFiltro,
                 idMetodoPagoFiltro,
                 idSucursalFiltro,
+                estadoVentaFiltro,
                 fechaInicio,
                 fechaFinExclusive,
                 rango);
+    }
+
+    private String normalizarEstadoVenta(String estadoVenta) {
+        if (estadoVenta == null) {
+            return null;
+        }
+
+        String normalizado = estadoVenta.trim().toUpperCase(Locale.ROOT);
+        if (normalizado.isBlank() || "TODOS".equals(normalizado)) {
+            return null;
+        }
+
+        if (!ESTADOS_VENTA_PERMITIDOS.contains(normalizado)) {
+            throw new RuntimeException(
+                    "estadoVenta invalido. Valores permitidos: "
+                            + String.join(", ", Arrays.asList("TODOS", "EMITIDA", "ANULADA", "NC_EMITIDA")));
+        }
+        return normalizado;
     }
 
     private Usuario obtenerUsuarioAutenticado(String correoUsuarioAutenticado) {
@@ -475,6 +507,9 @@ public class PagoService {
                     "Usuario filtrado: " + textoUsuarioFiltrado(filtros.idUsuario(), usuarioFiltro),
                     fuentePdf(false, 9f)));
         }
+        infoCell.addElement(new Paragraph(
+            "Estado venta: " + (filtros.estadoVenta() == null ? "TODOS" : filtros.estadoVenta()),
+            fuentePdf(false, 9f)));
         if (usuarioFiltro != null) {
             infoCell.addElement(new Paragraph(
                 "Usuario reporte: " + nombreUsuario(usuarioFiltro),
@@ -494,7 +529,7 @@ public class PagoService {
             return;
         }
 
-        PdfPTable tabla = new PdfPTable(new float[] { 1.8f, 3.1f, 2.3f, 2.0f, 1.6f, 2.2f });
+        PdfPTable tabla = new PdfPTable(new float[] { 1.6f, 2.8f, 2.0f, 1.8f, 1.6f, 1.9f, 2.1f });
         tabla.setWidthPercentage(100);
         tabla.setSpacingBefore(8f);
 
@@ -503,6 +538,7 @@ public class PagoService {
         agregarHeaderTabla(tabla, "Cliente", bgHeader);
         agregarHeaderTabla(tabla, "Codigo Operacion", bgHeader);
         agregarHeaderTabla(tabla, "Metodo Pago", bgHeader);
+        agregarHeaderTabla(tabla, "Estado Venta", bgHeader);
         agregarHeaderTabla(tabla, "Monto", bgHeader);
         agregarHeaderTabla(tabla, "Fecha y Hora", bgHeader);
 
@@ -514,6 +550,11 @@ public class PagoService {
             agregarCeldaTexto(tabla,
                     pago.getMetodoPago() != null ? valorTexto(pago.getMetodoPago().getNombre()) : "-",
                     Element.ALIGN_LEFT);
+                agregarCeldaTexto(tabla,
+                    pago.getVenta() != null && valorTexto(pago.getVenta().getEstado()).isBlank()
+                        ? "-"
+                        : (pago.getVenta() != null ? valorTexto(pago.getVenta().getEstado()) : "-"),
+                    Element.ALIGN_CENTER);
             
             String montoStr = pago.getMonto() != null ? String.format(Locale.US, "S/ %.2f", pago.getMonto()) : "S/ 0.00";
             agregarCeldaTexto(tabla, montoStr, Element.ALIGN_RIGHT);
@@ -626,6 +667,7 @@ public class PagoService {
             Integer idUsuario,
             Integer idMetodoPago,
             Integer idSucursal,
+            String estadoVenta,
             LocalDateTime fechaInicio,
             LocalDateTime fechaFinExclusive,
             RangoFechas rango) {

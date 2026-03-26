@@ -33,6 +33,7 @@ public interface ProductoRepository extends JpaRepository<Producto, Integer> {
                             :term IS NULL
                             OR LOWER(p.nombre) LIKE LOWER(CONCAT('%', :term, '%'))
                             OR v.sku LIKE CONCAT(:term, '%')
+                            OR v.codigoBarras LIKE CONCAT(:term, '%')
                       )
                       AND (
                             :conOferta IS NULL
@@ -52,6 +53,7 @@ public interface ProductoRepository extends JpaRepository<Producto, Integer> {
                             :term IS NULL
                             OR LOWER(p.nombre) LIKE LOWER(CONCAT('%', :term, '%'))
                             OR v.sku LIKE CONCAT(:term, '%')
+                            OR v.codigoBarras LIKE CONCAT(:term, '%')
                       )
                       AND (
                             :conOferta IS NULL
@@ -82,4 +84,14 @@ public interface ProductoRepository extends JpaRepository<Producto, Integer> {
 
     @Query("SELECT COUNT(v) > 0 FROM ProductoVariante v WHERE v.producto.idProducto = :idProducto")
     boolean estaEnUso(Integer idProducto);
+
+    @Query("""
+            SELECT COUNT(p)
+            FROM Producto p
+            WHERE p.estado <> :estadoProductoExcluido
+              AND (:idSucursal IS NULL OR p.sucursal.idSucursal = :idSucursal)
+            """)
+    long contarActivosParaReporte(
+            @Param("idSucursal") Integer idSucursal,
+            @Param("estadoProductoExcluido") String estadoProductoExcluido);
 }

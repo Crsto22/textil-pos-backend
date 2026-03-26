@@ -12,7 +12,13 @@ public interface HistorialStockRepository extends JpaRepository<HistorialStock, 
     
     // Buscar historial de un producto específico ordenado por lo más reciente
     List<HistorialStock> findByProductoVarianteProductoIdProductoOrderByFechaDesc(Integer idProducto);
+    List<HistorialStock> findByProductoVarianteProductoIdProductoAndSucursalIdSucursalOrderByFechaDesc(
+            Integer idProducto,
+            Integer idSucursal);
     List<HistorialStock> findByProductoVarianteIdProductoVarianteOrderByFechaDesc(Integer idProductoVariante);
+    List<HistorialStock> findByProductoVarianteIdProductoVarianteAndSucursalIdSucursalOrderByFechaDesc(
+            Integer idProductoVariante,
+            Integer idSucursal);
     
     // Buscar movimientos realizados en una sucursal específica
     List<HistorialStock> findBySucursalIdSucursalOrderByFechaDesc(Integer idSucursal);

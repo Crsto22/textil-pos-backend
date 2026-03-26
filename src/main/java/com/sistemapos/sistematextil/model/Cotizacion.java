@@ -1,6 +1,7 @@
 package com.sistemapos.sistematextil.model;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDateTime;
 
 import com.sistemapos.sistematextil.model.converter.EstadoActivoConverter;
@@ -30,6 +31,8 @@ import lombok.Setter;
 @Setter
 public class Cotizacion {
 
+    private static final BigDecimal CIEN = BigDecimal.valueOf(100);
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "id_cotizacion")
@@ -55,9 +58,6 @@ public class Cotizacion {
     @Column(nullable = false, updatable = false)
     private LocalDateTime fecha;
 
-    @Column(name = "igv_porcentaje", nullable = false, precision = 5, scale = 2)
-    private BigDecimal igvPorcentaje;
-
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal subtotal;
 
@@ -66,9 +66,6 @@ public class Cotizacion {
 
     @Column(name = "tipo_descuento", length = 10)
     private String tipoDescuento;
-
-    @Column(nullable = false, precision = 10, scale = 2)
-    private BigDecimal igv;
 
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal total;
@@ -96,17 +93,11 @@ public class Cotizacion {
             this.fecha = now;
         }
         this.updatedAt = now;
-        if (this.igvPorcentaje == null) {
-            this.igvPorcentaje = BigDecimal.valueOf(18);
-        }
         if (this.subtotal == null) {
             this.subtotal = BigDecimal.ZERO;
         }
         if (this.descuentoTotal == null) {
             this.descuentoTotal = BigDecimal.ZERO;
-        }
-        if (this.igv == null) {
-            this.igv = BigDecimal.ZERO;
         }
         if (this.total == null) {
             this.total = BigDecimal.ZERO;
@@ -122,5 +113,25 @@ public class Cotizacion {
     @PreUpdate
     protected void onUpdate() {
         this.updatedAt = LocalDateTime.now();
+    }
+
+    public BigDecimal getIgv() {
+        BigDecimal subtotalActual = this.subtotal == null ? BigDecimal.ZERO : this.subtotal;
+        BigDecimal totalActual = this.total == null ? BigDecimal.ZERO : this.total;
+        BigDecimal igvCalculado = totalActual.subtract(subtotalActual);
+        if (igvCalculado.compareTo(BigDecimal.ZERO) < 0) {
+            igvCalculado = BigDecimal.ZERO;
+        }
+        return igvCalculado.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    public BigDecimal getIgvPorcentaje() {
+        BigDecimal subtotalActual = this.subtotal == null ? BigDecimal.ZERO : this.subtotal;
+        if (subtotalActual.compareTo(BigDecimal.ZERO) <= 0) {
+            return BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+        }
+        return getIgv()
+                .multiply(CIEN)
+                .divide(subtotalActual, 2, RoundingMode.HALF_UP);
     }
 }

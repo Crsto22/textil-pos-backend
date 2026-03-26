@@ -2,6 +2,7 @@ package com.sistemapos.sistematextil.services;
 
 import java.io.ByteArrayOutputStream;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -9,204 +10,193 @@ import java.util.zip.ZipOutputStream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.w3c.dom.Document;
 
 import com.sistemapos.sistematextil.config.SunatProperties;
 import com.sistemapos.sistematextil.model.NotaCredito;
 import com.sistemapos.sistematextil.model.NotaCreditoDetalle;
 import com.sistemapos.sistematextil.model.SunatConfig;
-import com.sistemapos.sistematextil.model.Venta;
 import com.sistemapos.sistematextil.repositories.NotaCreditoDetalleRepository;
 import com.sistemapos.sistematextil.repositories.NotaCreditoRepository;
 import com.sistemapos.sistematextil.repositories.SunatConfigRepository;
 import com.sistemapos.sistematextil.util.sunat.SunatCdrResult;
+import com.sistemapos.sistematextil.util.sunat.SunatComprobanteHelper;
 import com.sistemapos.sistematextil.util.sunat.SunatEmissionResult;
 import com.sistemapos.sistematextil.util.sunat.SunatEstado;
 import com.sistemapos.sistematextil.util.sunat.SunatSoapFaultException;
 
 import lombok.RequiredArgsConstructor;
-import org.w3c.dom.Document;
 
-/**
- * Orquesta el flujo completo de Nota de Crédito (tipo 07) con SUNAT:
- * 1. Construir XML CreditNote UBL 2.1
- * 2. Firmar con certificado digital
- * 3. Comprimir en ZIP
- * 4. Almacenar XML y ZIP en S3
- * 5. Enviar via SOAP sendBill → obtener CDR (síncrono)
- * 6. Parsear CDR y almacenar
- * 7. Actualizar estado en BD
- *
- * Sigue las mismas convenciones que DefaultSunatEmissionService.
- */
 @Service
 @RequiredArgsConstructor
 public class SunatNotaCreditoEmissionService {
 
     private static final Logger log = LoggerFactory.getLogger(SunatNotaCreditoEmissionService.class);
+    private static final DateTimeFormatter TICKET_FORMAT = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
     private final SunatProperties sunatProperties;
     private final SunatConfigRepository sunatConfigRepository;
+    private final NotaCreditoRepository notaCreditoRepository;
+    private final NotaCreditoDetalleRepository notaCreditoDetalleRepository;
     private final SunatNotaCreditoXmlBuilderService sunatNotaCreditoXmlBuilderService;
     private final SunatXmlSignatureService sunatXmlSignatureService;
     private final SunatDocumentStorageService sunatDocumentStorageService;
     private final SunatSoapClientService sunatSoapClientService;
     private final SunatCdrParserService sunatCdrParserService;
-    private final NotaCreditoRepository notaCreditoRepository;
-    private final NotaCreditoDetalleRepository notaCreditoDetalleRepository;
 
-    // ─── EMITIR NOTA DE CRÉDITO ──────────────────────────────────────
+    public SunatEmissionResult emitir(Integer idNotaCredito) {
+        NotaCredito notaCredito = notaCreditoRepository.findByIdNotaCreditoAndDeletedAtIsNull(idNotaCredito)
+                .orElseThrow(() -> new RuntimeException("Nota de credito con ID " + idNotaCredito + " no encontrada"));
+        List<NotaCreditoDetalle> detalles = notaCreditoDetalleRepository
+                .findByNotaCredito_IdNotaCreditoAndDeletedAtIsNull(notaCredito.getIdNotaCredito());
 
-    @Transactional
-    public SunatEmissionResult emitir(NotaCredito nc) {
         String mode = sunatProperties.normalizedMode();
-
         if ("DISABLED".equals(mode)) {
-            String xmlName = sunatNotaCreditoXmlBuilderService.construirNombreArchivoXml(nc);
-            nc.setSunatXmlNombre(xmlName);
-            nc.setSunatEstado("PENDIENTE");
-            nc.setSunatMensaje("Integración SUNAT deshabilitada. La nota de crédito queda pendiente de envío.");
-            notaCreditoRepository.save(nc);
-
-            return new SunatEmissionResult(
-                    SunatEstado.PENDIENTE, null,
-                    "Integración SUNAT deshabilitada. La nota de crédito queda pendiente de envío.",
-                    null, null, xmlName, null, null, null, null, null, null, null);
+            return emitirDeshabilitado(notaCredito);
         }
-
         if ("SIMULATED".equals(mode)) {
-            return emitirSimulado(nc);
+            return emitirSimulado(notaCredito);
         }
-
         if (isRealMode(mode)) {
-            return emitirReal(nc);
+            return emitirReal(notaCredito, detalles);
         }
 
         LocalDateTime now = LocalDateTime.now();
+        notaCredito.setSunatEstado(SunatEstado.ERROR);
+        notaCredito.setSunatCodigo("CONFIG");
+        notaCredito.setSunatMensaje("Modo SUNAT no soportado: " + mode);
+        notaCredito.setSunatRespondidoAt(now);
+        notaCreditoRepository.save(notaCredito);
         return new SunatEmissionResult(
-                SunatEstado.ERROR, "CONFIG",
-                "Modo SUNAT no soportado: " + mode,
-                null, null,
-                sunatNotaCreditoXmlBuilderService.construirNombreArchivoXml(nc),
-                null, null, null, null, null, now, now);
+                SunatEstado.ERROR,
+                "CONFIG",
+                notaCredito.getSunatMensaje(),
+                notaCredito.getSunatHash(),
+                notaCredito.getSunatTicket(),
+                SunatComprobanteHelper.construirNombreArchivoXml(notaCredito),
+                notaCredito.getSunatXmlKey(),
+                SunatComprobanteHelper.construirNombreArchivoZip(notaCredito),
+                notaCredito.getSunatZipKey(),
+                notaCredito.getSunatCdrNombre(),
+                notaCredito.getSunatCdrKey(),
+                now,
+                now);
     }
 
-    private SunatEmissionResult emitirSimulado(NotaCredito nc) {
+    private SunatEmissionResult emitirDeshabilitado(NotaCredito notaCredito) {
+        notaCredito.setSunatEstado(SunatEstado.PENDIENTE);
+        notaCredito.setSunatMensaje("Integracion SUNAT deshabilitada. La nota de credito queda pendiente de envio.");
+        notaCredito.setSunatXmlNombre(SunatComprobanteHelper.construirNombreArchivoXml(notaCredito));
+        notaCreditoRepository.save(notaCredito);
+        return new SunatEmissionResult(
+                SunatEstado.PENDIENTE,
+                null,
+                notaCredito.getSunatMensaje(),
+                notaCredito.getSunatHash(),
+                notaCredito.getSunatTicket(),
+                notaCredito.getSunatXmlNombre(),
+                notaCredito.getSunatXmlKey(),
+                notaCredito.getSunatZipNombre(),
+                notaCredito.getSunatZipKey(),
+                notaCredito.getSunatCdrNombre(),
+                notaCredito.getSunatCdrKey(),
+                notaCredito.getSunatEnviadoAt(),
+                notaCredito.getSunatRespondidoAt());
+    }
+
+    private SunatEmissionResult emitirSimulado(NotaCredito notaCredito) {
         LocalDateTime now = LocalDateTime.now();
-        String xmlName = sunatNotaCreditoXmlBuilderService.construirNombreArchivoXml(nc);
-        String ticket = "SIM-NC-" + nc.getIdNotaCredito() + "-"
-                + now.format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
-
-        nc.setSunatEstado("ACEPTADO");
-        nc.setSunatCodigo("0");
-        nc.setSunatMensaje("Nota de crédito aceptada en modo simulado.");
-        nc.setSunatHash(ticket);
-        nc.setSunatXmlNombre(xmlName);
-        nc.setSunatEnviadoAt(now);
-        nc.setSunatRespondidoAt(now);
-        notaCreditoRepository.save(nc);
-
-        log.info("Nota de crédito {} simulada: ticket={}", sunatNotaCreditoXmlBuilderService.numeroComprobante(nc), ticket);
+        String hash = "SIM-NC-" + notaCredito.getIdNotaCredito() + "-" + now.format(TICKET_FORMAT);
+        notaCredito.setSunatEstado(SunatEstado.ACEPTADO);
+        notaCredito.setSunatCodigo("0");
+        notaCredito.setSunatMensaje("Nota de credito aceptada en modo simulado.");
+        notaCredito.setSunatHash(hash);
+        notaCredito.setSunatXmlNombre(SunatComprobanteHelper.construirNombreArchivoXml(notaCredito));
+        notaCredito.setSunatEnviadoAt(now);
+        notaCredito.setSunatRespondidoAt(now);
+        notaCreditoRepository.save(notaCredito);
 
         return new SunatEmissionResult(
-                SunatEstado.ACEPTADO, "0",
-                "Nota de crédito aceptada en modo simulado.",
-                ticket, null, xmlName, null, null, null, null, null, now, now);
+                SunatEstado.ACEPTADO,
+                "0",
+                notaCredito.getSunatMensaje(),
+                hash,
+                null,
+                notaCredito.getSunatXmlNombre(),
+                notaCredito.getSunatXmlKey(),
+                notaCredito.getSunatZipNombre(),
+                notaCredito.getSunatZipKey(),
+                notaCredito.getSunatCdrNombre(),
+                notaCredito.getSunatCdrKey(),
+                now,
+                now);
     }
 
-    private SunatEmissionResult emitirReal(NotaCredito nc) {
-        String xmlName = sunatNotaCreditoXmlBuilderService.construirNombreArchivoXml(nc);
-        String zipName = sunatNotaCreditoXmlBuilderService.construirNombreArchivoZip(nc);
-        String signatureId = "SIGN-" + nc.getSucursal().getEmpresa().getRuc().trim();
+    private SunatEmissionResult emitirReal(NotaCredito notaCredito, List<NotaCreditoDetalle> detalles) {
+        String xmlName = SunatComprobanteHelper.construirNombreArchivoXml(notaCredito);
+        String zipName = SunatComprobanteHelper.construirNombreArchivoZip(notaCredito);
+        String signatureId = "SIGN-" + notaCredito.getSucursal().getEmpresa().getRuc().trim();
 
         try {
-            Venta ventaRef = nc.getVentaReferencia();
-            SunatConfig config = resolveConfig(ventaRef);
-            log.info("SUNAT emitir nota de crédito real: xmlName={}, zipName={}, endpoint={}",
-                    xmlName, zipName, config.getUrlBillService());
-
-            List<NotaCreditoDetalle> detalles = notaCreditoDetalleRepository
-                    .findByNotaCredito_IdNotaCreditoAndDeletedAtIsNull(nc.getIdNotaCredito());
-
-            // 1. Construir XML CreditNote
-            Document xmlDocument = sunatNotaCreditoXmlBuilderService.build(nc, detalles);
-
-            // 2. Firmar
+            SunatConfig config = resolveConfig(notaCredito);
+            Document xmlDocument = sunatNotaCreditoXmlBuilderService.build(notaCredito, detalles);
             SunatXmlSignatureService.SignedXml signedXml = sunatXmlSignatureService.sign(xmlDocument, config, signatureId);
-            log.info("XML NC firmado: {} bytes, digestValue={}", signedXml.bytes().length, signedXml.digestValue());
-
-            // 3. ZIP
             byte[] zipBytes = zip(xmlName, signedXml.bytes());
-            log.info("ZIP NC generado: {} bytes", zipBytes.length);
-
-            // 4. Almacenar XML y ZIP en S3
             SunatDocumentStorageService.StoredUploadPair stored = sunatDocumentStorageService
-                    .storeXmlAndZip(ventaRef, xmlName, signedXml.bytes(), zipName, zipBytes);
+                    .storeXmlAndZip(notaCredito, xmlName, signedXml.bytes(), zipName, zipBytes);
 
-            nc.setSunatXmlNombre(stored.xml().fileName());
-            nc.setSunatXmlKey(stored.xml().key());
-            nc.setSunatZipNombre(stored.zip().fileName());
-            nc.setSunatZipKey(stored.zip().key());
-
-            // 5. Enviar vía SOAP sendBill (síncrono, devuelve CDR)
             LocalDateTime sentAt = LocalDateTime.now();
-            nc.setSunatEnviadoAt(sentAt);
+            notaCredito.setSunatHash(signedXml.digestValue());
+            notaCredito.setSunatXmlNombre(xmlName);
+            notaCredito.setSunatXmlKey(stored.xml().key());
+            notaCredito.setSunatZipNombre(zipName);
+            notaCredito.setSunatZipKey(stored.zip().key());
+            notaCredito.setSunatEnviadoAt(sentAt);
+            notaCreditoRepository.save(notaCredito);
 
             try {
-                SunatSoapClientService.SendBillResponse soapResponse = sunatSoapClientService
-                        .sendBill(config, zipName, zipBytes);
-
-                // 6. Parsear CDR
+                SunatSoapClientService.SendBillResponse soapResponse = sunatSoapClientService.sendBill(config, zipName, zipBytes);
                 SunatCdrResult cdrResult = sunatCdrParserService.parse(soapResponse.cdrZipBytes());
-                log.info("SUNAT CDR NC: estado={}, codigo={}, mensaje={}",
-                        cdrResult.estado(), cdrResult.codigo(), cdrResult.mensaje());
                 LocalDateTime respondedAt = LocalDateTime.now();
 
-                nc.setSunatEstado(cdrResult.estado().name());
-                nc.setSunatCodigo(cdrResult.codigo());
-                nc.setSunatMensaje(cdrResult.mensaje());
-                nc.setSunatHash(signedXml.digestValue());
-                nc.setSunatRespondidoAt(respondedAt);
-
-                // 7. Almacenar CDR
                 SunatDocumentStorageService.StoredDocument cdrStored = null;
+                String cdrMessage = cdrResult.mensaje();
                 String cdrXmlFileName = soapResponse.cdrZipFileName().replaceFirst("\\.zip$", ".xml");
                 try {
-                    cdrStored = sunatDocumentStorageService.storeCdr(ventaRef, cdrXmlFileName, cdrResult.xmlBytes());
-                    nc.setSunatCdrNombre(cdrStored.fileName());
-                    nc.setSunatCdrKey(cdrStored.key());
+                    cdrStored = sunatDocumentStorageService.storeCdr(notaCredito, cdrXmlFileName, cdrResult.xmlBytes());
                 } catch (RuntimeException storageError) {
-                    nc.setSunatMensaje(nc.getSunatMensaje() + " | CDR recibido pero no se pudo guardar en S3");
-                    log.warn("CDR NC recibido pero no se pudo guardar en S3: {}", storageError.getMessage());
+                    cdrMessage = cdrMessage + " | CDR recibido pero no se pudo guardar en S3";
                 }
 
-                notaCreditoRepository.save(nc);
+                notaCredito.setSunatEstado(cdrResult.estado());
+                notaCredito.setSunatCodigo(normalizarTexto(cdrResult.codigo()));
+                notaCredito.setSunatMensaje(normalizarTexto(cdrMessage));
+                notaCredito.setSunatCdrNombre(cdrStored != null ? cdrStored.fileName() : cdrXmlFileName);
+                notaCredito.setSunatCdrKey(cdrStored != null ? cdrStored.key() : null);
+                notaCredito.setSunatRespondidoAt(respondedAt);
+                notaCreditoRepository.save(notaCredito);
 
                 return new SunatEmissionResult(
                         cdrResult.estado(),
                         cdrResult.codigo(),
-                        nc.getSunatMensaje(),
+                        cdrMessage,
                         signedXml.digestValue(),
                         null,
                         xmlName,
                         stored.xml().key(),
                         zipName,
                         stored.zip().key(),
-                        cdrStored != null ? cdrStored.fileName() : soapResponse.cdrZipFileName(),
-                        cdrStored != null ? cdrStored.key() : null,
+                        notaCredito.getSunatCdrNombre(),
+                        notaCredito.getSunatCdrKey(),
                         sentAt,
                         respondedAt);
-
             } catch (SunatSoapFaultException e) {
-                log.error("SUNAT SOAP Fault en sendBill NC: code={}, message={}", e.getCode(), e.getMessage());
                 LocalDateTime respondedAt = LocalDateTime.now();
-
-                nc.setSunatEstado("RECHAZADO");
-                nc.setSunatCodigo(e.getCode());
-                nc.setSunatMensaje(e.getMessage());
-                nc.setSunatHash(signedXml.digestValue());
-                nc.setSunatRespondidoAt(respondedAt);
-                notaCreditoRepository.save(nc);
+                notaCredito.setSunatEstado(SunatEstado.RECHAZADO);
+                notaCredito.setSunatCodigo(normalizarTexto(e.getCode()));
+                notaCredito.setSunatMensaje(normalizarTexto(e.getMessage()));
+                notaCredito.setSunatRespondidoAt(respondedAt);
+                notaCreditoRepository.save(notaCredito);
 
                 return new SunatEmissionResult(
                         SunatEstado.RECHAZADO,
@@ -218,91 +208,89 @@ public class SunatNotaCreditoEmissionService {
                         stored.xml().key(),
                         zipName,
                         stored.zip().key(),
-                        null, null,
+                        null,
+                        null,
                         sentAt,
                         respondedAt);
-
             } catch (RuntimeException e) {
-                log.error("Error enviando NC a SUNAT: {}", e.getMessage(), e);
                 LocalDateTime respondedAt = LocalDateTime.now();
-                String msg = e.getMessage() != null ? e.getMessage() : "No se pudo enviar la nota de crédito a SUNAT";
-
-                nc.setSunatEstado("ERROR");
-                nc.setSunatCodigo("ENVIO");
-                nc.setSunatMensaje(msg);
-                nc.setSunatHash(signedXml.digestValue());
-                nc.setSunatRespondidoAt(respondedAt);
-                notaCreditoRepository.save(nc);
+                notaCredito.setSunatEstado(SunatEstado.ERROR);
+                notaCredito.setSunatCodigo("ENVIO");
+                notaCredito.setSunatMensaje(normalizarTexto(e.getMessage()));
+                notaCredito.setSunatRespondidoAt(respondedAt);
+                notaCreditoRepository.save(notaCredito);
 
                 return new SunatEmissionResult(
                         SunatEstado.ERROR,
                         "ENVIO",
-                        msg,
+                        notaCredito.getSunatMensaje(),
                         signedXml.digestValue(),
                         null,
                         xmlName,
                         stored.xml().key(),
                         zipName,
                         stored.zip().key(),
-                        null, null,
+                        null,
+                        null,
                         sentAt,
                         respondedAt);
             }
-
         } catch (RuntimeException e) {
             LocalDateTime now = LocalDateTime.now();
-            String msg = e.getMessage() != null ? e.getMessage() : "No se pudo preparar la nota de crédito para SUNAT";
-
-            nc.setSunatEstado("ERROR");
-            nc.setSunatCodigo("CONFIG");
-            nc.setSunatMensaje(msg);
-            notaCreditoRepository.save(nc);
+            notaCredito.setSunatEstado(SunatEstado.ERROR);
+            notaCredito.setSunatCodigo("CONFIG");
+            notaCredito.setSunatMensaje(normalizarTexto(e.getMessage()));
+            notaCredito.setSunatRespondidoAt(now);
+            notaCreditoRepository.save(notaCredito);
 
             return new SunatEmissionResult(
                     SunatEstado.ERROR,
                     "CONFIG",
-                    msg,
-                    null, null,
-                    xmlName, null,
-                    zipName, null,
-                    null, null,
-                    now, now);
+                    notaCredito.getSunatMensaje(),
+                    notaCredito.getSunatHash(),
+                    notaCredito.getSunatTicket(),
+                    xmlName,
+                    notaCredito.getSunatXmlKey(),
+                    zipName,
+                    notaCredito.getSunatZipKey(),
+                    notaCredito.getSunatCdrNombre(),
+                    notaCredito.getSunatCdrKey(),
+                    now,
+                    now);
         }
     }
 
-    // ─── HELPERS ─────────────────────────────────────────────────────
-
-    private SunatConfig resolveConfig(Venta venta) {
-        if (venta == null
-                || venta.getSucursal() == null
-                || venta.getSucursal().getEmpresa() == null
-                || venta.getSucursal().getEmpresa().getIdEmpresa() == null) {
-            throw new RuntimeException("La venta referenciada no tiene empresa asociada");
+    private SunatConfig resolveConfig(NotaCredito notaCredito) {
+        if (notaCredito == null
+                || notaCredito.getSucursal() == null
+                || notaCredito.getSucursal().getEmpresa() == null
+                || notaCredito.getSucursal().getEmpresa().getIdEmpresa() == null) {
+            throw new RuntimeException("La nota de credito no tiene empresa asociada para emitir en SUNAT");
         }
 
-        if (!Boolean.TRUE.equals(venta.getSucursal().getEmpresa().getGeneraFacturacionElectronica())) {
-            throw new RuntimeException("La empresa tiene deshabilitada la facturación electrónica");
+        if (!Boolean.TRUE.equals(notaCredito.getSucursal().getEmpresa().getGeneraFacturacionElectronica())) {
+            throw new RuntimeException("La empresa tiene deshabilitada la facturacion electronica");
         }
 
         List<SunatConfig> configs = sunatConfigRepository
                 .findByEmpresa_IdEmpresaAndDeletedAtIsNullOrderByIdSunatConfigAsc(
-                        venta.getSucursal().getEmpresa().getIdEmpresa());
+                        notaCredito.getSucursal().getEmpresa().getIdEmpresa());
         if (configs.isEmpty()) {
-            throw new RuntimeException("No hay configuración SUNAT registrada");
+            throw new RuntimeException("No hay configuracion SUNAT registrada");
         }
         if (configs.size() > 1) {
-            throw new RuntimeException("Existe más de una configuración SUNAT activa");
+            throw new RuntimeException("Existe mas de una configuracion SUNAT activa. Depure la tabla sunat_config");
         }
 
         SunatConfig config = configs.get(0);
         if (!"ACTIVO".equalsIgnoreCase(config.getActivo())) {
-            throw new RuntimeException("La configuración SUNAT está inactiva");
+            throw new RuntimeException("La configuracion SUNAT esta inactiva");
         }
         if (config.getUrlBillService() == null || config.getUrlBillService().isBlank()) {
-            throw new RuntimeException("La configuración SUNAT no tiene urlBillService");
+            throw new RuntimeException("La configuracion SUNAT no tiene urlBillService");
         }
         if (config.getCertificadoUrl() == null || config.getCertificadoUrl().isBlank()) {
-            throw new RuntimeException("La configuración SUNAT no tiene certificado digital");
+            throw new RuntimeException("La configuracion SUNAT no tiene certificado digital");
         }
         return config;
     }
@@ -316,7 +304,7 @@ public class SunatNotaCreditoEmissionService {
             zip.finish();
             return output.toByteArray();
         } catch (Exception e) {
-            throw new RuntimeException("No se pudo comprimir el XML de nota de crédito para SUNAT");
+            throw new RuntimeException("No se pudo comprimir el XML de nota de credito para SUNAT");
         }
     }
 
@@ -326,5 +314,9 @@ public class SunatNotaCreditoEmissionService {
                 || "ENABLED".equals(mode)
                 || "PRODUCCION".equals(mode)
                 || "PRODUCTION".equals(mode);
+    }
+
+    private String normalizarTexto(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 }

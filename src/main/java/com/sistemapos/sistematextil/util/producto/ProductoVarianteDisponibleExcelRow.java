@@ -5,6 +5,7 @@ import java.time.LocalDateTime;
 public record ProductoVarianteDisponibleExcelRow(
         Integer idProductoVariante,
         String sku,
+        String codigoBarras,
         String productoNombre,
         String categoriaNombre,
         String sucursalNombre,

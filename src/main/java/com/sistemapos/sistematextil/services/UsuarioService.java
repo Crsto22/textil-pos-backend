@@ -38,9 +38,16 @@ public class UsuarioService {
                 .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
     }
 
-    public PagedResponse<UsuarioListItemResponse> listarPaginado(int page) {
+    public PagedResponse<UsuarioListItemResponse> listarPaginado(
+            int page,
+            Integer idSucursal,
+            String correoUsuarioAutenticado) {
+        obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        Integer idSucursalFiltro = resolverIdSucursalFiltroListado(idSucursal);
         PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idUsuario").ascending());
-        Page<UsuarioListItemResponse> usuarios = usuarioRepository.findByDeletedAtIsNull(pageable).map(this::toListItemResponse);
+        Page<UsuarioListItemResponse> usuarios = idSucursalFiltro == null
+                ? usuarioRepository.findByDeletedAtIsNull(pageable).map(this::toListItemResponse)
+                : usuarioRepository.buscarConFiltros(null, null, idSucursalFiltro, pageable).map(this::toListItemResponse);
         return PagedResponse.fromPage(usuarios);
     }
 
@@ -48,7 +55,10 @@ public class UsuarioService {
         String termNormalizado = (term == null || term.isBlank()) ? null : term.trim();
 
         if (termNormalizado == null && rol == null && idSucursal == null) {
-            return listarPaginado(page);
+            PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idUsuario").ascending());
+            Page<UsuarioListItemResponse> usuarios = usuarioRepository.findByDeletedAtIsNull(pageable)
+                    .map(this::toListItemResponse);
+            return PagedResponse.fromPage(usuarios);
         }
 
         PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idUsuario").ascending());
@@ -143,6 +153,23 @@ public class UsuarioService {
         }
         return sucursalRepository.findById(idSucursal)
                 .orElseThrow(() -> new RuntimeException("Sucursal no encontrada"));
+    }
+
+    private Usuario obtenerUsuarioAutenticado(String correoUsuarioAutenticado) {
+        if (correoUsuarioAutenticado == null || correoUsuarioAutenticado.isBlank()) {
+            throw new RuntimeException("No autenticado");
+        }
+        return usuarioRepository.findByCorreoAndDeletedAtIsNull(correoUsuarioAutenticado)
+                .orElseThrow(() -> new RuntimeException("Usuario autenticado no encontrado"));
+    }
+
+    private Integer resolverIdSucursalFiltroListado(Integer idSucursalRequest) {
+        if (idSucursalRequest == null) {
+            return null;
+        }
+        return sucursalRepository.findByIdSucursalAndDeletedAtIsNull(idSucursalRequest)
+                .orElseThrow(() -> new RuntimeException("Sucursal no encontrada"))
+                .getIdSucursal();
     }
 
     private UsuarioListItemResponse toListItemResponse(Usuario usuario) {

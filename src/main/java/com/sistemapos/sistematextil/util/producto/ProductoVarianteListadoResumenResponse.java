@@ -6,6 +6,7 @@ import java.util.List;
 public record ProductoVarianteListadoResumenResponse(
         Integer idProductoVariante,
         String sku,
+        String codigoBarras,
         String estado,
         Integer stock,
         Double precio,

@@ -9,6 +9,7 @@ public record ProductoVarianteOfertaListItemResponse(
         Integer sucursalId,
         String sucursalNombre,
         String sku,
+        String codigoBarras,
         Integer colorId,
         String colorNombre,
         String colorHex,

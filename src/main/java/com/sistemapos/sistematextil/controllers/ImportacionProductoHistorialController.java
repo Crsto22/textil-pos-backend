@@ -25,10 +25,13 @@ public class ImportacionProductoHistorialController {
     private final ImportacionProductoHistorialService importacionProductoHistorialService;
 
     @GetMapping("/listar")
-    public ResponseEntity<?> listar(Authentication authentication, @RequestParam(defaultValue = "0") int page) {
+    public ResponseEntity<?> listar(
+            Authentication authentication,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(name = "idSucursal", required = false) Integer idSucursal) {
         try {
             PagedResponse<ProductoImportHistorialListItemResponse> response = importacionProductoHistorialService
-                    .listarPaginado(page, obtenerCorreoAutenticado(authentication));
+                    .listarPaginado(page, idSucursal, obtenerCorreoAutenticado(authentication));
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null

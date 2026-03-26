@@ -3,6 +3,7 @@ package com.sistemapos.sistematextil.services;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Locale;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
@@ -12,17 +13,18 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.sistemapos.sistematextil.model.Cliente;
-import com.sistemapos.sistematextil.model.Sucursal;
+import com.sistemapos.sistematextil.model.Empresa;
 import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.model.Venta;
 import com.sistemapos.sistematextil.repositories.ClienteRepository;
-import com.sistemapos.sistematextil.repositories.SucursalRepository;
+import com.sistemapos.sistematextil.repositories.EmpresaRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
 import com.sistemapos.sistematextil.repositories.VentaRepository;
 import com.sistemapos.sistematextil.util.cliente.ClienteCompraResumenResponse;
 import com.sistemapos.sistematextil.util.cliente.ClienteCreateRequest;
 import com.sistemapos.sistematextil.util.cliente.ClienteDetalleResponse;
 import com.sistemapos.sistematextil.util.cliente.ClienteListItemResponse;
+import com.sistemapos.sistematextil.util.cliente.ClienteRapidoRequest;
 import com.sistemapos.sistematextil.util.cliente.ClienteUpdateRequest;
 import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
 import com.sistemapos.sistematextil.util.usuario.Rol;
@@ -34,37 +36,44 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class ClienteService {
 
+    private static final String PREFIJO_CLIENTE_RAPIDO = "CLIENTE ";
+
     private final ClienteRepository clienteRepository;
-    private final SucursalRepository sucursalRepository;
+    private final EmpresaRepository empresaRepository;
     private final UsuarioRepository usuarioRepository;
     private final VentaRepository ventaRepository;
 
     @Value("${application.pagination.default-size:10}")
     private int defaultPageSize;
 
-    public PagedResponse<ClienteListItemResponse> listarPaginado(int page, String correoUsuarioAutenticado) {
+    public PagedResponse<ClienteListItemResponse> listarPaginado(
+            int page,
+            String tipoDocumento,
+            String correoUsuarioAutenticado) {
         if (page < 0) {
             throw new RuntimeException("El parametro page debe ser mayor o igual a 0");
         }
 
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolPermitido(usuarioAutenticado);
         PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idCliente").ascending());
+        TipoDocumento tipoDocumentoFiltro = normalizarTipoDocumentoParaFiltro(tipoDocumento);
+        Integer idEmpresaFiltro = resolverEmpresaContexto(usuarioAutenticado).getIdEmpresa();
 
-        Page<Cliente> clientesPage;
-        if (esAdministrador(usuarioAutenticado)) {
-            clientesPage = clienteRepository.findByDeletedAtIsNull(pageable);
-        } else if (esVentas(usuarioAutenticado)) {
-            Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
-            clientesPage = clienteRepository.findByDeletedAtIsNullAndSucursal_IdSucursal(pageable, idSucursalUsuario);
-        } else {
-            throw new RuntimeException("No tiene permisos para listar clientes");
-        }
-
+        Page<Cliente> clientesPage = clienteRepository.buscarConFiltros(
+                null,
+                idEmpresaFiltro,
+                tipoDocumentoFiltro,
+                pageable);
         Page<ClienteListItemResponse> clientes = clientesPage.map(this::toListItemResponse);
         return PagedResponse.fromPage(clientes);
     }
 
-    public PagedResponse<ClienteListItemResponse> buscarPaginado(String term, int page, String correoUsuarioAutenticado) {
+    public PagedResponse<ClienteListItemResponse> buscarPaginado(
+            String term,
+            int page,
+            String tipoDocumento,
+            String correoUsuarioAutenticado) {
         if (page < 0) {
             throw new RuntimeException("El parametro page debe ser mayor o igual a 0");
         }
@@ -73,11 +82,12 @@ public class ClienteService {
         validarRolPermitido(usuarioAutenticado);
 
         String termNormalizado = (term == null || term.isBlank()) ? null : term.trim();
-        Integer idSucursalFiltro = esVentas(usuarioAutenticado) ? obtenerIdSucursalUsuario(usuarioAutenticado) : null;
+        Integer idEmpresaFiltro = resolverEmpresaContexto(usuarioAutenticado).getIdEmpresa();
+        TipoDocumento tipoDocumentoFiltro = normalizarTipoDocumentoParaFiltro(tipoDocumento);
 
         PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idCliente").ascending());
         Page<ClienteListItemResponse> clientes = clienteRepository
-                .buscarPorNombreODni(termNormalizado, idSucursalFiltro, TipoDocumento.DNI, pageable)
+                .buscarConFiltros(termNormalizado, idEmpresaFiltro, tipoDocumentoFiltro, pageable)
                 .map(this::toListItemResponse);
 
         return PagedResponse.fromPage(clientes);
@@ -101,24 +111,48 @@ public class ClienteService {
     }
 
     @Transactional
+    public ClienteListItemResponse crearRapido(ClienteRapidoRequest request, String correoUsuarioAutenticado) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolPermitido(usuarioAutenticado);
+        Empresa empresa = resolverEmpresaContexto(usuarioAutenticado);
+        String telefono = normalizarTelefono(request.telefono());
+
+        Cliente clienteExistente = clienteRepository
+                .findFirstByTelefonoAndDeletedAtIsNullAndEmpresa_IdEmpresaOrderByIdClienteAsc(
+                        telefono,
+                        empresa.getIdEmpresa())
+                .orElse(null);
+        if (clienteExistente != null) {
+            return toListItemResponse(clienteExistente);
+        }
+
+        Cliente cliente = new Cliente();
+        cliente.setEmpresa(empresa);
+        cliente.setUsuarioCreacion(usuarioAutenticado);
+        cliente.setTipoDocumento(TipoDocumento.SIN_DOC);
+        cliente.setNroDocumento(null);
+        cliente.setNombres(PREFIJO_CLIENTE_RAPIDO + telefono);
+        cliente.setTelefono(telefono);
+        cliente.setCorreo(null);
+        cliente.setDireccion(null);
+        cliente.setEstado("ACTIVO");
+        cliente.setFechaCreacion(LocalDateTime.now());
+        cliente.setDeletedAt(null);
+
+        Cliente creado = clienteRepository.save(cliente);
+        return toListItemResponse(creado);
+    }
+
+    @Transactional
     public ClienteListItemResponse insertar(ClienteCreateRequest request, String correoUsuarioAutenticado) {
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
         validarRolPermitido(usuarioAutenticado);
-
-        if (esVentas(usuarioAutenticado)) {
-            Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
-            if (!idSucursalUsuario.equals(request.idSucursal())) {
-                throw new RuntimeException("No tiene permisos para registrar clientes en otra sucursal");
-            }
-        }
-
-        Sucursal sucursal = sucursalRepository.findByIdSucursalAndDeletedAtIsNull(request.idSucursal())
-                .orElseThrow(() -> new RuntimeException("Sucursal no encontrada"));
+        Empresa empresa = resolverEmpresaParaCrear(request.idEmpresa(), usuarioAutenticado);
 
         String nroDocumento = normalizarYValidarDocumento(request.tipoDocumento(), request.nroDocumento());
 
         Cliente cliente = new Cliente();
-        cliente.setSucursal(sucursal);
+        cliente.setEmpresa(empresa);
         cliente.setUsuarioCreacion(usuarioAutenticado);
         cliente.setTipoDocumento(request.tipoDocumento());
         cliente.setNroDocumento(nroDocumento);
@@ -138,24 +172,11 @@ public class ClienteService {
     public ClienteListItemResponse actualizar(Integer idCliente, ClienteUpdateRequest request, String correoUsuarioAutenticado) {
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
         validarRolPermitido(usuarioAutenticado);
-
-        Integer idSucursalUsuario = null;
-        if (esVentas(usuarioAutenticado)) {
-            idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
-        }
         Cliente cliente = obtenerClienteConAcceso(idCliente, usuarioAutenticado);
-
-        if (esVentas(usuarioAutenticado)
-            && (idSucursalUsuario == null || !idSucursalUsuario.equals(request.idSucursal()))) {
-            throw new RuntimeException("No tiene permisos para mover clientes a otra sucursal");
-        }
-
-        Sucursal sucursal = sucursalRepository.findByIdSucursalAndDeletedAtIsNull(request.idSucursal())
-                .orElseThrow(() -> new RuntimeException("Sucursal no encontrada"));
+        validarEmpresaInmutable(cliente, request.idEmpresa(), usuarioAutenticado);
 
         String nroDocumento = normalizarYValidarDocumento(request.tipoDocumento(), request.nroDocumento());
 
-        cliente.setSucursal(sucursal);
         cliente.setTipoDocumento(request.tipoDocumento());
         cliente.setNroDocumento(nroDocumento);
         cliente.setNombres(request.nombres().trim());
@@ -194,11 +215,50 @@ public class ClienteService {
                 .orElseThrow(() -> new RuntimeException("Usuario autenticado no encontrado"));
     }
 
-    private Integer obtenerIdSucursalUsuario(Usuario usuario) {
-        if (usuario.getSucursal() == null || usuario.getSucursal().getIdSucursal() == null) {
-            throw new RuntimeException("El usuario autenticado no tiene sucursal asignada");
+    private Empresa resolverEmpresaContexto(Usuario usuario) {
+        if (usuario.getSucursal() != null
+                && usuario.getSucursal().getEmpresa() != null
+                && usuario.getSucursal().getEmpresa().getIdEmpresa() != null) {
+            return usuario.getSucursal().getEmpresa();
         }
-        return usuario.getSucursal().getIdSucursal();
+        return empresaRepository.findTopByOrderByIdEmpresaAsc()
+                .orElseThrow(() -> new RuntimeException("No hay empresa registrada"));
+    }
+
+    private Empresa resolverEmpresaParaCrear(Integer idEmpresaRequest, Usuario usuarioAutenticado) {
+        Empresa empresaContexto = resolverEmpresaContexto(usuarioAutenticado);
+        if (esVentas(usuarioAutenticado)) {
+            if (idEmpresaRequest != null && !empresaContexto.getIdEmpresa().equals(idEmpresaRequest)) {
+                throw new RuntimeException("No tiene permisos para registrar clientes en otra empresa");
+            }
+            return empresaContexto;
+        }
+        if (idEmpresaRequest == null) {
+            return empresaContexto;
+        }
+        return empresaRepository.findById(idEmpresaRequest)
+                .orElseThrow(() -> new RuntimeException("Empresa no encontrada"));
+    }
+
+    private void validarEmpresaInmutable(Cliente cliente, Integer idEmpresaRequest, Usuario usuarioAutenticado) {
+        Integer idEmpresaActual = cliente.getEmpresa() != null ? cliente.getEmpresa().getIdEmpresa() : null;
+        if (idEmpresaActual == null) {
+            throw new RuntimeException("El cliente no tiene empresa asociada");
+        }
+
+        Integer idEmpresaDestino = idEmpresaRequest != null
+                ? idEmpresaRequest
+                : idEmpresaActual;
+        if (!idEmpresaActual.equals(idEmpresaDestino)) {
+            throw new RuntimeException("No se permite mover clientes a otra empresa");
+        }
+
+        if (esVentas(usuarioAutenticado)) {
+            Integer idEmpresaUsuario = resolverEmpresaContexto(usuarioAutenticado).getIdEmpresa();
+            if (!idEmpresaUsuario.equals(idEmpresaActual)) {
+                throw new RuntimeException("No tiene permisos para actualizar clientes de otra empresa");
+            }
+        }
     }
 
     private boolean esAdministrador(Usuario usuario) {
@@ -210,13 +270,8 @@ public class ClienteService {
     }
 
     private Cliente obtenerClienteConAcceso(Integer idCliente, Usuario usuarioAutenticado) {
-        if (esAdministrador(usuarioAutenticado)) {
-            return clienteRepository.findByIdClienteAndDeletedAtIsNull(idCliente)
-                    .orElseThrow(() -> new RuntimeException("Cliente con ID " + idCliente + " no encontrado"));
-        }
-
-        Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
-        return clienteRepository.findByIdClienteAndDeletedAtIsNullAndSucursal_IdSucursal(idCliente, idSucursalUsuario)
+        Integer idEmpresaUsuario = resolverEmpresaContexto(usuarioAutenticado).getIdEmpresa();
+        return clienteRepository.findByIdClienteAndDeletedAtIsNullAndEmpresa_IdEmpresa(idCliente, idEmpresaUsuario)
                 .orElseThrow(() -> new RuntimeException("Cliente con ID " + idCliente + " no encontrado"));
     }
 
@@ -246,6 +301,14 @@ public class ClienteService {
         return value;
     }
 
+    private String normalizarTelefono(String telefono) {
+        String normalizado = normalizarNullable(telefono);
+        if (normalizado == null) {
+            throw new RuntimeException("Ingrese telefono");
+        }
+        return validarRegex(normalizado, "\\d{7,20}", "El telefono debe tener entre 7 y 20 digitos");
+    }
+
     private String normalizarNullable(String value) {
         if (value == null) {
             return null;
@@ -254,9 +317,26 @@ public class ClienteService {
         return trimmed.isEmpty() ? null : trimmed;
     }
 
+    private TipoDocumento normalizarTipoDocumentoParaFiltro(String tipoDocumento) {
+        if (tipoDocumento == null || tipoDocumento.isBlank()) {
+            return null;
+        }
+
+        String normalizado = tipoDocumento.trim()
+                .toUpperCase(Locale.ROOT)
+                .replace('-', '_')
+                .replace(' ', '_');
+
+        try {
+            return TipoDocumento.valueOf(normalizado);
+        } catch (IllegalArgumentException e) {
+            throw new RuntimeException("tipoDocumento permitido: DNI, RUC, CE o SIN_DOC");
+        }
+    }
+
     private ClienteListItemResponse toListItemResponse(Cliente cliente) {
-        Integer idSucursal = cliente.getSucursal() != null ? cliente.getSucursal().getIdSucursal() : null;
-        String nombreSucursal = cliente.getSucursal() != null ? cliente.getSucursal().getNombre() : null;
+        Integer idEmpresa = cliente.getEmpresa() != null ? cliente.getEmpresa().getIdEmpresa() : null;
+        String nombreEmpresa = cliente.getEmpresa() != null ? cliente.getEmpresa().getNombre() : null;
 
         Integer idUsuarioCreacion = cliente.getUsuarioCreacion() != null ? cliente.getUsuarioCreacion().getIdUsuario() : null;
         String nombreUsuarioCreacion = null;
@@ -275,8 +355,8 @@ public class ClienteService {
                 cliente.getDireccion(),
                 cliente.getEstado(),
                 cliente.getFechaCreacion(),
-                idSucursal,
-                nombreSucursal,
+                idEmpresa,
+                nombreEmpresa,
                 idUsuarioCreacion,
                 nombreUsuarioCreacion);
     }
@@ -286,8 +366,8 @@ public class ClienteService {
             long comprasTotales,
             BigDecimal montoTotalCompras,
             List<ClienteCompraResumenResponse> ultimasCompras) {
-        Integer idSucursal = cliente.getSucursal() != null ? cliente.getSucursal().getIdSucursal() : null;
-        String nombreSucursal = cliente.getSucursal() != null ? cliente.getSucursal().getNombre() : null;
+        Integer idEmpresa = cliente.getEmpresa() != null ? cliente.getEmpresa().getIdEmpresa() : null;
+        String nombreEmpresa = cliente.getEmpresa() != null ? cliente.getEmpresa().getNombre() : null;
 
         Integer idUsuarioCreacion = cliente.getUsuarioCreacion() != null ? cliente.getUsuarioCreacion().getIdUsuario() : null;
         String nombreUsuarioCreacion = null;
@@ -306,8 +386,8 @@ public class ClienteService {
                 cliente.getDireccion(),
                 cliente.getEstado(),
                 cliente.getFechaCreacion(),
-                idSucursal,
-                nombreSucursal,
+                idEmpresa,
+                nombreEmpresa,
                 idUsuarioCreacion,
                 nombreUsuarioCreacion,
                 comprasTotales,

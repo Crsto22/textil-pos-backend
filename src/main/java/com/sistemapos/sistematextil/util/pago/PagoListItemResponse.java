@@ -19,6 +19,7 @@ public record PagoListItemResponse(
         Integer idUsuario,
         String nombreUsuario,
         Integer idSucursal,
-        String nombreSucursal
+        String nombreSucursal,
+        String estadoVenta
 ) {
 }

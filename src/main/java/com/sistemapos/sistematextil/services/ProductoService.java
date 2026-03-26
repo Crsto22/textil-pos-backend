@@ -84,13 +84,14 @@ public class ProductoService {
             Integer idCategoria,
             Integer idColor,
             Boolean conOferta,
+            Integer idSucursal,
             String correoUsuarioAutenticado) {
         validarPagina(page);
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
         validarRolPermitido(usuarioAutenticado);
 
         PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idProducto").ascending());
-        Integer idSucursalFiltro = esAdministrador(usuarioAutenticado) ? null : obtenerIdSucursalUsuario(usuarioAutenticado);
+        Integer idSucursalFiltro = resolverIdSucursalFiltroListado(usuarioAutenticado, idSucursal);
         Page<Producto> productos = productoRepository.buscarConFiltros(
                 null,
                 idSucursalFiltro,
@@ -111,6 +112,7 @@ public class ProductoService {
             Integer idCategoria,
             Integer idColor,
             Boolean conOferta,
+            Integer idSucursal,
             String correoUsuarioAutenticado) {
         validarPagina(page);
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
@@ -118,10 +120,10 @@ public class ProductoService {
 
         String term = normalizar(q);
         if (term == null) {
-            return listarResumenPaginado(page, idCategoria, idColor, conOferta, correoUsuarioAutenticado);
+            return listarResumenPaginado(page, idCategoria, idColor, conOferta, idSucursal, correoUsuarioAutenticado);
         }
 
-        Integer idSucursalFiltro = esAdministrador(usuarioAutenticado) ? null : obtenerIdSucursalUsuario(usuarioAutenticado);
+        Integer idSucursalFiltro = resolverIdSucursalFiltroListado(usuarioAutenticado, idSucursal);
         PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idProducto").ascending());
         Page<Producto> productos = productoRepository.buscarConFiltros(
                 term,
@@ -176,13 +178,14 @@ public class ProductoService {
             Integer idCategoria,
             Integer idColor,
             Boolean conOferta,
+            Integer idSucursal,
             String correoUsuarioAutenticado) {
         validarPagina(page);
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
         validarRolPermitido(usuarioAutenticado);
 
         PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idProducto").ascending());
-        Integer idSucursalFiltro = esAdministrador(usuarioAutenticado) ? null : obtenerIdSucursalUsuario(usuarioAutenticado);
+        Integer idSucursalFiltro = resolverIdSucursalFiltroListado(usuarioAutenticado, idSucursal);
         Page<Producto> productos = productoRepository.buscarConFiltros(
                 null,
                 idSucursalFiltro,
@@ -532,6 +535,22 @@ public class ProductoService {
         }
     }
 
+    private void validarCodigoBarrasVarianteUnicoPorSucursal(
+            String codigoBarras,
+            Integer idSucursal,
+            Integer idProductoExcluir) {
+        if (codigoBarras == null) {
+            return;
+        }
+        boolean existe = productoVarianteRepository.existsCodigoBarrasEnSucursalParaOtroProducto(
+                idSucursal,
+                codigoBarras,
+                idProductoExcluir);
+        if (existe) {
+            throw new RuntimeException("El codigo de barras '" + codigoBarras + "' ya existe en esta sucursal");
+        }
+    }
+
     private Usuario obtenerUsuarioAutenticado(String correoUsuarioAutenticado) {
         if (correoUsuarioAutenticado == null || correoUsuarioAutenticado.isBlank()) {
             throw new RuntimeException("No autenticado");
@@ -552,6 +571,23 @@ public class ProductoService {
             throw new RuntimeException("Ingrese idSucursal");
         }
         return idSucursalRequest;
+    }
+
+    private Integer resolverIdSucursalFiltroListado(Usuario usuarioAutenticado, Integer idSucursalRequest) {
+        if (esAdministrador(usuarioAutenticado)) {
+            if (idSucursalRequest == null) {
+                return null;
+            }
+            return sucursalRepository.findByIdSucursalAndDeletedAtIsNull(idSucursalRequest)
+                    .orElseThrow(() -> new RuntimeException("Sucursal no encontrada"))
+                    .getIdSucursal();
+        }
+
+        Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
+        if (idSucursalRequest != null && !idSucursalUsuario.equals(idSucursalRequest)) {
+            throw new RuntimeException("No tiene permisos para consultar otra sucursal");
+        }
+        return idSucursalUsuario;
     }
 
     private void validarRolPermitido(Usuario usuario) {
@@ -686,6 +722,7 @@ public class ProductoService {
         return new ProductoVarianteDetalleResponse(
                 variante.getIdProductoVariante(),
                 variante.getSku(),
+                variante.getCodigoBarras(),
                 colorId,
                 colorNombre,
                 colorHex,
@@ -756,6 +793,7 @@ public class ProductoService {
 
         Set<String> combinaciones = new HashSet<>();
         Set<String> skusNormalizados = new HashSet<>();
+        Set<String> codigosBarrasNormalizados = new HashSet<>();
         Map<Integer, Color> coloresCache = new HashMap<>();
         Map<Integer, Talla> tallasCache = new HashMap<>();
 
@@ -775,6 +813,14 @@ public class ProductoService {
                         throw new RuntimeException("No puede repetir SKU dentro del mismo producto");
                     }
                     validarSkuVarianteUnicoPorSucursal(sku, sucursal.getIdSucursal(), idProductoExcluir);
+                    String codigoBarras = normalizar(item.codigoBarras());
+                    if (codigoBarras != null && !codigosBarrasNormalizados.add(codigoBarras.toLowerCase())) {
+                        throw new RuntimeException("No puede repetir codigo de barras dentro del mismo producto");
+                    }
+                    validarCodigoBarrasVarianteUnicoPorSucursal(
+                            codigoBarras,
+                            sucursal.getIdSucursal(),
+                            idProductoExcluir);
                     Double precioMayor = normalizarPrecioMayor(item.precioMayor());
                     Double precioOferta = normalizarPrecioOferta(item.precioOferta());
                     LocalDateTime ofertaInicio = item.ofertaInicio();
@@ -810,6 +856,7 @@ public class ProductoService {
                     variante.setActivo(VALOR_ACTIVO);
                     variante.setDeletedAt(null);
                     variante.setSku(sku);
+                    variante.setCodigoBarras(codigoBarras);
                     return variante;
                 })
                 .toList();
@@ -926,6 +973,7 @@ public class ProductoService {
 
         Map<String, ProductoVariante> existentesPorCombinacion = new HashMap<>();
         Map<String, ProductoVariante> existentesPorSku = new HashMap<>();
+        Map<String, ProductoVariante> existentesPorCodigoBarras = new HashMap<>();
         for (ProductoVariante existente : existentes) {
             if (existente == null) {
                 continue;
@@ -940,11 +988,17 @@ public class ProductoService {
             if (skuExistente != null) {
                 existentesPorSku.putIfAbsent(skuExistente.toLowerCase(), existente);
             }
+
+            String codigoBarrasExistente = normalizar(existente.getCodigoBarras());
+            if (codigoBarrasExistente != null) {
+                existentesPorCodigoBarras.putIfAbsent(codigoBarrasExistente.toLowerCase(), existente);
+            }
         }
 
         LocalDateTime now = LocalDateTime.now();
         Set<String> combinaciones = new HashSet<>();
         Set<String> skusNormalizados = new HashSet<>();
+        Set<String> codigosBarrasNormalizados = new HashSet<>();
         Set<Integer> idsActivos = new HashSet<>();
         Set<Integer> coloresTocados = new HashSet<>();
         Map<Integer, Color> coloresCache = new HashMap<>();
@@ -975,6 +1029,22 @@ public class ProductoService {
                     && (varianteExistente == null
                     || !varianteSkuExistente.getIdProductoVariante().equals(varianteExistente.getIdProductoVariante()))) {
                 throw new RuntimeException("El SKU '" + sku
+                        + "' ya existe en otra variante de este producto y no se puede reasignar");
+            }
+            String codigoBarras = normalizar(item.codigoBarras());
+            String codigoBarrasKey = codigoBarras == null ? null : codigoBarras.toLowerCase();
+            if (codigoBarrasKey != null && !codigosBarrasNormalizados.add(codigoBarrasKey)) {
+                throw new RuntimeException("No puede repetir codigo de barras dentro del mismo producto");
+            }
+            validarCodigoBarrasVarianteUnicoPorSucursal(codigoBarras, sucursal.getIdSucursal(), idProducto);
+            ProductoVariante varianteCodigoBarrasExistente = codigoBarrasKey == null
+                    ? null
+                    : existentesPorCodigoBarras.get(codigoBarrasKey);
+            if (varianteCodigoBarrasExistente != null
+                    && (varianteExistente == null
+                    || !varianteCodigoBarrasExistente.getIdProductoVariante()
+                            .equals(varianteExistente.getIdProductoVariante()))) {
+                throw new RuntimeException("El codigo de barras '" + codigoBarras
                         + "' ya existe en otra variante de este producto y no se puede reasignar");
             }
             Double precioMayor = normalizarPrecioMayor(item.precioMayor());
@@ -1012,6 +1082,7 @@ public class ProductoService {
             destino.setActivo(VALOR_ACTIVO);
             destino.setDeletedAt(null);
             destino.setSku(sku);
+            destino.setCodigoBarras(codigoBarras);
             coloresTocados.add(item.colorId());
 
             if (destino.getIdProductoVariante() != null) {
@@ -1140,6 +1211,7 @@ public class ProductoService {
                             row.tallaId(),
                             row.tallaNombre(),
                             row.sku(),
+                            row.codigoBarras(),
                             row.precio(),
                             row.precioMayor(),
                             row.precioOferta(),

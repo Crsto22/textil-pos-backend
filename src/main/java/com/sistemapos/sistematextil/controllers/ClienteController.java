@@ -19,7 +19,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.sistemapos.sistematextil.services.ClienteService;
+import com.sistemapos.sistematextil.services.ClienteReporteService;
 import com.sistemapos.sistematextil.util.cliente.ClienteCreateRequest;
+import com.sistemapos.sistematextil.util.cliente.ClienteRapidoRequest;
 import com.sistemapos.sistematextil.util.cliente.ClienteUpdateRequest;
 
 import jakarta.validation.Valid;
@@ -31,11 +33,18 @@ import lombok.AllArgsConstructor;
 public class ClienteController {
 
     private final ClienteService clienteService;
+    private final ClienteReporteService clienteReporteService;
 
     @GetMapping("/listar")
-    public ResponseEntity<?> listar(Authentication authentication, @RequestParam(defaultValue = "0") int page) {
+    public ResponseEntity<?> listar(
+            Authentication authentication,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(name = "tipoDocumento", required = false) String tipoDocumento) {
         try {
-            return ResponseEntity.ok(clienteService.listarPaginado(page, obtenerCorreoAutenticado(authentication)));
+            return ResponseEntity.ok(clienteService.listarPaginado(
+                    page,
+                    tipoDocumento,
+                    obtenerCorreoAutenticado(authentication)));
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al listar clientes" : e.getMessage();
             HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
@@ -47,9 +56,14 @@ public class ClienteController {
     public ResponseEntity<?> buscar(
             Authentication authentication,
             @RequestParam(name = "q", required = false) String q,
-            @RequestParam(defaultValue = "0") int page) {
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(name = "tipoDocumento", required = false) String tipoDocumento) {
         try {
-            return ResponseEntity.ok(clienteService.buscarPaginado(q, page, obtenerCorreoAutenticado(authentication)));
+            return ResponseEntity.ok(clienteService.buscarPaginado(
+                    q,
+                    page,
+                    tipoDocumento,
+                    obtenerCorreoAutenticado(authentication)));
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al buscar clientes" : e.getMessage();
             HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
@@ -68,6 +82,23 @@ public class ClienteController {
         }
     }
 
+    @GetMapping("/reporte")
+    public ResponseEntity<?> reporte(
+            Authentication authentication,
+            @RequestParam(name = "filtro", required = false) String filtro,
+            @RequestParam(name = "idSucursal", required = false) Integer idSucursal) {
+        try {
+            return ResponseEntity.ok(clienteReporteService.obtenerReporte(
+                    filtro,
+                    idSucursal,
+                    obtenerCorreoAutenticado(authentication)));
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al generar reporte de clientes" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
     @PostMapping("/insertar")
     public ResponseEntity<?> crear(Authentication authentication, @Valid @RequestBody ClienteCreateRequest request) {
         try {
@@ -75,6 +106,18 @@ public class ClienteController {
                     .body(clienteService.insertar(request, obtenerCorreoAutenticado(authentication)));
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al crear cliente" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
+    @PostMapping("/rapido")
+    public ResponseEntity<?> crearRapido(Authentication authentication, @Valid @RequestBody ClienteRapidoRequest request) {
+        try {
+            return ResponseEntity.ok(
+                    clienteService.crearRapido(request, obtenerCorreoAutenticado(authentication)));
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al crear cliente rapido" : e.getMessage();
             HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
             return ResponseEntity.status(status).body(Map.of("message", message));
         }

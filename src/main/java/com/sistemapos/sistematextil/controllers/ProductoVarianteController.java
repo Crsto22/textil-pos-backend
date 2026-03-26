@@ -42,9 +42,10 @@ public class ProductoVarianteController {
     private final ProductoVarianteService service;
 
     @GetMapping("listar")
-    public ResponseEntity<?> listar() {
+    public ResponseEntity<?> listar(
+            @RequestParam(name = "idSucursal", required = false) Integer idSucursal) {
         try {
-            return ResponseEntity.ok(service.listarTodas());
+            return ResponseEntity.ok(service.listarTodas(idSucursal));
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al listar variantes" : e.getMessage();
             return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
@@ -53,9 +54,11 @@ public class ProductoVarianteController {
     }
 
     @GetMapping("producto/{id}")
-    public ResponseEntity<?> listarPorProducto(@PathVariable Integer id) {
+    public ResponseEntity<?> listarPorProducto(
+            @PathVariable Integer id,
+            @RequestParam(name = "idSucursal", required = false) Integer idSucursal) {
         try {
-            return ResponseEntity.ok(service.listarPorProducto(id));
+            return ResponseEntity.ok(service.listarPorProducto(id, idSucursal));
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al listar variantes del producto" : e.getMessage();
             return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
@@ -70,7 +73,8 @@ public class ProductoVarianteController {
             @RequestParam(name = "q", required = false) String q,
             @RequestParam(name = "idCategoria", required = false) Integer idCategoria,
             @RequestParam(name = "idColor", required = false) Integer idColor,
-            @RequestParam(name = "conOferta", required = false) Boolean conOferta) {
+            @RequestParam(name = "conOferta", required = false) Boolean conOferta,
+            @RequestParam(name = "idSucursal", required = false) Integer idSucursal) {
         try {
             PagedResponse<ProductoVarianteListadoResumenResponse> response = service.listarResumenPaginado(
                     q,
@@ -78,6 +82,7 @@ public class ProductoVarianteController {
                     idCategoria,
                     idColor,
                     conOferta,
+                    idSucursal,
                     obtenerCorreoAutenticado(authentication));
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
@@ -90,9 +95,11 @@ public class ProductoVarianteController {
     @GetMapping(
             value = "reporte/excel",
             produces = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    public ResponseEntity<?> reporteExcelDisponibles(Authentication authentication) {
+    public ResponseEntity<?> reporteExcelDisponibles(
+            Authentication authentication,
+            @RequestParam(name = "idSucursal", required = false) Integer idSucursal) {
         try {
-            byte[] archivo = service.exportarDisponiblesExcel(obtenerCorreoAutenticado(authentication));
+            byte[] archivo = service.exportarDisponiblesExcel(obtenerCorreoAutenticado(authentication), idSucursal);
             String ts = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
             String nombreArchivo = "productos_disponibles_" + ts + ".xlsx";
 
@@ -110,9 +117,11 @@ public class ProductoVarianteController {
 
     @GetMapping("ofertas")
     public ResponseEntity<?> listarConOferta(
-            @RequestParam(defaultValue = "0") int page) {
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(name = "idSucursal", required = false) Integer idSucursal) {
         try {
-            PagedResponse<ProductoVarianteOfertaListItemResponse> response = service.listarConOfertaPaginado(page);
+            PagedResponse<ProductoVarianteOfertaListItemResponse> response = service
+                    .listarConOfertaPaginado(page, idSucursal);
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al listar variantes con oferta" : e.getMessage();

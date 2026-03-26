@@ -21,6 +21,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import com.sistemapos.sistematextil.services.ProductoImagenService;
 import com.sistemapos.sistematextil.services.ProductoImportService;
+import com.sistemapos.sistematextil.services.ProductoReporteService;
 import com.sistemapos.sistematextil.services.ProductoService;
 import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoCompletoCreateRequest;
@@ -46,6 +47,7 @@ public class ProductoController {
     private final ProductoService productoService;
     private final ProductoImagenService productoImagenService;
     private final ProductoImportService productoImportService;
+    private final ProductoReporteService productoReporteService;
 
     @GetMapping("/listar")
     public ResponseEntity<?> listar(
@@ -53,10 +55,17 @@ public class ProductoController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(name = "idCategoria", required = false) Integer idCategoria,
             @RequestParam(name = "idColor", required = false) Integer idColor,
-            @RequestParam(name = "conOferta", required = false) Boolean conOferta) {
+            @RequestParam(name = "conOferta", required = false) Boolean conOferta,
+            @RequestParam(name = "idSucursal", required = false) Integer idSucursal) {
         try {
             PagedResponse<ProductoListItemResponse> response = productoService
-                    .listarPaginado(page, idCategoria, idColor, conOferta, obtenerCorreoAutenticado(authentication));
+                    .listarPaginado(
+                            page,
+                            idCategoria,
+                            idColor,
+                            conOferta,
+                            idSucursal,
+                            obtenerCorreoAutenticado(authentication));
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al listar productos" : e.getMessage();
@@ -71,10 +80,17 @@ public class ProductoController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(name = "idCategoria", required = false) Integer idCategoria,
             @RequestParam(name = "idColor", required = false) Integer idColor,
-            @RequestParam(name = "conOferta", required = false) Boolean conOferta) {
+            @RequestParam(name = "conOferta", required = false) Boolean conOferta,
+            @RequestParam(name = "idSucursal", required = false) Integer idSucursal) {
         try {
             PagedResponse<ProductoListadoResumenResponse> response = productoService
-                    .listarResumenPaginado(page, idCategoria, idColor, conOferta, obtenerCorreoAutenticado(authentication));
+                    .listarResumenPaginado(
+                            page,
+                            idCategoria,
+                            idColor,
+                            conOferta,
+                            idSucursal,
+                            obtenerCorreoAutenticado(authentication));
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al listar productos" : e.getMessage();
@@ -90,10 +106,18 @@ public class ProductoController {
             @RequestParam(name = "idCategoria", required = false) Integer idCategoria,
             @RequestParam(name = "idColor", required = false) Integer idColor,
             @RequestParam(name = "conOferta", required = false) Boolean conOferta,
+            @RequestParam(name = "idSucursal", required = false) Integer idSucursal,
             @RequestParam(defaultValue = "0") int page) {
         try {
             PagedResponse<ProductoListadoResumenResponse> response = productoService
-                    .buscarPaginado(q, page, idCategoria, idColor, conOferta, obtenerCorreoAutenticado(authentication));
+                    .buscarPaginado(
+                            q,
+                            page,
+                            idCategoria,
+                            idColor,
+                            conOferta,
+                            idSucursal,
+                            obtenerCorreoAutenticado(authentication));
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al buscar productos" : e.getMessage();
@@ -109,6 +133,23 @@ public class ProductoController {
             return ResponseEntity.ok(detalle);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al obtener detalle del producto" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
+    @GetMapping("/reporte")
+    public ResponseEntity<?> reporte(
+            Authentication authentication,
+            @RequestParam(name = "filtro", required = false) String filtro,
+            @RequestParam(name = "idSucursal", required = false) Integer idSucursal) {
+        try {
+            return ResponseEntity.ok(productoReporteService.obtenerReporte(
+                    filtro,
+                    idSucursal,
+                    obtenerCorreoAutenticado(authentication)));
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al generar reporte de productos" : e.getMessage();
             HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
             return ResponseEntity.status(status).body(Map.of("message", message));
         }

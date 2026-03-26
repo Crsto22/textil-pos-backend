@@ -21,11 +21,19 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.sistemapos.sistematextil.services.NotaCreditoService;
+import com.sistemapos.sistematextil.services.VentaAnulacionService;
+import com.sistemapos.sistematextil.services.VentaResumenReporteService;
 import com.sistemapos.sistematextil.services.VentaService;
+import com.sistemapos.sistematextil.util.notacredito.NotaCreditoCreateRequest;
+import com.sistemapos.sistematextil.util.notacredito.NotaCreditoResponse;
 import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
+import com.sistemapos.sistematextil.util.venta.VentaAnulacionRequest;
+import com.sistemapos.sistematextil.util.venta.VentaAnulacionResponse;
 import com.sistemapos.sistematextil.util.venta.VentaCreateRequest;
 import com.sistemapos.sistematextil.util.venta.VentaListItemResponse;
 import com.sistemapos.sistematextil.util.venta.VentaReporteResponse;
+import com.sistemapos.sistematextil.util.venta.VentaResumenReporteResponse;
 import com.sistemapos.sistematextil.util.venta.VentaResponse;
 
 import jakarta.validation.Valid;
@@ -37,6 +45,9 @@ import lombok.AllArgsConstructor;
 public class VentaController {
 
     private final VentaService ventaService;
+    private final VentaResumenReporteService ventaResumenReporteService;
+    private final VentaAnulacionService ventaAnulacionService;
+    private final NotaCreditoService notaCreditoService;
 
     @GetMapping("/listar")
     public ResponseEntity<?> listar(
@@ -96,6 +107,24 @@ public class VentaController {
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al generar reporte de ventas" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
+    @GetMapping("/reporte/resumen")
+    public ResponseEntity<?> reporteResumen(
+            Authentication authentication,
+            @RequestParam(name = "filtro", required = false) String filtro,
+            @RequestParam(name = "idSucursal", required = false) Integer idSucursal) {
+        try {
+            VentaResumenReporteResponse response = ventaResumenReporteService.obtenerReporte(
+                    filtro,
+                    idSucursal,
+                    obtenerCorreoAutenticado(authentication));
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al generar resumen de ventas" : e.getMessage();
             HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
             return ResponseEntity.status(status).body(Map.of("message", message));
         }
@@ -289,6 +318,38 @@ public class VentaController {
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al reenviar comprobante a SUNAT" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
+    @PostMapping("/{id}/anular")
+    public ResponseEntity<?> anularVenta(
+            Authentication authentication,
+            @PathVariable Integer id,
+            @Valid @RequestBody VentaAnulacionRequest request) {
+        try {
+            VentaAnulacionResponse response = ventaAnulacionService
+                    .anular(id, request, obtenerCorreoAutenticado(authentication));
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al anular venta" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
+    @PostMapping("/{id}/nota-credito")
+    public ResponseEntity<?> emitirNotaCredito(
+            Authentication authentication,
+            @PathVariable Integer id,
+            @Valid @RequestBody NotaCreditoCreateRequest request) {
+        try {
+            NotaCreditoResponse response = notaCreditoService
+                    .emitirDesdeVenta(id, request, obtenerCorreoAutenticado(authentication));
+            return ResponseEntity.status(HttpStatus.CREATED).body(response);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al emitir nota de credito" : e.getMessage();
             HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
             return ResponseEntity.status(status).body(Map.of("message", message));
         }

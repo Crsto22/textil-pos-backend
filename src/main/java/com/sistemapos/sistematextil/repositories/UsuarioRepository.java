@@ -1,5 +1,6 @@
 package com.sistemapos.sistematextil.repositories;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -60,4 +61,71 @@ public interface UsuarioRepository extends JpaRepository <Usuario, Integer>{
             """, nativeQuery = true)
     List<SucursalUsuarioResumenProjection> findUsuariosResumenRandomBySucursal(
             @Param("idSucursal") Integer idSucursal);
+
+    @Query(value = """
+            SELECT
+              u.id_usuario,
+              CONCAT(u.nombre, ' ', u.apellido) AS usuario,
+              u.rol,
+              s.id_sucursal,
+              s.nombre AS sucursal,
+              COALESCE(SUM(CASE WHEN v.estado = 'EMITIDA' THEN 1 ELSE 0 END), 0) AS ventas_emitidas,
+              COALESCE(SUM(CASE WHEN v.estado = 'EMITIDA' THEN v.total ELSE 0 END), 0) AS monto_emitido,
+              COALESCE(SUM(CASE WHEN v.estado = 'ANULADA' THEN 1 ELSE 0 END), 0) AS anulaciones,
+              COALESCE(SUM(CASE WHEN v.estado = 'ANULADA' THEN v.total ELSE 0 END), 0) AS monto_anulado
+            FROM usuario u
+            LEFT JOIN sucursal s ON s.id_sucursal = u.id_sucursal
+            LEFT JOIN venta v ON v.id_usuario = u.id_usuario
+              AND v.deleted_at IS NULL
+              AND (:idSucursal IS NULL OR v.id_sucursal = :idSucursal)
+              AND (:fechaInicio IS NULL OR v.fecha >= :fechaInicio)
+              AND (:fechaFinExclusive IS NULL OR v.fecha < :fechaFinExclusive)
+            WHERE u.deleted_at IS NULL
+              AND u.rol IN ('ADMINISTRADOR', 'VENTAS')
+              AND (
+                    :idSucursal IS NULL
+                    OR u.id_sucursal = :idSucursal
+                    OR EXISTS (
+                          SELECT 1
+                          FROM venta vx
+                          WHERE vx.id_usuario = u.id_usuario
+                            AND vx.deleted_at IS NULL
+                            AND vx.id_sucursal = :idSucursal
+                            AND (:fechaInicio IS NULL OR vx.fecha >= :fechaInicio)
+                            AND (:fechaFinExclusive IS NULL OR vx.fecha < :fechaFinExclusive)
+                    )
+              )
+            GROUP BY u.id_usuario, u.nombre, u.apellido, u.rol, s.id_sucursal, s.nombre
+            ORDER BY monto_emitido DESC, ventas_emitidas DESC, usuario ASC
+            """, nativeQuery = true)
+    List<Object[]> obtenerResumenReporteUsuarios(
+            @Param("idSucursal") Integer idSucursal,
+            @Param("fechaInicio") LocalDateTime fechaInicio,
+            @Param("fechaFinExclusive") LocalDateTime fechaFinExclusive);
+
+    @Query(value = """
+            SELECT
+              DATE(v.fecha) AS fecha,
+              u.id_usuario,
+              CONCAT(u.nombre, ' ', u.apellido) AS usuario,
+              u.rol,
+              COALESCE(SUM(CASE WHEN v.estado = 'EMITIDA' THEN 1 ELSE 0 END), 0) AS ventas_emitidas,
+              COALESCE(SUM(CASE WHEN v.estado = 'EMITIDA' THEN v.total ELSE 0 END), 0) AS monto_emitido,
+              COALESCE(SUM(CASE WHEN v.estado = 'ANULADA' THEN 1 ELSE 0 END), 0) AS anulaciones,
+              COALESCE(SUM(CASE WHEN v.estado = 'ANULADA' THEN v.total ELSE 0 END), 0) AS monto_anulado
+            FROM venta v
+            JOIN usuario u ON u.id_usuario = v.id_usuario
+            WHERE v.deleted_at IS NULL
+              AND u.deleted_at IS NULL
+              AND u.rol IN ('ADMINISTRADOR', 'VENTAS')
+              AND (:idSucursal IS NULL OR v.id_sucursal = :idSucursal)
+              AND (:fechaInicio IS NULL OR v.fecha >= :fechaInicio)
+              AND (:fechaFinExclusive IS NULL OR v.fecha < :fechaFinExclusive)
+            GROUP BY DATE(v.fecha), u.id_usuario, u.nombre, u.apellido, u.rol
+            ORDER BY DATE(v.fecha) ASC, usuario ASC
+            """, nativeQuery = true)
+    List<Object[]> obtenerEvolucionDiariaReporteUsuarios(
+            @Param("idSucursal") Integer idSucursal,
+            @Param("fechaInicio") LocalDateTime fechaInicio,
+            @Param("fechaFinExclusive") LocalDateTime fechaFinExclusive);
 }

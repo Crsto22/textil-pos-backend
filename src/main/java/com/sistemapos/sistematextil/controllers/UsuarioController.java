@@ -5,6 +5,7 @@ import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -17,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.sistemapos.sistematextil.services.UsuarioService;
+import com.sistemapos.sistematextil.services.UsuarioReporteService;
 import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
 import com.sistemapos.sistematextil.util.usuario.Rol;
 import com.sistemapos.sistematextil.util.usuario.UsuarioListItemResponse;
@@ -32,10 +34,23 @@ import lombok.AllArgsConstructor;
 public class UsuarioController {
 
     private final UsuarioService usuarioService;
+    private final UsuarioReporteService usuarioReporteService;
 
     @GetMapping("/listar")
-    public ResponseEntity<PagedResponse<UsuarioListItemResponse>> listar(@RequestParam(defaultValue = "0") int page) {
-        return ResponseEntity.ok(usuarioService.listarPaginado(page));
+    public ResponseEntity<?> listar(
+            Authentication authentication,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(name = "idSucursal", required = false) Integer idSucursal) {
+        try {
+            return ResponseEntity.ok(usuarioService.listarPaginado(
+                    page,
+                    idSucursal,
+                    obtenerCorreoAutenticado(authentication)));
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al listar usuarios" : e.getMessage();
+            return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
+                    .body(Map.of("message", message));
+        }
     }
 
     @GetMapping("/buscar")
@@ -48,6 +63,23 @@ public class UsuarioController {
             return ResponseEntity.ok(usuarioService.buscarPaginado(q, rol, idSucursal, page));
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        }
+    }
+
+    @GetMapping("/reporte")
+    public ResponseEntity<?> reporte(
+            Authentication authentication,
+            @RequestParam(name = "filtro", required = false) String filtro,
+            @RequestParam(name = "idSucursal", required = false) Integer idSucursal) {
+        try {
+            return ResponseEntity.ok(usuarioReporteService.obtenerReporte(
+                    filtro,
+                    idSucursal,
+                    obtenerCorreoAutenticado(authentication)));
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al generar reporte de usuarios" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
         }
     }
 
@@ -102,5 +134,25 @@ public class UsuarioController {
                 .orElse("Datos de entrada invalidos");
 
         return ResponseEntity.badRequest().body(Map.of("message", message));
+    }
+
+    private HttpStatus resolverStatus(String message, HttpStatus defaultStatus) {
+        String normalizedMessage = message.toLowerCase();
+        if (normalizedMessage.contains("no encontrado")
+                || normalizedMessage.contains("no encontrada")) {
+            return HttpStatus.NOT_FOUND;
+        }
+        if (normalizedMessage.contains("no autenticado")
+                || normalizedMessage.contains("no tiene permisos")) {
+            return HttpStatus.FORBIDDEN;
+        }
+        return defaultStatus;
+    }
+
+    private String obtenerCorreoAutenticado(Authentication authentication) {
+        if (authentication == null || authentication.getName() == null || authentication.getName().isBlank()) {
+            throw new RuntimeException("No autenticado");
+        }
+        return authentication.getName();
     }
 }

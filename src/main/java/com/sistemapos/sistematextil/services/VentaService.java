@@ -66,6 +66,7 @@ import com.lowagie.text.pdf.PdfWriter;
 import com.sistemapos.sistematextil.events.VentaRegistradaEvent;
 import com.sistemapos.sistematextil.model.Cliente;
 import com.sistemapos.sistematextil.model.ComprobanteConfig;
+import com.sistemapos.sistematextil.model.Empresa;
 import com.sistemapos.sistematextil.model.HistorialStock;
 import com.sistemapos.sistematextil.model.MetodoPagoConfig;
 import com.sistemapos.sistematextil.model.Pago;
@@ -76,6 +77,7 @@ import com.sistemapos.sistematextil.model.Venta;
 import com.sistemapos.sistematextil.model.VentaDetalle;
 import com.sistemapos.sistematextil.repositories.ClienteRepository;
 import com.sistemapos.sistematextil.repositories.ComprobanteConfigRepository;
+import com.sistemapos.sistematextil.repositories.EmpresaRepository;
 import com.sistemapos.sistematextil.repositories.HistorialStockRepository;
 import com.sistemapos.sistematextil.repositories.MetodoPagoConfigRepository;
 import com.sistemapos.sistematextil.repositories.PagoRepository;
@@ -120,10 +122,12 @@ public class VentaService {
     private final UsuarioRepository usuarioRepository;
     private final SucursalRepository sucursalRepository;
     private final ClienteRepository clienteRepository;
+    private final EmpresaRepository empresaRepository;
     private final HistorialStockRepository historialStockRepository;
     private final ApplicationEventPublisher applicationEventPublisher;
     private final SunatEmissionService sunatEmissionService;
     private final SunatDocumentStorageService sunatDocumentStorageService;
+    private final SunatCdrParserService sunatCdrParserService;
 
     @Value("${application.pagination.default-size:10}")
     private int defaultPageSize;
@@ -184,6 +188,7 @@ public class VentaService {
             String periodo,
             LocalDate desde,
             LocalDate hasta,
+            Integer idUsuario,
             Integer idSucursal,
             Integer idCliente,
             boolean incluirAnuladas,
@@ -197,6 +202,7 @@ public class VentaService {
                 periodo,
                 desde,
                 hasta,
+                idUsuario,
                 idSucursal,
                 idCliente);
         List<Venta> ventas = buscarVentasParaReporte(filtro, incluirAnuladas);
@@ -209,6 +215,7 @@ public class VentaService {
             String periodo,
             LocalDate desde,
             LocalDate hasta,
+            Integer idUsuario,
             Integer idSucursal,
             Integer idCliente,
             boolean incluirAnuladas,
@@ -218,6 +225,7 @@ public class VentaService {
                 periodo,
                 desde,
                 hasta,
+                idUsuario,
                 idSucursal,
                 idCliente,
                 incluirAnuladas,
@@ -230,6 +238,7 @@ public class VentaService {
             String periodo,
             LocalDate desde,
             LocalDate hasta,
+            Integer idUsuario,
             Integer idSucursal,
             Integer idCliente,
             boolean incluirAnuladas,
@@ -239,6 +248,7 @@ public class VentaService {
                 periodo,
                 desde,
                 hasta,
+                idUsuario,
                 idSucursal,
                 idCliente,
                 incluirAnuladas,
@@ -250,8 +260,12 @@ public class VentaService {
         List<VentaDetalle> detallesVenta = ventaIds.isEmpty()
                 ? List.of()
                 : ventaDetalleRepository.findActivosByVentaIds(ventaIds);
+        List<Pago> pagosVenta = ventaIds.isEmpty()
+                ? List.of()
+                : pagoRepository.findActivosByVentaIds(ventaIds);
         Map<Integer, List<VentaDetalle>> detallesPorVenta = agruparDetallesPorVenta(detallesVenta);
-        return construirPdfReporteVentas(reporte, detallesPorVenta);
+        Map<Integer, List<Pago>> pagosPorVenta = agruparPagosPorVenta(pagosVenta);
+        return construirPdfReporteVentas(reporte, detallesPorVenta, pagosPorVenta);
     }
 
     public VentaResponse obtenerDetalle(Integer idVenta, String correoUsuarioAutenticado) {
@@ -634,6 +648,10 @@ public class VentaService {
     }
 
     public ArchivoDescargable descargarSunatCdr(Integer idVenta, String correoUsuarioAutenticado) {
+        return descargarSunatCdr(idVenta, correoUsuarioAutenticado, "xml");
+    }
+
+    public ArchivoDescargable descargarSunatCdr(Integer idVenta, String correoUsuarioAutenticado, String formato) {
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
         validarRolLectura(usuarioAutenticado);
 
@@ -646,12 +664,73 @@ public class VentaService {
         }
 
         byte[] contenido = sunatDocumentStorageService.download(venta.getSunatCdrKey());
-        return new ArchivoDescargable(
-                venta.getSunatCdrNombre() != null && !venta.getSunatCdrNombre().isBlank()
-                        ? venta.getSunatCdrNombre()
-                        : SunatComprobanteHelper.construirNombreArchivoCdrZip(venta),
-                "application/xml",
-                contenido);
+        return construirArchivoDescargableCdr(
+                contenido,
+                venta.getSunatCdrNombre(),
+                SunatComprobanteHelper.construirNombreArchivoCdrXml(venta),
+                SunatComprobanteHelper.construirNombreArchivoCdrZip(venta),
+                formato);
+    }
+
+    private ArchivoDescargable construirArchivoDescargableCdr(
+            byte[] contenido,
+            String nombreRegistrado,
+            String nombreXmlFallback,
+            String nombreZipFallback,
+            String formatoSolicitado) {
+        String formato = normalizarFormatoCdr(formatoSolicitado);
+        String nombreXml = resolverNombreCdrXml(nombreRegistrado, nombreXmlFallback);
+        String nombreZip = resolverNombreCdrZip(nombreRegistrado, nombreZipFallback);
+
+        if ("zip".equals(formato)) {
+            byte[] zipBytes = sunatCdrParserService.isZip(contenido)
+                    ? contenido
+                    : sunatCdrParserService.wrapXmlAsZip(nombreXml, contenido);
+            return new ArchivoDescargable(nombreZip, "application/zip", zipBytes);
+        }
+
+        if (sunatCdrParserService.isZip(contenido)) {
+            SunatCdrParserService.ExtractedXml extractedXml = sunatCdrParserService.extractXml(contenido);
+            String nombreXmlExtraido = extractedXml.fileName() == null || extractedXml.fileName().isBlank()
+                    ? nombreXml
+                    : extractedXml.fileName();
+            return new ArchivoDescargable(nombreXmlExtraido, MediaType.APPLICATION_XML_VALUE, extractedXml.bytes());
+        }
+
+        return new ArchivoDescargable(nombreXml, MediaType.APPLICATION_XML_VALUE, contenido);
+    }
+
+    private String normalizarFormatoCdr(String formato) {
+        if (formato == null || formato.isBlank()) {
+            return "xml";
+        }
+        String formatoNormalizado = formato.trim().toLowerCase(Locale.ROOT);
+        if ("xml".equals(formatoNormalizado) || "zip".equals(formatoNormalizado)) {
+            return formatoNormalizado;
+        }
+        throw new RuntimeException("Formato de CDR no valido. Use xml o zip");
+    }
+
+    private String resolverNombreCdrXml(String nombreRegistrado, String fallback) {
+        if (nombreRegistrado == null || nombreRegistrado.isBlank()) {
+            return fallback;
+        }
+        String nombre = nombreRegistrado.trim();
+        if (nombre.toLowerCase(Locale.ROOT).endsWith(".zip")) {
+            return nombre.substring(0, nombre.length() - 4) + ".xml";
+        }
+        return nombre;
+    }
+
+    private String resolverNombreCdrZip(String nombreRegistrado, String fallback) {
+        if (nombreRegistrado == null || nombreRegistrado.isBlank()) {
+            return fallback;
+        }
+        String nombre = nombreRegistrado.trim();
+        if (nombre.toLowerCase(Locale.ROOT).endsWith(".xml")) {
+            return nombre.substring(0, nombre.length() - 4) + ".zip";
+        }
+        return nombre;
     }
 
     private void agregarCabeceraComprobantePdf(Document document, Venta venta) throws DocumentException {
@@ -1241,7 +1320,11 @@ public class VentaService {
                 && venta.getSucursal() != null
                 && venta.getSucursal().getEmpresa() != null
                         ? venta.getSucursal().getEmpresa().getLogoUrl()
-                        : null;
+                : null;
+        return cargarLogoEmpresaParaPdf(logoUrl);
+    }
+
+    private Image cargarLogoEmpresaParaPdf(String logoUrl) {
         if (logoUrl == null || logoUrl.isBlank()) {
             return null;
         }
@@ -1506,7 +1589,6 @@ public class VentaService {
                     venta.getSunatXmlNombre(),
                     venta.getSunatXmlKey(),
                     venta.getSunatZipNombre(),
-                    venta.getSunatZipKey(),
                     venta.getSunatCdrNombre(),
                     venta.getSunatCdrKey(),
                     venta.getSunatEnviadoAt(),
@@ -1896,7 +1978,6 @@ public class VentaService {
         venta.setSunatXmlNombre(normalizarTexto(resultado.xmlNombre(), 180));
         venta.setSunatXmlKey(normalizarTexto(resultado.xmlKey(), 600));
         venta.setSunatZipNombre(normalizarTexto(resultado.zipNombre(), 180));
-        venta.setSunatZipKey(normalizarTexto(resultado.zipKey(), 600));
         venta.setSunatCdrNombre(normalizarTexto(resultado.cdrNombre(), 180));
         venta.setSunatCdrKey(normalizarTexto(resultado.cdrKey(), 600));
         venta.setSunatEnviadoAt(resultado.fechaEnvio());
@@ -2039,6 +2120,7 @@ public class VentaService {
             String periodo,
             LocalDate desde,
             LocalDate hasta,
+            Integer idUsuarioRequest,
             Integer idSucursalRequest,
             Integer idClienteRequest) {
         AgrupacionReporte agrupacion = normalizarAgrupacionReporte(agrupar);
@@ -2065,6 +2147,7 @@ public class VentaService {
             nombreSucursalFiltro = sucursal.getNombre();
         }
 
+        Usuario usuarioFiltro = resolverUsuarioFiltroReporte(usuarioAutenticado, idUsuarioRequest);
         Integer idClienteFiltro = resolverIdClienteFiltro(usuarioAutenticado, idClienteRequest, idSucursalFiltro);
 
         return new FiltroReporteVentas(
@@ -2074,6 +2157,8 @@ public class VentaService {
                 rango.hasta(),
                 idSucursalFiltro,
                 nombreSucursalFiltro,
+                usuarioFiltro != null ? usuarioFiltro.getIdUsuario() : null,
+                usuarioFiltro != null ? nombreUsuario(usuarioFiltro) : "TODOS",
                 idClienteFiltro);
     }
 
@@ -2147,6 +2232,7 @@ public class VentaService {
         String estadoFiltro = incluirAnuladas ? null : "EMITIDA";
         return ventaRepository.buscarParaReporte(
                 filtro.idSucursal(),
+                filtro.idUsuario(),
                 filtro.idCliente(),
                 estadoFiltro,
                 fechaInicio,
@@ -2192,9 +2278,9 @@ public class VentaService {
             }
 
             Integer idCliente = venta.getCliente() != null ? venta.getCliente().getIdCliente() : null;
-            String telefonoCliente = venta.getCliente() != null && venta.getCliente().getTelefono() != null && !venta.getCliente().getTelefono().isBlank()
-                    ? " - " + venta.getCliente().getTelefono() : "";
-            String nombreCliente = (venta.getCliente() != null ? venta.getCliente().getNombres() : "SIN CLIENTE") + telefonoCliente;
+            String telefonoCliente = venta.getCliente() != null ? valorTexto(venta.getCliente().getTelefono()) : "";
+            String telefonoClienteLabel = !telefonoCliente.isBlank() ? " - " + telefonoCliente : "";
+            String nombreCliente = (venta.getCliente() != null ? venta.getCliente().getNombres() : "SIN CLIENTE") + telefonoClienteLabel;
             String claveCliente = idCliente == null ? "SIN_CLIENTE" : "ID_" + idCliente;
             AcumuladoCliente clienteActual = acumuladoPorCliente.get(claveCliente);
             if (clienteActual == null) {
@@ -2218,6 +2304,7 @@ public class VentaService {
                     venta.getEstado(),
                     idCliente,
                     nombreCliente,
+                    telefonoCliente,
                     venta.getUsuario() != null ? venta.getUsuario().getIdUsuario() : null,
                     nombreUsuario(venta.getUsuario()),
                     venta.getSucursal() != null ? venta.getSucursal().getIdSucursal() : null,
@@ -2257,6 +2344,8 @@ public class VentaService {
                 filtro.hasta(),
                 filtro.idSucursal(),
                 filtro.nombreSucursal(),
+                filtro.idUsuario(),
+                filtro.nombreUsuario(),
                 incluirAnuladas,
                 montoTotal,
                 cantidadVentas,
@@ -2465,23 +2554,18 @@ public class VentaService {
 
     // ─── PDF Reporte de Ventas ────────────────────────────────────────────────
 
-    private static final Color[] COLORES_COMPROBANTE_PDF = {
-            new Color(232, 240, 254),  // celeste claro
-            null                       // sin color
-    };
-
     private byte[] construirPdfReporteVentas(
             VentaReporteResponse reporte,
-            Map<Integer, List<VentaDetalle>> detallesPorVenta) {
+            Map<Integer, List<VentaDetalle>> detallesPorVenta,
+            Map<Integer, List<Pago>> pagosPorVenta) {
         try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-            Document document = new Document(PageSize.A4.rotate(), 30f, 30f, 30f, 30f);
+            Document document = new Document(PageSize.A4.rotate(), 20f, 20f, 22f, 20f);
             PdfWriter.getInstance(document, output);
             document.open();
 
             agregarEncabezadoReportePdf(document, reporte);
             document.add(new Paragraph(" "));
-            agregarTablaItemsReportePdf(document, reporte, detallesPorVenta);
-            agregarPieTotalReportePdf(document, reporte);
+            agregarTablaItemsReportePdf(document, reporte, detallesPorVenta, pagosPorVenta);
 
             document.close();
             return output.toByteArray();
@@ -2492,140 +2576,218 @@ public class VentaService {
 
     private void agregarEncabezadoReportePdf(Document document, VentaReporteResponse reporte)
             throws DocumentException {
-        Color colorPrimario = new Color(60, 76, 102);
+        Empresa empresa = resolverEmpresaReportePdf(reporte);
+        String nombreEmpresa = nombreEmpresaReportePdf(empresa);
+        String nombreSucursal = valorTexto(reporte.nombreSucursal()).isBlank() ? "TODAS" : valorTexto(reporte.nombreSucursal());
 
-        Paragraph titulo = new Paragraph("REPORTE DE VENTAS", fuentePdf(true, 16f, colorPrimario));
-        titulo.setAlignment(Element.ALIGN_CENTER);
-        document.add(titulo);
+        PdfPTable cabeceraEmpresa = new PdfPTable(new float[] { 1.2f, 8.8f });
+        cabeceraEmpresa.setWidthPercentage(100);
 
-        String sucursalTexto = reporte.nombreSucursal() != null && !reporte.nombreSucursal().isBlank()
-                ? reporte.nombreSucursal() : "TODAS";
-        Paragraph sucursal = new Paragraph("Sucursal: " + sucursalTexto, fuentePdf(true, 11f));
-        sucursal.setAlignment(Element.ALIGN_CENTER);
-        sucursal.setSpacingBefore(4f);
-        document.add(sucursal);
+        PdfPCell logoCell = crearCeldaBase(Rectangle.NO_BORDER, 0f);
+        logoCell.setHorizontalAlignment(Element.ALIGN_LEFT);
+        logoCell.setVerticalAlignment(Element.ALIGN_MIDDLE);
+        Image logo = cargarLogoEmpresaParaPdf(empresa != null ? empresa.getLogoUrl() : null);
+        if (logo != null) {
+            logo.scaleToFit(58f, 32f);
+            logo.setAlignment(Element.ALIGN_LEFT);
+            logoCell.addElement(logo);
+        }
+        cabeceraEmpresa.addCell(logoCell);
 
-        String rango = (reporte.desde() != null ? reporte.desde().format(DateTimeFormatter.ofPattern("dd/MM/yyyy")) : "-")
-                + " al "
-                + (reporte.hasta() != null ? reporte.hasta().format(DateTimeFormatter.ofPattern("dd/MM/yyyy")) : "-");
-        Paragraph fechas = new Paragraph("Periodo: " + rango, fuentePdf(false, 9.5f));
-        fechas.setAlignment(Element.ALIGN_CENTER);
-        fechas.setSpacingBefore(2f);
-        document.add(fechas);
+        PdfPCell datosEmpresaCell = crearCeldaBase(Rectangle.NO_BORDER, 0f);
+        datosEmpresaCell.setVerticalAlignment(Element.ALIGN_MIDDLE);
+        if (!nombreEmpresa.isBlank()) {
+            Paragraph empresaP = new Paragraph(nombreEmpresa, fuentePdf(true, 12f));
+            empresaP.setAlignment(Element.ALIGN_LEFT);
+            datosEmpresaCell.addElement(empresaP);
+        }
+        Paragraph sucursalP = new Paragraph("Sucursal: " + nombreSucursal, fuentePdf(true, 9f));
+        sucursalP.setAlignment(Element.ALIGN_LEFT);
+        sucursalP.setSpacingBefore(2f);
+        datosEmpresaCell.addElement(sucursalP);
+        cabeceraEmpresa.addCell(datosEmpresaCell);
 
-        String generado = "Generado: " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm"));
-        Paragraph gen = new Paragraph(generado, fuentePdf(false, 8.5f, new Color(120, 120, 120)));
-        gen.setAlignment(Element.ALIGN_CENTER);
-        gen.setSpacingBefore(2f);
-        document.add(gen);
+        document.add(cabeceraEmpresa);
+
+        PdfPTable tabla = new PdfPTable(new float[] { 2.6f, 4.8f, 1.6f, 3.2f, 1.6f, 2.8f });
+        tabla.setWidthPercentage(100);
+        tabla.setSpacingBefore(4f);
+
+        agregarCampoEncabezadoReportePdf(tabla, "NOMBRE DE ASESOR(A):", valorTexto(reporte.nombreUsuario()));
+        agregarCampoEncabezadoReportePdf(tabla, "F. VENTA:", formatearPeriodoVentaReportePdf(reporte.desde(), reporte.hasta()));
+        agregarCampoEncabezadoReportePdf(tabla, "F. ENVIO:", "");
+una con
+        document.add(tabla);
     }
 
     private void agregarTablaItemsReportePdf(
             Document document,
             VentaReporteResponse reporte,
-            Map<Integer, List<VentaDetalle>> detallesPorVenta) throws DocumentException {
-        Color colorHeaderBg = new Color(60, 76, 102);
+            Map<Integer, List<VentaDetalle>> detallesPorVenta,
+            Map<Integer, List<Pago>> pagosPorVenta) throws DocumentException {
+        Color colorHeaderBg = new Color(245, 222, 117);
 
-        // columnas: Comprobante | FechaVenta | Estado | Cliente | Producto | Color | Talla | Cantidad | P.Unit | Total
-        PdfPTable tabla = new PdfPTable(new float[] { 2.8f, 2.2f, 1.6f, 2.8f, 3.2f, 1.5f, 1.2f, 1.2f, 1.6f, 1.6f });
+        // columnas: Hora | Cod. de pago | Monto | Metodo de pago | Nro celular | Modelo | Color | T | Cant | Sep | Env | Observacion
+        PdfPTable tabla = new PdfPTable(new float[] { 1.2f, 2.6f, 1.6f, 2.1f, 2.3f, 2.8f, 1.8f, 0.8f, 0.9f, 0.8f, 0.8f, 4.8f });
         tabla.setWidthPercentage(100);
         tabla.setHeaderRows(1);
-        tabla.setSpacingBefore(6f);
+        tabla.setSpacingBefore(4f);
 
-        String[] headers = { "Comprobante", "Fecha Venta", "Estado", "Cliente",
-                "Producto", "Color", "Talla", "Cant.", "P. Unit.", "Total" };
-        int[] aligns = { Element.ALIGN_LEFT, Element.ALIGN_CENTER, Element.ALIGN_CENTER,
-                Element.ALIGN_LEFT, Element.ALIGN_LEFT, Element.ALIGN_CENTER,
-                Element.ALIGN_CENTER, Element.ALIGN_CENTER, Element.ALIGN_RIGHT, Element.ALIGN_RIGHT };
+        String[] headers = { "HORA", "COD. DE PAGO", "MONTO", "M. DE PAGO", "NRO CELULAR", "MODELO",
+                "COLOR", "T", "CANT", "SEP", "ENV", "OBSERVACION" };
+        int[] aligns = { Element.ALIGN_CENTER, Element.ALIGN_CENTER, Element.ALIGN_RIGHT, Element.ALIGN_CENTER,
+                Element.ALIGN_CENTER, Element.ALIGN_LEFT, Element.ALIGN_CENTER, Element.ALIGN_CENTER,
+                Element.ALIGN_CENTER, Element.ALIGN_CENTER, Element.ALIGN_CENTER, Element.ALIGN_LEFT };
         for (int i = 0; i < headers.length; i++) {
-            agregarHeaderDetalle(tabla, headers[i], aligns[i], colorHeaderBg);
+            agregarHeaderReporteTablaPdf(tabla, headers[i], aligns[i], colorHeaderBg);
         }
 
-        int colorIdx = 0;
-        Map<Integer, Integer> colorPorVenta = new java.util.LinkedHashMap<>();
+        // Cada fila del PDF representa un detalle de venta.
+        DateTimeFormatter fmtHora = DateTimeFormatter.ofPattern("HH:mm");
 
-        // Primero asignar colores por comprobante (en orden de aparición)
         for (VentaReporteResponse.DetalleItem ventaItem : reporte.detalleVentas()) {
             Integer idVenta = ventaItem.idVenta();
-            if (idVenta != null && !colorPorVenta.containsKey(idVenta)) {
-                colorPorVenta.put(idVenta, colorIdx % COLORES_COMPROBANTE_PDF.length);
-                colorIdx++;
+            if (idVenta == null) {
+                continue;
             }
-        }
-
-        DateTimeFormatter fmtFecha = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
-
-        for (VentaReporteResponse.DetalleItem ventaItem : reporte.detalleVentas()) {
-            Integer idVenta = ventaItem.idVenta();
-            if (idVenta == null) continue;
 
             List<VentaDetalle> itemsVenta = detallesPorVenta.getOrDefault(idVenta, List.of());
-            int colorIndex = colorPorVenta.getOrDefault(idVenta, 0);
-            Color bgFila = COLORES_COMPROBANTE_PDF[colorIndex];
+            List<Pago> pagosVenta = pagosPorVenta.getOrDefault(idVenta, List.of());
+            String hora = ventaItem.fecha() != null ? ventaItem.fecha().format(fmtHora) : "";
+            String codigoPago = construirCodigosOperacionPagoPdf(pagosVenta);
+            String montoPago = formatearMonedaPdf(pagosVenta.isEmpty() ? ventaItem.total() : sumarMontoPagosReportePdf(pagosVenta));
+            String metodoPago = construirTextoPagosPdf(pagosVenta);
+            String celular = valorTexto(ventaItem.telefonoCliente());
 
+            boolean primeraFilaVenta = true;
             for (VentaDetalle detalle : itemsVenta) {
                 ProductoVariante variante = detalle.getProductoVariante();
 
-                String comprobante = comprobanteTexto(ventaItem);
-                String fechaVenta = ventaItem.fecha() != null ? ventaItem.fecha().format(fmtFecha) : "-";
-                String estado = valorTexto(ventaItem.estado());
-                String cliente = valorTexto(ventaItem.nombreCliente());
                 String producto = variante != null && variante.getProducto() != null
                         ? valorTexto(variante.getProducto().getNombre())
                         : valorTexto(detalle.getDescripcion());
                 String color = variante != null && variante.getColor() != null
-                        ? valorTexto(variante.getColor().getNombre()) : "-";
+                        ? valorTexto(variante.getColor().getNombre()) : "";
                 String talla = variante != null && variante.getTalla() != null
-                        ? valorTexto(variante.getTalla().getNombre()) : "-";
+                        ? valorTexto(variante.getTalla().getNombre()) : "";
                 String cantidad = String.valueOf(detalle.getCantidad() == null ? 0 : detalle.getCantidad());
-                String precioUnit = formatearMonedaPdf(detalle.getPrecioUnitario());
-                BigDecimal totalLinea = detalle.getTotalDetalle() != null
-                        ? detalle.getTotalDetalle() : detalle.getSubtotal();
-                String totalStr = formatearMonedaPdf(totalLinea);
 
-                tabla.addCell(crearCeldaReportePdf(comprobante, Element.ALIGN_LEFT, bgFila));
-                tabla.addCell(crearCeldaReportePdf(fechaVenta, Element.ALIGN_CENTER, bgFila));
-                tabla.addCell(crearCeldaReportePdf(estado, Element.ALIGN_CENTER, bgFila));
-                tabla.addCell(crearCeldaReportePdf(cliente, Element.ALIGN_LEFT, bgFila));
-                tabla.addCell(crearCeldaReportePdf(producto, Element.ALIGN_LEFT, bgFila));
-                tabla.addCell(crearCeldaReportePdf(color, Element.ALIGN_CENTER, bgFila));
-                tabla.addCell(crearCeldaReportePdf(talla, Element.ALIGN_CENTER, bgFila));
-                tabla.addCell(crearCeldaReportePdf(cantidad, Element.ALIGN_CENTER, bgFila));
-                tabla.addCell(crearCeldaReportePdf(precioUnit, Element.ALIGN_RIGHT, bgFila));
-                tabla.addCell(crearCeldaReportePdf(totalStr, Element.ALIGN_RIGHT, bgFila));
+                String horaMostrar = primeraFilaVenta ? hora : "";
+                String codigoPagoMostrar = primeraFilaVenta ? codigoPago : "";
+                String montoPagoMostrar = primeraFilaVenta ? montoPago : "";
+                String metodoPagoMostrar = primeraFilaVenta ? metodoPago : "";
+                String celularMostrar = primeraFilaVenta ? celular : "";
+
+                tabla.addCell(crearCeldaReportePdf(horaMostrar, Element.ALIGN_CENTER, 18f));
+                tabla.addCell(crearCeldaReportePdf(codigoPagoMostrar, Element.ALIGN_CENTER, 18f));
+                tabla.addCell(crearCeldaReportePdf(montoPagoMostrar, Element.ALIGN_RIGHT, 18f));
+                tabla.addCell(crearCeldaReportePdf(metodoPagoMostrar, Element.ALIGN_CENTER, 18f));
+                tabla.addCell(crearCeldaReportePdf(celularMostrar, Element.ALIGN_CENTER, 18f));
+                tabla.addCell(crearCeldaReportePdf(producto, Element.ALIGN_LEFT, 18f));
+                tabla.addCell(crearCeldaReportePdf(color, Element.ALIGN_CENTER, 18f));
+                tabla.addCell(crearCeldaReportePdf(talla, Element.ALIGN_CENTER, 18f));
+                tabla.addCell(crearCeldaReportePdf(cantidad, Element.ALIGN_CENTER, 18f));
+                tabla.addCell(crearCeldaReportePdf("", Element.ALIGN_CENTER, 18f));
+                tabla.addCell(crearCeldaReportePdf("", Element.ALIGN_CENTER, 18f));
+                tabla.addCell(crearCeldaReportePdf("", Element.ALIGN_LEFT, 18f));
+                primeraFilaVenta = false;
             }
         }
 
         document.add(tabla);
     }
 
-    private void agregarPieTotalReportePdf(Document document, VentaReporteResponse reporte)
-            throws DocumentException {
-        Color colorPrimario = new Color(60, 76, 102);
-        String totalFormateado = formatearMonedaPdf(reporte.montoTotal());
-        String ventas = String.valueOf(reporte.cantidadVentas());
-
-        Paragraph p = new Paragraph(
-                String.format("Total de Ventas: S/ %s   |   Cantidad de Comprobantes: %s", totalFormateado, ventas),
-                fuentePdf(true, 10.5f, colorPrimario));
-        p.setAlignment(Element.ALIGN_RIGHT);
-        p.setSpacingBefore(10f);
-        document.add(p);
+    private void agregarCampoEncabezadoReportePdf(PdfPTable tabla, String label, String value) {
+        tabla.addCell(crearCeldaCampoReportePdf(label, true));
+        tabla.addCell(crearCeldaCampoReportePdf(value, false));
     }
 
-    private PdfPCell crearCeldaReportePdf(String texto, int alineacion, Color bgColor) {
+    private PdfPCell crearCeldaCampoReportePdf(String texto, boolean bold) {
         PdfPCell cell = crearCeldaBase(Rectangle.BOX, 4.5f);
-        cell.setBorderColor(new Color(200, 210, 225));
+        cell.setBorderColor(new Color(160, 160, 160));
+        cell.setHorizontalAlignment(Element.ALIGN_LEFT);
+        cell.setVerticalAlignment(Element.ALIGN_MIDDLE);
+        cell.setUseAscender(true);
+        cell.setMinimumHeight(18f);
+        Paragraph paragraph = new Paragraph(valorTexto(texto), fuentePdf(bold, 8.5f));
+        paragraph.setAlignment(Element.ALIGN_LEFT);
+        cell.addElement(paragraph);
+        return cell;
+    }
+
+    private void agregarHeaderReporteTablaPdf(PdfPTable tabla, String texto, int alineacion, Color bgColor) {
+        PdfPCell cell = crearCeldaBase(Rectangle.BOX, 4f);
+        cell.setBorderColor(new Color(120, 120, 120));
+        cell.setBackgroundColor(bgColor);
         cell.setHorizontalAlignment(alineacion);
         cell.setVerticalAlignment(Element.ALIGN_MIDDLE);
         cell.setUseAscender(true);
-        if (bgColor != null) {
-            cell.setBackgroundColor(bgColor);
-        }
-        Paragraph paragraph = new Paragraph(valorTexto(texto), fuentePdf(false, 8.5f));
+        cell.setMinimumHeight(20f);
+        Paragraph paragraph = new Paragraph(texto, fuentePdf(true, 8f, Color.BLACK));
+        paragraph.setAlignment(alineacion);
+        cell.addElement(paragraph);
+        tabla.addCell(cell);
+    }
+
+    private PdfPCell crearCeldaReportePdf(String texto, int alineacion, float minHeight) {
+        PdfPCell cell = crearCeldaBase(Rectangle.BOX, 4f);
+        cell.setBorderColor(new Color(180, 180, 180));
+        cell.setHorizontalAlignment(alineacion);
+        cell.setVerticalAlignment(Element.ALIGN_MIDDLE);
+        cell.setUseAscender(true);
+        cell.setMinimumHeight(minHeight);
+        Paragraph paragraph = new Paragraph(valorTexto(texto), fuentePdf(false, 8f));
         paragraph.setAlignment(alineacion);
         cell.addElement(paragraph);
         return cell;
+    }
+
+    private String formatearPeriodoVentaReportePdf(LocalDate desde, LocalDate hasta) {
+        if (desde == null && hasta == null) {
+            return "";
+        }
+        DateTimeFormatter formato = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+        if (desde != null && hasta != null && desde.equals(hasta)) {
+            return desde.format(formato);
+        }
+        String desdeTexto = desde != null ? desde.format(formato) : "";
+        String hastaTexto = hasta != null ? hasta.format(formato) : "";
+        return (desdeTexto + " al " + hastaTexto).trim();
+    }
+
+    private Empresa resolverEmpresaReportePdf(VentaReporteResponse reporte) {
+        if (reporte != null && reporte.idSucursal() != null) {
+            return sucursalRepository.findByIdSucursalAndDeletedAtIsNull(reporte.idSucursal())
+                    .map(Sucursal::getEmpresa)
+                    .orElse(null);
+        }
+        return empresaRepository.findTopByOrderByIdEmpresaAsc().orElse(null);
+    }
+
+    private String nombreEmpresaReportePdf(Empresa empresa) {
+        if (empresa == null) {
+            return "";
+        }
+        String nombreComercial = valorTexto(empresa.getNombreComercial());
+        if (!nombreComercial.isBlank()) {
+            return nombreComercial;
+        }
+        String nombre = valorTexto(empresa.getNombre());
+        if (!nombre.isBlank()) {
+            return nombre;
+        }
+        return valorTexto(empresa.getRazonSocial());
+    }
+
+    private BigDecimal sumarMontoPagosReportePdf(List<Pago> pagos) {
+        if (pagos == null || pagos.isEmpty()) {
+            return CERO_MONETARIO;
+        }
+        return pagos.stream()
+                .map(Pago::getMonto)
+                .filter(monto -> monto != null)
+                .reduce(CERO_MONETARIO, BigDecimal::add)
+                .setScale(2, RoundingMode.HALF_UP);
     }
 
     private Map<Integer, List<VentaDetalle>> agruparDetallesPorVenta(List<VentaDetalle> detallesVenta) {
@@ -2949,6 +3111,27 @@ public class VentaService {
         return idUsuarioAutenticado;
     }
 
+    private Usuario resolverUsuarioFiltroReporte(Usuario usuarioAutenticado, Integer idUsuarioRequest) {
+        Integer idUsuarioFiltro = normalizarIdUsuarioFiltro(idUsuarioRequest);
+        if (esAdministrador(usuarioAutenticado)) {
+            if (idUsuarioFiltro == null) {
+                return null;
+            }
+            return usuarioRepository.findByIdUsuarioAndDeletedAtIsNull(idUsuarioFiltro)
+                    .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
+        }
+
+        Integer idUsuarioAutenticado = usuarioAutenticado.getIdUsuario();
+        if (idUsuarioAutenticado == null || idUsuarioAutenticado <= 0) {
+            throw new RuntimeException("El usuario autenticado no tiene identificador valido");
+        }
+        if (idUsuarioFiltro != null && !idUsuarioAutenticado.equals(idUsuarioFiltro)) {
+            throw new RuntimeException("El usuario autenticado no tiene permisos para filtrar por otro usuario");
+        }
+        return usuarioRepository.findByIdUsuarioAndDeletedAtIsNull(idUsuarioAutenticado)
+                .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
+    }
+
     private Integer resolverIdClienteFiltro(
             Usuario usuarioAutenticado,
             Integer idClienteRequest,
@@ -3165,6 +3348,8 @@ public class VentaService {
             LocalDate hasta,
             Integer idSucursal,
             String nombreSucursal,
+            Integer idUsuario,
+            String nombreUsuario,
             Integer idCliente) {
     }
 

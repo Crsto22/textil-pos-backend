@@ -11,7 +11,6 @@ public record SunatEmissionResult(
         String xmlNombre,
         String xmlKey,
         String zipNombre,
-        String zipKey,
         String cdrNombre,
         String cdrKey,
         LocalDateTime fechaEnvio,

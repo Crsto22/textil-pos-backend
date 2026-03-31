@@ -53,18 +53,18 @@ import com.sistemapos.sistematextil.util.producto.ProductoVarianteCreateItem;
 import com.sistemapos.sistematextil.util.usuario.Rol;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class ProductoService {
 
     private static final String VALOR_ACTIVO = "ACTIVO";
     private static final String VALOR_INACTIVO = "INACTIVO";
     private static final String ESTADO_PRODUCTO_ACTIVO = VALOR_ACTIVO;
-    private static final String ESTADO_PRODUCTO_ARCHIVADO = "ARCHIVADO";
     private static final String ESTADO_VARIANTE_ACTIVA = VALOR_ACTIVO;
-    private static final String ESTADO_VARIANTE_INACTIVA = "AGOTADO";
-    private static final String ESTADO_IMAGEN_INACTIVA = VALOR_INACTIVO;
+    private static final String ESTADO_VARIANTE_AGOTADA = "AGOTADO";
 
     private final ProductoRepository productoRepository;
     private final CategoriaRepository categoriaRepository;
@@ -98,7 +98,6 @@ public class ProductoService {
                 idCategoria,
                 idColor,
                 conOferta,
-                ESTADO_PRODUCTO_ARCHIVADO,
                 pageable);
 
         Map<Integer, VarianteReferencia> referencias = obtenerReferenciasVariantes(productos.getContent());
@@ -131,7 +130,6 @@ public class ProductoService {
                 idCategoria,
                 idColor,
                 conOferta,
-                ESTADO_PRODUCTO_ARCHIVADO,
                 pageable);
 
         List<Integer> productoIds = productos.getContent().stream()
@@ -192,7 +190,6 @@ public class ProductoService {
                 idCategoria,
                 idColor,
                 conOferta,
-                ESTADO_PRODUCTO_ARCHIVADO,
                 pageable);
 
         List<Integer> productoIds = productos.getContent().stream()
@@ -252,6 +249,8 @@ public class ProductoService {
         producto.setDescripcion(descripcion);
         producto.setFechaCreacion(LocalDateTime.now());
         producto.setEstado(ESTADO_PRODUCTO_ACTIVO);
+        producto.setActivo(VALOR_ACTIVO);
+        producto.setDeletedAt(null);
 
         try {
             Producto creado = productoRepository.save(producto);
@@ -281,6 +280,8 @@ public class ProductoService {
         producto.setDescripcion(descripcion);
         producto.setFechaCreacion(LocalDateTime.now());
         producto.setEstado(ESTADO_PRODUCTO_ACTIVO);
+        producto.setActivo(VALOR_ACTIVO);
+        producto.setDeletedAt(null);
 
         Producto creado = productoRepository.save(producto);
 
@@ -320,6 +321,9 @@ public class ProductoService {
         producto.setCategoria(categoriaDestino);
         producto.setNombre(nombre);
         producto.setDescripcion(descripcion);
+        producto.setEstado(ESTADO_PRODUCTO_ACTIVO);
+        producto.setActivo(VALOR_ACTIVO);
+        producto.setDeletedAt(null);
 
         Producto actualizado = productoRepository.save(producto);
 
@@ -329,7 +333,8 @@ public class ProductoService {
                 request.variantes(),
                 idProducto);
 
-        List<ProductoColorImagen> imagenesActuales = productoColorImagenRepository.findByProductoIdProducto(idProducto);
+        List<ProductoColorImagen> imagenesActuales = productoColorImagenRepository
+                .findByProductoIdProductoAndDeletedAtIsNull(idProducto);
         Set<String> urlsActuales = extraerUrlsImagenes(imagenesActuales);
 
         productoColorImagenRepository.deleteByProductoIdProducto(idProducto);
@@ -348,11 +353,8 @@ public class ProductoService {
             limpiarImagenesColorSiNoHayVariantesActivas(idProducto, colorId);
         }
 
-        List<ProductoColorImagen> imagenesVigentes = productoColorImagenRepository.findByProductoIdProducto(idProducto).stream()
-                .filter(img -> img != null
-                        && "ACTIVO".equalsIgnoreCase(img.getEstado())
-                        && img.getDeletedAt() == null)
-                .toList();
+        List<ProductoColorImagen> imagenesVigentes = productoColorImagenRepository
+                .findByProductoIdProductoAndDeletedAtIsNull(idProducto);
         Set<String> urlsNuevas = extraerUrlsImagenes(imagenesVigentes);
         eliminarImagenesObsoletasEnS3(urlsActuales, urlsNuevas);
 
@@ -382,6 +384,9 @@ public class ProductoService {
         producto.setCategoria(categoriaDestino);
         producto.setNombre(nombre);
         producto.setDescripcion(descripcion);
+        producto.setEstado(ESTADO_PRODUCTO_ACTIVO);
+        producto.setActivo(VALOR_ACTIVO);
+        producto.setDeletedAt(null);
 
         try {
             Producto actualizado = productoRepository.save(producto);
@@ -403,41 +408,33 @@ public class ProductoService {
         validarRolEdicionProducto(usuarioAutenticado);
 
         Producto producto = obtenerProductoConAlcance(idProducto, usuarioAutenticado);
-        producto.setEstado(ESTADO_PRODUCTO_ARCHIVADO);
+        LocalDateTime now = LocalDateTime.now();
+        producto.setEstado(ESTADO_PRODUCTO_ACTIVO);
+        producto.setActivo(VALOR_INACTIVO);
+        producto.setDeletedAt(now);
         productoRepository.save(producto);
 
         List<ProductoVariante> variantes = productoVarianteRepository
                 .findByProductoIdProductoAndDeletedAtIsNull(producto.getIdProducto());
         if (!variantes.isEmpty()) {
-            LocalDateTime now = LocalDateTime.now();
             for (ProductoVariante variante : variantes) {
                 if (variante == null) {
                     continue;
                 }
-                variante.setEstado(ESTADO_VARIANTE_INACTIVA);
+                variante.setEstado(resolverEstadoVarianteSegunStock(variante.getStock()));
                 variante.setActivo(VALOR_INACTIVO);
                 variante.setDeletedAt(now);
             }
             productoVarianteRepository.saveAll(variantes);
         }
 
-        List<ProductoColorImagen> imagenes = productoColorImagenRepository.findByProductoIdProducto(producto.getIdProducto());
-        if (!imagenes.isEmpty()) {
-            LocalDateTime now = LocalDateTime.now();
-            for (ProductoColorImagen imagen : imagenes) {
-                if (imagen == null) {
-                    continue;
-                }
-                imagen.setEstado(ESTADO_IMAGEN_INACTIVA);
-                imagen.setEsPrincipal(false);
-                imagen.setDeletedAt(now);
-            }
-            productoColorImagenRepository.saveAll(imagenes);
-        }
+        List<ProductoColorImagen> imagenes = productoColorImagenRepository
+                .findByProductoIdProductoAndDeletedAtIsNull(producto.getIdProducto());
+        eliminarImagenesFisicamente(imagenes, "producto " + producto.getIdProducto());
     }
 
     public Producto obtenerPorId(Integer id) {
-        return productoRepository.findByIdProductoAndEstadoNot(id, ESTADO_PRODUCTO_ARCHIVADO)
+        return productoRepository.findByIdProductoAndDeletedAtIsNull(id)
                 .orElseThrow(() -> new RuntimeException("Producto con ID " + id + " no encontrado"));
     }
 
@@ -461,7 +458,8 @@ public class ProductoService {
                         .thenComparing(ProductoVarianteDetalleResponse::tallaId, Comparator.nullsLast(Integer::compareTo)))
                 .toList();
 
-        List<ProductoImagenDetalleResponse> imagenes = productoColorImagenRepository.findByProductoIdProducto(idProducto).stream()
+        List<ProductoImagenDetalleResponse> imagenes = productoColorImagenRepository
+                .findByProductoIdProductoAndDeletedAtIsNull(idProducto).stream()
                 .map(this::toImagenDetalleResponse)
                 .sorted(Comparator
                         .comparing(ProductoImagenDetalleResponse::colorId, Comparator.nullsLast(Integer::compareTo))
@@ -477,14 +475,11 @@ public class ProductoService {
 
     private Producto obtenerProductoConAlcance(Integer idProducto, Usuario usuarioAutenticado) {
         if (esAdministrador(usuarioAutenticado)) {
-            return productoRepository.findByIdProductoAndEstadoNot(idProducto, ESTADO_PRODUCTO_ARCHIVADO)
+            return productoRepository.findByIdProductoAndDeletedAtIsNull(idProducto)
                     .orElseThrow(() -> new RuntimeException("Producto con ID " + idProducto + " no encontrado"));
         }
         Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
-        return productoRepository.findByIdProductoAndSucursal_IdSucursalAndEstadoNot(
-                idProducto,
-                idSucursalUsuario,
-                ESTADO_PRODUCTO_ARCHIVADO)
+        return productoRepository.findByIdProductoAndSucursal_IdSucursalAndDeletedAtIsNull(idProducto, idSucursalUsuario)
                 .orElseThrow(() -> new RuntimeException("Producto con ID " + idProducto + " no encontrado"));
     }
 
@@ -704,7 +699,7 @@ public class ProductoService {
                 referencia != null ? referencia.sku() : null,
                 producto.getNombre(),
                 producto.getDescripcion(),
-                producto.getEstado(),
+                resolverEstadoProductoVisible(producto),
                 producto.getFechaCreacion(),
                 idCategoria,
                 nombreCategoria,
@@ -771,7 +766,7 @@ public class ProductoService {
                 referencia != null ? referencia.sku() : null,
                 producto.getNombre(),
                 producto.getDescripcion(),
-                producto.getEstado(),
+                resolverEstadoProductoVisible(producto),
                 producto.getFechaCreacion(),
                 precioMin,
                 precioMax,
@@ -852,7 +847,7 @@ public class ProductoService {
                     variante.setOfertaInicio(ofertaInicio);
                     variante.setOfertaFin(ofertaFin);
                     variante.setStock(item.stock());
-                    variante.setEstado(ESTADO_VARIANTE_ACTIVA);
+                    variante.setEstado(resolverEstadoVarianteSegunStock(item.stock()));
                     variante.setActivo(VALOR_ACTIVO);
                     variante.setDeletedAt(null);
                     variante.setSku(sku);
@@ -1078,7 +1073,7 @@ public class ProductoService {
             destino.setOfertaInicio(ofertaInicio);
             destino.setOfertaFin(ofertaFin);
             destino.setStock(item.stock());
-            destino.setEstado(ESTADO_VARIANTE_ACTIVA);
+            destino.setEstado(resolverEstadoVarianteSegunStock(item.stock()));
             destino.setActivo(VALOR_ACTIVO);
             destino.setDeletedAt(null);
             destino.setSku(sku);
@@ -1099,7 +1094,7 @@ public class ProductoService {
             if (idsActivos.contains(existente.getIdProductoVariante())) {
                 continue;
             }
-            existente.setEstado(ESTADO_VARIANTE_INACTIVA);
+            existente.setEstado(resolverEstadoVarianteSegunStock(existente.getStock()));
             existente.setActivo(VALOR_INACTIVO);
             existente.setDeletedAt(now);
             if (existente.getColor() != null && existente.getColor().getIdColor() != null) {
@@ -1453,7 +1448,11 @@ public class ProductoService {
         Set<String> urlsVigentes = urlsNuevas == null ? Set.of() : urlsNuevas;
         for (String url : urlsActuales) {
             if (!urlsVigentes.contains(url)) {
-                s3StorageService.deleteByUrl(url);
+                try {
+                    s3StorageService.deleteByUrl(url);
+                } catch (RuntimeException e) {
+                    log.warn("No se pudo eliminar imagen obsoleta en S3: {}", url, e);
+                }
             }
         }
     }
@@ -1469,31 +1468,36 @@ public class ProductoService {
         }
 
         List<ProductoColorImagen> imagenes = productoColorImagenRepository
-                .findByProductoIdProductoAndColorIdColor(idProducto, idColor);
-        if (imagenes.isEmpty()) {
+                .findByProductoIdProductoAndColorIdColorAndDeletedAtIsNull(idProducto, idColor);
+        eliminarImagenesFisicamente(imagenes, "producto " + idProducto + " color " + idColor);
+    }
+
+    private void eliminarImagenesFisicamente(List<ProductoColorImagen> imagenes, String contexto) {
+        if (imagenes == null || imagenes.isEmpty()) {
             return;
         }
 
-        LocalDateTime now = LocalDateTime.now();
-        Set<String> urls = new HashSet<>();
-        for (ProductoColorImagen imagen : imagenes) {
-            if (imagen == null) {
-                continue;
-            }
-            agregarSiTieneValor(urls, imagen.getUrl());
-            agregarSiTieneValor(urls, imagen.getUrlThumb());
-            imagen.setEstado(ESTADO_IMAGEN_INACTIVA);
-            imagen.setEsPrincipal(false);
-            imagen.setDeletedAt(now);
-        }
-        productoColorImagenRepository.saveAll(imagenes);
+        Set<String> urls = extraerUrlsImagenes(imagenes);
+        productoColorImagenRepository.deleteAll(imagenes);
 
         for (String url : urls) {
             try {
                 s3StorageService.deleteByUrl(url);
-            } catch (RuntimeException ignored) {
-                // Best-effort: no se revierte la transaccion por falla externa de S3.
+            } catch (RuntimeException e) {
+                log.warn("No se pudo eliminar imagen de S3 para {}: {}", contexto, url, e);
             }
         }
+    }
+
+    private String resolverEstadoVarianteSegunStock(Integer stock) {
+        return stock != null && stock <= 0 ? ESTADO_VARIANTE_AGOTADA : ESTADO_VARIANTE_ACTIVA;
+    }
+
+    private String resolverEstadoProductoVisible(Producto producto) {
+        String estado = producto == null ? null : normalizar(producto.getEstado());
+        if (estado == null || "ARCHIVADO".equalsIgnoreCase(estado)) {
+            return ESTADO_PRODUCTO_ACTIVO;
+        }
+        return estado;
     }
 }

@@ -12,13 +12,13 @@ import com.sistemapos.sistematextil.util.producto.ProductoImagenColorRow;
 
 public interface ProductoColorImagenRepository extends JpaRepository<ProductoColorImagen, Integer> {
 
-    List<ProductoColorImagen> findByProductoIdProducto(Integer idProducto);
+    List<ProductoColorImagen> findByProductoIdProductoAndDeletedAtIsNull(Integer idProducto);
 
-    List<ProductoColorImagen> findByProductoIdProductoIn(List<Integer> productoIds);
+    List<ProductoColorImagen> findByProductoIdProductoInAndDeletedAtIsNull(List<Integer> productoIds);
 
-    List<ProductoColorImagen> findByProductoIdProductoAndColorIdColor(Integer idProducto, Integer idColor);
+    List<ProductoColorImagen> findByProductoIdProductoAndColorIdColorAndDeletedAtIsNull(Integer idProducto, Integer idColor);
 
-    Optional<ProductoColorImagen> findByIdColorImagen(Integer idColorImagen);
+    Optional<ProductoColorImagen> findByIdColorImagenAndDeletedAtIsNull(Integer idColorImagen);
 
     void deleteByProductoIdProducto(Integer idProducto);
 
@@ -35,7 +35,8 @@ public interface ProductoColorImagenRepository extends JpaRepository<ProductoCol
             )
             FROM ProductoColorImagen pci
             JOIN pci.color c
-            WHERE pci.producto.idProducto IN :productoIds
+            WHERE pci.deletedAt IS NULL
+              AND pci.producto.idProducto IN :productoIds
             """)
     List<ProductoImagenColorRow> obtenerResumenPorProductos(@Param("productoIds") List<Integer> productoIds);
 }

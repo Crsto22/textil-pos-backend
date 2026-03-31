@@ -26,7 +26,6 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class ProductoReporteService {
 
-    private static final String ESTADO_PRODUCTO_ARCHIVADO = "ARCHIVADO";
     private static final BigDecimal CERO_MONETARIO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
 
     private final UsuarioRepository usuarioRepository;
@@ -48,13 +47,9 @@ public class ProductoReporteService {
         LocalDateTime fechaInicio = rango.desde().atStartOfDay();
         LocalDateTime fechaFinExclusive = rango.hastaExclusiva();
 
-        long productosActivos = productoRepository.contarActivosParaReporte(idSucursal, ESTADO_PRODUCTO_ARCHIVADO);
-        long variantesActivas = productoVarianteRepository.contarVariantesActivasParaReporte(
-                idSucursal,
-                ESTADO_PRODUCTO_ARCHIVADO);
-        long variantesSinStock = productoVarianteRepository.contarVariantesSinStockParaReporte(
-                idSucursal,
-                ESTADO_PRODUCTO_ARCHIVADO);
+        long productosActivos = productoRepository.contarActivosParaReporte(idSucursal);
+        long variantesActivas = productoVarianteRepository.contarVariantesActivasParaReporte(idSucursal);
+        long variantesSinStock = productoVarianteRepository.contarVariantesSinStockParaReporte(idSucursal);
 
         List<ProductoReporteResponse.TopProductoItem> topProductosPorMonto = mapTopVariantes(
                 ventaDetalleRepository.obtenerTopProductosPorMonto(idSucursal, fechaInicio, fechaFinExclusive));

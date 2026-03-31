@@ -134,6 +134,10 @@ public final class SunatComprobanteHelper {
     }
 
     public static String construirNombreArchivoCdrZip(Venta venta) {
+        return "R-" + construirBaseNombreArchivo(venta) + ".zip";
+    }
+
+    public static String construirNombreArchivoCdrXml(Venta venta) {
         return "R-" + construirBaseNombreArchivo(venta) + ".xml";
     }
 
@@ -146,6 +150,10 @@ public final class SunatComprobanteHelper {
     }
 
     public static String construirNombreArchivoCdrZip(NotaCredito notaCredito) {
+        return "R-" + construirBaseNombreArchivo(notaCredito) + ".zip";
+    }
+
+    public static String construirNombreArchivoCdrXml(NotaCredito notaCredito) {
         return "R-" + construirBaseNombreArchivo(notaCredito) + ".xml";
     }
 
@@ -154,17 +162,17 @@ public final class SunatComprobanteHelper {
             return "comprobante";
         }
         return switch (venta.getTipoComprobante().trim().toUpperCase(Locale.ROOT)) {
-            case "FACTURA" -> "factura";
-            case "BOLETA" -> "boleta";
+            case "FACTURA" -> "facturas";
+            case "BOLETA" -> "boletas";
             default -> "comprobante";
         };
     }
 
     public static String carpetaTipoComprobante(NotaCredito notaCredito) {
         if (notaCredito == null) {
-            return "nota-credito";
+            return "notas-credito";
         }
-        return "nota-credito";
+        return "notas-credito";
     }
 
     private static String construirBaseNombreArchivo(Venta venta) {

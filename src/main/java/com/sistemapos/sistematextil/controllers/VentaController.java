@@ -91,6 +91,7 @@ public class VentaController {
             @RequestParam(name = "periodo", required = false) String periodo,
             @RequestParam(name = "desde", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate desde,
             @RequestParam(name = "hasta", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hasta,
+            @RequestParam(name = "idUsuario", required = false) Integer idUsuario,
             @RequestParam(name = "idSucursal", required = false) Integer idSucursal,
             @RequestParam(name = "idCliente", required = false) Integer idCliente,
             @RequestParam(name = "incluirAnuladas", defaultValue = "false") boolean incluirAnuladas) {
@@ -100,6 +101,7 @@ public class VentaController {
                     periodo,
                     desde,
                     hasta,
+                    idUsuario,
                     idSucursal,
                     idCliente,
                     incluirAnuladas,
@@ -139,6 +141,7 @@ public class VentaController {
             @RequestParam(name = "periodo", required = false) String periodo,
             @RequestParam(name = "desde", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate desde,
             @RequestParam(name = "hasta", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hasta,
+            @RequestParam(name = "idUsuario", required = false) Integer idUsuario,
             @RequestParam(name = "idSucursal", required = false) Integer idSucursal,
             @RequestParam(name = "idCliente", required = false) Integer idCliente,
             @RequestParam(name = "incluirAnuladas", defaultValue = "false") boolean incluirAnuladas) {
@@ -148,6 +151,7 @@ public class VentaController {
                     periodo,
                     desde,
                     hasta,
+                    idUsuario,
                     idSucursal,
                     idCliente,
                     incluirAnuladas,
@@ -176,6 +180,7 @@ public class VentaController {
             @RequestParam(name = "periodo", required = false) String periodo,
             @RequestParam(name = "desde", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate desde,
             @RequestParam(name = "hasta", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hasta,
+            @RequestParam(name = "idUsuario", required = false) Integer idUsuario,
             @RequestParam(name = "idSucursal", required = false) Integer idSucursal,
             @RequestParam(name = "idCliente", required = false) Integer idCliente,
             @RequestParam(name = "incluirAnuladas", defaultValue = "false") boolean incluirAnuladas) {
@@ -185,6 +190,7 @@ public class VentaController {
                     periodo,
                     desde,
                     hasta,
+                    idUsuario,
                     idSucursal,
                     idCliente,
                     incluirAnuladas,
@@ -277,13 +283,14 @@ public class VentaController {
         }
     }
 
-    @GetMapping(value = "/{id}/sunat/cdr", produces = MediaType.APPLICATION_XML_VALUE)
+    @GetMapping(value = "/{id}/sunat/cdr", produces = { MediaType.APPLICATION_XML_VALUE, "application/zip" })
     public ResponseEntity<?> descargarSunatCdr(
             Authentication authentication,
-            @PathVariable Integer id) {
+            @PathVariable Integer id,
+            @RequestParam(name = "formato", required = false) String formato) {
         try {
             VentaService.ArchivoDescargable archivo = ventaService
-                    .descargarSunatCdr(id, obtenerCorreoAutenticado(authentication));
+                    .descargarSunatCdr(id, obtenerCorreoAutenticado(authentication), formato);
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + archivo.nombreArchivo() + "\"")
                     .contentType(MediaType.parseMediaType(archivo.contentType()))

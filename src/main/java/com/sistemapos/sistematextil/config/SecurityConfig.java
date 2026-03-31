@@ -57,6 +57,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.DELETE, "/api/producto/**").hasAnyAuthority("ADMINISTRADOR", "ALMACEN")
                         .requestMatchers("/api/producto/**").hasAnyAuthority("ADMINISTRADOR", "VENTAS", "ALMACEN")
                         .requestMatchers("/api/variante/listar-resumen").hasAnyAuthority("ADMINISTRADOR", "VENTAS", "ALMACEN")
+                        .requestMatchers(HttpMethod.GET, "/api/variante/escanear").hasAnyAuthority("ADMINISTRADOR", "VENTAS")
                         .requestMatchers("/api/venta/**").hasAnyAuthority("ADMINISTRADOR", "VENTAS")
                         .requestMatchers("/api/cotizacion/**").hasAnyAuthority("ADMINISTRADOR", "VENTAS")
                         .requestMatchers("/api/documento/**").hasAnyAuthority("ADMINISTRADOR", "VENTAS", "ALMACEN")

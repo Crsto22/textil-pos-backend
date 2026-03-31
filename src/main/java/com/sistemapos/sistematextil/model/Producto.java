@@ -3,8 +3,10 @@ package com.sistemapos.sistematextil.model;
 import java.time.LocalDateTime;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.sistemapos.sistematextil.model.converter.EstadoActivoConverter;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
@@ -40,8 +42,15 @@ public class Producto {
     @Column(nullable = false)
     private String estado;
 
+    @Convert(converter = EstadoActivoConverter.class)
+    @Column(name = "activo", nullable = false)
+    private String activo = "ACTIVO";
+
     @Column(name = "created_at")
     private LocalDateTime fechaCreacion;
+
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
 
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "categoria_id", nullable = false)

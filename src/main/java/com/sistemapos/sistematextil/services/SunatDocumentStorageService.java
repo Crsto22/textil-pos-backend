@@ -1,8 +1,6 @@
 package com.sistemapos.sistematextil.services;
 
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Locale;
 
 import org.springframework.beans.factory.annotation.Value;
@@ -37,31 +35,20 @@ public class SunatDocumentStorageService {
     @Value("${aws.s3.sunat.bucket:}")
     private String configuredBucket;
 
-    @Value("${aws.s3.sunat.prefix:sunat}")
-    private String keyPrefix;
-
     public StoredDocument storeXml(Venta venta, String fileName, byte[] bytes) {
-        return upload(venta, "xml", fileName, bytes, "application/xml");
-    }
-
-    public StoredDocument storeZip(Venta venta, String fileName, byte[] bytes) {
-        return upload(venta, "zip", fileName, bytes, "application/zip");
+        return upload(buildKey(venta, fileName), fileName, bytes, "application/xml");
     }
 
     public StoredDocument storeCdr(Venta venta, String fileName, byte[] bytes) {
-        return upload(venta, "cdr", fileName, bytes, "application/xml");
+        return upload(buildKey(venta, fileName), fileName, bytes, "application/zip");
     }
 
     public StoredDocument storeXml(NotaCredito notaCredito, String fileName, byte[] bytes) {
-        return upload(notaCredito, "xml", fileName, bytes, "application/xml");
-    }
-
-    public StoredDocument storeZip(NotaCredito notaCredito, String fileName, byte[] bytes) {
-        return upload(notaCredito, "zip", fileName, bytes, "application/zip");
+        return upload(buildKey(notaCredito, fileName), fileName, bytes, "application/xml");
     }
 
     public StoredDocument storeCdr(NotaCredito notaCredito, String fileName, byte[] bytes) {
-        return upload(notaCredito, "cdr", fileName, bytes, "application/xml");
+        return upload(buildKey(notaCredito, fileName), fileName, bytes, "application/zip");
     }
 
     public byte[] download(String key) {
@@ -100,44 +87,10 @@ public class SunatDocumentStorageService {
         }
     }
 
-    public StoredUploadPair storeXmlAndZip(Venta venta, String xmlName, byte[] xmlBytes, String zipName, byte[] zipBytes) {
-        List<String> uploadedKeys = new ArrayList<>();
-        try {
-            StoredDocument xml = storeXml(venta, xmlName, xmlBytes);
-            uploadedKeys.add(xml.key());
-            StoredDocument zip = storeZip(venta, zipName, zipBytes);
-            uploadedKeys.add(zip.key());
-            return new StoredUploadPair(xml, zip);
-        } catch (RuntimeException e) {
-            uploadedKeys.forEach(this::deleteQuietly);
-            throw e;
-        }
-    }
-
-    public StoredUploadPair storeXmlAndZip(
-            NotaCredito notaCredito,
-            String xmlName,
-            byte[] xmlBytes,
-            String zipName,
-            byte[] zipBytes) {
-        List<String> uploadedKeys = new ArrayList<>();
-        try {
-            StoredDocument xml = storeXml(notaCredito, xmlName, xmlBytes);
-            uploadedKeys.add(xml.key());
-            StoredDocument zip = storeZip(notaCredito, zipName, zipBytes);
-            uploadedKeys.add(zip.key());
-            return new StoredUploadPair(xml, zip);
-        } catch (RuntimeException e) {
-            uploadedKeys.forEach(this::deleteQuietly);
-            throw e;
-        }
-    }
-
-    private StoredDocument upload(Venta venta, String folder, String fileName, byte[] bytes, String contentType) {
+    private StoredDocument upload(String key, String fileName, byte[] bytes, String contentType) {
         if (bytes == null || bytes.length == 0) {
             throw new RuntimeException("No hay contenido para guardar en S3");
         }
-        String key = buildKey(venta, folder, fileName);
         PutObjectRequest request = PutObjectRequest.builder()
                 .bucket(resolveBucket())
                 .key(key)
@@ -152,33 +105,7 @@ public class SunatDocumentStorageService {
         }
     }
 
-    private StoredDocument upload(NotaCredito notaCredito, String folder, String fileName, byte[] bytes, String contentType) {
-        if (bytes == null || bytes.length == 0) {
-            throw new RuntimeException("No hay contenido para guardar en S3");
-        }
-        String key = buildKey(notaCredito, folder, fileName);
-        PutObjectRequest request = PutObjectRequest.builder()
-                .bucket(resolveBucket())
-                .key(key)
-                .contentType(contentType)
-                .contentDisposition("attachment; filename=\"" + fileName + "\"")
-                .build();
-        try {
-            s3Client.putObject(request, RequestBody.fromBytes(bytes));
-            return new StoredDocument(fileName, key);
-        } catch (S3Exception e) {
-            throw new RuntimeException("No se pudo guardar el archivo SUNAT en S3");
-        }
-    }
-
-    private String buildKey(Venta venta, String folder, String fileName) {
-        String ruc = venta != null
-                && venta.getSucursal() != null
-                && venta.getSucursal().getEmpresa() != null
-                && venta.getSucursal().getEmpresa().getRuc() != null
-                && !venta.getSucursal().getEmpresa().getRuc().isBlank()
-                        ? venta.getSucursal().getEmpresa().getRuc().trim()
-                        : "sin-ruc";
+    private String buildKey(Venta venta, String fileName) {
         String year = venta != null && venta.getFecha() != null
                 ? venta.getFecha().format(YEAR_FORMAT)
                 : "sin-fecha";
@@ -186,19 +113,11 @@ public class SunatDocumentStorageService {
                 ? venta.getFecha().format(MONTH_FORMAT)
                 : "sin-mes";
         String tipo = sanitizeSegment(SunatComprobanteHelper.carpetaTipoComprobante(venta));
-        String numero = venta == null ? "sin-numero" : sanitizeSegment(SunatComprobanteHelper.numeroComprobante(venta));
 
-        return buildKey(ruc, year, month, tipo, numero, folder, fileName);
+        return buildKey(tipo, year, month, fileName);
     }
 
-    private String buildKey(NotaCredito notaCredito, String folder, String fileName) {
-        String ruc = notaCredito != null
-                && notaCredito.getSucursal() != null
-                && notaCredito.getSucursal().getEmpresa() != null
-                && notaCredito.getSucursal().getEmpresa().getRuc() != null
-                && !notaCredito.getSucursal().getEmpresa().getRuc().isBlank()
-                        ? notaCredito.getSucursal().getEmpresa().getRuc().trim()
-                        : "sin-ruc";
+    private String buildKey(NotaCredito notaCredito, String fileName) {
         String year = notaCredito != null && notaCredito.getFecha() != null
                 ? notaCredito.getFecha().format(YEAR_FORMAT)
                 : "sin-fecha";
@@ -206,32 +125,21 @@ public class SunatDocumentStorageService {
                 ? notaCredito.getFecha().format(MONTH_FORMAT)
                 : "sin-mes";
         String tipo = sanitizeSegment(SunatComprobanteHelper.carpetaTipoComprobante(notaCredito));
-        String numero = notaCredito == null
-                ? "sin-numero"
-                : sanitizeSegment(SunatComprobanteHelper.numeroComprobante(notaCredito));
 
-        return buildKey(ruc, year, month, tipo, numero, folder, fileName);
+        return buildKey(tipo, year, month, fileName);
     }
 
     private String buildKey(
-            String ruc,
+            String tipo,
             String year,
             String month,
-            String tipo,
-            String numero,
-            String folder,
             String fileName) {
-        String prefix = keyPrefix == null || keyPrefix.isBlank() ? "sunat" : keyPrefix.trim();
         String safeFileName = sanitizeFileName(fileName);
 
         return String.join("/",
-                sanitizeSegment(prefix),
-                sanitizeSegment(ruc),
+                sanitizeSegment(tipo),
                 year,
                 month,
-                tipo,
-                numero,
-                sanitizeSegment(folder),
                 safeFileName);
     }
 
@@ -269,10 +177,5 @@ public class SunatDocumentStorageService {
     public record StoredDocument(
             String fileName,
             String key) {
-    }
-
-    public record StoredUploadPair(
-            StoredDocument xml,
-            StoredDocument zip) {
     }
 }

@@ -21,10 +21,12 @@ import com.sistemapos.sistematextil.util.producto.ProductoImagenUploadItem;
 import com.sistemapos.sistematextil.util.producto.ProductoImagenUploadResponse;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import net.coobird.thumbnailator.Thumbnails;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class ProductoImagenService {
 
     private static final int MAX_IMAGENES_POR_COLOR = 5;
@@ -102,7 +104,7 @@ public class ProductoImagenService {
             throw new RuntimeException("El orden de imagen debe estar entre 1 y 5");
         }
 
-        ProductoColorImagen imagen = productoColorImagenRepository.findByIdColorImagen(idColorImagen)
+        ProductoColorImagen imagen = productoColorImagenRepository.findByIdColorImagenAndDeletedAtIsNull(idColorImagen)
                 .orElseThrow(() -> new RuntimeException("Imagen con ID " + idColorImagen + " no encontrada"));
 
         Integer productoId = imagen.getProducto() != null ? imagen.getProducto().getIdProducto() : null;
@@ -154,10 +156,18 @@ public class ProductoImagenService {
         ProductoColorImagen actualizada = productoColorImagenRepository.save(imagen);
 
         if (oldUrl != null && !oldUrl.equals(nuevaUrl)) {
-            s3StorageService.deleteByUrl(oldUrl);
+            try {
+                s3StorageService.deleteByUrl(oldUrl);
+            } catch (RuntimeException e) {
+                log.warn("No se pudo eliminar imagen anterior en S3: {}", oldUrl, e);
+            }
         }
         if (oldUrlThumb != null && !oldUrlThumb.equals(nuevaUrlThumb)) {
-            s3StorageService.deleteByUrl(oldUrlThumb);
+            try {
+                s3StorageService.deleteByUrl(oldUrlThumb);
+            } catch (RuntimeException e) {
+                log.warn("No se pudo eliminar thumbnail anterior en S3: {}", oldUrlThumb, e);
+            }
         }
 
         return new ProductoImagenEditResponse(
@@ -199,7 +209,7 @@ public class ProductoImagenService {
 
     private void desmarcarImagenesPrincipalesDelMismoColor(Integer productoId, Integer colorId, Integer idActual) {
         List<ProductoColorImagen> imagenes = productoColorImagenRepository
-                .findByProductoIdProductoAndColorIdColor(productoId, colorId);
+                .findByProductoIdProductoAndColorIdColorAndDeletedAtIsNull(productoId, colorId);
         for (ProductoColorImagen item : imagenes) {
             if (!item.getIdColorImagen().equals(idActual) && Boolean.TRUE.equals(item.getEsPrincipal())) {
                 item.setEsPrincipal(false);

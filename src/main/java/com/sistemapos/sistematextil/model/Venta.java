@@ -123,9 +123,6 @@ public class Venta {
     @Column(name = "sunat_zip_nombre", length = 180)
     private String sunatZipNombre;
 
-    @Column(name = "sunat_zip_key", length = 600)
-    private String sunatZipKey;
-
     @Column(name = "sunat_cdr_nombre", length = 180)
     private String sunatCdrNombre;
 

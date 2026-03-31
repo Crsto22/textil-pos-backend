@@ -12,11 +12,10 @@ import com.sistemapos.sistematextil.model.Producto;
 
 public interface ProductoRepository extends JpaRepository<Producto, Integer> {
 
-    Page<Producto> findByEstadoNotOrderByIdProductoAsc(String estado, Pageable pageable);
+    Page<Producto> findByDeletedAtIsNullOrderByIdProductoAsc(Pageable pageable);
 
-    Page<Producto> findBySucursal_IdSucursalAndEstadoNotOrderByIdProductoAsc(
+    Page<Producto> findBySucursal_IdSucursalAndDeletedAtIsNullOrderByIdProductoAsc(
             Integer idSucursal,
-            String estado,
             Pageable pageable);
 
     @Query(
@@ -24,8 +23,8 @@ public interface ProductoRepository extends JpaRepository<Producto, Integer> {
                     SELECT DISTINCT p
                     FROM Producto p
                     LEFT JOIN p.sucursal s
-                    LEFT JOIN ProductoVariante v ON v.producto = p
-                    WHERE p.estado <> :estadoExcluido
+                    LEFT JOIN ProductoVariante v ON v.producto = p AND v.deletedAt IS NULL
+                    WHERE p.deletedAt IS NULL
                       AND (:idSucursal IS NULL OR s.idSucursal = :idSucursal)
                       AND (:idCategoria IS NULL OR p.categoria.idCategoria = :idCategoria)
                       AND (:idColor IS NULL OR v.color.idColor = :idColor)
@@ -44,8 +43,8 @@ public interface ProductoRepository extends JpaRepository<Producto, Integer> {
                     SELECT COUNT(DISTINCT p.idProducto)
                     FROM Producto p
                     LEFT JOIN p.sucursal s
-                    LEFT JOIN ProductoVariante v ON v.producto = p
-                    WHERE p.estado <> :estadoExcluido
+                    LEFT JOIN ProductoVariante v ON v.producto = p AND v.deletedAt IS NULL
+                    WHERE p.deletedAt IS NULL
                       AND (:idSucursal IS NULL OR s.idSucursal = :idSucursal)
                       AND (:idCategoria IS NULL OR p.categoria.idCategoria = :idCategoria)
                       AND (:idColor IS NULL OR v.color.idColor = :idColor)
@@ -66,32 +65,32 @@ public interface ProductoRepository extends JpaRepository<Producto, Integer> {
             @Param("idCategoria") Integer idCategoria,
             @Param("idColor") Integer idColor,
             @Param("conOferta") Boolean conOferta,
-            @Param("estadoExcluido") String estadoExcluido,
             Pageable pageable);
 
-    Optional<Producto> findFirstBySucursal_IdSucursalAndCategoria_IdCategoriaAndNombreIgnoreCaseAndEstadoNotOrderByIdProductoAsc(
+    Optional<Producto> findFirstBySucursal_IdSucursalAndCategoria_IdCategoriaAndNombreIgnoreCaseAndDeletedAtIsNullOrderByIdProductoAsc(
             Integer idSucursal,
             Integer idCategoria,
-            String nombre,
-            String estado);
+            String nombre);
 
-    Optional<Producto> findByIdProductoAndEstadoNot(Integer idProducto, String estado);
+    Optional<Producto> findByIdProductoAndDeletedAtIsNull(Integer idProducto);
 
-    Optional<Producto> findByIdProductoAndSucursal_IdSucursalAndEstadoNot(
+    Optional<Producto> findByIdProductoAndSucursal_IdSucursalAndDeletedAtIsNull(
             Integer idProducto,
-            Integer idSucursal,
-            String estado);
+            Integer idSucursal);
 
-    @Query("SELECT COUNT(v) > 0 FROM ProductoVariante v WHERE v.producto.idProducto = :idProducto")
+    @Query("""
+            SELECT COUNT(v) > 0
+            FROM ProductoVariante v
+            WHERE v.producto.idProducto = :idProducto
+              AND v.deletedAt IS NULL
+            """)
     boolean estaEnUso(Integer idProducto);
 
     @Query("""
             SELECT COUNT(p)
             FROM Producto p
-            WHERE p.estado <> :estadoProductoExcluido
+            WHERE p.deletedAt IS NULL
               AND (:idSucursal IS NULL OR p.sucursal.idSucursal = :idSucursal)
             """)
-    long contarActivosParaReporte(
-            @Param("idSucursal") Integer idSucursal,
-            @Param("estadoProductoExcluido") String estadoProductoExcluido);
+    long contarActivosParaReporte(@Param("idSucursal") Integer idSucursal);
 }

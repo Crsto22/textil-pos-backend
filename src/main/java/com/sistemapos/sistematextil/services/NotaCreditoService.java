@@ -142,6 +142,7 @@ public class NotaCreditoService {
     private final NotaCreditoDetalleRepository notaCreditoDetalleRepository;
     private final SunatNotaCreditoEmissionService sunatNotaCreditoEmissionService;
     private final SunatDocumentStorageService sunatDocumentStorageService;
+    private final SunatCdrParserService sunatCdrParserService;
     private final SunatMontoTextoService sunatMontoTextoService;
     private final SunatProperties sunatProperties;
 
@@ -312,6 +313,13 @@ public class NotaCreditoService {
     }
 
     public VentaService.ArchivoDescargable descargarSunatCdr(Integer idNotaCredito, String correoUsuarioAutenticado) {
+        return descargarSunatCdr(idNotaCredito, correoUsuarioAutenticado, "xml");
+    }
+
+    public VentaService.ArchivoDescargable descargarSunatCdr(
+            Integer idNotaCredito,
+            String correoUsuarioAutenticado,
+            String formato) {
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
         validarRolLecturaNotaCredito(usuarioAutenticado);
 
@@ -321,12 +329,76 @@ public class NotaCreditoService {
         }
 
         byte[] contenido = sunatDocumentStorageService.download(notaCredito.getSunatCdrKey());
-        return new VentaService.ArchivoDescargable(
-                notaCredito.getSunatCdrNombre() != null && !notaCredito.getSunatCdrNombre().isBlank()
-                        ? notaCredito.getSunatCdrNombre()
-                        : SunatComprobanteHelper.construirNombreArchivoCdrZip(notaCredito),
-                MediaType.APPLICATION_XML_VALUE,
-                contenido);
+        return construirArchivoDescargableCdr(
+                contenido,
+                notaCredito.getSunatCdrNombre(),
+                SunatComprobanteHelper.construirNombreArchivoCdrXml(notaCredito),
+                SunatComprobanteHelper.construirNombreArchivoCdrZip(notaCredito),
+                formato);
+    }
+
+    private VentaService.ArchivoDescargable construirArchivoDescargableCdr(
+            byte[] contenido,
+            String nombreRegistrado,
+            String nombreXmlFallback,
+            String nombreZipFallback,
+            String formatoSolicitado) {
+        String formato = normalizarFormatoCdr(formatoSolicitado);
+        String nombreXml = resolverNombreCdrXml(nombreRegistrado, nombreXmlFallback);
+        String nombreZip = resolverNombreCdrZip(nombreRegistrado, nombreZipFallback);
+
+        if ("zip".equals(formato)) {
+            byte[] zipBytes = sunatCdrParserService.isZip(contenido)
+                    ? contenido
+                    : sunatCdrParserService.wrapXmlAsZip(nombreXml, contenido);
+            return new VentaService.ArchivoDescargable(nombreZip, "application/zip", zipBytes);
+        }
+
+        if (sunatCdrParserService.isZip(contenido)) {
+            SunatCdrParserService.ExtractedXml extractedXml = sunatCdrParserService.extractXml(contenido);
+            String nombreXmlExtraido = extractedXml.fileName() == null || extractedXml.fileName().isBlank()
+                    ? nombreXml
+                    : extractedXml.fileName();
+            return new VentaService.ArchivoDescargable(
+                    nombreXmlExtraido,
+                    MediaType.APPLICATION_XML_VALUE,
+                    extractedXml.bytes());
+        }
+
+        return new VentaService.ArchivoDescargable(nombreXml, MediaType.APPLICATION_XML_VALUE, contenido);
+    }
+
+    private String normalizarFormatoCdr(String formato) {
+        if (formato == null || formato.isBlank()) {
+            return "xml";
+        }
+        String formatoNormalizado = formato.trim().toLowerCase(Locale.ROOT);
+        if ("xml".equals(formatoNormalizado) || "zip".equals(formatoNormalizado)) {
+            return formatoNormalizado;
+        }
+        throw new RuntimeException("Formato de CDR no valido. Use xml o zip");
+    }
+
+    private String resolverNombreCdrXml(String nombreRegistrado, String fallback) {
+        if (nombreRegistrado == null || nombreRegistrado.isBlank()) {
+            return fallback;
+        }
+        String nombre = nombreRegistrado.trim();
+        if (nombre.toLowerCase(Locale.ROOT).endsWith(".zip")) {
+            return nombre.substring(0, nombre.length() - 4) + ".xml";
+        }
+        return nombre;
+    }
+
+    private String resolverNombreCdrZip(String nombreRegistrado, String fallback) {
+        if (nombreRegistrado == null || nombreRegistrado.isBlank()) {
+            return fallback;
+        }
+        String nombre = nombreRegistrado.trim();
+        if (nombre.toLowerCase(Locale.ROOT).endsWith(".xml")) {
+            return nombre.substring(0, nombre.length() - 4) + ".zip";
+        }
+        return nombre;
     }
 
     private NotaCreditoListItemResponse toListItemResponse(NotaCredito notaCredito) {

@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__mysql__read_query"
+    ]
+  }
+}

@@ -281,6 +281,7 @@ CREATE TABLE IF NOT EXISTS cliente (
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   deleted_at DATETIME(6) DEFAULT NULL,
   PRIMARY KEY (id_cliente),
+  UNIQUE KEY uk_cliente_empresa_telefono (id_empresa, telefono),
   KEY idx_cliente_empresa (id_empresa),
   KEY idx_cliente_doc (tipo_documento, nro_documento),
   KEY idx_cliente_usuario_creacion (id_usuario_creacion),
@@ -475,7 +476,6 @@ CREATE TABLE IF NOT EXISTS venta (
   sunat_xml_nombre VARCHAR(180) DEFAULT NULL,
   sunat_xml_key VARCHAR(600) DEFAULT NULL,
   sunat_zip_nombre VARCHAR(180) DEFAULT NULL,
-  sunat_zip_key VARCHAR(600) DEFAULT NULL,
   sunat_cdr_nombre VARCHAR(180) DEFAULT NULL,
   sunat_cdr_key VARCHAR(600) DEFAULT NULL,
   sunat_enviado_at DATETIME(6) DEFAULT NULL,
@@ -566,7 +566,6 @@ CREATE TABLE IF NOT EXISTS nota_credito (
   sunat_xml_nombre VARCHAR(180) DEFAULT NULL,
   sunat_xml_key VARCHAR(600) DEFAULT NULL,
   sunat_zip_nombre VARCHAR(180) DEFAULT NULL,
-  sunat_zip_key VARCHAR(600) DEFAULT NULL,
   sunat_cdr_nombre VARCHAR(180) DEFAULT NULL,
   sunat_cdr_key VARCHAR(600) DEFAULT NULL,
   sunat_enviado_at DATETIME(6) DEFAULT NULL,
@@ -1275,5 +1274,30 @@ WHERE estado = 'ANULACION_PENDIENTE';
 UPDATE venta
 SET estado = 'ANULADA'
 WHERE estado = 'NC_EMITIDA';
+
+-- =========================
+-- NORMALIZACION CATALOGO
+-- =========================
+UPDATE producto
+SET deleted_at = COALESCE(deleted_at, CURRENT_TIMESTAMP(6)),
+    activo = 0,
+    estado = 'ACTIVO'
+WHERE estado = 'ARCHIVADO'
+   OR deleted_at IS NOT NULL;
+
+UPDATE producto
+SET activo = 1,
+    estado = 'ACTIVO'
+WHERE deleted_at IS NULL;
+
+UPDATE producto_variante
+SET activo = CASE
+        WHEN deleted_at IS NULL THEN 1
+        ELSE 0
+    END,
+    estado = CASE
+        WHEN stock <= 0 THEN 'AGOTADO'
+        ELSE 'ACTIVO'
+    END;
 
 COMMIT;

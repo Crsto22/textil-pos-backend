@@ -92,6 +92,10 @@ public class VentaAnulacionSchemaMigration implements ApplicationRunner {
                     """);
             log.info("Columna venta.id_usuario_anulacion creada");
         }
+        if (columnExists(connection, "venta", "sunat_zip_key")) {
+            statement.execute("ALTER TABLE venta DROP COLUMN sunat_zip_key");
+            log.info("Columna venta.sunat_zip_key eliminada");
+        }
 
         statement.executeUpdate("""
                 UPDATE venta
@@ -178,7 +182,6 @@ public class VentaAnulacionSchemaMigration implements ApplicationRunner {
                   sunat_xml_nombre VARCHAR(180) DEFAULT NULL,
                   sunat_xml_key VARCHAR(600) DEFAULT NULL,
                   sunat_zip_nombre VARCHAR(180) DEFAULT NULL,
-                  sunat_zip_key VARCHAR(600) DEFAULT NULL,
                   sunat_cdr_nombre VARCHAR(180) DEFAULT NULL,
                   sunat_cdr_key VARCHAR(600) DEFAULT NULL,
                   sunat_enviado_at DATETIME(6) DEFAULT NULL,
@@ -209,6 +212,11 @@ public class VentaAnulacionSchemaMigration implements ApplicationRunner {
                     ON DELETE RESTRICT ON UPDATE RESTRICT
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
                 """);
+
+        if (columnExists(connection, "nota_credito", "sunat_zip_key")) {
+            statement.execute("ALTER TABLE nota_credito DROP COLUMN sunat_zip_key");
+            log.info("Columna nota_credito.sunat_zip_key eliminada");
+        }
 
         if (!indexExists(connection, "nota_credito", "uk_nota_credito_numero_comprobante")) {
             try (Statement uniqueStatement = connection.createStatement()) {

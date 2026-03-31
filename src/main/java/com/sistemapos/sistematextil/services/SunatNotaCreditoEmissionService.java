@@ -76,7 +76,6 @@ public class SunatNotaCreditoEmissionService {
                 SunatComprobanteHelper.construirNombreArchivoXml(notaCredito),
                 notaCredito.getSunatXmlKey(),
                 SunatComprobanteHelper.construirNombreArchivoZip(notaCredito),
-                notaCredito.getSunatZipKey(),
                 notaCredito.getSunatCdrNombre(),
                 notaCredito.getSunatCdrKey(),
                 now,
@@ -97,7 +96,6 @@ public class SunatNotaCreditoEmissionService {
                 notaCredito.getSunatXmlNombre(),
                 notaCredito.getSunatXmlKey(),
                 notaCredito.getSunatZipNombre(),
-                notaCredito.getSunatZipKey(),
                 notaCredito.getSunatCdrNombre(),
                 notaCredito.getSunatCdrKey(),
                 notaCredito.getSunatEnviadoAt(),
@@ -125,7 +123,6 @@ public class SunatNotaCreditoEmissionService {
                 notaCredito.getSunatXmlNombre(),
                 notaCredito.getSunatXmlKey(),
                 notaCredito.getSunatZipNombre(),
-                notaCredito.getSunatZipKey(),
                 notaCredito.getSunatCdrNombre(),
                 notaCredito.getSunatCdrKey(),
                 now,
@@ -142,15 +139,14 @@ public class SunatNotaCreditoEmissionService {
             Document xmlDocument = sunatNotaCreditoXmlBuilderService.build(notaCredito, detalles);
             SunatXmlSignatureService.SignedXml signedXml = sunatXmlSignatureService.sign(xmlDocument, config, signatureId);
             byte[] zipBytes = zip(xmlName, signedXml.bytes());
-            SunatDocumentStorageService.StoredUploadPair stored = sunatDocumentStorageService
-                    .storeXmlAndZip(notaCredito, xmlName, signedXml.bytes(), zipName, zipBytes);
+            SunatDocumentStorageService.StoredDocument storedXml = sunatDocumentStorageService
+                    .storeXml(notaCredito, xmlName, signedXml.bytes());
 
             LocalDateTime sentAt = LocalDateTime.now();
             notaCredito.setSunatHash(signedXml.digestValue());
             notaCredito.setSunatXmlNombre(xmlName);
-            notaCredito.setSunatXmlKey(stored.xml().key());
+            notaCredito.setSunatXmlKey(storedXml.key());
             notaCredito.setSunatZipNombre(zipName);
-            notaCredito.setSunatZipKey(stored.zip().key());
             notaCredito.setSunatEnviadoAt(sentAt);
             notaCreditoRepository.save(notaCredito);
 
@@ -161,9 +157,11 @@ public class SunatNotaCreditoEmissionService {
 
                 SunatDocumentStorageService.StoredDocument cdrStored = null;
                 String cdrMessage = cdrResult.mensaje();
-                String cdrXmlFileName = soapResponse.cdrZipFileName().replaceFirst("\\.zip$", ".xml");
                 try {
-                    cdrStored = sunatDocumentStorageService.storeCdr(notaCredito, cdrXmlFileName, cdrResult.xmlBytes());
+                    cdrStored = sunatDocumentStorageService.storeCdr(
+                            notaCredito,
+                            soapResponse.cdrZipFileName(),
+                            soapResponse.cdrZipBytes());
                 } catch (RuntimeException storageError) {
                     cdrMessage = cdrMessage + " | CDR recibido pero no se pudo guardar en S3";
                 }
@@ -171,7 +169,7 @@ public class SunatNotaCreditoEmissionService {
                 notaCredito.setSunatEstado(cdrResult.estado());
                 notaCredito.setSunatCodigo(normalizarTexto(cdrResult.codigo()));
                 notaCredito.setSunatMensaje(normalizarTexto(cdrMessage));
-                notaCredito.setSunatCdrNombre(cdrStored != null ? cdrStored.fileName() : cdrXmlFileName);
+                notaCredito.setSunatCdrNombre(cdrStored != null ? cdrStored.fileName() : soapResponse.cdrZipFileName());
                 notaCredito.setSunatCdrKey(cdrStored != null ? cdrStored.key() : null);
                 notaCredito.setSunatRespondidoAt(respondedAt);
                 notaCreditoRepository.save(notaCredito);
@@ -183,9 +181,8 @@ public class SunatNotaCreditoEmissionService {
                         signedXml.digestValue(),
                         null,
                         xmlName,
-                        stored.xml().key(),
+                        storedXml.key(),
                         zipName,
-                        stored.zip().key(),
                         notaCredito.getSunatCdrNombre(),
                         notaCredito.getSunatCdrKey(),
                         sentAt,
@@ -205,9 +202,8 @@ public class SunatNotaCreditoEmissionService {
                         signedXml.digestValue(),
                         null,
                         xmlName,
-                        stored.xml().key(),
+                        storedXml.key(),
                         zipName,
-                        stored.zip().key(),
                         null,
                         null,
                         sentAt,
@@ -227,9 +223,8 @@ public class SunatNotaCreditoEmissionService {
                         signedXml.digestValue(),
                         null,
                         xmlName,
-                        stored.xml().key(),
+                        storedXml.key(),
                         zipName,
-                        stored.zip().key(),
                         null,
                         null,
                         sentAt,
@@ -252,7 +247,6 @@ public class SunatNotaCreditoEmissionService {
                     xmlName,
                     notaCredito.getSunatXmlKey(),
                     zipName,
-                    notaCredito.getSunatZipKey(),
                     notaCredito.getSunatCdrNombre(),
                     notaCredito.getSunatCdrKey(),
                     now,

@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Locale;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -125,6 +126,7 @@ public class ClienteService {
         if (clienteExistente != null) {
             return toListItemResponse(clienteExistente);
         }
+        validarTelefonoUnicoEnEmpresa(telefono, empresa.getIdEmpresa(), null);
 
         Cliente cliente = new Cliente();
         cliente.setEmpresa(empresa);
@@ -139,8 +141,12 @@ public class ClienteService {
         cliente.setFechaCreacion(LocalDateTime.now());
         cliente.setDeletedAt(null);
 
-        Cliente creado = clienteRepository.save(cliente);
-        return toListItemResponse(creado);
+        try {
+            Cliente creado = clienteRepository.saveAndFlush(cliente);
+            return toListItemResponse(creado);
+        } catch (DataIntegrityViolationException e) {
+            throw new RuntimeException(mensajeTelefonoDuplicado(telefono));
+        }
     }
 
     @Transactional
@@ -150,6 +156,8 @@ public class ClienteService {
         Empresa empresa = resolverEmpresaParaCrear(request.idEmpresa(), usuarioAutenticado);
 
         String nroDocumento = normalizarYValidarDocumento(request.tipoDocumento(), request.nroDocumento());
+        String telefono = normalizarTelefonoOpcional(request.telefono());
+        validarTelefonoUnicoEnEmpresa(telefono, empresa.getIdEmpresa(), null);
 
         Cliente cliente = new Cliente();
         cliente.setEmpresa(empresa);
@@ -157,15 +165,22 @@ public class ClienteService {
         cliente.setTipoDocumento(request.tipoDocumento());
         cliente.setNroDocumento(nroDocumento);
         cliente.setNombres(request.nombres().trim());
-        cliente.setTelefono(normalizarNullable(request.telefono()));
+        cliente.setTelefono(telefono);
         cliente.setCorreo(normalizarNullable(request.correo()));
         cliente.setDireccion(normalizarNullable(request.direccion()));
         cliente.setEstado("ACTIVO");
         cliente.setFechaCreacion(LocalDateTime.now());
         cliente.setDeletedAt(null);
 
-        Cliente creado = clienteRepository.save(cliente);
-        return toListItemResponse(creado);
+        try {
+            Cliente creado = clienteRepository.saveAndFlush(cliente);
+            return toListItemResponse(creado);
+        } catch (DataIntegrityViolationException e) {
+            if (telefono != null) {
+                throw new RuntimeException(mensajeTelefonoDuplicado(telefono));
+            }
+            throw e;
+        }
     }
 
     @Transactional
@@ -176,17 +191,27 @@ public class ClienteService {
         validarEmpresaInmutable(cliente, request.idEmpresa(), usuarioAutenticado);
 
         String nroDocumento = normalizarYValidarDocumento(request.tipoDocumento(), request.nroDocumento());
+        String telefono = normalizarTelefonoOpcional(request.telefono());
+        Integer idEmpresaCliente = cliente.getEmpresa() != null ? cliente.getEmpresa().getIdEmpresa() : null;
+        validarTelefonoUnicoEnEmpresa(telefono, idEmpresaCliente, idCliente);
 
         cliente.setTipoDocumento(request.tipoDocumento());
         cliente.setNroDocumento(nroDocumento);
         cliente.setNombres(request.nombres().trim());
-        cliente.setTelefono(normalizarNullable(request.telefono()));
+        cliente.setTelefono(telefono);
         cliente.setCorreo(normalizarNullable(request.correo()));
         cliente.setDireccion(normalizarNullable(request.direccion()));
         cliente.setEstado(request.estado().toUpperCase());
 
-        Cliente actualizado = clienteRepository.save(cliente);
-        return toListItemResponse(actualizado);
+        try {
+            Cliente actualizado = clienteRepository.saveAndFlush(cliente);
+            return toListItemResponse(actualizado);
+        } catch (DataIntegrityViolationException e) {
+            if (telefono != null) {
+                throw new RuntimeException(mensajeTelefonoDuplicado(telefono));
+            }
+            throw e;
+        }
     }
 
     @Transactional
@@ -307,6 +332,35 @@ public class ClienteService {
             throw new RuntimeException("Ingrese telefono");
         }
         return validarRegex(normalizado, "\\d{7,20}", "El telefono debe tener entre 7 y 20 digitos");
+    }
+
+    private String normalizarTelefonoOpcional(String telefono) {
+        String normalizado = normalizarNullable(telefono);
+        if (normalizado == null) {
+            return null;
+        }
+        return validarRegex(normalizado, "\\d{7,20}", "El telefono debe tener entre 7 y 20 digitos");
+    }
+
+    private void validarTelefonoUnicoEnEmpresa(String telefono, Integer idEmpresa, Integer idClienteActual) {
+        if (telefono == null || idEmpresa == null) {
+            return;
+        }
+
+        Cliente duplicado = idClienteActual == null
+                ? clienteRepository.findFirstByTelefonoAndEmpresa_IdEmpresaOrderByIdClienteAsc(telefono, idEmpresa)
+                        .orElse(null)
+                : clienteRepository.findFirstByTelefonoAndEmpresa_IdEmpresaAndIdClienteNotOrderByIdClienteAsc(
+                        telefono,
+                        idEmpresa,
+                        idClienteActual).orElse(null);
+        if (duplicado != null) {
+            throw new RuntimeException(mensajeTelefonoDuplicado(telefono));
+        }
+    }
+
+    private String mensajeTelefonoDuplicado(String telefono) {
+        return "El telefono '" + telefono + "' ya existe en otro cliente de esta empresa";
     }
 
     private String normalizarNullable(String value) {

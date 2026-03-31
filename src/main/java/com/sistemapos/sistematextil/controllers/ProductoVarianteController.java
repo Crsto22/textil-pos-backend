@@ -29,6 +29,7 @@ import com.sistemapos.sistematextil.util.producto.ProductoVarianteListadoResumen
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaListItemResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaLoteUpdateRequest;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaUpdateRequest;
+import com.sistemapos.sistematextil.util.producto.ProductoVariantePosResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteUpdateRequest;
 
 import jakarta.validation.Valid;
@@ -61,6 +62,24 @@ public class ProductoVarianteController {
             return ResponseEntity.ok(service.listarPorProducto(id, idSucursal));
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al listar variantes del producto" : e.getMessage();
+            return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
+                    .body(Map.of("message", message));
+        }
+    }
+
+    @GetMapping("escanear")
+    public ResponseEntity<?> escanear(
+            Authentication authentication,
+            @RequestParam(name = "codigoBarras", required = false) String codigoBarras,
+            @RequestParam(name = "idSucursal", required = false) Integer idSucursal) {
+        try {
+            ProductoVariantePosResponse response = service.escanearPorCodigoBarras(
+                    codigoBarras,
+                    idSucursal,
+                    obtenerCorreoAutenticado(authentication));
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al escanear codigo de barras" : e.getMessage();
             return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
                     .body(Map.of("message", message));
         }
@@ -234,6 +253,9 @@ public class ProductoVarianteController {
                 || normalizedMessage.contains("no tiene permisos")) {
             return HttpStatus.FORBIDDEN;
         }
+        if (esConflicto(message)) {
+            return HttpStatus.CONFLICT;
+        }
         return esNoEncontrada(message) ? HttpStatus.NOT_FOUND : defaultStatus;
     }
 
@@ -242,6 +264,13 @@ public class ProductoVarianteController {
         return normalizedMessage.contains("no encontrada")
                 || normalizedMessage.contains("no encontrado")
                 || normalizedMessage.contains("no existe");
+    }
+
+    private boolean esConflicto(String message) {
+        String normalizedMessage = message.toLowerCase();
+        return normalizedMessage.contains("no esta disponible")
+                || normalizedMessage.contains("no tiene stock")
+                || normalizedMessage.contains("stock insuficiente");
     }
 
     private String obtenerCorreoAutenticado(Authentication authentication) {

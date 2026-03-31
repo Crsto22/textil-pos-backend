@@ -57,7 +57,6 @@ public class DefaultSunatEmissionService implements SunatEmissionService {
                     null,
                     null,
                     null,
-                    null,
                     null);
         }
 
@@ -77,7 +76,6 @@ public class DefaultSunatEmissionService implements SunatEmissionService {
                 null,
                 null,
                 SunatComprobanteHelper.construirNombreArchivoXml(venta),
-                null,
                 null,
                 null,
                 null,
@@ -103,7 +101,6 @@ public class DefaultSunatEmissionService implements SunatEmissionService {
                 null,
                 null,
                 null,
-                null,
                 now,
                 now);
     }
@@ -124,8 +121,8 @@ public class DefaultSunatEmissionService implements SunatEmissionService {
 
             byte[] zipBytes = zip(xmlName, signedXml.bytes());
             log.info("ZIP generado: {} bytes, entryName={}", zipBytes.length, xmlName);
-            SunatDocumentStorageService.StoredUploadPair stored = sunatDocumentStorageService
-                    .storeXmlAndZip(venta, xmlName, signedXml.bytes(), zipName, zipBytes);
+            SunatDocumentStorageService.StoredDocument storedXml = sunatDocumentStorageService
+                    .storeXml(venta, xmlName, signedXml.bytes());
 
             LocalDateTime sentAt = LocalDateTime.now();
             try {
@@ -138,12 +135,11 @@ public class DefaultSunatEmissionService implements SunatEmissionService {
 
                 SunatDocumentStorageService.StoredDocument cdrStored = null;
                 String cdrMessage = cdrResult.mensaje();
-                String cdrXmlFileName = soapResponse.cdrZipFileName().replaceFirst("\\.zip$", ".xml");
                 try {
                     cdrStored = sunatDocumentStorageService.storeCdr(
                             venta,
-                            cdrXmlFileName,
-                            cdrResult.xmlBytes());
+                            soapResponse.cdrZipFileName(),
+                            soapResponse.cdrZipBytes());
                 } catch (RuntimeException storageError) {
                     cdrMessage = cdrMessage + " | CDR recibido pero no se pudo guardar en S3";
                 }
@@ -155,9 +151,8 @@ public class DefaultSunatEmissionService implements SunatEmissionService {
                         signedXml.digestValue(),
                         null,
                         xmlName,
-                        stored.xml().key(),
+                        storedXml.key(),
                         zipName,
-                        stored.zip().key(),
                         cdrStored != null ? cdrStored.fileName() : soapResponse.cdrZipFileName(),
                         cdrStored != null ? cdrStored.key() : null,
                         sentAt,
@@ -172,9 +167,8 @@ public class DefaultSunatEmissionService implements SunatEmissionService {
                         signedXml.digestValue(),
                         null,
                         xmlName,
-                        stored.xml().key(),
+                        storedXml.key(),
                         zipName,
-                        stored.zip().key(),
                         null,
                         null,
                         sentAt,
@@ -189,9 +183,8 @@ public class DefaultSunatEmissionService implements SunatEmissionService {
                         signedXml.digestValue(),
                         null,
                         xmlName,
-                        stored.xml().key(),
+                        storedXml.key(),
                         zipName,
-                        stored.zip().key(),
                         null,
                         null,
                         sentAt,
@@ -208,7 +201,6 @@ public class DefaultSunatEmissionService implements SunatEmissionService {
                     xmlName,
                     null,
                     zipName,
-                    null,
                     null,
                     null,
                     now,

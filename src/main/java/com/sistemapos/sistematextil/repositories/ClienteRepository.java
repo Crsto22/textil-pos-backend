@@ -43,6 +43,13 @@ public interface ClienteRepository extends JpaRepository<Cliente, Integer> {
     Optional<Cliente> findFirstByTelefonoAndDeletedAtIsNullAndEmpresa_IdEmpresaOrderByIdClienteAsc(
             String telefono,
             Integer idEmpresa);
+    Optional<Cliente> findFirstByTelefonoAndEmpresa_IdEmpresaOrderByIdClienteAsc(
+            String telefono,
+            Integer idEmpresa);
+    Optional<Cliente> findFirstByTelefonoAndEmpresa_IdEmpresaAndIdClienteNotOrderByIdClienteAsc(
+            String telefono,
+            Integer idEmpresa,
+            Integer idCliente);
 
     @Query("""
             SELECT COUNT(c)

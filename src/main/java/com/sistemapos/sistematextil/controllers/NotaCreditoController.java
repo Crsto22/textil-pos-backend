@@ -105,13 +105,14 @@ public class NotaCreditoController {
         }
     }
 
-    @GetMapping(value = "/{id}/sunat/cdr", produces = MediaType.APPLICATION_XML_VALUE)
+    @GetMapping(value = "/{id}/sunat/cdr", produces = { MediaType.APPLICATION_XML_VALUE, "application/zip" })
     public ResponseEntity<?> descargarSunatCdr(
             Authentication authentication,
-            @PathVariable Integer id) {
+            @PathVariable Integer id,
+            @RequestParam(name = "formato", required = false) String formato) {
         try {
             VentaService.ArchivoDescargable archivo = notaCreditoService
-                    .descargarSunatCdr(id, obtenerCorreoAutenticado(authentication));
+                    .descargarSunatCdr(id, obtenerCorreoAutenticado(authentication), formato);
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + archivo.nombreArchivo() + "\"")
                     .contentType(MediaType.parseMediaType(archivo.contentType()))

@@ -6,6 +6,7 @@ import java.math.BigDecimal;
 import java.text.Normalizer;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -68,6 +69,7 @@ public class ProductoImportService {
     private final CategoriaRepository categoriaRepository;
     private final ProductoRepository productoRepository;
     private final ProductoVarianteRepository productoVarianteRepository;
+    private final ProductoService productoService;
     private final ColorRepository colorRepository;
     private final TallaRepository tallaRepository;
     private final ImportacionProductoHistorialService importacionProductoHistorialService;
@@ -398,11 +400,10 @@ public class ProductoImportService {
         for (ProductoAgrupado agrupado : agrupados.values()) {
             Categoria categoria = resolverCategoria(agrupado, resumen);
             Optional<Producto> existente = productoRepository
-                    .findFirstBySucursal_IdSucursalAndCategoria_IdCategoriaAndNombreIgnoreCaseAndEstadoNotOrderByIdProductoAsc(
+                    .findFirstBySucursal_IdSucursalAndCategoria_IdCategoriaAndNombreIgnoreCaseAndDeletedAtIsNullOrderByIdProductoAsc(
                             agrupado.sucursal().getIdSucursal(),
                             categoria.getIdCategoria(),
-                            agrupado.nombreProducto(),
-                            "ARCHIVADO");
+                            agrupado.nombreProducto());
             Producto producto = existente.orElseGet(Producto::new);
 
             if (existente.isEmpty()) {
@@ -416,6 +417,9 @@ public class ProductoImportService {
             producto.setSucursal(agrupado.sucursal());
             producto.setCategoria(categoria);
             producto.setNombre(agrupado.nombreProducto());
+            producto.setEstado("ACTIVO");
+            producto.setActivo("ACTIVO");
+            producto.setDeletedAt(null);
             if (agrupado.descripcion() != null || existente.isEmpty()) {
                 producto.setDescripcion(agrupado.descripcion());
             }
@@ -427,51 +431,135 @@ public class ProductoImportService {
                 throw new RuntimeException("Fila " + agrupado.filaBase() + ": no se pudo guardar el producto por datos duplicados");
             }
 
-            productoVarianteRepository.deleteByProductoIdProducto(guardado.getIdProducto());
-            productoVarianteRepository.flush();
-
-            List<ProductoVariante> nuevasVariantes = new ArrayList<>();
-            for (VarianteFila varianteFila : agrupado.variantes().values()) {
-                Color color = resolverColor(varianteFila, resumen);
-                Talla talla = resolverTalla(varianteFila, resumen);
-
-                if (!"ACTIVO".equalsIgnoreCase(color.getEstado())) {
-                    throw new RuntimeException("Fila " + varianteFila.fila() + ": el color '" + color.getNombre() + "' esta INACTIVO");
-                }
-                if (!"ACTIVO".equalsIgnoreCase(talla.getEstado())) {
-                    throw new RuntimeException("Fila " + varianteFila.fila() + ": la talla '" + talla.getNombre() + "' esta INACTIVA");
-                }
-
-                if (productoVarianteRepository.existsSkuEnSucursalParaOtroProducto(
-                        agrupado.sucursal().getIdSucursal(),
-                        varianteFila.sku(),
-                        guardado.getIdProducto())) {
-                    throw new RuntimeException("Fila " + varianteFila.fila()
-                            + ": el SKU '" + varianteFila.sku() + "' ya existe en la sucursal");
-                }
-
-                ProductoVariante variante = new ProductoVariante();
-                variante.setProducto(guardado);
-                variante.setSucursal(agrupado.sucursal());
-                variante.setColor(color);
-                variante.setTalla(talla);
-                variante.setSku(varianteFila.sku());
-                variante.setPrecio(varianteFila.precio().doubleValue());
-                variante.setPrecioOferta(varianteFila.precioOferta() == null ? null : varianteFila.precioOferta().doubleValue());
-                variante.setStock(varianteFila.stock());
-                variante.setEstado("ACTIVO");
-                nuevasVariantes.add(variante);
-            }
-
-            try {
-                productoVarianteRepository.saveAll(nuevasVariantes);
-            } catch (DataIntegrityViolationException e) {
-                throw new RuntimeException("Fila " + agrupado.filaBase() + ": variantes repetidas para el mismo producto");
-            }
-            resumen.variantesGuardadas += nuevasVariantes.size();
+            resumen.variantesGuardadas += sincronizarVariantesImportadas(guardado, agrupado, resumen);
         }
 
         return resumen;
+    }
+
+    private int sincronizarVariantesImportadas(
+            Producto producto,
+            ProductoAgrupado agrupado,
+            ResumenImportacion resumen) {
+        List<ProductoVariante> existentes = productoVarianteRepository.findByProductoIdProducto(producto.getIdProducto());
+
+        Map<String, ProductoVariante> existentesPorCombinacion = new HashMap<>();
+        Map<String, ProductoVariante> existentesPorSku = new HashMap<>();
+        for (ProductoVariante existente : existentes) {
+            if (existente == null) {
+                continue;
+            }
+            Integer colorId = existente.getColor() != null ? existente.getColor().getIdColor() : null;
+            Integer tallaId = existente.getTalla() != null ? existente.getTalla().getIdTalla() : null;
+            if (colorId != null && tallaId != null) {
+                existentesPorCombinacion.put(colorId + "-" + tallaId, existente);
+            }
+
+            String skuExistente = normalizarComparable(existente.getSku());
+            if (skuExistente != null) {
+                existentesPorSku.putIfAbsent(skuExistente, existente);
+            }
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        Set<String> combinaciones = new HashSet<>();
+        Set<String> skusNormalizados = new HashSet<>();
+        Set<Integer> idsActivos = new HashSet<>();
+        Set<Integer> coloresTocados = new HashSet<>();
+        List<ProductoVariante> variantesParaPersistir = new ArrayList<>();
+
+        for (VarianteFila varianteFila : agrupado.variantes().values()) {
+            Color color = resolverColor(varianteFila, resumen);
+            Talla talla = resolverTalla(varianteFila, resumen);
+
+            if (!"ACTIVO".equalsIgnoreCase(color.getEstado())) {
+                throw new RuntimeException("Fila " + varianteFila.fila() + ": el color '" + color.getNombre() + "' esta INACTIVO");
+            }
+            if (!"ACTIVO".equalsIgnoreCase(talla.getEstado())) {
+                throw new RuntimeException("Fila " + varianteFila.fila() + ": la talla '" + talla.getNombre() + "' esta INACTIVA");
+            }
+
+            String combinacionKey = color.getIdColor() + "-" + talla.getIdTalla();
+            if (!combinaciones.add(combinacionKey)) {
+                throw new RuntimeException("Fila " + varianteFila.fila()
+                        + ": no puede repetir la misma combinacion de color y talla en el mismo producto");
+            }
+
+            if (productoVarianteRepository.existsSkuEnSucursalParaOtroProducto(
+                    agrupado.sucursal().getIdSucursal(),
+                    varianteFila.sku(),
+                    producto.getIdProducto())) {
+                throw new RuntimeException("Fila " + varianteFila.fila()
+                        + ": el SKU '" + varianteFila.sku() + "' ya existe en la sucursal");
+            }
+
+            String skuKey = normalizarComparable(varianteFila.sku());
+            if (skuKey == null || !skusNormalizados.add(skuKey)) {
+                throw new RuntimeException("Fila " + varianteFila.fila()
+                        + ": no puede repetir SKU dentro del mismo producto");
+            }
+
+            ProductoVariante varianteExistente = existentesPorCombinacion.get(combinacionKey);
+            ProductoVariante varianteSkuExistente = existentesPorSku.get(skuKey);
+            if (varianteSkuExistente != null
+                    && (varianteExistente == null
+                    || !varianteSkuExistente.getIdProductoVariante().equals(varianteExistente.getIdProductoVariante()))) {
+                throw new RuntimeException("Fila " + varianteFila.fila()
+                        + ": el SKU '" + varianteFila.sku()
+                        + "' ya existe en otra variante de este producto y no se puede reasignar");
+            }
+
+            ProductoVariante variante = varianteExistente != null ? varianteExistente : new ProductoVariante();
+            variante.setProducto(producto);
+            variante.setSucursal(agrupado.sucursal());
+            variante.setColor(color);
+            variante.setTalla(talla);
+            variante.setSku(varianteFila.sku());
+            variante.setCodigoBarras(null);
+            variante.setPrecio(varianteFila.precio().doubleValue());
+            variante.setPrecioMayor(null);
+            variante.setPrecioOferta(varianteFila.precioOferta() == null ? null : varianteFila.precioOferta().doubleValue());
+            variante.setOfertaInicio(null);
+            variante.setOfertaFin(null);
+            variante.setStock(varianteFila.stock());
+            variante.setEstado(resolverEstadoVarianteSegunStock(varianteFila.stock()));
+            variante.setActivo("ACTIVO");
+            variante.setDeletedAt(null);
+            coloresTocados.add(color.getIdColor());
+
+            if (variante.getIdProductoVariante() != null) {
+                idsActivos.add(variante.getIdProductoVariante());
+            }
+            variantesParaPersistir.add(variante);
+        }
+
+        for (ProductoVariante existente : existentes) {
+            if (existente == null || existente.getIdProductoVariante() == null) {
+                continue;
+            }
+            if (idsActivos.contains(existente.getIdProductoVariante())) {
+                continue;
+            }
+            existente.setEstado(resolverEstadoVarianteSegunStock(existente.getStock()));
+            existente.setActivo("INACTIVO");
+            existente.setDeletedAt(now);
+            if (existente.getColor() != null && existente.getColor().getIdColor() != null) {
+                coloresTocados.add(existente.getColor().getIdColor());
+            }
+            variantesParaPersistir.add(existente);
+        }
+
+        try {
+            productoVarianteRepository.saveAll(variantesParaPersistir);
+        } catch (DataIntegrityViolationException e) {
+            throw new RuntimeException("Fila " + agrupado.filaBase() + ": variantes repetidas para el mismo producto");
+        }
+
+        for (Integer colorId : coloresTocados) {
+            productoService.limpiarImagenesColorSiNoHayVariantesActivas(producto.getIdProducto(), colorId);
+        }
+
+        return agrupado.variantes().size();
     }
 
     private Categoria resolverCategoria(ProductoAgrupado agrupado, ResumenImportacion resumen) {
@@ -599,6 +687,10 @@ public class ProductoImportService {
 
     private String normalizarComparable(String value) {
         return opcional(value) == null ? null : opcional(value).toLowerCase(Locale.ROOT);
+    }
+
+    private String resolverEstadoVarianteSegunStock(int stock) {
+        return stock <= 0 ? "AGOTADO" : "ACTIVO";
     }
 
     private String requerido(String value, String field, int fila) {

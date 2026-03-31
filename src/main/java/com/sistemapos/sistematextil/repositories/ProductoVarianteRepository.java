@@ -113,6 +113,22 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
             Integer idProductoVariante,
             Integer idSucursal);
 
+    @Query("""
+            SELECT v
+            FROM ProductoVariante v
+            JOIN FETCH v.producto p
+            LEFT JOIN FETCH v.color
+            LEFT JOIN FETCH v.talla
+            LEFT JOIN FETCH v.sucursal
+            WHERE v.codigoBarras = :codigoBarras
+              AND v.sucursal.idSucursal = :idSucursal
+              AND v.deletedAt IS NULL
+              AND p.deletedAt IS NULL
+            """)
+    Optional<ProductoVariante> findEscaneableByCodigoBarras(
+            @Param("codigoBarras") String codigoBarras,
+            @Param("idSucursal") Integer idSucursal);
+
     Optional<ProductoVariante> findByProductoIdProductoAndTallaIdTallaAndColorIdColorAndSucursalIdSucursal(
             Integer idProducto,
             Integer idTalla,
@@ -198,8 +214,8 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
             FROM ProductoVariante v
             WHERE v.producto.idProducto = :idProducto
               AND v.color.idColor = :idColor
-              AND v.activo = true
               AND v.deletedAt IS NULL
+              AND v.producto.deletedAt IS NULL
             """)
     boolean existsVarianteActivaPorProductoYColor(
             @Param("idProducto") Integer idProducto,
@@ -210,27 +226,21 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
             FROM ProductoVariante v
             JOIN v.producto p
             WHERE v.deletedAt IS NULL
-              AND v.activo = true
-              AND p.estado <> :estadoProductoExcluido
+              AND p.deletedAt IS NULL
               AND (:idSucursal IS NULL OR v.sucursal.idSucursal = :idSucursal)
             """)
-    long contarVariantesActivasParaReporte(
-            @Param("idSucursal") Integer idSucursal,
-            @Param("estadoProductoExcluido") String estadoProductoExcluido);
+    long contarVariantesActivasParaReporte(@Param("idSucursal") Integer idSucursal);
 
     @Query("""
             SELECT COUNT(v)
             FROM ProductoVariante v
             JOIN v.producto p
             WHERE v.deletedAt IS NULL
-              AND v.activo = true
-              AND p.estado <> :estadoProductoExcluido
+              AND p.deletedAt IS NULL
               AND v.stock <= 0
               AND (:idSucursal IS NULL OR v.sucursal.idSucursal = :idSucursal)
             """)
-    long contarVariantesSinStockParaReporte(
-            @Param("idSucursal") Integer idSucursal,
-            @Param("estadoProductoExcluido") String estadoProductoExcluido);
+    long contarVariantesSinStockParaReporte(@Param("idSucursal") Integer idSucursal);
 
     @Query("""
             SELECT new com.sistemapos.sistematextil.util.producto.ProductoVarianteResumenRow(
@@ -253,8 +263,8 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
             )
             FROM ProductoVariante v
             WHERE v.producto.idProducto IN :productoIds
-              AND v.activo = true
               AND v.deletedAt IS NULL
+              AND v.producto.deletedAt IS NULL
             """)
     List<ProductoVarianteResumenRow> obtenerResumenPorProductos(@Param("productoIds") List<Integer> productoIds);
 
@@ -268,8 +278,7 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
                     LEFT JOIN FETCH v.color
                     LEFT JOIN FETCH v.talla
                     WHERE v.deletedAt IS NULL
-                      AND v.activo = true
-                      AND p.estado <> :estadoProductoExcluido
+                      AND p.deletedAt IS NULL
                       AND (:idSucursal IS NULL OR p.sucursal.idSucursal = :idSucursal)
                       AND (:idCategoria IS NULL OR p.categoria.idCategoria = :idCategoria)
                       AND (:idColor IS NULL OR v.color.idColor = :idColor)
@@ -289,8 +298,7 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
                     FROM ProductoVariante v
                     JOIN v.producto p
                     WHERE v.deletedAt IS NULL
-                      AND v.activo = true
-                      AND p.estado <> :estadoProductoExcluido
+                      AND p.deletedAt IS NULL
                       AND (:idSucursal IS NULL OR p.sucursal.idSucursal = :idSucursal)
                       AND (:idCategoria IS NULL OR p.categoria.idCategoria = :idCategoria)
                       AND (:idColor IS NULL OR v.color.idColor = :idColor)
@@ -311,7 +319,6 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
             @Param("idCategoria") Integer idCategoria,
             @Param("idColor") Integer idColor,
             @Param("conOferta") Boolean conOferta,
-            @Param("estadoProductoExcluido") String estadoProductoExcluido,
             Pageable pageable);
 
     @Query("""
@@ -335,15 +342,12 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
             FROM ProductoVariante v
             JOIN v.producto p
             WHERE v.deletedAt IS NULL
-              AND v.activo = true
-              AND p.estado <> :estadoProductoExcluido
+              AND p.deletedAt IS NULL
               AND v.stock > 0
               AND (:idSucursal IS NULL OR p.sucursal.idSucursal = :idSucursal)
             ORDER BY p.nombre ASC, v.color.nombre ASC, v.talla.nombre ASC, v.idProductoVariante ASC
             """)
-    List<ProductoVarianteDisponibleExcelRow> listarDisponiblesParaReporte(
-            @Param("idSucursal") Integer idSucursal,
-            @Param("estadoProductoExcluido") String estadoProductoExcluido);
+    List<ProductoVarianteDisponibleExcelRow> listarDisponiblesParaReporte(@Param("idSucursal") Integer idSucursal);
 
     @Query("""
             SELECT new com.sistemapos.sistematextil.util.producto.ProductoVarianteDisponibleExcelRow(
@@ -366,13 +370,10 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
             FROM ProductoVariante v
             JOIN v.producto p
             WHERE v.deletedAt IS NULL
-              AND v.activo = true
-              AND p.estado <> :estadoProductoExcluido
+              AND p.deletedAt IS NULL
               AND v.stock <= 0
               AND (:idSucursal IS NULL OR p.sucursal.idSucursal = :idSucursal)
             ORDER BY p.nombre ASC, v.color.nombre ASC, v.talla.nombre ASC, v.idProductoVariante ASC
             """)
-    List<ProductoVarianteDisponibleExcelRow> listarSinStockParaReporte(
-            @Param("idSucursal") Integer idSucursal,
-            @Param("estadoProductoExcluido") String estadoProductoExcluido);
+    List<ProductoVarianteDisponibleExcelRow> listarSinStockParaReporte(@Param("idSucursal") Integer idSucursal);
 }

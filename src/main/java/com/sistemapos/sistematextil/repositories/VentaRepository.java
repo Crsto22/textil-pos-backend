@@ -189,6 +189,7 @@ public interface VentaRepository extends JpaRepository<Venta, Integer> {
             LEFT JOIN v.cliente c
             WHERE v.deletedAt IS NULL
               AND (:idSucursal IS NULL OR v.sucursal.idSucursal = :idSucursal)
+              AND (:idUsuario IS NULL OR v.usuario.idUsuario = :idUsuario)
               AND (:idCliente IS NULL OR c.idCliente = :idCliente)
               AND (:estado IS NULL OR v.estado = :estado)
               AND v.fecha >= :fechaInicio
@@ -197,6 +198,7 @@ public interface VentaRepository extends JpaRepository<Venta, Integer> {
             """)
     List<Venta> buscarParaReporte(
             @Param("idSucursal") Integer idSucursal,
+            @Param("idUsuario") Integer idUsuario,
             @Param("idCliente") Integer idCliente,
             @Param("estado") String estado,
             @Param("fechaInicio") LocalDateTime fechaInicio,

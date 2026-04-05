@@ -19,7 +19,9 @@ public class ComprobanteConfigIndexMigration implements ApplicationRunner {
     private static final Logger log = LoggerFactory.getLogger(ComprobanteConfigIndexMigration.class);
     private static final String TABLE_NAME = "comprobante_config";
     private static final String OLD_INDEX = "uk_comprobante_config_sucursal_tipo";
-    private static final String NEW_INDEX = "uk_comprobante_config_sucursal_tipo_serie";
+    private static final String LEGACY_SERIE_INDEX = "uk_comprobante_config_sucursal_tipo_serie";
+    private static final String GLOBAL_INDEX = "uk_comprobante_config_tipo_serie";
+    private static final String LOOKUP_INDEX = "idx_comprobante_config_lookup";
 
     private final DataSource dataSource;
 
@@ -34,28 +36,37 @@ public class ComprobanteConfigIndexMigration implements ApplicationRunner {
                 return;
             }
 
-            boolean oldIndexExists = indexExists(connection, TABLE_NAME, OLD_INDEX);
-            boolean newIndexExists = indexExists(connection, TABLE_NAME, NEW_INDEX);
-
-            if (!oldIndexExists && newIndexExists) {
-                return;
-            }
-
             try (Statement statement = connection.createStatement()) {
-                if (oldIndexExists) {
-                    statement.execute("ALTER TABLE comprobante_config DROP INDEX " + OLD_INDEX);
-                    log.info("Indice antiguo {} eliminado de {}", OLD_INDEX, TABLE_NAME);
-                }
-                if (!newIndexExists) {
+                dropIndexIfExists(connection, statement, OLD_INDEX);
+                dropIndexIfExists(connection, statement, LEGACY_SERIE_INDEX);
+
+                if (!indexExists(connection, TABLE_NAME, GLOBAL_INDEX)) {
                     statement.execute("""
                             ALTER TABLE comprobante_config
-                            ADD UNIQUE KEY uk_comprobante_config_sucursal_tipo_serie
-                            (id_sucursal, tipo_comprobante, serie)
+                            ADD UNIQUE KEY uk_comprobante_config_tipo_serie
+                            (tipo_comprobante, serie)
                             """);
-                    log.info("Indice nuevo {} creado en {}", NEW_INDEX, TABLE_NAME);
+                    log.info("Indice global {} creado en {}", GLOBAL_INDEX, TABLE_NAME);
+                }
+
+                if (!indexExists(connection, TABLE_NAME, LOOKUP_INDEX)) {
+                    statement.execute("""
+                            ALTER TABLE comprobante_config
+                            ADD KEY idx_comprobante_config_lookup
+                            (tipo_comprobante, serie, activo, deleted_at)
+                            """);
+                    log.info("Indice {} creado en {}", LOOKUP_INDEX, TABLE_NAME);
                 }
             }
         }
+    }
+
+    private void dropIndexIfExists(Connection connection, Statement statement, String indexName) throws Exception {
+        if (!indexExists(connection, TABLE_NAME, indexName)) {
+            return;
+        }
+        statement.execute("ALTER TABLE " + TABLE_NAME + " DROP INDEX " + indexName);
+        log.info("Indice {} eliminado de {}", indexName, TABLE_NAME);
     }
 
     private boolean tableExists(Connection connection, String tableName) throws Exception {

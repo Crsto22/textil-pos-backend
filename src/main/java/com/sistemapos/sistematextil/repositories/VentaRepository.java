@@ -254,12 +254,10 @@ public interface VentaRepository extends JpaRepository<Venta, Integer> {
             SELECT COALESCE(MAX(v.correlativo), 0)
             FROM Venta v
             WHERE v.deletedAt IS NULL
-              AND v.sucursal.idSucursal = :idSucursal
               AND v.tipoComprobante = :tipoComprobante
               AND v.serie = :serie
             """)
     Integer obtenerMaxCorrelativoPorDocumento(
-            @Param("idSucursal") Integer idSucursal,
             @Param("tipoComprobante") String tipoComprobante,
             @Param("serie") String serie);
 }

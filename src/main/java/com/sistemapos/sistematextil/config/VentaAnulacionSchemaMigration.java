@@ -33,6 +33,7 @@ public class VentaAnulacionSchemaMigration implements ApplicationRunner {
             asegurarNotaCredito(connection, statement);
             asegurarNotaCreditoDetalle(connection, statement);
             asegurarConfiguracionesComprobante(connection, statement);
+            asegurarIndicesGlobalesDocumentos(connection, statement);
         }
     }
 
@@ -159,7 +160,7 @@ public class VentaAnulacionSchemaMigration implements ApplicationRunner {
                   id_sucursal INT(11) NOT NULL,
                   id_usuario INT(11) NOT NULL,
                   id_cliente INT(11) DEFAULT NULL,
-                  tipo_comprobante VARCHAR(20) NOT NULL,
+                  tipo_comprobante ENUM('NOTA_CREDITO_BOLETA','NOTA_CREDITO_FACTURA') NOT NULL DEFAULT 'NOTA_CREDITO_BOLETA',
                   serie VARCHAR(10) NOT NULL,
                   correlativo INT(11) NOT NULL,
                   moneda CHAR(3) NOT NULL DEFAULT 'PEN',
@@ -198,6 +199,7 @@ public class VentaAnulacionSchemaMigration implements ApplicationRunner {
                   KEY idx_nota_credito_usuario (id_usuario),
                   KEY idx_nota_credito_cliente (id_cliente),
                   UNIQUE KEY uk_nota_credito_numero_comprobante (id_sucursal, tipo_comprobante, serie, correlativo),
+                  UNIQUE KEY uk_nota_credito_tipo_serie_correlativo (tipo_comprobante, serie, correlativo),
                   CONSTRAINT fk_nc_venta_ref
                     FOREIGN KEY (id_venta_referencia) REFERENCES venta (id_venta)
                     ON DELETE RESTRICT ON UPDATE RESTRICT,
@@ -218,14 +220,32 @@ public class VentaAnulacionSchemaMigration implements ApplicationRunner {
             log.info("Columna nota_credito.sunat_zip_key eliminada");
         }
 
-        if (!indexExists(connection, "nota_credito", "uk_nota_credito_numero_comprobante")) {
+        statement.executeUpdate("""
+                UPDATE nota_credito
+                SET tipo_comprobante = CASE
+                    WHEN UPPER(TRIM(tipo_comprobante)) = 'NOTA_CREDITO_BOLETA' THEN 'NOTA_CREDITO_BOLETA'
+                    WHEN UPPER(TRIM(tipo_comprobante)) = 'NOTA_CREDITO_FACTURA' THEN 'NOTA_CREDITO_FACTURA'
+                    WHEN tipo_documento_ref = '03' THEN 'NOTA_CREDITO_BOLETA'
+                    WHEN tipo_documento_ref = '01' THEN 'NOTA_CREDITO_FACTURA'
+                    ELSE tipo_comprobante
+                  END
+                WHERE tipo_comprobante IS NOT NULL
+                  AND tipo_comprobante NOT IN ('NOTA_CREDITO_BOLETA', 'NOTA_CREDITO_FACTURA')
+                """);
+
+        statement.execute("""
+                ALTER TABLE nota_credito
+                MODIFY COLUMN tipo_comprobante ENUM('NOTA_CREDITO_BOLETA','NOTA_CREDITO_FACTURA') NOT NULL DEFAULT 'NOTA_CREDITO_BOLETA'
+                """);
+
+        if (!indexExists(connection, "nota_credito", "uk_nota_credito_tipo_serie_correlativo")) {
             try (Statement uniqueStatement = connection.createStatement()) {
                 uniqueStatement.execute("""
                         ALTER TABLE nota_credito
-                        ADD UNIQUE KEY uk_nota_credito_numero_comprobante
-                        (id_sucursal, tipo_comprobante, serie, correlativo)
+                        ADD UNIQUE KEY uk_nota_credito_tipo_serie_correlativo
+                        (tipo_comprobante, serie, correlativo)
                         """);
-                log.info("Indice unico de nota_credito creado");
+                log.info("Indice unico global de nota_credito creado");
             }
         }
     }
@@ -305,206 +325,132 @@ public class VentaAnulacionSchemaMigration implements ApplicationRunner {
 
         statement.executeUpdate("""
                 UPDATE comprobante_config
-                SET habilitado_venta = 0
-                WHERE tipo_comprobante IN ('NOTA_CREDITO_BOLETA', 'NOTA_CREDITO_FACTURA', 'COTIZACION')
+                SET habilitado_venta = CASE
+                    WHEN tipo_comprobante IN ('NOTA DE VENTA', 'BOLETA', 'FACTURA') THEN 1
+                    ELSE 0
+                  END
                 """);
 
-        statement.executeUpdate("""
-                INSERT INTO comprobante_config (
-                  id_sucursal,
-                  tipo_comprobante,
-                  serie,
-                  ultimo_correlativo,
-                  habilitado_venta,
-                  activo,
-                  created_at,
-                  updated_at,
-                  deleted_at
-                )
-                SELECT
-                  s.id_sucursal,
-                  'NOTA_CREDITO_BOLETA',
-                  'BC01',
-                  0,
-                  0,
-                  1,
-                  CURRENT_TIMESTAMP(6),
-                  CURRENT_TIMESTAMP(6),
-                  NULL
-                FROM sucursal s
-                WHERE s.deleted_at IS NULL
-                  AND s.activo = 1
-                  AND NOT EXISTS (
-                    SELECT 1
-                    FROM comprobante_config cc
-                    WHERE cc.id_sucursal = s.id_sucursal
-                      AND cc.tipo_comprobante = 'NOTA_CREDITO_BOLETA'
-                      AND cc.deleted_at IS NULL
-                  )
-                """);
+        eliminarForeignKeySiExiste(connection, statement, "comprobante_config", "fk_comprobante_config_sucursal");
+        eliminarIndiceSiExiste(connection, statement, "comprobante_config", "uk_comprobante_config_sucursal_tipo");
+        eliminarIndiceSiExiste(connection, statement, "comprobante_config", "uk_comprobante_config_sucursal_tipo_serie");
 
-        statement.executeUpdate("""
-                INSERT INTO comprobante_config (
-                  id_sucursal,
-                  tipo_comprobante,
-                  serie,
-                  ultimo_correlativo,
-                  habilitado_venta,
-                  activo,
-                  created_at,
-                  updated_at,
-                  deleted_at
-                )
-                SELECT
-                  s.id_sucursal,
-                  'NOTA_CREDITO_FACTURA',
-                  'FC01',
-                  0,
-                  0,
-                  1,
-                  CURRENT_TIMESTAMP(6),
-                  CURRENT_TIMESTAMP(6),
-                  NULL
-                FROM sucursal s
-                WHERE s.deleted_at IS NULL
-                  AND s.activo = 1
-                  AND NOT EXISTS (
-                    SELECT 1
-                    FROM comprobante_config cc
-                    WHERE cc.id_sucursal = s.id_sucursal
-                      AND cc.tipo_comprobante = 'NOTA_CREDITO_FACTURA'
-                      AND cc.deleted_at IS NULL
-                  )
-                """);
+        if (columnExists(connection, "comprobante_config", "id_sucursal")) {
+            eliminarIndiceSiExiste(connection, statement, "comprobante_config", "idx_comprobante_config_lookup");
+            statement.execute("ALTER TABLE comprobante_config DROP COLUMN id_sucursal");
+            log.info("Columna comprobante_config.id_sucursal eliminada");
+        }
 
-        statement.executeUpdate("""
-                UPDATE comprobante_config cc
-                SET cc.serie = %s
-                WHERE cc.tipo_comprobante = 'COTIZACION'
-                  AND cc.deleted_at IS NULL
-                  AND (
-                        cc.serie IS NULL
-                        OR TRIM(cc.serie) = ''
-                        OR UPPER(TRIM(cc.serie)) = 'COT'
-                      )
-                  AND NOT EXISTS (
-                        SELECT 1
-                        FROM comprobante_config cc2
-                        WHERE cc2.id_sucursal = cc.id_sucursal
-                          AND cc2.tipo_comprobante = 'COTIZACION'
-                          AND cc2.deleted_at IS NULL
-                          AND cc2.id_comprobante <> cc.id_comprobante
-                          AND cc2.serie = %s
-                  )
-                """.formatted(
-                serieCotizacionPorSucursalSql("cc.id_sucursal"),
-                serieCotizacionPorSucursalSql("cc.id_sucursal")));
+        asegurarIndiceUnico(
+                connection,
+                statement,
+                "comprobante_config",
+                "uk_comprobante_config_tipo_serie",
+                "(tipo_comprobante, serie)");
+        asegurarIndiceSimple(
+                connection,
+                statement,
+                "comprobante_config",
+                "idx_comprobante_config_lookup",
+                "(tipo_comprobante, serie, activo, deleted_at)");
+    }
+
+    private void asegurarIndicesGlobalesDocumentos(Connection connection, Statement statement) throws Exception {
+        if (tableExists(connection, "venta")) {
+            eliminarIndiceSiExiste(connection, statement, "venta", "uk_venta_numero_comprobante");
+            asegurarIndiceUnico(
+                    connection,
+                    statement,
+                    "venta",
+                    "uk_venta_tipo_serie_correlativo",
+                    "(tipo_comprobante, serie, correlativo)");
+        }
+
+        if (tableExists(connection, "nota_credito")) {
+            eliminarIndiceSiExiste(connection, statement, "nota_credito", "uk_nota_credito_numero_comprobante");
+            asegurarIndiceUnico(
+                    connection,
+                    statement,
+                    "nota_credito",
+                    "uk_nota_credito_tipo_serie_correlativo",
+                    "(tipo_comprobante, serie, correlativo)");
+        }
 
         if (tableExists(connection, "cotizacion")) {
-            statement.executeUpdate("""
-                    UPDATE cotizacion c
-                    SET c.serie = %s
-                    WHERE c.serie IS NULL
-                       OR TRIM(c.serie) = ''
-                       OR UPPER(TRIM(c.serie)) = 'COT'
-                    """.formatted(serieCotizacionPorSucursalSql("c.id_sucursal")));
-
-            statement.executeUpdate("""
-                    INSERT INTO comprobante_config (
-                      id_sucursal,
-                      tipo_comprobante,
-                      serie,
-                      ultimo_correlativo,
-                      habilitado_venta,
-                      activo,
-                      created_at,
-                      updated_at,
-                      deleted_at
-                    )
-                    SELECT
-                      s.id_sucursal,
-                      'COTIZACION',
-                      %s,
-                      0,
-                      0,
-                      1,
-                      CURRENT_TIMESTAMP(6),
-                      CURRENT_TIMESTAMP(6),
-                      NULL
-                    FROM sucursal s
-                    WHERE s.deleted_at IS NULL
-                      AND s.activo = 1
-                      AND NOT EXISTS (
-                        SELECT 1
-                        FROM comprobante_config cc
-                        WHERE cc.id_sucursal = s.id_sucursal
-                          AND cc.tipo_comprobante = 'COTIZACION'
-                          AND cc.deleted_at IS NULL
-                      )
-                    """.formatted(serieCotizacionPorSucursalSql("s.id_sucursal")));
-
-            statement.executeUpdate("""
-                    UPDATE comprobante_config cc
-                    LEFT JOIN (
-                      SELECT
-                        c.id_sucursal,
-                        COALESCE(NULLIF(TRIM(c.serie), ''), %s) AS serie_normalizada,
-                        MAX(c.correlativo) AS max_corr
-                      FROM cotizacion c
-                      WHERE c.deleted_at IS NULL
-                      GROUP BY c.id_sucursal, COALESCE(NULLIF(TRIM(c.serie), ''), %s)
-                    ) hist
-                      ON hist.id_sucursal = cc.id_sucursal
-                     AND hist.serie_normalizada = cc.serie
-                    SET cc.ultimo_correlativo = GREATEST(
-                          COALESCE(cc.ultimo_correlativo, 0),
-                          COALESCE(hist.max_corr, 0)
-                        ),
-                        cc.habilitado_venta = 0
-                    WHERE cc.tipo_comprobante = 'COTIZACION'
-                      AND cc.deleted_at IS NULL
-                    """.formatted(
-                    serieCotizacionPorSucursalSql("c.id_sucursal"),
-                    serieCotizacionPorSucursalSql("c.id_sucursal")));
-        } else {
-            statement.executeUpdate("""
-                    INSERT INTO comprobante_config (
-                      id_sucursal,
-                      tipo_comprobante,
-                      serie,
-                      ultimo_correlativo,
-                      habilitado_venta,
-                      activo,
-                      created_at,
-                      updated_at,
-                      deleted_at
-                    )
-                    SELECT
-                      s.id_sucursal,
-                      'COTIZACION',
-                      %s,
-                      0,
-                      0,
-                      1,
-                      CURRENT_TIMESTAMP(6),
-                      CURRENT_TIMESTAMP(6),
-                      NULL
-                    FROM sucursal s
-                    WHERE s.deleted_at IS NULL
-                      AND s.activo = 1
-                      AND NOT EXISTS (
-                        SELECT 1
-                        FROM comprobante_config cc
-                        WHERE cc.id_sucursal = s.id_sucursal
-                          AND cc.tipo_comprobante = 'COTIZACION'
-                          AND cc.deleted_at IS NULL
-                      )
-                    """.formatted(serieCotizacionPorSucursalSql("s.id_sucursal")));
+            eliminarIndiceSiExiste(connection, statement, "cotizacion", "uk_cotizacion_numero");
+            asegurarIndiceUnico(
+                    connection,
+                    statement,
+                    "cotizacion",
+                    "uk_cotizacion_serie_correlativo",
+                    "(serie, correlativo)");
         }
     }
 
+    private void asegurarIndiceUnico(
+            Connection connection,
+            Statement statement,
+            String tableName,
+            String indexName,
+            String columnsSql) throws Exception {
+        if (indexExists(connection, tableName, indexName)) {
+            return;
+        }
+        statement.execute("ALTER TABLE " + tableName + " ADD UNIQUE KEY " + indexName + " " + columnsSql);
+        log.info("Indice unico {} creado en {}", indexName, tableName);
+    }
+
+    private void asegurarIndiceSimple(
+            Connection connection,
+            Statement statement,
+            String tableName,
+            String indexName,
+            String columnsSql) throws Exception {
+        if (indexExists(connection, tableName, indexName)) {
+            return;
+        }
+        statement.execute("ALTER TABLE " + tableName + " ADD KEY " + indexName + " " + columnsSql);
+        log.info("Indice {} creado en {}", indexName, tableName);
+    }
+
+    private void eliminarIndiceSiExiste(
+            Connection connection,
+            Statement statement,
+            String tableName,
+            String indexName) throws Exception {
+        if (!indexExists(connection, tableName, indexName)) {
+            return;
+        }
+        statement.execute("ALTER TABLE " + tableName + " DROP INDEX " + indexName);
+        log.info("Indice {} eliminado de {}", indexName, tableName);
+    }
+
+    private void eliminarForeignKeySiExiste(
+            Connection connection,
+            Statement statement,
+            String tableName,
+            String constraintName) throws Exception {
+        if (!foreignKeyExists(connection, tableName, constraintName)) {
+            return;
+        }
+        statement.execute("ALTER TABLE " + tableName + " DROP FOREIGN KEY " + constraintName);
+        log.info("FK {} eliminada de {}", constraintName, tableName);
+    }
+
     private String serieCotizacionPorSucursalSql(String idSucursalExpression) {
-        return "CONCAT('COT', LPAD(" + idSucursalExpression + ", 2, '0'))";
+        return seriePorSucursalSql("COT", idSucursalExpression, 2);
+    }
+
+    private String serieNotaCreditoBoletaPorSucursalSql(String idSucursalExpression) {
+        return seriePorSucursalSql("BC", idSucursalExpression, 2);
+    }
+
+    private String serieNotaCreditoFacturaPorSucursalSql(String idSucursalExpression) {
+        return seriePorSucursalSql("FC", idSucursalExpression, 2);
+    }
+
+    private String seriePorSucursalSql(String prefijo, String idSucursalExpression, int longitudNumerica) {
+        return "CONCAT('" + prefijo + "', LPAD(" + idSucursalExpression + ", " + longitudNumerica + ", '0'))";
     }
 
     private boolean tableExists(Connection connection, String tableName) throws Exception {

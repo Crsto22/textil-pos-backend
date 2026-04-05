@@ -7,6 +7,10 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
 public record NotaCreditoCreateRequest(
+        @NotBlank(message = "La serie es obligatoria")
+        @Size(max = 10, message = "La serie no debe superar 10 caracteres")
+        String serie,
+
         @NotBlank(message = "El codigoMotivo es obligatorio")
         String codigoMotivo,
 

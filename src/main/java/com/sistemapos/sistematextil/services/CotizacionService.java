@@ -221,7 +221,7 @@ public class CotizacionService {
                 request.descuentoTotal(),
                 request.tipoDescuento(),
                 request.igvPorcentaje());
-        NumeroCotizacion numeroCotizacion = asignarNumeroCotizacion(sucursal.getIdSucursal());
+        NumeroCotizacion numeroCotizacion = asignarNumeroCotizacion(normalizarSerieObligatoria(request.serie()));
 
         Cotizacion cotizacion = new Cotizacion();
         cotizacion.setSucursal(sucursal);
@@ -262,7 +262,7 @@ public class CotizacionService {
                 request.igvPorcentaje());
         NumeroCotizacion numeroCotizacion = resolverNumeroCotizacionActualizacion(
                 cotizacion,
-                sucursalDestino.getIdSucursal());
+                normalizarSerieObligatoria(request.serie()));
 
         cotizacion.setSucursal(sucursalDestino);
         cotizacion.setCliente(cliente);
@@ -368,7 +368,7 @@ public class CotizacionService {
                 cotizacion.getSucursal() != null ? cotizacion.getSucursal().getIdSucursal() : null,
                 cotizacion.getCliente() != null ? cotizacion.getCliente().getIdCliente() : null,
                 request.tipoComprobante(),
-                null,
+                normalizarSerieObligatoria(request.serie()),
                 null,
                 null,
                 null,
@@ -572,38 +572,32 @@ public class CotizacionService {
 
     private NumeroCotizacion resolverNumeroCotizacionActualizacion(
             Cotizacion cotizacion,
-            Integer idSucursalDestino) {
-        Integer idSucursalActual = cotizacion.getSucursal() != null ? cotizacion.getSucursal().getIdSucursal() : null;
+            String serieDestino) {
         String serieActual = normalizarTexto(cotizacion.getSerie(), 10);
         Integer correlativoActual = cotizacion.getCorrelativo();
 
-        if (idSucursalActual != null
-                && idSucursalActual.equals(idSucursalDestino)
-                && serieActual != null
+        if (serieActual != null
+                && serieActual.equalsIgnoreCase(serieDestino)
                 && correlativoActual != null) {
             validarNumeroCotizacionDisponible(
-                    idSucursalDestino,
-                    serieActual,
+                    serieDestino,
                     correlativoActual,
                     cotizacion.getIdCotizacion());
-            return new NumeroCotizacion(serieActual, correlativoActual);
+            return new NumeroCotizacion(serieDestino, correlativoActual);
         }
 
-        return asignarNumeroCotizacion(idSucursalDestino);
+        return asignarNumeroCotizacion(serieDestino);
     }
 
-    private NumeroCotizacion asignarNumeroCotizacion(Integer idSucursal) {
-        ComprobanteConfig config = comprobanteConfigRepository.findActivoForUpdate(idSucursal, TIPO_COTIZACION)
+    private NumeroCotizacion asignarNumeroCotizacion(String serieSolicitada) {
+        ComprobanteConfig config = comprobanteConfigRepository.findActivoForUpdate(TIPO_COTIZACION, serieSolicitada)
                 .orElseThrow(() -> new RuntimeException(
-                        "No existe configuracion activa de cotizacion para la sucursal"));
+                        "No existe configuracion activa de cotizacion para la serie indicada"));
 
-        String serie = normalizarTexto(config.getSerie(), 10);
-        if (serie == null) {
-            throw new RuntimeException("La configuracion de cotizacion no tiene serie valida");
-        }
+        String serie = normalizarSerieObligatoria(config.getSerie());
 
         int ultimoConfig = valorEntero(config.getUltimoCorrelativo());
-        int maxCotizacion = valorEntero(cotizacionRepository.obtenerMaxCorrelativoPorSerie(idSucursal, serie));
+        int maxCotizacion = valorEntero(cotizacionRepository.obtenerMaxCorrelativoPorSerie(serie));
         int nuevoCorrelativo = Math.max(ultimoConfig, maxCotizacion) + 1;
 
         config.setUltimoCorrelativo(nuevoCorrelativo);
@@ -612,23 +606,28 @@ public class CotizacionService {
     }
 
     private void validarNumeroCotizacionDisponible(
-            Integer idSucursal,
             String serie,
             Integer correlativo,
             Integer idCotizacionExcluir) {
         boolean existe = idCotizacionExcluir == null
-                ? cotizacionRepository.existsBySucursal_IdSucursalAndSerieAndCorrelativoAndDeletedAtIsNull(
-                        idSucursal,
+                ? cotizacionRepository.existsBySerieAndCorrelativoAndDeletedAtIsNull(
                         serie,
                         correlativo)
-                : cotizacionRepository.existsBySucursal_IdSucursalAndSerieAndCorrelativoAndDeletedAtIsNullAndIdCotizacionNot(
-                        idSucursal,
+                : cotizacionRepository.existsBySerieAndCorrelativoAndDeletedAtIsNullAndIdCotizacionNot(
                         serie,
                         correlativo,
                         idCotizacionExcluir);
         if (existe) {
             throw new RuntimeException("Ya existe una cotizacion con la serie y correlativo indicados");
         }
+    }
+
+    private String normalizarSerieObligatoria(String serie) {
+        String serieNormalizada = normalizarTexto(serie, 10);
+        if (serieNormalizada == null) {
+            throw new RuntimeException("La serie es obligatoria");
+        }
+        return serieNormalizada.toUpperCase(Locale.ROOT);
     }
 
     private FiltroReporteCotizacion resolverFiltroReporteCotizacion(

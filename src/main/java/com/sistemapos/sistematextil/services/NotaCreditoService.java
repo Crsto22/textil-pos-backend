@@ -150,10 +150,15 @@ public class NotaCreditoService {
 
     public VentaAnulacionResponse anularConNotaCreditoTotal(
             Integer idVenta,
+            String serie,
             String descripcionMotivo,
             Usuario usuarioAutenticado) {
         NotaCreditoPreparada preparada = transactionTemplate.execute(
-                status -> prepararNotaCreditoAnulacionTotal(idVenta, descripcionMotivo, usuarioAutenticado));
+                status -> prepararNotaCreditoAnulacionTotal(
+                        idVenta,
+                        normalizarSerieObligatoria(serie),
+                        descripcionMotivo,
+                        usuarioAutenticado));
 
         if (preparada == null) {
             throw new RuntimeException("No se pudo preparar la nota de credito para la anulacion");
@@ -178,12 +183,14 @@ public class NotaCreditoService {
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
         validarRolNotaCredito(usuarioAutenticado);
 
+        String serieSolicitada = normalizarSerieObligatoria(request.serie());
         String codigoMotivo = normalizarCodigoMotivo(request.codigoMotivo());
         String descripcionMotivo = normalizarDescripcion(request.descripcionMotivo());
         validarCodigoMotivoEndpointGeneral(codigoMotivo);
 
         NotaCreditoPreparada preparada = transactionTemplate.execute(status -> prepararNotaCreditoGeneral(
                 idVenta,
+                serieSolicitada,
                 codigoMotivo,
                 descripcionMotivo,
                 request.items(),
@@ -1195,6 +1202,7 @@ public class NotaCreditoService {
 
     private NotaCreditoPreparada prepararNotaCreditoAnulacionTotal(
             Integer idVenta,
+            String serieSolicitada,
             String descripcionMotivo,
             Usuario usuarioAutenticado) {
         Venta venta = obtenerVentaConAlcanceForUpdate(idVenta, usuarioAutenticado);
@@ -1234,6 +1242,7 @@ public class NotaCreditoService {
         return crearNotaCredito(
                 venta,
                 usuarioAutenticado,
+                serieSolicitada,
                 CODIGO_ANULACION_OPERACION,
                 descripcionMotivo,
                 construirLineasCompletas(detallesVenta));
@@ -1241,6 +1250,7 @@ public class NotaCreditoService {
 
     private NotaCreditoPreparada prepararNotaCreditoGeneral(
             Integer idVenta,
+            String serieSolicitada,
             String codigoMotivo,
             String descripcionMotivo,
             List<NotaCreditoItemRequest> items,
@@ -1261,12 +1271,13 @@ public class NotaCreditoService {
         }
 
         List<DetalleNotaCreditoPlan> lineas = construirLineasParaMotivo(venta, codigoMotivo, items, detallesVenta);
-        return crearNotaCredito(venta, usuarioAutenticado, codigoMotivo, descripcionMotivo, lineas);
+        return crearNotaCredito(venta, usuarioAutenticado, serieSolicitada, codigoMotivo, descripcionMotivo, lineas);
     }
 
     private NotaCreditoPreparada crearNotaCredito(
             Venta venta,
             Usuario usuarioAutenticado,
+            String serieSolicitada,
             String codigoMotivo,
             String descripcionMotivo,
             List<DetalleNotaCreditoPlan> lineas) {
@@ -1274,7 +1285,7 @@ public class NotaCreditoService {
             throw new RuntimeException("La nota de credito no tiene detalles para emitir");
         }
 
-        NumeroComprobanteNotaCredito numero = asignarNumeroNotaCredito(venta);
+        NumeroComprobanteNotaCredito numero = asignarNumeroNotaCredito(venta, serieSolicitada);
         NotaCredito notaCredito = new NotaCredito();
         notaCredito.setVentaReferencia(venta);
         notaCredito.setSucursal(venta.getSucursal());
@@ -1611,34 +1622,34 @@ public class NotaCreditoService {
         }
     }
 
-    private NumeroComprobanteNotaCredito asignarNumeroNotaCredito(Venta venta) {
-        Integer idSucursal = venta.getSucursal() != null ? venta.getSucursal().getIdSucursal() : null;
-        if (idSucursal == null) {
-            throw new RuntimeException("La venta no tiene sucursal asociada");
-        }
-
+    private NumeroComprobanteNotaCredito asignarNumeroNotaCredito(Venta venta, String serieSolicitada) {
         String tipoComprobanteNc = TIPO_BOLETA.equals(normalizarTipoComprobante(venta.getTipoComprobante()))
                 ? TIPO_NC_BOLETA
                 : TIPO_NC_FACTURA;
 
-        ComprobanteConfig config = comprobanteConfigRepository.findActivoForUpdate(idSucursal, tipoComprobanteNc)
+        ComprobanteConfig config = comprobanteConfigRepository.findActivoForUpdate(tipoComprobanteNc, serieSolicitada)
                 .orElseThrow(() -> new RuntimeException(
-                        "No existe configuracion activa de nota de credito para la sucursal y tipo"));
+                        "No existe configuracion activa de nota de credito para el tipo y serie indicados"));
 
-        String serie = normalizarTexto(config.getSerie(), 10);
-        if (serie == null) {
-            throw new RuntimeException("La configuracion de nota de credito no tiene serie valida");
-        }
+        String serie = normalizarSerieObligatoria(config.getSerie());
 
         int ultimoConfig = valorEntero(config.getUltimoCorrelativo());
         int maxNotaCredito = valorEntero(notaCreditoRepository
-                .obtenerMaxCorrelativoPorDocumento(idSucursal, tipoComprobanteNc, serie));
+                .obtenerMaxCorrelativoPorDocumento(tipoComprobanteNc, serie));
         int nuevoCorrelativo = Math.max(ultimoConfig, maxNotaCredito) + 1;
 
         config.setUltimoCorrelativo(nuevoCorrelativo);
         comprobanteConfigRepository.save(config);
 
         return new NumeroComprobanteNotaCredito(tipoComprobanteNc, serie, nuevoCorrelativo);
+    }
+
+    private String normalizarSerieObligatoria(String serie) {
+        String serieNormalizada = normalizarTexto(serie, 10);
+        if (serieNormalizada == null) {
+            throw new RuntimeException("La serie es obligatoria");
+        }
+        return serieNormalizada.toUpperCase(Locale.ROOT);
     }
 
     private int obtenerCantidadDisponibleParaDevolver(Venta venta, VentaDetalle detalleVenta) {

@@ -4,8 +4,6 @@ import java.time.LocalDateTime;
 
 public record ComprobanteConfigResponse(
         Integer idComprobante,
-        Integer idSucursal,
-        String nombreSucursal,
         String tipoComprobante,
         String serie,
         Integer ultimoCorrelativo,

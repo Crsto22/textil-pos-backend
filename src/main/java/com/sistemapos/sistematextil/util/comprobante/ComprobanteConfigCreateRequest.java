@@ -2,14 +2,10 @@ package com.sistemapos.sistematextil.util.comprobante;
 
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 public record ComprobanteConfigCreateRequest(
-        @NotNull(message = "idSucursal es obligatorio")
-        Integer idSucursal,
-
         @NotBlank(message = "Ingrese tipoComprobante")
         @Size(max = 20, message = "tipoComprobante no debe superar 20 caracteres")
         String tipoComprobante,

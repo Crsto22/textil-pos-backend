@@ -33,7 +33,6 @@ public class SucursalService {
     private final SucursalRepository sucursalRepository;
     private final EmpresaRepository empresaRepository;
     private final UsuarioRepository usuarioRepository;
-    private final ComprobanteConfigService comprobanteConfigService;
 
     @Value("${application.pagination.default-size:10}")
     private int defaultPageSize;
@@ -79,7 +78,6 @@ public class SucursalService {
         sucursal.setEmpresa(empresa);
 
         Sucursal creada = sucursalRepository.save(sucursal);
-        comprobanteConfigService.asegurarConfiguracionesInicialesSucursal(creada.getIdSucursal());
         return toListItemResponse(creada);
     }
 

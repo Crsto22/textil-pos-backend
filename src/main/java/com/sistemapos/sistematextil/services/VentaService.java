@@ -1474,9 +1474,10 @@ public class VentaService {
                 aplicaIgv);
         List<DetalleCalculado> detallesFinales = aplicarTributosDetalle(detallesCalculados, totales);
         List<PagoCalculado> pagosCalculados = calcularPagos(request.pagos(), totales.total());
+        String serieSolicitada = normalizarSerieObligatoria(request.serie());
         NumeroComprobante numeroComprobante = asignarNumeroComprobante(
-                sucursalVenta.getIdSucursal(),
-                tipoComprobante);
+                tipoComprobante,
+                serieSolicitada);
 
         Venta venta = new Venta();
         venta.setSucursal(sucursalVenta);
@@ -1965,19 +1966,16 @@ public class VentaService {
         venta.setSunatRespondidoAt(resultado.fechaRespuesta());
     }
 
-    private NumeroComprobante asignarNumeroComprobante(Integer idSucursal, String tipoComprobante) {
-        ComprobanteConfig config = comprobanteConfigRepository.findActivoForUpdate(idSucursal, tipoComprobante)
+    private NumeroComprobante asignarNumeroComprobante(String tipoComprobante, String serieSolicitada) {
+        ComprobanteConfig config = comprobanteConfigRepository.findActivoForUpdate(tipoComprobante, serieSolicitada)
                 .orElseThrow(() -> new RuntimeException(
-                        "No existe configuracion activa de comprobante para la sucursal y tipo"));
+                        "No existe configuracion activa de comprobante para el tipo y serie indicados"));
 
-        String serie = normalizarTexto(config.getSerie(), 10);
-        if (serie == null) {
-            throw new RuntimeException("La configuracion del comprobante no tiene serie valida");
-        }
+        String serie = normalizarSerieObligatoria(config.getSerie());
 
         int ultimoConfig = valorEntero(config.getUltimoCorrelativo());
         int maxVenta = valorEntero(ventaRepository
-                .obtenerMaxCorrelativoPorDocumento(idSucursal, tipoComprobante, serie));
+                .obtenerMaxCorrelativoPorDocumento(tipoComprobante, serie));
         int base = Math.max(ultimoConfig, maxVenta);
         int nuevoCorrelativo = base + 1;
 
@@ -1985,6 +1983,14 @@ public class VentaService {
         comprobanteConfigRepository.save(config);
 
         return new NumeroComprobante(serie, nuevoCorrelativo);
+    }
+
+    private String normalizarSerieObligatoria(String serie) {
+        String serieNormalizada = normalizarTexto(serie, 10);
+        if (serieNormalizada == null) {
+            throw new RuntimeException("La serie es obligatoria");
+        }
+        return serieNormalizada.toUpperCase(Locale.ROOT);
     }
 
     private VentaListItemResponse toListItemResponse(Venta venta) {

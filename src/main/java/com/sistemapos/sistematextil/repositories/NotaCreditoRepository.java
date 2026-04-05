@@ -68,12 +68,10 @@ public interface NotaCreditoRepository extends JpaRepository<NotaCredito, Intege
             SELECT COALESCE(MAX(nc.correlativo), 0)
             FROM NotaCredito nc
             WHERE nc.deletedAt IS NULL
-              AND nc.sucursal.idSucursal = :idSucursal
               AND nc.tipoComprobante = :tipoComprobante
               AND nc.serie = :serie
             """)
     Integer obtenerMaxCorrelativoPorDocumento(
-            @Param("idSucursal") Integer idSucursal,
             @Param("tipoComprobante") String tipoComprobante,
             @Param("serie") String serie);
 }

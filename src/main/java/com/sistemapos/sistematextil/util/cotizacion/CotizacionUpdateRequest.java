@@ -5,6 +5,7 @@ import java.util.List;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
 public record CotizacionUpdateRequest(
@@ -12,6 +13,7 @@ public record CotizacionUpdateRequest(
 
         Integer idCliente,
 
+        @NotBlank(message = "La serie es obligatoria")
         @Size(max = 10, message = "La serie no debe superar 10 caracteres")
         String serie,
 

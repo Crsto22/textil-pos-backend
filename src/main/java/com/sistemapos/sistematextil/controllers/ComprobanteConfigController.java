@@ -33,10 +33,9 @@ public class ComprobanteConfigController {
     @GetMapping
     public ResponseEntity<?> listar(
             @RequestParam(name = "activo", required = false) String activo,
-            @RequestParam(name = "idSucursal", required = false) Integer idSucursal,
             @RequestParam(name = "habilitadoVenta", required = false) Boolean habilitadoVenta) {
         try {
-            return ResponseEntity.ok(comprobanteConfigService.listar(activo, idSucursal, habilitadoVenta));
+            return ResponseEntity.ok(comprobanteConfigService.listar(activo, habilitadoVenta));
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al listar comprobantes" : e.getMessage();
             return ResponseEntity.badRequest().body(Map.of("message", message));
@@ -47,10 +46,9 @@ public class ComprobanteConfigController {
     public ResponseEntity<?> listarPaginado(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(name = "activo", required = false) String activo,
-            @RequestParam(name = "idSucursal", required = false) Integer idSucursal,
             @RequestParam(name = "habilitadoVenta", required = false) Boolean habilitadoVenta) {
         try {
-            return ResponseEntity.ok(comprobanteConfigService.listarPaginado(page, activo, idSucursal, habilitadoVenta));
+            return ResponseEntity.ok(comprobanteConfigService.listarPaginado(page, activo, habilitadoVenta));
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al listar comprobantes" : e.getMessage();
             return ResponseEntity.badRequest().body(Map.of("message", message));
@@ -62,11 +60,10 @@ public class ComprobanteConfigController {
             @RequestParam(name = "q", required = false) String q,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(name = "activo", required = false) String activo,
-            @RequestParam(name = "idSucursal", required = false) Integer idSucursal,
             @RequestParam(name = "habilitadoVenta", required = false) Boolean habilitadoVenta) {
         try {
             return ResponseEntity.ok(
-                    comprobanteConfigService.buscarPaginado(q, page, activo, idSucursal, habilitadoVenta));
+                    comprobanteConfigService.buscarPaginado(q, page, activo, habilitadoVenta));
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al buscar comprobantes" : e.getMessage();
             return ResponseEntity.badRequest().body(Map.of("message", message));

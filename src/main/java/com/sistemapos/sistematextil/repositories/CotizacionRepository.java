@@ -84,13 +84,11 @@ public interface CotizacionRepository extends JpaRepository<Cotizacion, Integer>
             Integer idCotizacion,
             Integer idSucursal);
 
-    boolean existsBySucursal_IdSucursalAndSerieAndCorrelativoAndDeletedAtIsNull(
-            Integer idSucursal,
+    boolean existsBySerieAndCorrelativoAndDeletedAtIsNull(
             String serie,
             Integer correlativo);
 
-    boolean existsBySucursal_IdSucursalAndSerieAndCorrelativoAndDeletedAtIsNullAndIdCotizacionNot(
-            Integer idSucursal,
+    boolean existsBySerieAndCorrelativoAndDeletedAtIsNullAndIdCotizacionNot(
             String serie,
             Integer correlativo,
             Integer idCotizacion);
@@ -99,10 +97,8 @@ public interface CotizacionRepository extends JpaRepository<Cotizacion, Integer>
             SELECT COALESCE(MAX(c.correlativo), 0)
             FROM Cotizacion c
             WHERE c.deletedAt IS NULL
-              AND c.sucursal.idSucursal = :idSucursal
               AND c.serie = :serie
             """)
     Integer obtenerMaxCorrelativoPorSerie(
-            @Param("idSucursal") Integer idSucursal,
             @Param("serie") String serie);
 }

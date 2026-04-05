@@ -18,13 +18,11 @@ public interface ComprobanteConfigRepository extends JpaRepository<ComprobanteCo
             FROM ComprobanteConfig c
             WHERE c.deletedAt IS NULL
               AND (:activo IS NULL OR c.activo = :activo)
-              AND (:idSucursal IS NULL OR c.sucursal.idSucursal = :idSucursal)
               AND (:habilitadoVenta IS NULL OR c.habilitadoVenta = :habilitadoVenta)
             ORDER BY c.idComprobante ASC
             """)
     List<ComprobanteConfig> buscar(
             @Param("activo") String activo,
-            @Param("idSucursal") Integer idSucursal,
             @Param("habilitadoVenta") Boolean habilitadoVenta);
 
     @Query("""
@@ -33,58 +31,29 @@ public interface ComprobanteConfigRepository extends JpaRepository<ComprobanteCo
             WHERE c.deletedAt IS NULL
               AND (:term IS NULL
                    OR UPPER(c.tipoComprobante) LIKE CONCAT('%', UPPER(:term), '%')
-                   OR UPPER(c.serie) LIKE CONCAT('%', UPPER(:term), '%')
-                   OR UPPER(c.sucursal.nombre) LIKE CONCAT('%', UPPER(:term), '%'))
+                   OR UPPER(c.serie) LIKE CONCAT('%', UPPER(:term), '%'))
               AND (:activo IS NULL OR c.activo = :activo)
-              AND (:idSucursal IS NULL OR c.sucursal.idSucursal = :idSucursal)
               AND (:habilitadoVenta IS NULL OR c.habilitadoVenta = :habilitadoVenta)
             ORDER BY c.idComprobante ASC
             """)
     Page<ComprobanteConfig> buscarPaginado(
             @Param("term") String term,
             @Param("activo") String activo,
-            @Param("idSucursal") Integer idSucursal,
             @Param("habilitadoVenta") Boolean habilitadoVenta,
             Pageable pageable);
 
     Optional<ComprobanteConfig> findByIdComprobanteAndDeletedAtIsNull(Integer idComprobante);
 
-    Optional<ComprobanteConfig> findBySucursal_IdSucursalAndTipoComprobanteAndSerie(
-            Integer idSucursal,
+    Optional<ComprobanteConfig> findByTipoComprobanteAndSerieAndDeletedAtIsNull(
             String tipoComprobante,
             String serie);
-
-    Optional<ComprobanteConfig> findFirstBySucursal_IdSucursalAndTipoComprobanteAndDeletedAtIsNullOrderByIdComprobanteDesc(
-            Integer idSucursal,
-            String tipoComprobante);
-
-    @Query(
-            value = """
-                    SELECT MAX(CAST(SUBSTRING(serie, 4) AS UNSIGNED))
-                    FROM comprobante_config
-                    WHERE tipo_comprobante = :tipoComprobante
-                      AND UPPER(serie) REGEXP '^COT[0-9]+$'
-                    """,
-            nativeQuery = true)
-    Integer obtenerMaxSufijoSerieCotizacion(@Param("tipoComprobante") String tipoComprobante);
-
-    long countBySucursal_IdSucursalAndTipoComprobanteAndActivoAndDeletedAtIsNull(
-            Integer idSucursal,
-            String tipoComprobante,
-            String activo);
-
-    long countBySucursal_IdSucursalAndTipoComprobanteAndActivoAndDeletedAtIsNullAndIdComprobanteNot(
-            Integer idSucursal,
-            String tipoComprobante,
-            String activo,
-            Integer idComprobante);
 
     @Query(
             value = """
                     SELECT *
                     FROM comprobante_config
-                    WHERE id_sucursal = :idSucursal
-                      AND tipo_comprobante = :tipoComprobante
+                    WHERE tipo_comprobante = :tipoComprobante
+                      AND serie = :serie
                       AND activo = 1
                       AND deleted_at IS NULL
                     ORDER BY id_comprobante DESC
@@ -93,6 +62,6 @@ public interface ComprobanteConfigRepository extends JpaRepository<ComprobanteCo
                     """,
             nativeQuery = true)
     Optional<ComprobanteConfig> findActivoForUpdate(
-            @Param("idSucursal") Integer idSucursal,
-            @Param("tipoComprobante") String tipoComprobante);
+            @Param("tipoComprobante") String tipoComprobante,
+            @Param("serie") String serie);
 }

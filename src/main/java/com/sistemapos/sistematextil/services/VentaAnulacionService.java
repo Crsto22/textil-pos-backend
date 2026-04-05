@@ -60,7 +60,11 @@ public class VentaAnulacionService {
             throw new RuntimeException("Para anular una venta electronica el codigoMotivo debe ser 01");
         }
 
-        return notaCreditoService.anularConNotaCreditoTotal(idVenta, descripcionMotivo, usuarioAutenticado);
+        return notaCreditoService.anularConNotaCreditoTotal(
+                idVenta,
+                request.serie(),
+                descripcionMotivo,
+                usuarioAutenticado);
     }
 
     private VentaAnulacionResponse anularNotaVenta(Integer idVenta, String descripcionMotivo, Usuario usuarioAutenticado) {

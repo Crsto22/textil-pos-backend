@@ -9,8 +9,6 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
 public record ProductoCompletoUpdateRequest(
-        Integer idSucursal,
-
         @NotNull(message = "Ingrese idCategoria")
         Integer idCategoria,
 

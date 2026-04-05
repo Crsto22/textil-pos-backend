@@ -93,6 +93,7 @@ public class ProductoVarianteController {
             @RequestParam(name = "idCategoria", required = false) Integer idCategoria,
             @RequestParam(name = "idColor", required = false) Integer idColor,
             @RequestParam(name = "conOferta", required = false) Boolean conOferta,
+            @RequestParam(name = "soloDisponibles", required = false) Boolean soloDisponibles,
             @RequestParam(name = "idSucursal", required = false) Integer idSucursal) {
         try {
             PagedResponse<ProductoVarianteListadoResumenResponse> response = service.listarResumenPaginado(
@@ -101,6 +102,7 @@ public class ProductoVarianteController {
                     idCategoria,
                     idColor,
                     conOferta,
+                    soloDisponibles,
                     idSucursal,
                     obtenerCorreoAutenticado(authentication));
             return ResponseEntity.ok(response);

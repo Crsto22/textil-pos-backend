@@ -62,7 +62,6 @@ import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.model.Venta;
 import com.sistemapos.sistematextil.model.VentaDetalle;
 import com.sistemapos.sistematextil.repositories.ComprobanteConfigRepository;
-import com.sistemapos.sistematextil.repositories.HistorialStockRepository;
 import com.sistemapos.sistematextil.repositories.NotaCreditoDetalleRepository;
 import com.sistemapos.sistematextil.repositories.NotaCreditoRepository;
 import com.sistemapos.sistematextil.repositories.ProductoVarianteRepository;
@@ -135,7 +134,7 @@ public class NotaCreditoService {
     private final VentaRepository ventaRepository;
     private final VentaDetalleRepository ventaDetalleRepository;
     private final ProductoVarianteRepository productoVarianteRepository;
-    private final HistorialStockRepository historialStockRepository;
+    private final StockMovimientoService stockMovimientoService;
     private final UsuarioRepository usuarioRepository;
     private final ComprobanteConfigRepository comprobanteConfigRepository;
     private final NotaCreditoRepository notaCreditoRepository;
@@ -1589,8 +1588,10 @@ public class NotaCreditoService {
             throw new RuntimeException("La nota de credito no tiene detalles para revertir stock");
         }
 
-        List<ProductoVariante> variantesActualizar = new ArrayList<>();
-        List<HistorialStock> historial = new ArrayList<>();
+        Integer idSucursal = notaCredito.getSucursal() != null ? notaCredito.getSucursal().getIdSucursal() : null;
+        if (idSucursal == null) {
+            throw new RuntimeException("La nota de credito no tiene sucursal asociada");
+        }
 
         for (NotaCreditoDetalle detalle : detalles) {
             Integer idProductoVariante = detalle.getProductoVariante() != null
@@ -1600,30 +1601,14 @@ public class NotaCreditoService {
                 throw new RuntimeException("Uno de los detalles de la nota de credito no tiene variante de producto");
             }
 
-            ProductoVariante variante = productoVarianteRepository.findByIdProductoVarianteForUpdate(idProductoVariante)
-                    .orElseThrow(() -> new RuntimeException(
-                            "La variante con ID " + idProductoVariante + " no existe"));
-
-            int stockAnterior = valorEntero(variante.getStock());
-            int stockNuevo = stockAnterior + valorEntero(detalle.getCantidad());
-            variante.setStock(stockNuevo);
-            variante.setEstado(stockNuevo <= 0 ? "AGOTADO" : "ACTIVO");
-            variantesActualizar.add(variante);
-
-            HistorialStock movimiento = new HistorialStock();
-            movimiento.setTipoMovimiento(HistorialStock.TipoMovimiento.DEVOLUCION);
-            movimiento.setMotivo("NOTA CREDITO " + SunatComprobanteHelper.numeroComprobante(notaCredito));
-            movimiento.setProductoVariante(variante);
-            movimiento.setSucursal(notaCredito.getSucursal());
-            movimiento.setUsuario(usuarioAutenticado);
-            movimiento.setCantidad(valorEntero(detalle.getCantidad()));
-            movimiento.setStockAnterior(stockAnterior);
-            movimiento.setStockNuevo(stockNuevo);
-            historial.add(movimiento);
+            stockMovimientoService.incrementar(
+                    idSucursal,
+                    idProductoVariante,
+                    valorEntero(detalle.getCantidad()),
+                    HistorialStock.TipoMovimiento.DEVOLUCION,
+                    "NOTA CREDITO " + SunatComprobanteHelper.numeroComprobante(notaCredito),
+                    usuarioAutenticado);
         }
-
-        productoVarianteRepository.saveAll(variantesActualizar);
-        historialStockRepository.saveAll(historial);
     }
 
     private NumeroComprobanteNotaCredito asignarNumeroNotaCredito(Venta venta) {

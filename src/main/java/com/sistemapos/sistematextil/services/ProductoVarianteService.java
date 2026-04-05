@@ -34,6 +34,7 @@ import com.sistemapos.sistematextil.model.Producto;
 import com.sistemapos.sistematextil.model.ProductoColorImagen;
 import com.sistemapos.sistematextil.model.ProductoVariante;
 import com.sistemapos.sistematextil.model.Sucursal;
+import com.sistemapos.sistematextil.model.SucursalTipo;
 import com.sistemapos.sistematextil.model.Talla;
 import com.sistemapos.sistematextil.repositories.ProductoColorImagenRepository;
 import com.sistemapos.sistematextil.repositories.ProductoVarianteRepository;
@@ -47,8 +48,10 @@ import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaListItem
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaLoteItemRequest;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaLoteUpdateRequest;
 import com.sistemapos.sistematextil.util.producto.ProductoVariantePosResponse;
+import com.sistemapos.sistematextil.util.producto.ProductoVarianteStockSucursalRow;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaUpdateRequest;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteUpdateRequest;
+import com.sistemapos.sistematextil.util.producto.StockSucursalVentaResumen;
 import com.sistemapos.sistematextil.util.usuario.Rol;
 import com.sistemapos.sistematextil.model.Usuario;
 
@@ -73,6 +76,7 @@ public class ProductoVarianteService {
     private final ColorService colorService;
     private final SucursalRepository sucursalRepository;
     private final UsuarioRepository usuarioRepository;
+    private final StockMovimientoService stockMovimientoService;
 
     @PersistenceContext
     private final EntityManager entityManager;
@@ -107,14 +111,19 @@ public class ProductoVarianteService {
         }
 
         Integer idSucursalFiltro = resolverIdSucursalEscaneo(usuarioAutenticado, idSucursal);
-        ProductoVariante variante = repository.findEscaneableByCodigoBarras(codigoNormalizado, idSucursalFiltro)
+        ProductoVariante variante = repository.findEscaneableByCodigoBarras(codigoNormalizado)
                 .orElseThrow(() -> new RuntimeException(
-                        "No existe una variante con el codigo de barras '" + codigoNormalizado + "' en la sucursal"));
+                        "No existe una variante con el codigo de barras '" + codigoNormalizado + "'"));
 
-        validarVarianteVendibleParaEscaneo(variante);
+        StockMovimientoService.StockContexto contextoStock = stockMovimientoService.obtenerContexto(
+                idSucursalFiltro,
+                variante.getIdProductoVariante());
+        ProductoVariante varianteEscaneable = contextoStock.sucursalStock().getProductoVariante();
 
-        Map<ProductoColorKey, ImagenDetalleGroup> imagenes = resolverImagenesDetallePorProductoColor(List.of(variante));
-        return toPosResponse(variante, imagenes);
+        validarVarianteVendibleParaEscaneo(varianteEscaneable);
+
+        Map<ProductoColorKey, ImagenDetalleGroup> imagenes = resolverImagenesDetallePorProductoColor(List.of(varianteEscaneable));
+        return toPosResponse(varianteEscaneable, imagenes);
     }
 
     public PagedResponse<ProductoVarianteListadoResumenResponse> listarResumenPaginado(
@@ -123,6 +132,7 @@ public class ProductoVarianteService {
             Integer idCategoria,
             Integer idColor,
             Boolean conOferta,
+            Boolean soloDisponibles,
             Integer idSucursal,
             String correoUsuarioAutenticado) {
         validarPagina(page);
@@ -138,9 +148,26 @@ public class ProductoVarianteService {
                 idCategoria,
                 idColor,
                 conOferta,
+                SucursalTipo.VENTA,
+                Boolean.TRUE.equals(soloDisponibles),
                 pageable);
         Map<ProductoColorKey, ImagenDetalleGroup> imagenes = resolverImagenesDetallePorProductoColor(variantes.getContent());
-        return PagedResponse.fromPage(variantes.map(variante -> toListadoResumenResponse(variante, imagenes)));
+        List<Integer> varianteIds = variantes.getContent().stream()
+                .map(ProductoVariante::getIdProductoVariante)
+                .filter(id -> id != null)
+                .toList();
+        List<ProductoVarianteStockSucursalRow> stockRows = varianteIds.isEmpty()
+                ? List.of()
+                : repository.obtenerStocksCatalogoPorVariantes(varianteIds, idSucursalFiltro, SucursalTipo.VENTA);
+        Map<Integer, List<StockSucursalVentaResumen>> stocksPorVariante = agruparStocksVenta(stockRows);
+        Sucursal sucursalContexto = idSucursalFiltro == null
+                ? null
+                : sucursalRepository.findByIdSucursalAndDeletedAtIsNull(idSucursalFiltro).orElse(null);
+        return PagedResponse.fromPage(variantes.map(variante -> toListadoResumenResponse(
+                variante,
+                imagenes,
+                stocksPorVariante.getOrDefault(variante.getIdProductoVariante(), List.of()),
+                sucursalContexto)));
     }
 
     public PagedResponse<ProductoVarianteOfertaListItemResponse> listarConOfertaPaginado(int page, Integer idSucursal) {
@@ -392,8 +419,9 @@ public class ProductoVarianteService {
         variante.setPrecioOferta(precioOferta);
         variante.setOfertaInicio(ofertaInicio);
         variante.setOfertaFin(ofertaFin);
-        variante.setStock(request.stock());
-        variante.setEstado(resolverEstadoVarianteSegunStock(request.stock()));
+        int stockSolicitado = sumarStocksSolicitados(request.stocksSucursales());
+        variante.setStock(stockSolicitado);
+        variante.setEstado(resolverEstadoVarianteSegunStock(stockSolicitado));
 
         ProductoVariante actualizada = repository.save(variante);
 
@@ -798,6 +826,18 @@ public class ProductoVarianteService {
         }
     }
 
+    private int sumarStocksSolicitados(
+            java.util.List<com.sistemapos.sistematextil.util.producto.ProductoVarianteStockCreateItem> stocks) {
+        if (stocks == null || stocks.isEmpty()) {
+            return 0;
+        }
+        return stocks.stream()
+                .map(com.sistemapos.sistematextil.util.producto.ProductoVarianteStockCreateItem::cantidad)
+                .filter(java.util.Objects::nonNull)
+                .mapToInt(Integer::intValue)
+                .sum();
+    }
+
     private void aplicarOferta(
             ProductoVariante variante,
             Double precioOfertaSolicitado,
@@ -947,9 +987,30 @@ public class ProductoVarianteService {
         return result;
     }
 
+    private Map<Integer, List<StockSucursalVentaResumen>> agruparStocksVenta(
+            List<ProductoVarianteStockSucursalRow> rows) {
+        Map<Integer, List<StockSucursalVentaResumen>> result = new HashMap<>();
+        for (ProductoVarianteStockSucursalRow row : rows) {
+            if (row.varianteId() == null) {
+                continue;
+            }
+            result.computeIfAbsent(row.varianteId(), unused -> new ArrayList<>())
+                    .add(new StockSucursalVentaResumen(row.idSucursal(), row.nombreSucursal(), row.stock()));
+        }
+        return result;
+    }
+
     private ProductoVarianteListadoResumenResponse toListadoResumenResponse(
             ProductoVariante variante,
             Map<ProductoColorKey, ImagenDetalleGroup> imagenes) {
+        return toListadoResumenResponse(variante, imagenes, List.of(), null);
+    }
+
+    private ProductoVarianteListadoResumenResponse toListadoResumenResponse(
+            ProductoVariante variante,
+            Map<ProductoColorKey, ImagenDetalleGroup> imagenes,
+            List<StockSucursalVentaResumen> stocksSucursalesVenta,
+            Sucursal sucursalContexto) {
         Producto producto = variante.getProducto();
         Integer productoId = producto != null ? producto.getIdProducto() : null;
         Integer colorId = variante.getColor() != null ? variante.getColor().getIdColor() : null;
@@ -963,12 +1024,21 @@ public class ProductoVarianteService {
                                 producto.getCategoria().getNombreCategoria())
                         : null;
 
-        ProductoVarianteListadoResumenResponse.SucursalItem sucursal = producto != null
-                && producto.getSucursal() != null
-                        ? new ProductoVarianteListadoResumenResponse.SucursalItem(
-                                producto.getSucursal().getIdSucursal(),
-                                producto.getSucursal().getNombre())
-                        : null;
+        ProductoVarianteListadoResumenResponse.SucursalItem sucursal = null;
+        if (sucursalContexto != null) {
+            sucursal = new ProductoVarianteListadoResumenResponse.SucursalItem(
+                    sucursalContexto.getIdSucursal(),
+                    sucursalContexto.getNombre());
+        } else if (producto != null && producto.getSucursal() != null) {
+            sucursal = new ProductoVarianteListadoResumenResponse.SucursalItem(
+                    producto.getSucursal().getIdSucursal(),
+                    producto.getSucursal().getNombre());
+        } else if (stocksSucursalesVenta.size() == 1) {
+            StockSucursalVentaResumen stockSucursal = stocksSucursalesVenta.get(0);
+            sucursal = new ProductoVarianteListadoResumenResponse.SucursalItem(
+                    stockSucursal.idSucursal(),
+                    stockSucursal.nombreSucursal());
+        }
 
         ProductoVarianteListadoResumenResponse.ProductoItem productoItem = producto != null
                 ? new ProductoVarianteListadoResumenResponse.ProductoItem(
@@ -994,12 +1064,21 @@ public class ProductoVarianteService {
                         variante.getTalla().getNombre())
                 : null;
 
+        int stockTotal = stocksSucursalesVenta.isEmpty()
+                ? (variante.getStock() == null ? 0 : variante.getStock())
+                : stocksSucursalesVenta.stream()
+                        .map(StockSucursalVentaResumen::stock)
+                        .filter(stock -> stock != null)
+                        .mapToInt(Integer::intValue)
+                        .sum();
+
         return new ProductoVarianteListadoResumenResponse(
                 variante.getIdProductoVariante(),
                 variante.getSku(),
                 variante.getCodigoBarras(),
                 variante.getEstado(),
-                variante.getStock(),
+                stockTotal,
+                stocksSucursalesVenta,
                 variante.getPrecio(),
                 variante.getPrecioMayor(),
                 variante.getPrecioOferta(),

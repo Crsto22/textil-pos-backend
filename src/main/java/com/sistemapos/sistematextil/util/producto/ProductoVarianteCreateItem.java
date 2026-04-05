@@ -1,12 +1,14 @@
 package com.sistemapos.sistematextil.util.producto;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 import jakarta.validation.constraints.DecimalMin;
-import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+import jakarta.validation.Valid;
 
 public record ProductoVarianteCreateItem(
         @NotNull(message = "Ingrese colorId")
@@ -36,8 +38,8 @@ public record ProductoVarianteCreateItem(
 
         LocalDateTime ofertaFin,
 
-        @NotNull(message = "Ingrese stock")
-        @Min(value = 0, message = "El stock no puede ser negativo")
-        Integer stock
+        @NotEmpty(message = "Ingrese stocksSucursales")
+        @Valid
+        List<ProductoVarianteStockCreateItem> stocksSucursales
 ) {
 }

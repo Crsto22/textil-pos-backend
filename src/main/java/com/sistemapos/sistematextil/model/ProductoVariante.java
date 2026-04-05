@@ -14,9 +14,11 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 import jakarta.validation.constraints.DecimalMin;
-import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -38,12 +40,7 @@ public class ProductoVariante {
     @Column(name = "id_producto_variante")
     private Integer idProductoVariante;
 
-    @NotNull(message = "El stock es obligatorio")
-    @Min(value = 0, message = "El stock no puede ser negativo")
-    private Integer stock;
-
     @NotNull(message = "El precio es obligatorio")
-    @Min(value = 0, message = "El precio no puede ser negativo")
     private Double precio;
 
     @DecimalMin(value = "0.0", inclusive = false, message = "El precio por mayor debe ser mayor a 0")
@@ -66,6 +63,12 @@ public class ProductoVariante {
     @Column(name = "activo", nullable = false)
     private String activo = "ACTIVO";
 
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private LocalDateTime createdAt;
+
+    @Column(name = "updated_at", nullable = false)
+    private LocalDateTime updatedAt;
+
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
 
@@ -79,7 +82,7 @@ public class ProductoVariante {
 
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "producto_id", nullable = false)
-    @JsonIgnoreProperties({"categoria", "sucursal"}) 
+    @JsonIgnoreProperties({"categoria"})
     private Producto producto;
 
     @ManyToOne(fetch = FetchType.EAGER)
@@ -90,8 +93,29 @@ public class ProductoVariante {
     @JoinColumn(name = "color_id", nullable = false)
     private Color color;
 
-    @ManyToOne(fetch = FetchType.EAGER)
-    @JoinColumn(name = "sucursal_id", nullable = false)
-    @JsonIgnoreProperties({"empresa", "hibernateLazyInitializer", "handler"})
+    @Transient
     private Sucursal sucursal;
+
+    @Transient
+    private Integer stock;
+
+    @PrePersist
+    protected void onCreate() {
+        LocalDateTime now = LocalDateTime.now();
+        if (this.createdAt == null) {
+            this.createdAt = now;
+        }
+        this.updatedAt = now;
+        if (this.estado == null || this.estado.isBlank()) {
+            this.estado = "ACTIVO";
+        }
+        if (this.activo == null || this.activo.isBlank()) {
+            this.activo = "ACTIVO";
+        }
+    }
+
+    @PreUpdate
+    protected void onUpdate() {
+        this.updatedAt = LocalDateTime.now();
+    }
 }

@@ -19,7 +19,8 @@ public class ProductoVarianteBarcodeMigration implements ApplicationRunner {
     private static final Logger log = LoggerFactory.getLogger(ProductoVarianteBarcodeMigration.class);
     private static final String TABLE_NAME = "producto_variante";
     private static final String COLUMN_NAME = "codigo_barras";
-    private static final String INDEX_NAME = "uk_variante_sucursal_codigo_barras";
+    private static final String LEGACY_INDEX_NAME = "uk_variante_sucursal_codigo_barras";
+    private static final String GLOBAL_INDEX_NAME = "uk_variante_codigo_barras";
 
     private final DataSource dataSource;
 
@@ -37,8 +38,9 @@ public class ProductoVarianteBarcodeMigration implements ApplicationRunner {
 
             asegurarColumnaCodigoBarras(connection, statement);
             normalizarCodigosBarrasVacios(statement);
-            validarCodigosBarrasDuplicados(connection);
-            asegurarIndiceCodigoBarras(connection, statement);
+            String sucursalColumn = resolverSucursalColumn(connection);
+            validarCodigosBarrasDuplicados(connection, sucursalColumn);
+            asegurarIndiceCodigoBarras(connection, statement, sucursalColumn);
         }
     }
 
@@ -61,36 +63,58 @@ public class ProductoVarianteBarcodeMigration implements ApplicationRunner {
                 """);
     }
 
-    private void validarCodigosBarrasDuplicados(Connection connection) throws Exception {
-        try (PreparedStatement statement = connection.prepareStatement("""
-                SELECT sucursal_id, codigo_barras, COUNT(*) AS total
+    private void validarCodigosBarrasDuplicados(Connection connection, String sucursalColumn) throws Exception {
+        String sucursalSelect = sucursalColumn == null ? "NULL" : sucursalColumn;
+        String groupBy = sucursalColumn == null ? "codigo_barras" : sucursalColumn + ", codigo_barras";
+        try (PreparedStatement statement = connection.prepareStatement(
+                """
+                SELECT %s AS sucursal_ref, codigo_barras, COUNT(*) AS total
                 FROM producto_variante
                 WHERE codigo_barras IS NOT NULL
-                GROUP BY sucursal_id, codigo_barras
+                GROUP BY %s
                 HAVING COUNT(*) > 1
                 LIMIT 1
-                """);
+                """.formatted(sucursalSelect, groupBy));
                 ResultSet resultSet = statement.executeQuery()) {
             if (!resultSet.next()) {
                 return;
             }
+            Object sucursalRef = resultSet.getObject("sucursal_ref");
             throw new IllegalStateException(
                     "Existen codigos de barras duplicados en producto_variante. "
-                            + "Sucursal: " + resultSet.getInt("sucursal_id")
+                            + "Sucursal: " + (sucursalRef == null ? "GLOBAL" : sucursalRef)
                             + ", codigo_barras: " + resultSet.getString("codigo_barras")
                             + ", total: " + resultSet.getInt("total"));
         }
     }
 
-    private void asegurarIndiceCodigoBarras(Connection connection, Statement statement) throws Exception {
-        if (indexExists(connection, TABLE_NAME, INDEX_NAME)) {
+    private void asegurarIndiceCodigoBarras(Connection connection, Statement statement, String sucursalColumn)
+            throws Exception {
+        String indexName = sucursalColumn == null ? GLOBAL_INDEX_NAME : LEGACY_INDEX_NAME;
+        if (indexExists(connection, TABLE_NAME, indexName)) {
             return;
         }
-        statement.execute("""
+        String alterSql = sucursalColumn == null
+                ? """
                 ALTER TABLE producto_variante
-                ADD UNIQUE KEY uk_variante_sucursal_codigo_barras (sucursal_id, codigo_barras)
-                """);
-        log.info("Indice {} creado en {}", INDEX_NAME, TABLE_NAME);
+                ADD UNIQUE KEY uk_variante_codigo_barras (codigo_barras)
+                """
+                : """
+                ALTER TABLE producto_variante
+                ADD UNIQUE KEY uk_variante_sucursal_codigo_barras (%s, codigo_barras)
+                """.formatted(sucursalColumn);
+        statement.execute(alterSql);
+        log.info("Indice {} creado en {}", indexName, TABLE_NAME);
+    }
+
+    private String resolverSucursalColumn(Connection connection) throws Exception {
+        if (columnExists(connection, TABLE_NAME, "id_sucursal")) {
+            return "id_sucursal";
+        }
+        if (columnExists(connection, TABLE_NAME, "sucursal_id")) {
+            return "sucursal_id";
+        }
+        return null;
     }
 
     private boolean tableExists(Connection connection, String tableName) throws Exception {

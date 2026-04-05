@@ -7,6 +7,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import com.sistemapos.sistematextil.model.Sucursal;
+import java.util.List;
 
 public interface SucursalRepository extends JpaRepository<Sucursal, Integer> {
     Page<Sucursal> findByDeletedAtIsNull(Pageable pageable);
@@ -14,4 +15,5 @@ public interface SucursalRepository extends JpaRepository<Sucursal, Integer> {
     Optional<Sucursal> findByIdSucursalAndDeletedAtIsNull(Integer idSucursal);
     Optional<Sucursal> findByNombreIgnoreCaseAndDeletedAtIsNull(String nombre);
     Optional<Sucursal> findByEmpresa_IdEmpresaAndNombreIgnoreCaseAndDeletedAtIsNull(Integer idEmpresa, String nombre);
+    List<Sucursal> findByDeletedAtIsNullAndEstadoOrderByIdSucursalAsc(String estado);
 }

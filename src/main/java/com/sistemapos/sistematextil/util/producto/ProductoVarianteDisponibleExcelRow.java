@@ -19,4 +19,37 @@ public record ProductoVarianteDisponibleExcelRow(
         LocalDateTime ofertaInicio,
         LocalDateTime ofertaFin
 ) {
+    public ProductoVarianteDisponibleExcelRow(
+            Integer idProductoVariante,
+            String sku,
+            String codigoBarras,
+            String productoNombre,
+            String categoriaNombre,
+            String sucursalNombre,
+            String colorNombre,
+            String tallaNombre,
+            Long stock,
+            Double precio,
+            Double precioMayor,
+            Double precioOferta,
+            String estado,
+            LocalDateTime ofertaInicio,
+            LocalDateTime ofertaFin) {
+        this(
+                idProductoVariante,
+                sku,
+                codigoBarras,
+                productoNombre,
+                categoriaNombre,
+                sucursalNombre,
+                colorNombre,
+                tallaNombre,
+                stock == null ? 0 : stock.intValue(),
+                precio,
+                precioMayor,
+                precioOferta,
+                estado,
+                ofertaInicio,
+                ofertaFin);
+    }
 }

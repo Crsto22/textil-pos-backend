@@ -8,6 +8,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
@@ -32,7 +33,7 @@ public class Empresa {
     private Integer idEmpresa;
 
     @NotBlank(message = "El nombre es obligatorio")
-    @Size(min = 3, max = 60, message = "El nombre debe tener entre 3 y 60 caracteres")
+    @Size(min = 3, max = 100, message = "El nombre debe tener entre 3 y 100 caracteres")
     private String nombre;
 
     @Size(max = 150, message = "El nombre comercial no debe superar 150 caracteres")
@@ -45,36 +46,73 @@ public class Empresa {
     private String ruc;
 
     @NotBlank(message = "La razon social es obligatoria")
-    @Size(min = 5, max = 120, message = "La razon social debe tener entre 5 y 120 caracteres")
+    @Size(min = 5, max = 150, message = "La razon social debe tener entre 5 y 150 caracteres")
     @Column(name = "razon_social")
     private String razonSocial;
 
-    @NotBlank(message = "El correo es obligatorio")
     @Email(message = "El correo no tiene un formato valido")
+    @Column(length = 150)
     private String correo;
 
-    @Pattern(regexp = "^$|\\d{7,15}", message = "El telefono debe tener entre 7 y 15 digitos")
+    @Column(length = 20)
     private String telefono;
 
-    @Column(name = "logo_url")
+    @Column(length = 255)
+    private String direccion;
+
+    @Column(length = 6)
+    private String ubigeo;
+
+    @Column(length = 100)
+    private String departamento;
+
+    @Column(length = 100)
+    private String provincia;
+
+    @Column(length = 100)
+    private String distrito;
+
+    @Column(name = "codigo_establecimiento_sunat", length = 4)
+    private String codigoEstablecimientoSunat;
+
+    @Column(name = "logo_url", length = 600)
     private String logoUrl;
 
     @Column(name = "genera_facturacion_electronica", nullable = false)
     private Boolean generaFacturacionElectronica;
 
-    @Column(name = "created_at")
+    @Column(name = "activo", nullable = false)
+    private Boolean activo;
+
+    @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime fechaCreacion;
+
+    @Column(name = "updated_at", nullable = false)
+    private LocalDateTime updatedAt;
+
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
 
     @PrePersist
     protected void onCreate() {
+        LocalDateTime now = LocalDateTime.now();
         if (this.fechaCreacion == null) {
-            this.fechaCreacion = LocalDateTime.now();
+            this.fechaCreacion = now;
         }
+        this.updatedAt = now;
         if (this.generaFacturacionElectronica == null) {
             this.generaFacturacionElectronica = Boolean.FALSE;
+        }
+        if (this.activo == null) {
+            this.activo = Boolean.TRUE;
         }
         if ((this.nombreComercial == null || this.nombreComercial.isBlank()) && this.nombre != null) {
             this.nombreComercial = this.nombre.trim();
         }
+    }
+
+    @PreUpdate
+    protected void onUpdate() {
+        this.updatedAt = LocalDateTime.now();
     }
 }

@@ -47,6 +47,10 @@ public class Venta {
     private Usuario usuario;
 
     @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "id_canal_venta")
+    private CanalVenta canalVenta;
+
+    @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "id_cliente")
     private Cliente cliente;
 

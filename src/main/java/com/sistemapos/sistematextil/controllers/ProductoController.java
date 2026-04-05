@@ -81,6 +81,7 @@ public class ProductoController {
             @RequestParam(name = "idCategoria", required = false) Integer idCategoria,
             @RequestParam(name = "idColor", required = false) Integer idColor,
             @RequestParam(name = "conOferta", required = false) Boolean conOferta,
+            @RequestParam(name = "soloDisponibles", required = false) Boolean soloDisponibles,
             @RequestParam(name = "idSucursal", required = false) Integer idSucursal) {
         try {
             PagedResponse<ProductoListadoResumenResponse> response = productoService
@@ -89,6 +90,7 @@ public class ProductoController {
                             idCategoria,
                             idColor,
                             conOferta,
+                            soloDisponibles,
                             idSucursal,
                             obtenerCorreoAutenticado(authentication));
             return ResponseEntity.ok(response);
@@ -106,6 +108,7 @@ public class ProductoController {
             @RequestParam(name = "idCategoria", required = false) Integer idCategoria,
             @RequestParam(name = "idColor", required = false) Integer idColor,
             @RequestParam(name = "conOferta", required = false) Boolean conOferta,
+            @RequestParam(name = "soloDisponibles", required = false) Boolean soloDisponibles,
             @RequestParam(name = "idSucursal", required = false) Integer idSucursal,
             @RequestParam(defaultValue = "0") int page) {
         try {
@@ -116,6 +119,7 @@ public class ProductoController {
                             idCategoria,
                             idColor,
                             conOferta,
+                            soloDisponibles,
                             idSucursal,
                             obtenerCorreoAutenticado(authentication));
             return ResponseEntity.ok(response);

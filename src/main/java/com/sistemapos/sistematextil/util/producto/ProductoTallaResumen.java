@@ -14,6 +14,7 @@ public record ProductoTallaResumen(
         LocalDateTime ofertaInicio,
         LocalDateTime ofertaFin,
         Integer stock,
+        java.util.List<StockSucursalVentaResumen> stocksSucursalesVenta,
         String estado
 ) {
 }

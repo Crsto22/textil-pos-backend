@@ -58,6 +58,7 @@ public class DashboardService {
             case ADMINISTRADOR -> construirDashboardAdmin(usuario, filtro, idSucursal);
             case VENTAS -> construirDashboardVentas(usuario, filtro, idSucursal);
             case ALMACEN -> construirDashboardAlmacen(usuario, idSucursal);
+            case VENTAS_ALMACEN -> construirDashboardVentas(usuario, filtro, idSucursal);
         };
     }
 

@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.sistemapos.sistematextil.model.Empresa;
 import com.sistemapos.sistematextil.model.Sucursal;
+import com.sistemapos.sistematextil.model.SucursalTipo;
 import com.sistemapos.sistematextil.repositories.EmpresaRepository;
 import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
@@ -67,15 +68,11 @@ public class SucursalService {
 
         Sucursal sucursal = new Sucursal();
         sucursal.setNombre(nombreNormalizado);
-        sucursal.setDescripcion(normalizarTexto(request.descripcion()));
+        sucursal.setCiudad(resolverCiudad(request.ciudad(), request.descripcion(), request.distrito(), request.provincia()));
         sucursal.setDireccion(request.direccion().trim());
         sucursal.setTelefono(request.telefono().trim());
         sucursal.setCorreo(request.correo().trim());
-        sucursal.setUbigeo(normalizarTexto(request.ubigeo()));
-        sucursal.setDepartamento(normalizarTexto(request.departamento()));
-        sucursal.setProvincia(normalizarTexto(request.provincia()));
-        sucursal.setDistrito(normalizarTexto(request.distrito()));
-        sucursal.setCodigoEstablecimientoSunat(normalizarCodigo(request.codigoEstablecimientoSunat()));
+        sucursal.setTipo(resolverTipo(request.tipo()));
         sucursal.setEstado("ACTIVO");
         sucursal.setFechaCreacion(LocalDateTime.now());
         sucursal.setDeletedAt(null);
@@ -98,15 +95,11 @@ public class SucursalService {
                 .orElseThrow(() -> new RuntimeException("Empresa no encontrada"));
 
         sucursal.setNombre(nombreNormalizado);
-        sucursal.setDescripcion(normalizarTexto(request.descripcion()));
+        sucursal.setCiudad(resolverCiudad(request.ciudad(), request.descripcion(), request.distrito(), request.provincia()));
         sucursal.setDireccion(request.direccion().trim());
         sucursal.setTelefono(request.telefono().trim());
         sucursal.setCorreo(request.correo().trim());
-        sucursal.setUbigeo(normalizarTexto(request.ubigeo()));
-        sucursal.setDepartamento(normalizarTexto(request.departamento()));
-        sucursal.setProvincia(normalizarTexto(request.provincia()));
-        sucursal.setDistrito(normalizarTexto(request.distrito()));
-        sucursal.setCodigoEstablecimientoSunat(normalizarCodigo(request.codigoEstablecimientoSunat()));
+        sucursal.setTipo(resolverTipo(request.tipo()));
         sucursal.setEstado(request.estado().toUpperCase());
         sucursal.setEmpresa(empresa);
 
@@ -165,6 +158,8 @@ public class SucursalService {
         return new SucursalListItemResponse(
                 idSucursal,
                 sucursal.getNombre(),
+                sucursal.getCiudad(),
+                sucursal.getTipo() != null ? sucursal.getTipo().name() : null,
                 sucursal.getDescripcion(),
                 sucursal.getDireccion(),
                 sucursal.getTelefono(),
@@ -202,5 +197,32 @@ public class SucursalService {
     private String normalizarCodigo(String valor) {
         String normalizado = normalizarTexto(valor);
         return normalizado == null ? null : normalizado.toUpperCase();
+    }
+
+    private String resolverCiudad(String ciudad, String descripcion, String distrito, String provincia) {
+        String ciudadNormalizada = normalizarTexto(ciudad);
+        if (ciudadNormalizada != null) {
+            return ciudadNormalizada;
+        }
+
+        String descripcionNormalizada = normalizarTexto(descripcion);
+        if (descripcionNormalizada != null) {
+            return descripcionNormalizada;
+        }
+
+        String distritoNormalizado = normalizarTexto(distrito);
+        if (distritoNormalizado != null) {
+            return distritoNormalizado;
+        }
+
+        return normalizarTexto(provincia);
+    }
+
+    private SucursalTipo resolverTipo(String tipo) {
+        String tipoNormalizado = normalizarTexto(tipo);
+        if (tipoNormalizado == null) {
+            return SucursalTipo.VENTA;
+        }
+        return SucursalTipo.valueOf(tipoNormalizado.toUpperCase());
     }
 }

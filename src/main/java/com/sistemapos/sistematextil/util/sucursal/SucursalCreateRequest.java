@@ -12,6 +12,12 @@ public record SucursalCreateRequest(
         @Size(min = 3, max = 100, message = "El nombre debe tener entre 3 y 100 caracteres")
         String nombre,
 
+        @Size(max = 100, message = "La ciudad no puede superar los 100 caracteres")
+        String ciudad,
+
+        @Pattern(regexp = "^(|VENTA|ALMACEN)$", message = "Tipo permitido: VENTA o ALMACEN")
+        String tipo,
+
         @Size(max = 255, message = "La descripcion no puede superar los 255 caracteres")
         String descripcion,
 

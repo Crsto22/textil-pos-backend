@@ -17,7 +17,7 @@ public record ProductoVarianteResumenRow(
         Double precioOferta,
         LocalDateTime ofertaInicio,
         LocalDateTime ofertaFin,
-        Integer stock,
+        Long stock,
         String estado
 ) {
 }

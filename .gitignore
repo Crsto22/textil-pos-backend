@@ -40,4 +40,5 @@ build/
 # Local runtime and temporary files
 .tmp*/
 storage/
+.tools/
 --help

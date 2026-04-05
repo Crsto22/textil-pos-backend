@@ -2,26 +2,24 @@ package com.sistemapos.sistematextil.model;
 
 import java.time.LocalDateTime;
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.sistemapos.sistematextil.model.converter.EstadoActivoConverter;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
-import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.JoinColumn;
-import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
-import jakarta.persistence.Convert;
+import jakarta.persistence.Transient;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
-import com.sistemapos.sistematextil.model.converter.EstadoActivoConverter;
 
 @Entity
 @Table(name = "categoria")
@@ -36,37 +34,43 @@ public class Categoria {
     @Column(name = "id_categoria")
     private Integer idCategoria;
 
-    @NotBlank(message = "El nombre de la categoría es obligatorio")
-    @Size(min = 3, max = 50, message = "El nombre debe tener entre 3 y 50 caracteres")
-    @Column(name = "nombre_categoria")
+    @NotBlank(message = "El nombre de la categoria es obligatorio")
+    @Size(min = 3, max = 100, message = "El nombre debe tener entre 3 y 100 caracteres")
+    @Column(name = "nombre_categoria", unique = true)
     private String nombreCategoria;
 
     private String descripcion;
 
-    // Se inicializa como ACTIVO por defecto
     @Convert(converter = EstadoActivoConverter.class)
     @Column(name = "activo", nullable = false)
     private String estado = "ACTIVO";
 
-    @Column(name = "created_at")
+    @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime fechaRegistro;
+
+    @Column(name = "updated_at", nullable = false)
+    private LocalDateTime updatedAt;
 
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
 
-    // Relación con Sucursal
-    @ManyToOne(fetch = FetchType.EAGER)
-    @JoinColumn(name = "id_sucursal", nullable = false)
-    @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
+    @Transient
     private Sucursal sucursal;
 
     @PrePersist
     protected void onCreate() {
+        LocalDateTime now = LocalDateTime.now();
         if (this.fechaRegistro == null) {
-            this.fechaRegistro = LocalDateTime.now();
+            this.fechaRegistro = now;
         }
+        this.updatedAt = now;
         if (this.estado == null || this.estado.isBlank()) {
             this.estado = "ACTIVO";
         }
+    }
+
+    @PreUpdate
+    protected void onUpdate() {
+        this.updatedAt = LocalDateTime.now();
     }
 }

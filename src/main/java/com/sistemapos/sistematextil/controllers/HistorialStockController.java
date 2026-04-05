@@ -9,10 +9,13 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.sistemapos.sistematextil.model.HistorialStock;
 import com.sistemapos.sistematextil.services.HistorialStockService;
+import com.sistemapos.sistematextil.util.historialstock.HistorialStockListItemResponse;
+import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
 
 import lombok.AllArgsConstructor;
 
@@ -24,9 +27,13 @@ public class HistorialStockController {
     private final HistorialStockService service;
 
     @GetMapping("listar")
-    public ResponseEntity<?> listarTodo(Authentication authentication) {
+    public ResponseEntity<?> listarTodo(
+            Authentication authentication,
+            @RequestParam(defaultValue = "0") int page) {
         try {
-            return ResponseEntity.ok(service.listarTodo(obtenerCorreoAutenticado(authentication)));
+            PagedResponse<HistorialStockListItemResponse> response = service
+                    .listarPaginado(page, obtenerCorreoAutenticado(authentication));
+            return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al listar historial de stock" : e.getMessage();
             return ResponseEntity.status(resolverStatus(message)).body(Map.of("message", message));

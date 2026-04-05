@@ -78,7 +78,6 @@ import com.sistemapos.sistematextil.model.VentaDetalle;
 import com.sistemapos.sistematextil.repositories.ClienteRepository;
 import com.sistemapos.sistematextil.repositories.ComprobanteConfigRepository;
 import com.sistemapos.sistematextil.repositories.EmpresaRepository;
-import com.sistemapos.sistematextil.repositories.HistorialStockRepository;
 import com.sistemapos.sistematextil.repositories.MetodoPagoConfigRepository;
 import com.sistemapos.sistematextil.repositories.PagoRepository;
 import com.sistemapos.sistematextil.repositories.ProductoVarianteRepository;
@@ -123,7 +122,7 @@ public class VentaService {
     private final SucursalRepository sucursalRepository;
     private final ClienteRepository clienteRepository;
     private final EmpresaRepository empresaRepository;
-    private final HistorialStockRepository historialStockRepository;
+    private final StockMovimientoService stockMovimientoService;
     private final ApplicationEventPublisher applicationEventPublisher;
     private final SunatEmissionService sunatEmissionService;
     private final SunatDocumentStorageService sunatDocumentStorageService;
@@ -1530,27 +1529,15 @@ public class VentaService {
         }
         List<Pago> pagosGuardados = pagoRepository.saveAll(pagosGuardar);
 
-        List<HistorialStock> historial = new ArrayList<>();
         for (DetalleCalculado detalleCalculado : detallesFinales) {
-            ProductoVariante variante = detalleCalculado.variante();
-            int stockAnterior = valorEntero(variante.getStock());
-            int stockNuevo = stockAnterior - detalleCalculado.cantidad();
-            variante.setStock(stockNuevo);
-            variante.setEstado(stockNuevo <= 0 ? "AGOTADO" : "ACTIVO");
-
-            HistorialStock movimiento = new HistorialStock();
-            movimiento.setTipoMovimiento(HistorialStock.TipoMovimiento.VENTA);
-            movimiento.setMotivo("VENTA #" + ventaGuardada.getIdVenta());
-            movimiento.setProductoVariante(variante);
-            movimiento.setSucursal(sucursalVenta);
-            movimiento.setUsuario(usuarioAutenticado);
-            movimiento.setCantidad(detalleCalculado.cantidad());
-            movimiento.setStockAnterior(stockAnterior);
-            movimiento.setStockNuevo(stockNuevo);
-            historial.add(movimiento);
+            stockMovimientoService.descontar(
+                    sucursalVenta.getIdSucursal(),
+                    detalleCalculado.variante().getIdProductoVariante(),
+                    detalleCalculado.cantidad(),
+                    HistorialStock.TipoMovimiento.VENTA,
+                    "VENTA #" + ventaGuardada.getIdVenta(),
+                    usuarioAutenticado);
         }
-        productoVarianteRepository.saveAll(detallesFinales.stream().map(DetalleCalculado::variante).toList());
-        historialStockRepository.saveAll(historial);
 
         if (requiereComprobanteElectronico(tipoComprobante)) {
             applicationEventPublisher.publishEvent(new VentaRegistradaEvent(ventaGuardada.getIdVenta()));
@@ -1638,15 +1625,9 @@ public class VentaService {
                 throw new RuntimeException("No puede repetir la misma variante en el detalle de venta");
             }
 
-            ProductoVariante variante = productoVarianteRepository.findByIdProductoVarianteForUpdate(idProductoVariante)
-                    .orElseThrow(() -> new RuntimeException(
-                            "La variante con ID " + idProductoVariante + " no existe"));
-
-            if (variante.getSucursal() == null
-                    || variante.getSucursal().getIdSucursal() == null
-                    || !idSucursalVenta.equals(variante.getSucursal().getIdSucursal())) {
-                throw new RuntimeException("La variante con ID " + idProductoVariante + " no pertenece a la sucursal de la venta");
-            }
+            StockMovimientoService.StockContexto stockContexto = stockMovimientoService
+                    .obtenerContextoConBloqueo(idSucursalVenta, idProductoVariante);
+            ProductoVariante variante = stockContexto.sucursalStock().getProductoVariante();
 
             String nombreProducto = descripcionDetalleVenta(null, variante);
 
@@ -1655,7 +1636,7 @@ public class VentaService {
             }
 
             int cantidad = item.cantidad();
-            int stockActual = valorEntero(variante.getStock());
+            int stockActual = valorEntero(stockContexto.stockActual());
             if (stockActual < cantidad) {
                 throw new RuntimeException("Stock insuficiente para '" + nombreProducto
                         + "'. Disponible: " + stockActual + ", solicitado: " + cantidad);
@@ -2616,7 +2597,7 @@ public class VentaService {
         agregarCampoEncabezadoReportePdf(tabla, "NOMBRE DE ASESOR(A):", valorTexto(reporte.nombreUsuario()));
         agregarCampoEncabezadoReportePdf(tabla, "F. VENTA:", formatearPeriodoVentaReportePdf(reporte.desde(), reporte.hasta()));
         agregarCampoEncabezadoReportePdf(tabla, "F. ENVIO:", "");
-una con
+
         document.add(tabla);
     }
 

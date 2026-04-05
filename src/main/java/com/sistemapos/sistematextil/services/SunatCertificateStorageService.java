@@ -3,6 +3,7 @@ package com.sistemapos.sistematextil.services;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
@@ -108,8 +109,35 @@ public class SunatCertificateStorageService {
 
     private Path resolveBasePath() {
         String configured = sunatProperties.getCertBasePath();
-        String value = configured == null || configured.isBlank() ? "storage/sunat/certificados" : configured.trim();
-        return Paths.get(value).toAbsolutePath().normalize();
+        Path defaultPath = Paths.get("storage/sunat/certificados").toAbsolutePath().normalize();
+        if (configured == null || configured.isBlank()) {
+            return ensureDirectory(defaultPath);
+        }
+
+        Path configuredPath;
+        try {
+            configuredPath = Paths.get(configured.trim()).toAbsolutePath().normalize();
+        } catch (InvalidPathException e) {
+            return ensureDirectory(defaultPath);
+        }
+
+        try {
+            return ensureDirectory(configuredPath);
+        } catch (RuntimeException e) {
+            if (configuredPath.equals(defaultPath)) {
+                throw e;
+            }
+            return ensureDirectory(defaultPath);
+        }
+    }
+
+    private Path ensureDirectory(Path path) {
+        try {
+            Files.createDirectories(path);
+            return path;
+        } catch (IOException e) {
+            throw new RuntimeException("No se pudo acceder a la carpeta de certificados: " + path);
+        }
     }
 
     private Path resolveManagedPath(String storedPath) {

@@ -17,6 +17,7 @@ public record ProductoVarianteDetalleResponse(
         LocalDateTime ofertaInicio,
         LocalDateTime ofertaFin,
         Integer stock,
+        java.util.List<ProductoVarianteStockDetalleResponse> stocksSucursales,
         String estado
 ) {
 }

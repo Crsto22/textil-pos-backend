@@ -2,6 +2,7 @@ package com.sistemapos.sistematextil.controllers;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -67,12 +68,16 @@ public class EmpresaController {
 
     
     @PutMapping("actualizar/{id}")
-    public ResponseEntity<EmpresaResponse> actualizar(@PathVariable Integer id, @Valid @RequestBody Empresa empresa) {
+    public ResponseEntity<?> actualizar(@PathVariable Integer id, @Valid @RequestBody Empresa empresa) {
         try {
             Empresa empresaActualizada = empresaService.actualizar(id, empresa);
             return ResponseEntity.ok(EmpresaResponse.fromEntity(empresaActualizada));
         } catch (RuntimeException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(null);
+            String message = e.getMessage() == null ? "Error al actualizar la empresa" : e.getMessage();
+            HttpStatus status = message.toLowerCase().contains("no existe")
+                    ? HttpStatus.NOT_FOUND
+                    : HttpStatus.BAD_REQUEST;
+            return ResponseEntity.status(status).body(Map.of("message", message));
         }
     }
 

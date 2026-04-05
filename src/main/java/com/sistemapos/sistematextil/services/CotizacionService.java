@@ -97,6 +97,7 @@ public class CotizacionService {
     private final SucursalRepository sucursalRepository;
     private final ClienteRepository clienteRepository;
     private final ComprobanteConfigRepository comprobanteConfigRepository;
+    private final StockMovimientoService stockMovimientoService;
     private final VentaService ventaService;
 
     @Value("${application.pagination.default-size:10}")
@@ -409,16 +410,9 @@ public class CotizacionService {
                 throw new RuntimeException("No puede repetir la misma variante en el detalle de cotizacion");
             }
 
-            ProductoVariante variante = productoVarianteRepository.findByIdProductoVarianteAndDeletedAtIsNull(idProductoVariante)
-                    .orElseThrow(() -> new RuntimeException(
-                            "La variante con ID " + idProductoVariante + " no existe"));
-
-            if (variante.getSucursal() == null
-                    || variante.getSucursal().getIdSucursal() == null
-                    || !idSucursalCotizacion.equals(variante.getSucursal().getIdSucursal())) {
-                throw new RuntimeException(
-                        "La variante con ID " + idProductoVariante + " no pertenece a la sucursal de la cotizacion");
-            }
+            StockMovimientoService.StockContexto stockContexto = stockMovimientoService
+                    .obtenerContexto(idSucursalCotizacion, idProductoVariante);
+            ProductoVariante variante = stockContexto.sucursalStock().getProductoVariante();
 
             if (!"ACTIVO".equalsIgnoreCase(variante.getActivo())) {
                 throw new RuntimeException("La variante con SKU '" + variante.getSku() + "' esta INACTIVA");

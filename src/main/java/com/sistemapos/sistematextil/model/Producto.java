@@ -14,7 +14,10 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -46,19 +49,40 @@ public class Producto {
     @Column(name = "activo", nullable = false)
     private String activo = "ACTIVO";
 
-    @Column(name = "created_at")
+    @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime fechaCreacion;
+
+    @Column(name = "updated_at", nullable = false)
+    private LocalDateTime updatedAt;
 
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
 
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "categoria_id", nullable = false)
-    @JsonIgnoreProperties({"productos", "sucursal"}) 
+    @JsonIgnoreProperties({"productos"})
     private Categoria categoria;
 
-    @ManyToOne(fetch = FetchType.EAGER)
-    @JoinColumn(name = "sucursal_id", nullable = false)
-    @JsonIgnoreProperties({"hibernateLazyInitializer", "handler", "empresa"}) 
+    @Transient
     private Sucursal sucursal;
+
+    @PrePersist
+    protected void onCreate() {
+        LocalDateTime now = LocalDateTime.now();
+        if (this.fechaCreacion == null) {
+            this.fechaCreacion = now;
+        }
+        this.updatedAt = now;
+        if (this.estado == null || this.estado.isBlank()) {
+            this.estado = "ACTIVO";
+        }
+        if (this.activo == null || this.activo.isBlank()) {
+            this.activo = "ACTIVO";
+        }
+    }
+
+    @PreUpdate
+    protected void onUpdate() {
+        this.updatedAt = LocalDateTime.now();
+    }
 }

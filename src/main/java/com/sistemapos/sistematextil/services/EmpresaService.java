@@ -64,12 +64,16 @@ public class EmpresaService {
         normalizarEmpresa(empresa);
         empresa.setIdEmpresa(idEmpresa);
         empresa.setFechaCreacion(original.getFechaCreacion() != null ? original.getFechaCreacion() : LocalDateTime.now());
+        empresa.setDeletedAt(original.getDeletedAt());
 
         if (empresa.getLogoUrl() == null) {
             empresa.setLogoUrl(original.getLogoUrl());
         }
         if (empresa.getGeneraFacturacionElectronica() == null) {
             empresa.setGeneraFacturacionElectronica(original.getGeneraFacturacionElectronica());
+        }
+        if (empresa.getActivo() == null) {
+            empresa.setActivo(original.getActivo() != null ? original.getActivo() : Boolean.TRUE);
         }
 
         return empresaRepository.save(empresa);

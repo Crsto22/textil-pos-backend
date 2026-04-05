@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.sistemapos.sistematextil.model.Sucursal;
+import com.sistemapos.sistematextil.model.SucursalTipo;
 import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
@@ -151,8 +152,19 @@ public class UsuarioService {
         if (idSucursal == null) {
             throw new RuntimeException("La sucursal es obligatoria para el rol " + rol.name());
         }
-        return sucursalRepository.findById(idSucursal)
+        Sucursal sucursal = sucursalRepository.findById(idSucursal)
                 .orElseThrow(() -> new RuntimeException("Sucursal no encontrada"));
+        validarRolSegunTipoSucursal(rol, sucursal);
+        return sucursal;
+    }
+
+    private void validarRolSegunTipoSucursal(Rol rol, Sucursal sucursal) {
+        if (sucursal.getTipo() == SucursalTipo.ALMACEN && rol != Rol.ALMACEN) {
+            throw new RuntimeException("La sucursal tipo ALMACEN solo permite el rol ALMACEN");
+        }
+        if (sucursal.getTipo() == SucursalTipo.VENTA && rol == Rol.ALMACEN) {
+            throw new RuntimeException("La sucursal tipo VENTA no permite el rol ALMACEN");
+        }
     }
 
     private Usuario obtenerUsuarioAutenticado(String correoUsuarioAutenticado) {

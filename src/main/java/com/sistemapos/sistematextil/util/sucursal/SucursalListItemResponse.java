@@ -6,6 +6,8 @@ import java.util.List;
 public record SucursalListItemResponse(
         Integer idSucursal,
         String nombre,
+        String ciudad,
+        String tipo,
         String descripcion,
         String direccion,
         String telefono,

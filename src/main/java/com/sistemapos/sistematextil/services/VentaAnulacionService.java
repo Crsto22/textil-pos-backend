@@ -1,7 +1,6 @@
 package com.sistemapos.sistematextil.services;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
@@ -9,12 +8,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import com.sistemapos.sistematextil.model.HistorialStock;
-import com.sistemapos.sistematextil.model.ProductoVariante;
 import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.model.Venta;
 import com.sistemapos.sistematextil.model.VentaDetalle;
-import com.sistemapos.sistematextil.repositories.HistorialStockRepository;
-import com.sistemapos.sistematextil.repositories.ProductoVarianteRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
 import com.sistemapos.sistematextil.repositories.VentaDetalleRepository;
 import com.sistemapos.sistematextil.repositories.VentaRepository;
@@ -40,10 +36,9 @@ public class VentaAnulacionService {
     private final TransactionTemplate transactionTemplate;
     private final VentaRepository ventaRepository;
     private final VentaDetalleRepository ventaDetalleRepository;
-    private final ProductoVarianteRepository productoVarianteRepository;
-    private final HistorialStockRepository historialStockRepository;
     private final UsuarioRepository usuarioRepository;
     private final NotaCreditoService notaCreditoService;
+    private final StockMovimientoService stockMovimientoService;
 
     public VentaAnulacionResponse anular(Integer idVenta, VentaAnulacionRequest request, String correoUsuarioAutenticado) {
         String descripcionMotivo = normalizarDescripcion(request.descripcionMotivo());
@@ -106,8 +101,10 @@ public class VentaAnulacionService {
             throw new RuntimeException("La venta no tiene detalles para revertir stock");
         }
 
-        List<ProductoVariante> variantesActualizar = new ArrayList<>();
-        List<HistorialStock> historial = new ArrayList<>();
+        Integer idSucursal = venta.getSucursal() != null ? venta.getSucursal().getIdSucursal() : null;
+        if (idSucursal == null) {
+            throw new RuntimeException("La venta no tiene sucursal asociada");
+        }
 
         for (VentaDetalle detalle : detalles) {
             Integer idProductoVariante = detalle.getProductoVariante() != null
@@ -117,30 +114,14 @@ public class VentaAnulacionService {
                 throw new RuntimeException("Uno de los detalles de venta no tiene variante de producto");
             }
 
-            ProductoVariante variante = productoVarianteRepository.findByIdProductoVarianteForUpdate(idProductoVariante)
-                    .orElseThrow(() -> new RuntimeException(
-                            "La variante con ID " + idProductoVariante + " no existe"));
-
-            int stockAnterior = valorEntero(variante.getStock());
-            int stockNuevo = stockAnterior + valorEntero(detalle.getCantidad());
-            variante.setStock(stockNuevo);
-            variante.setEstado(stockNuevo <= 0 ? "AGOTADO" : "ACTIVO");
-            variantesActualizar.add(variante);
-
-            HistorialStock movimiento = new HistorialStock();
-            movimiento.setTipoMovimiento(HistorialStock.TipoMovimiento.DEVOLUCION);
-            movimiento.setMotivo(motivoMovimiento);
-            movimiento.setProductoVariante(variante);
-            movimiento.setSucursal(venta.getSucursal());
-            movimiento.setUsuario(usuarioAutenticado);
-            movimiento.setCantidad(valorEntero(detalle.getCantidad()));
-            movimiento.setStockAnterior(stockAnterior);
-            movimiento.setStockNuevo(stockNuevo);
-            historial.add(movimiento);
+            stockMovimientoService.incrementar(
+                    idSucursal,
+                    idProductoVariante,
+                    valorEntero(detalle.getCantidad()),
+                    HistorialStock.TipoMovimiento.DEVOLUCION,
+                    motivoMovimiento,
+                    usuarioAutenticado);
         }
-
-        productoVarianteRepository.saveAll(variantesActualizar);
-        historialStockRepository.saveAll(historial);
     }
 
     private void validarVentaDisponibleParaAnulacion(Venta venta) {
@@ -232,12 +213,11 @@ public class VentaAnulacionService {
         }
         return normalizado.length() <= maxLen ? normalizado : normalizado.substring(0, maxLen);
     }
+    private boolean requiereComprobanteElectronico(String tipoComprobante) {
+        return TIPO_BOLETA.equals(tipoComprobante) || TIPO_FACTURA.equals(tipoComprobante);
+    }
 
     private int valorEntero(Integer value) {
         return value == null ? 0 : value;
-    }
-
-    private boolean requiereComprobanteElectronico(String tipoComprobante) {
-        return TIPO_BOLETA.equals(tipoComprobante) || TIPO_FACTURA.equals(tipoComprobante);
     }
 }

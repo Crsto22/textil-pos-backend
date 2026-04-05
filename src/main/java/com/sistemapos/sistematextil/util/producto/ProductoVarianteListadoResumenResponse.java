@@ -9,6 +9,7 @@ public record ProductoVarianteListadoResumenResponse(
         String codigoBarras,
         String estado,
         Integer stock,
+        List<StockSucursalVentaResumen> stocksSucursalesVenta,
         Double precio,
         Double precioMayor,
         Double precioOferta,

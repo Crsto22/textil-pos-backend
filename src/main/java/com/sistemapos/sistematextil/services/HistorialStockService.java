@@ -24,6 +24,7 @@ public class HistorialStockService {
 
     private final HistorialStockRepository repository;
     private final UsuarioRepository usuarioRepository;
+    private final UsuarioSucursalAccessService usuarioSucursalAccessService;
 
     @Value("${application.pagination.default-size:10}")
     private int defaultPageSize;
@@ -128,10 +129,7 @@ public class HistorialStockService {
         if (usuarioAutenticado.getRol().esAdministrador()) {
             return null;
         }
-        if (usuarioAutenticado.getSucursal() != null && usuarioAutenticado.getSucursal().getIdSucursal() != null) {
-            return usuarioAutenticado.getSucursal().getIdSucursal();
-        }
-        throw new RuntimeException("El usuario autenticado no tiene sucursal asignada");
+        return usuarioSucursalAccessService.obtenerIdSucursalPrincipal(usuarioAutenticado);
     }
 
     private void validarPagina(int page) {

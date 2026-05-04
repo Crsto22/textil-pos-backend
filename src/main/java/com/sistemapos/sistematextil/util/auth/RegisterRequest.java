@@ -1,5 +1,7 @@
 package com.sistemapos.sistematextil.util.auth;
 
+import java.util.List;
+
 import com.sistemapos.sistematextil.util.usuario.Rol;
 
 import jakarta.persistence.Column;
@@ -36,7 +38,11 @@ public record RegisterRequest(
     @NotNull(message = "Ingrese rol")
     Rol rol,
 
-    Integer idSucursal
+    Integer idSucursal,
+
+    List<Integer> idsSucursales,
+
+    Integer idTurno
 
 ) {
 

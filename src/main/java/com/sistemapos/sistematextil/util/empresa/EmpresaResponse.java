@@ -12,9 +12,18 @@ public record EmpresaResponse(
         String razonSocial,
         String correo,
         String telefono,
+        String direccion,
+        String ubigeo,
+        String departamento,
+        String provincia,
+        String distrito,
+        String codigoEstablecimientoSunat,
         String logoUrl,
         Boolean generaFacturacionElectronica,
-        LocalDateTime fechaCreacion
+        Boolean activo,
+        LocalDateTime fechaCreacion,
+        LocalDateTime updatedAt,
+        LocalDateTime deletedAt
 ) {
     public static EmpresaResponse fromEntity(Empresa empresa) {
         return new EmpresaResponse(
@@ -25,8 +34,17 @@ public record EmpresaResponse(
                 empresa.getRazonSocial(),
                 empresa.getCorreo(),
                 empresa.getTelefono(),
+                empresa.getDireccion(),
+                empresa.getUbigeo(),
+                empresa.getDepartamento(),
+                empresa.getProvincia(),
+                empresa.getDistrito(),
+                empresa.getCodigoEstablecimientoSunat(),
                 empresa.getLogoUrl(),
                 empresa.getGeneraFacturacionElectronica(),
-                empresa.getFechaCreacion());
+                empresa.getActivo(),
+                empresa.getFechaCreacion(),
+                empresa.getUpdatedAt(),
+                empresa.getDeletedAt());
     }
 }

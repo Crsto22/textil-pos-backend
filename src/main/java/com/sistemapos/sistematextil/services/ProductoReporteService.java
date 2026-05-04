@@ -33,6 +33,7 @@ public class ProductoReporteService {
     private final ProductoRepository productoRepository;
     private final ProductoVarianteRepository productoVarianteRepository;
     private final VentaDetalleRepository ventaDetalleRepository;
+    private final UsuarioSucursalAccessService usuarioSucursalAccessService;
 
     public ProductoReporteResponse obtenerReporte(
             String filtro,
@@ -92,33 +93,16 @@ public class ProductoReporteService {
     }
 
     private void validarRolPermitido(Usuario usuario) {
-        if (usuario.getRol() != Rol.ADMINISTRADOR
-                && usuario.getRol() != Rol.VENTAS
-                && usuario.getRol() != Rol.ALMACEN) {
+        if (!usuario.getRol().permiteVentas() && !usuario.getRol().permiteAlmacen()) {
             throw new RuntimeException("El usuario autenticado no tiene permisos para consultar reportes de productos");
         }
     }
 
     private Integer resolverIdSucursalFiltro(Usuario usuarioAutenticado, Integer idSucursalRequest) {
-        if (usuarioAutenticado.getRol() == Rol.ADMINISTRADOR) {
-            if (idSucursalRequest == null) {
-                return null;
-            }
-            return obtenerSucursalActiva(idSucursalRequest).getIdSucursal();
-        }
-
-        Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
-        if (idSucursalRequest != null && !idSucursalRequest.equals(idSucursalUsuario)) {
-            throw new RuntimeException("El usuario autenticado no tiene permisos para consultar otra sucursal");
-        }
-        return idSucursalUsuario;
-    }
-
-    private Integer obtenerIdSucursalUsuario(Usuario usuarioAutenticado) {
-        if (usuarioAutenticado.getSucursal() == null || usuarioAutenticado.getSucursal().getIdSucursal() == null) {
-            throw new RuntimeException("El usuario autenticado no tiene sucursal asignada");
-        }
-        return usuarioAutenticado.getSucursal().getIdSucursal();
+        return usuarioSucursalAccessService.resolverIdSucursalFiltro(
+                usuarioAutenticado,
+                idSucursalRequest,
+                "El usuario autenticado no tiene permisos para consultar otra sucursal");
     }
 
     private String resolverNombreSucursal(Integer idSucursal) {

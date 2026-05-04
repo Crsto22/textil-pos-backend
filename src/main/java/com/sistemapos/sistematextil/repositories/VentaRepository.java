@@ -2,6 +2,7 @@ package com.sistemapos.sistematextil.repositories;
 
 import java.time.LocalDateTime;
 import java.math.BigDecimal;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -12,6 +13,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import com.sistemapos.sistematextil.model.Venta;
+import com.sistemapos.sistematextil.util.sunat.SunatEstado;
 
 public interface VentaRepository extends JpaRepository<Venta, Integer> {
 
@@ -78,6 +80,46 @@ public interface VentaRepository extends JpaRepository<Venta, Integer> {
                     """,
             nativeQuery = true)
     List<Object[]> obtenerVentasPorFecha(
+            @Param("idSucursal") Integer idSucursal,
+            @Param("idUsuario") Integer idUsuario,
+            @Param("fechaInicio") LocalDateTime fechaInicio,
+            @Param("fechaFinExclusive") LocalDateTime fechaFinExclusive);
+
+    @Query(
+            value = """
+                    SELECT HOUR(v.fecha) AS hora, COALESCE(SUM(v.total), 0) AS monto
+                    FROM venta v
+                    WHERE v.deleted_at IS NULL
+                      AND v.estado = 'EMITIDA'
+                      AND (:idSucursal IS NULL OR v.id_sucursal = :idSucursal)
+                      AND (:idUsuario IS NULL OR v.id_usuario = :idUsuario)
+                      AND (:fechaInicio IS NULL OR v.fecha >= :fechaInicio)
+                      AND (:fechaFinExclusive IS NULL OR v.fecha < :fechaFinExclusive)
+                    GROUP BY HOUR(v.fecha)
+                    ORDER BY HOUR(v.fecha)
+                    """,
+            nativeQuery = true)
+    List<Object[]> obtenerVentasPorHora(
+            @Param("idSucursal") Integer idSucursal,
+            @Param("idUsuario") Integer idUsuario,
+            @Param("fechaInicio") LocalDateTime fechaInicio,
+            @Param("fechaFinExclusive") LocalDateTime fechaFinExclusive);
+
+    @Query(
+            value = """
+                    SELECT DATE_FORMAT(v.fecha, '%Y-%m-01') AS periodo, COALESCE(SUM(v.total), 0) AS monto
+                    FROM venta v
+                    WHERE v.deleted_at IS NULL
+                      AND v.estado = 'EMITIDA'
+                      AND (:idSucursal IS NULL OR v.id_sucursal = :idSucursal)
+                      AND (:idUsuario IS NULL OR v.id_usuario = :idUsuario)
+                      AND (:fechaInicio IS NULL OR v.fecha >= :fechaInicio)
+                      AND (:fechaFinExclusive IS NULL OR v.fecha < :fechaFinExclusive)
+                    GROUP BY YEAR(v.fecha), MONTH(v.fecha)
+                    ORDER BY YEAR(v.fecha), MONTH(v.fecha)
+                    """,
+            nativeQuery = true)
+    List<Object[]> obtenerVentasPorMes(
             @Param("idSucursal") Integer idSucursal,
             @Param("idUsuario") Integer idUsuario,
             @Param("fechaInicio") LocalDateTime fechaInicio,
@@ -158,7 +200,8 @@ public interface VentaRepository extends JpaRepository<Venta, Integer> {
               AND (:idSucursal IS NULL OR v.sucursal.idSucursal = :idSucursal)
               AND (:idUsuario IS NULL OR v.usuario.idUsuario = :idUsuario)
               AND (:idCliente IS NULL OR c.idCliente = :idCliente)
-              AND (:tipoComprobante IS NULL OR v.tipoComprobante = :tipoComprobante)
+              AND (:#{#tiposComprobante == null || #tiposComprobante.size() == 0} = true
+                   OR v.tipoComprobante IN :tiposComprobante)
               AND (:fechaInicio IS NULL OR v.fecha >= :fechaInicio)
               AND (:fechaFinExclusive IS NULL OR v.fecha < :fechaFinExclusive)
               AND (
@@ -178,7 +221,7 @@ public interface VentaRepository extends JpaRepository<Venta, Integer> {
             @Param("idSucursal") Integer idSucursal,
             @Param("idUsuario") Integer idUsuario,
             @Param("idCliente") Integer idCliente,
-            @Param("tipoComprobante") String tipoComprobante,
+            @Param("tiposComprobante") List<String> tiposComprobante,
             @Param("fechaInicio") LocalDateTime fechaInicio,
             @Param("fechaFinExclusive") LocalDateTime fechaFinExclusive,
             Pageable pageable);
@@ -191,6 +234,8 @@ public interface VentaRepository extends JpaRepository<Venta, Integer> {
               AND (:idSucursal IS NULL OR v.sucursal.idSucursal = :idSucursal)
               AND (:idUsuario IS NULL OR v.usuario.idUsuario = :idUsuario)
               AND (:idCliente IS NULL OR c.idCliente = :idCliente)
+              AND (:#{#tiposComprobante == null || #tiposComprobante.size() == 0} = true
+                   OR v.tipoComprobante IN :tiposComprobante)
               AND (:estado IS NULL OR v.estado = :estado)
               AND v.fecha >= :fechaInicio
               AND v.fecha < :fechaFinExclusive
@@ -200,6 +245,7 @@ public interface VentaRepository extends JpaRepository<Venta, Integer> {
             @Param("idSucursal") Integer idSucursal,
             @Param("idUsuario") Integer idUsuario,
             @Param("idCliente") Integer idCliente,
+            @Param("tiposComprobante") List<String> tiposComprobante,
             @Param("estado") String estado,
             @Param("fechaInicio") LocalDateTime fechaInicio,
             @Param("fechaFinExclusive") LocalDateTime fechaFinExclusive);
@@ -222,6 +268,20 @@ public interface VentaRepository extends JpaRepository<Venta, Integer> {
     Optional<Venta> findByIdVentaAndDeletedAtIsNull(Integer idVenta);
 
     Optional<Venta> findByIdVentaAndDeletedAtIsNullAndSucursal_IdSucursal(Integer idVenta, Integer idSucursal);
+
+    @Query("""
+            SELECT v
+            FROM Venta v
+            WHERE v.deletedAt IS NULL
+              AND v.tipoComprobante IN ('FACTURA', 'BOLETA')
+              AND (:tipoComprobante IS NULL OR v.tipoComprobante = :tipoComprobante)
+              AND UPPER(v.serie) = UPPER(:serie)
+              AND v.correlativo = :correlativo
+            """)
+    List<Venta> buscarComprobanteParaGuia(
+            @Param("tipoComprobante") String tipoComprobante,
+            @Param("serie") String serie,
+            @Param("correlativo") Integer correlativo);
 
     @Query(
             value = """
@@ -260,4 +320,22 @@ public interface VentaRepository extends JpaRepository<Venta, Integer> {
     Integer obtenerMaxCorrelativoPorDocumento(
             @Param("tipoComprobante") String tipoComprobante,
             @Param("serie") String serie);
+
+    @Query("""
+            SELECT v.idVenta
+            FROM Venta v
+            WHERE v.deletedAt IS NULL
+              AND v.tipoComprobante IN ('FACTURA', 'BOLETA')
+              AND v.sunatEstado IN :estadosSunat
+              AND NOT EXISTS (
+                    SELECT 1
+                    FROM SunatJob j
+                    WHERE j.tipoDocumento = com.sistemapos.sistematextil.util.sunat.SunatJobTipoDocumento.VENTA
+                      AND j.documentoId = v.idVenta
+              )
+            ORDER BY v.updatedAt ASC, v.idVenta ASC
+            """)
+    List<Integer> findPendingSunatIdsWithoutJob(
+            @Param("estadosSunat") Collection<SunatEstado> estadosSunat,
+            Pageable pageable);
 }

@@ -30,6 +30,19 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class SunatConfigService {
 
+    private static final String BETA_CPE_BILL_SERVICE_URL =
+            "https://e-beta.sunat.gob.pe/ol-ti-itcpfegem-beta/billService?wsdl";
+    private static final String PRODUCCION_CPE_BILL_SERVICE_URL =
+            "https://e-factura.sunat.gob.pe/ol-ti-itcpfegem/billService?wsdl";
+    private static final String PRODUCCION_CPE_TICKET_URL =
+            "https://e-factura.sunat.gob.pe/ol-it-wsconscpegem/billConsultService?wsdl";
+    private static final String BETA_GRE_TOKEN_BASE_URL = "https://gre-test.nubefact.com/v1/clientessol";
+    private static final String PRODUCTION_GRE_TOKEN_BASE_URL = "https://api-seguridad.sunat.gob.pe/v1/clientessol";
+    private static final String BETA_GRE_CPE_BASE_URL =
+            "https://gre-test.nubefact.com/v1/contribuyente/gem/comprobantes";
+    private static final String PRODUCTION_GRE_CPE_BASE_URL =
+            "https://api-cpe.sunat.gob.pe/v1/contribuyente/gem/comprobantes";
+
     private final SunatConfigRepository sunatConfigRepository;
     private final EmpresaRepository empresaRepository;
     private final SunatSecretCryptoService sunatSecretCryptoService;
@@ -57,6 +70,21 @@ public class SunatConfigService {
                 ambiente,
                 ambienteAnterior,
                 config.getUrlBillService()));
+        config.setUrlConsultaTicket(resolverUrlConsultaTicket(
+                request.urlConsultaTicket(),
+                ambiente,
+                ambienteAnterior,
+                config.getUrlConsultaTicket()));
+        config.setUrlApiToken(resolverUrlApiToken(
+                request.urlApiToken(),
+                ambiente,
+                ambienteAnterior,
+                config.getUrlApiToken()));
+        config.setUrlApiCpe(resolverUrlApiCpe(
+                request.urlApiCpe(),
+                ambiente,
+                ambienteAnterior,
+                config.getUrlApiCpe()));
         config.setActivo(normalizarActivo(request.activo()));
         config.setDeletedAt(null);
 
@@ -151,6 +179,9 @@ public class SunatConfigService {
                     config.getAmbiente(),
                     config.getUsuarioSol(),
                     config.getUrlBillService(),
+                    config.getUrlConsultaTicket(),
+                    config.getUrlApiToken(),
+                    config.getUrlApiCpe(),
                     obtenerNombreArchivo(config.getCertificadoUrl()),
                     true,
                     true,
@@ -176,6 +207,9 @@ public class SunatConfigService {
                 config.getAmbiente(),
                 config.getUsuarioSol(),
                 config.getUrlBillService(),
+                config.getUrlConsultaTicket(),
+                config.getUrlApiToken(),
+                config.getUrlApiCpe(),
                 obtenerNombreArchivo(config.getCertificadoUrl()),
                 tieneValor(config.getClaveSol()),
                 tieneValor(config.getCertificadoUrl()),
@@ -262,7 +296,7 @@ public class SunatConfigService {
             String urlActual) {
         String normalized = normalizarTextoOpcional(urlRequest);
         if (normalized != null) {
-            return validarUrl(normalized);
+            return validarUrl(normalized, "urlBillService");
         }
         if (urlActual != null && !urlActual.isBlank()
                 && ambienteAnterior != null
@@ -272,23 +306,101 @@ public class SunatConfigService {
         return defaultUrlBillService(ambienteNuevo);
     }
 
-    private String validarUrl(String url) {
+    private String resolverUrlConsultaTicket(
+            String urlRequest,
+            String ambienteNuevo,
+            String ambienteAnterior,
+            String urlActual) {
+        String normalized = normalizarTextoOpcional(urlRequest);
+        if (normalized != null) {
+            return validarUrl(normalized, "urlConsultaTicket");
+        }
+        if (urlActual != null && !urlActual.isBlank()
+                && ambienteAnterior != null
+                && ambienteAnterior.equalsIgnoreCase(ambienteNuevo)) {
+            return urlActual;
+        }
+        return defaultUrlConsultaTicket(ambienteNuevo);
+    }
+
+    private String resolverUrlApiToken(
+            String urlRequest,
+            String ambienteNuevo,
+            String ambienteAnterior,
+            String urlActual) {
+        String normalized = normalizarTextoOpcional(urlRequest);
+        if (normalized != null) {
+            return validarUrl(normalized, "urlApiToken");
+        }
+        if (urlActual != null && !urlActual.isBlank()
+                && ambienteAnterior != null
+                && ambienteAnterior.equalsIgnoreCase(ambienteNuevo)) {
+            return urlActual;
+        }
+        return defaultUrlApiToken(ambienteNuevo);
+    }
+
+    private String resolverUrlApiCpe(
+            String urlRequest,
+            String ambienteNuevo,
+            String ambienteAnterior,
+            String urlActual) {
+        String normalized = normalizarTextoOpcional(urlRequest);
+        if (normalized != null) {
+            return validarUrl(normalized, "urlApiCpe");
+        }
+        if (urlActual != null && !urlActual.isBlank()
+                && ambienteAnterior != null
+                && ambienteAnterior.equalsIgnoreCase(ambienteNuevo)) {
+            return urlActual;
+        }
+        return defaultUrlApiCpe(ambienteNuevo);
+    }
+
+    private String validarUrl(String url, String fieldName) {
         try {
             java.net.URI uri = java.net.URI.create(url);
             if (uri.getScheme() == null || uri.getHost() == null) {
-                throw new RuntimeException("urlBillService debe ser una URL absoluta");
+                throw new RuntimeException(fieldName + " debe ser una URL absoluta");
             }
             return uri.toString();
         } catch (IllegalArgumentException e) {
-            throw new RuntimeException("urlBillService debe ser una URL valida");
+            throw new RuntimeException(fieldName + " debe ser una URL valida");
         }
     }
 
     private String defaultUrlBillService(String ambiente) {
         if ("PRODUCCION".equalsIgnoreCase(ambiente)) {
-            return "https://e-factura.sunat.gob.pe/ol-ti-itcpfegem/billService?wsdl";
+            return PRODUCCION_CPE_BILL_SERVICE_URL;
         }
-        return "https://e-beta.sunat.gob.pe/ol-ti-itcpfegem-beta/billService?wsdl";
+        return BETA_CPE_BILL_SERVICE_URL;
+    }
+
+    private String defaultUrlConsultaTicket(String ambiente) {
+        if ("PRODUCCION".equalsIgnoreCase(ambiente)) {
+            return PRODUCCION_CPE_TICKET_URL;
+        }
+        return BETA_CPE_BILL_SERVICE_URL;
+    }
+
+    private String defaultUrlApiToken(String ambiente) {
+        if ("BETA".equalsIgnoreCase(ambiente)) {
+            return BETA_GRE_TOKEN_BASE_URL;
+        }
+        if ("PRODUCCION".equalsIgnoreCase(ambiente)) {
+            return PRODUCTION_GRE_TOKEN_BASE_URL;
+        }
+        return null;
+    }
+
+    private String defaultUrlApiCpe(String ambiente) {
+        if ("BETA".equalsIgnoreCase(ambiente)) {
+            return BETA_GRE_CPE_BASE_URL;
+        }
+        if ("PRODUCCION".equalsIgnoreCase(ambiente)) {
+            return PRODUCTION_GRE_CPE_BASE_URL;
+        }
+        return null;
     }
 
     private String normalizarTextoOpcional(String value) {

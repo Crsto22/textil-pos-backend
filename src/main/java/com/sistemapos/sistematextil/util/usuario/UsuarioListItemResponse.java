@@ -1,6 +1,10 @@
 package com.sistemapos.sistematextil.util.usuario;
 
 import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.util.List;
+
+import com.sistemapos.sistematextil.util.turno.DiaSemana;
 
 public record UsuarioListItemResponse(
         Integer idUsuario,
@@ -14,6 +18,12 @@ public record UsuarioListItemResponse(
         String estado,
         LocalDateTime fechaCreacion,
         Integer idSucursal,
-        String nombreSucursal
+        String nombreSucursal,
+        List<SucursalPermitidaResponse> sucursalesPermitidas,
+        Integer idTurno,
+        String nombreTurno,
+        LocalTime horaInicioTurno,
+        LocalTime horaFinTurno,
+        List<DiaSemana> diasTurno
 ) {
 }

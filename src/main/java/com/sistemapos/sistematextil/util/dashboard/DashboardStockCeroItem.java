@@ -6,5 +6,7 @@ public record DashboardStockCeroItem(
         String color,
         String talla,
         Integer stock,
-        String sku) {
+        String sku,
+        String imagenPrincipal,
+        String imagenPrincipalThumb) {
 }

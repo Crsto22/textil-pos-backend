@@ -21,13 +21,20 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import com.sistemapos.sistematextil.model.ProductoVariante;
+import com.sistemapos.sistematextil.services.ProductoImagenService;
 import com.sistemapos.sistematextil.services.ProductoVarianteService;
 import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
+import com.sistemapos.sistematextil.util.producto.ProductoVarianteImagenDeleteResponse;
+import com.sistemapos.sistematextil.util.producto.ProductoVarianteImagenUploadResponse;
+import com.sistemapos.sistematextil.util.producto.ProductoVarianteListadoResumenPageResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteListadoResumenResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaListItemResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaLoteUpdateRequest;
+import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaSucursalLoteUpdateRequest;
+import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaSucursalUpdateRequest;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaUpdateRequest;
 import com.sistemapos.sistematextil.util.producto.ProductoVariantePosResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteUpdateRequest;
@@ -41,6 +48,7 @@ import lombok.AllArgsConstructor;
 public class ProductoVarianteController {
 
     private final ProductoVarianteService service;
+    private final ProductoImagenService productoImagenService;
 
     @GetMapping("listar")
     public ResponseEntity<?> listar(
@@ -96,7 +104,7 @@ public class ProductoVarianteController {
             @RequestParam(name = "soloDisponibles", required = false) Boolean soloDisponibles,
             @RequestParam(name = "idSucursal", required = false) Integer idSucursal) {
         try {
-            PagedResponse<ProductoVarianteListadoResumenResponse> response = service.listarResumenPaginado(
+            ProductoVarianteListadoResumenPageResponse response = service.listarResumenPaginado(
                     q,
                     page,
                     idCategoria,
@@ -138,14 +146,31 @@ public class ProductoVarianteController {
 
     @GetMapping("ofertas")
     public ResponseEntity<?> listarConOferta(
+            Authentication authentication,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(name = "idSucursal", required = false) Integer idSucursal) {
         try {
             PagedResponse<ProductoVarianteOfertaListItemResponse> response = service
-                    .listarConOfertaPaginado(page, idSucursal);
+                    .listarConOfertaPaginado(page, idSucursal, obtenerCorreoAutenticado(authentication));
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al listar variantes con oferta" : e.getMessage();
+            return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
+                    .body(Map.of("message", message));
+        }
+    }
+
+    @GetMapping("ofertas/sucursal")
+    public ResponseEntity<?> listarOfertasSucursal(
+            Authentication authentication,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(name = "idSucursal") Integer idSucursal) {
+        try {
+            PagedResponse<ProductoVarianteOfertaListItemResponse> response = service
+                    .listarOfertasSucursalPaginado(page, idSucursal, obtenerCorreoAutenticado(authentication));
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al listar ofertas por sucursal" : e.getMessage();
             return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
                     .body(Map.of("message", message));
         }
@@ -171,6 +196,42 @@ public class ProductoVarianteController {
             return ResponseEntity.ok(service.actualizar(id, request, obtenerCorreoAutenticado(authentication)));
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al actualizar variante" : e.getMessage();
+            return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
+                    .body(Map.of("message", message));
+        }
+    }
+
+    @PostMapping(value = "{idProductoVariante}/imagenes", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<?> subirImagenesVariante(
+            Authentication authentication,
+            @PathVariable Integer idProductoVariante,
+            @RequestParam("files") java.util.List<MultipartFile> files) {
+        try {
+            ProductoVarianteImagenUploadResponse response = productoImagenService.subirImagenesDesdeVariante(
+                    idProductoVariante,
+                    obtenerCorreoAutenticado(authentication),
+                    files);
+            return ResponseEntity.status(HttpStatus.CREATED).body(response);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al subir imagenes de variante" : e.getMessage();
+            return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
+                    .body(Map.of("message", message));
+        }
+    }
+
+    @DeleteMapping("{idProductoVariante}/imagenes/{idColorImagen}")
+    public ResponseEntity<?> eliminarImagenVariante(
+            Authentication authentication,
+            @PathVariable Integer idProductoVariante,
+            @PathVariable Integer idColorImagen) {
+        try {
+            ProductoVarianteImagenDeleteResponse response = productoImagenService.eliminarImagenDesdeVariante(
+                    idProductoVariante,
+                    idColorImagen,
+                    obtenerCorreoAutenticado(authentication));
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al eliminar imagen de variante" : e.getMessage();
             return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
                     .body(Map.of("message", message));
         }
@@ -214,10 +275,11 @@ public class ProductoVarianteController {
 
     @PatchMapping("oferta/{id}")
     public ResponseEntity<?> actualizarOferta(
+            Authentication authentication,
             @PathVariable Integer id,
             @Valid @RequestBody ProductoVarianteOfertaUpdateRequest request) {
         try {
-            return ResponseEntity.ok(service.actualizarOferta(id, request));
+            return ResponseEntity.ok(service.actualizarOferta(id, request, obtenerCorreoAutenticado(authentication)));
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al actualizar oferta de variante" : e.getMessage();
             return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
@@ -227,11 +289,46 @@ public class ProductoVarianteController {
 
     @PatchMapping("ofertas/lote")
     public ResponseEntity<?> actualizarOfertasLote(
+            Authentication authentication,
             @Valid @RequestBody ProductoVarianteOfertaLoteUpdateRequest request) {
         try {
-            return ResponseEntity.ok(service.actualizarOfertasLote(request));
+            return ResponseEntity.ok(service.actualizarOfertasLote(request, obtenerCorreoAutenticado(authentication)));
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al actualizar ofertas de variantes" : e.getMessage();
+            return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
+                    .body(Map.of("message", message));
+        }
+    }
+
+    @PatchMapping("oferta/{idProductoVariante}/sucursal/{idSucursal}")
+    public ResponseEntity<?> actualizarOfertaSucursal(
+            Authentication authentication,
+            @PathVariable Integer idProductoVariante,
+            @PathVariable Integer idSucursal,
+            @Valid @RequestBody ProductoVarianteOfertaSucursalUpdateRequest request) {
+        try {
+            return ResponseEntity.ok(service.actualizarOfertaSucursal(
+                    idProductoVariante,
+                    idSucursal,
+                    request,
+                    obtenerCorreoAutenticado(authentication)));
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al actualizar oferta por sucursal" : e.getMessage();
+            return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
+                    .body(Map.of("message", message));
+        }
+    }
+
+    @PatchMapping("ofertas/sucursal/lote")
+    public ResponseEntity<?> actualizarOfertasSucursalLote(
+            Authentication authentication,
+            @Valid @RequestBody ProductoVarianteOfertaSucursalLoteUpdateRequest request) {
+        try {
+            return ResponseEntity.ok(service.actualizarOfertasSucursalLote(
+                    request,
+                    obtenerCorreoAutenticado(authentication)));
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al actualizar ofertas por sucursal" : e.getMessage();
             return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
                     .body(Map.of("message", message));
         }

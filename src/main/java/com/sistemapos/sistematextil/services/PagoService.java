@@ -5,7 +5,6 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URI;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -38,7 +37,6 @@ import com.sistemapos.sistematextil.model.Pago;
 import com.sistemapos.sistematextil.model.Sucursal;
 import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.repositories.PagoRepository;
-import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
 import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
 import com.sistemapos.sistematextil.util.pago.PagoActualizarCodigoRequest;
@@ -58,7 +56,8 @@ public class PagoService {
 
     private final PagoRepository pagoRepository;
     private final UsuarioRepository usuarioRepository;
-    private final SucursalRepository sucursalRepository;
+    private final S3StorageService s3StorageService;
+    private final UsuarioSucursalAccessService usuarioSucursalAccessService;
 
     @Value("${application.pagination.default-size:10}")
     private int defaultPageSize;
@@ -181,10 +180,10 @@ public class PagoService {
             Integer sucursalPago = pago.getVenta() != null && pago.getVenta().getSucursal() != null
                     ? pago.getVenta().getSucursal().getIdSucursal()
                     : null;
-            Integer sucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
-            if (sucursalPago != null && !sucursalPago.equals(sucursalUsuario)) {
-                throw new RuntimeException("El usuario autenticado no tiene permisos para actualizar pagos de otra sucursal");
-            }
+            usuarioSucursalAccessService.validarSucursalPermitida(
+                    usuarioAutenticado,
+                    sucursalPago,
+                    "El usuario autenticado no tiene permisos para actualizar pagos de otra sucursal");
         }
 
         pago.setCodigoOperacion(request.codigoOperacion().trim());
@@ -299,52 +298,30 @@ public class PagoService {
     }
 
     private void validarRolLectura(Usuario usuario) {
-        if (usuario.getRol() != Rol.ADMINISTRADOR
-                && usuario.getRol() != Rol.VENTAS) {
+        if (!usuario.getRol().permiteVentas()) {
             throw new RuntimeException("El usuario autenticado no tiene permisos para consultar pagos");
         }
     }
 
     private void validarRolActualizacion(Usuario usuario) {
-        if (usuario.getRol() != Rol.ADMINISTRADOR
-                && usuario.getRol() != Rol.VENTAS) {
+        if (!usuario.getRol().permiteVentas()) {
             throw new RuntimeException("El usuario autenticado no tiene permisos para actualizar pagos");
         }
     }
 
     private Integer resolverIdSucursalListado(Usuario usuarioAutenticado, Integer idSucursalRequest) {
-        if (esAdministrador(usuarioAutenticado)) {
-            if (idSucursalRequest == null) {
-                return null;
-            }
-            if (idSucursalRequest <= 0) {
-                throw new RuntimeException("idSucursal debe ser mayor a 0");
-            }
-            return sucursalRepository.findByIdSucursalAndDeletedAtIsNull(idSucursalRequest)
-                    .map(Sucursal::getIdSucursal)
-                    .orElseThrow(() -> new RuntimeException("Sucursal no encontrada"));
-        }
-
-        Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
-        if (idSucursalRequest != null && !idSucursalUsuario.equals(idSucursalRequest)) {
-            throw new RuntimeException("El usuario autenticado no tiene permisos para filtrar por otra sucursal");
-        }
-        return idSucursalUsuario;
-    }
-
-    private Integer obtenerIdSucursalUsuario(Usuario usuario) {
-        if (usuario.getSucursal() == null || usuario.getSucursal().getIdSucursal() == null) {
-            throw new RuntimeException("El usuario autenticado no tiene sucursal asignada");
-        }
-        return usuario.getSucursal().getIdSucursal();
+        return usuarioSucursalAccessService.resolverIdSucursalFiltro(
+                usuarioAutenticado,
+                idSucursalRequest,
+                "El usuario autenticado no tiene permisos para filtrar por otra sucursal");
     }
 
     private boolean esAdministrador(Usuario usuario) {
-        return usuario.getRol() == Rol.ADMINISTRADOR;
+        return usuario.getRol().esAdministrador();
     }
 
     private boolean esVentas(Usuario usuario) {
-        return usuario.getRol() == Rol.VENTAS;
+        return usuario.getRol().operaVentas();
     }
 
     private String nombreUsuario(Usuario usuario) {
@@ -616,7 +593,7 @@ public class PagoService {
         }
 
         ImageIO.scanForPlugins();
-        try (InputStream stream = URI.create(logoUrl).toURL().openStream()) {
+        try (InputStream stream = s3StorageService.openStream(logoUrl)) {
             BufferedImage buffered = ImageIO.read(stream);
             if (buffered != null) {
                 ByteArrayOutputStream png = new ByteArrayOutputStream();

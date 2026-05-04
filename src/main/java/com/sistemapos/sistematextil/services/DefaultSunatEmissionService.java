@@ -39,6 +39,7 @@ public class DefaultSunatEmissionService implements SunatEmissionService {
     private final SunatDocumentStorageService sunatDocumentStorageService;
     private final SunatSoapClientService sunatSoapClientService;
     private final SunatCdrParserService sunatCdrParserService;
+    private final SunatErrorClassifierService sunatErrorClassifierService;
 
     @Override
     public SunatEmissionResult emitir(Venta venta, List<VentaDetalle> detalles) {
@@ -46,9 +47,9 @@ public class DefaultSunatEmissionService implements SunatEmissionService {
 
         if ("DISABLED".equals(mode)) {
             return new SunatEmissionResult(
-                    SunatEstado.PENDIENTE,
-                    null,
-                    "Integracion SUNAT deshabilitada. La venta queda pendiente de envio electronico.",
+                    SunatEstado.ERROR_DEFINITIVO,
+                    "DISABLED",
+                    "Integracion SUNAT deshabilitada. Active la configuracion para emitir el comprobante.",
                     null,
                     null,
                     SunatComprobanteHelper.construirNombreArchivoXml(venta),
@@ -70,7 +71,7 @@ public class DefaultSunatEmissionService implements SunatEmissionService {
 
         LocalDateTime now = LocalDateTime.now();
         return new SunatEmissionResult(
-                SunatEstado.ERROR,
+                SunatEstado.ERROR_DEFINITIVO,
                 "CONFIG",
                 "Modo SUNAT no soportado: " + mode,
                 null,
@@ -141,7 +142,7 @@ public class DefaultSunatEmissionService implements SunatEmissionService {
                             soapResponse.cdrZipFileName(),
                             soapResponse.cdrZipBytes());
                 } catch (RuntimeException storageError) {
-                    cdrMessage = cdrMessage + " | CDR recibido pero no se pudo guardar en S3";
+                    cdrMessage = cdrMessage + " | CDR recibido pero no se pudo guardar en disco local";
                 }
 
                 return new SunatEmissionResult(
@@ -176,8 +177,9 @@ public class DefaultSunatEmissionService implements SunatEmissionService {
             } catch (RuntimeException e) {
                 log.error("Error en envio SUNAT: {}", e.getMessage(), e);
                 LocalDateTime respondedAt = LocalDateTime.now();
+                SunatEstado estadoError = sunatErrorClassifierService.classify(e.getMessage());
                 return new SunatEmissionResult(
-                        SunatEstado.ERROR,
+                        estadoError,
                         "ENVIO",
                         normalizarMensaje(e.getMessage(), "No se pudo enviar el comprobante a SUNAT"),
                         signedXml.digestValue(),
@@ -193,7 +195,7 @@ public class DefaultSunatEmissionService implements SunatEmissionService {
         } catch (RuntimeException e) {
             LocalDateTime now = LocalDateTime.now();
             return new SunatEmissionResult(
-                    SunatEstado.ERROR,
+                    SunatEstado.ERROR_DEFINITIVO,
                     "CONFIG",
                     normalizarMensaje(e.getMessage(), "No se pudo preparar el comprobante para SUNAT"),
                     null,

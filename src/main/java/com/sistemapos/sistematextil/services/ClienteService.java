@@ -57,7 +57,7 @@ public class ClienteService {
 
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
         validarRolPermitido(usuarioAutenticado);
-        PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idCliente").ascending());
+        PageRequest pageable = PageRequest.of(page, defaultPageSize, ordenClientesPorCreacionDesc());
         TipoDocumento tipoDocumentoFiltro = normalizarTipoDocumentoParaFiltro(tipoDocumento);
         Integer idEmpresaFiltro = resolverEmpresaContexto(usuarioAutenticado).getIdEmpresa();
 
@@ -86,12 +86,18 @@ public class ClienteService {
         Integer idEmpresaFiltro = resolverEmpresaContexto(usuarioAutenticado).getIdEmpresa();
         TipoDocumento tipoDocumentoFiltro = normalizarTipoDocumentoParaFiltro(tipoDocumento);
 
-        PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idCliente").ascending());
+        PageRequest pageable = PageRequest.of(page, defaultPageSize, ordenClientesPorCreacionDesc());
         Page<ClienteListItemResponse> clientes = clienteRepository
                 .buscarConFiltros(termNormalizado, idEmpresaFiltro, tipoDocumentoFiltro, pageable)
                 .map(this::toListItemResponse);
 
         return PagedResponse.fromPage(clientes);
+    }
+
+    private Sort ordenClientesPorCreacionDesc() {
+        return Sort.by(
+                Sort.Order.desc("fechaCreacion"),
+                Sort.Order.desc("idCliente"));
     }
 
     public ClienteDetalleResponse obtenerDetalle(Integer idCliente, String correoUsuarioAutenticado) {
@@ -227,8 +233,8 @@ public class ClienteService {
     }
 
     private void validarRolPermitido(Usuario usuario) {
-        if (usuario.getRol() != Rol.ADMINISTRADOR && usuario.getRol() != Rol.VENTAS) {
-            throw new RuntimeException("El usuario autenticado debe tener rol ADMINISTRADOR o VENTAS");
+        if (!usuario.getRol().permiteVentas()) {
+            throw new RuntimeException("El usuario autenticado debe tener permisos de ventas");
         }
     }
 
@@ -287,11 +293,11 @@ public class ClienteService {
     }
 
     private boolean esAdministrador(Usuario usuario) {
-        return usuario.getRol() == Rol.ADMINISTRADOR;
+        return usuario.getRol().esAdministrador();
     }
 
     private boolean esVentas(Usuario usuario) {
-        return usuario.getRol() == Rol.VENTAS;
+        return usuario.getRol().operaVentas();
     }
 
     private Cliente obtenerClienteConAcceso(Integer idCliente, Usuario usuarioAutenticado) {

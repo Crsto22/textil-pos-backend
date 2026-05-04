@@ -5,5 +5,7 @@ import java.time.LocalDate;
 
 public record DashboardSerieItem(
         LocalDate fecha,
+        String etiqueta,
+        String granularidad,
         BigDecimal monto) {
 }

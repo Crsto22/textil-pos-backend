@@ -37,6 +37,7 @@ public class ClienteReporteService {
     private final EmpresaRepository empresaRepository;
     private final UsuarioRepository usuarioRepository;
     private final SucursalRepository sucursalRepository;
+    private final UsuarioSucursalAccessService usuarioSucursalAccessService;
 
     public ClienteReporteResponse obtenerReporte(
             String filtro,
@@ -124,31 +125,16 @@ public class ClienteReporteService {
     }
 
     private void validarRolPermitido(Usuario usuarioAutenticado) {
-        if (usuarioAutenticado.getRol() != Rol.ADMINISTRADOR && usuarioAutenticado.getRol() != Rol.VENTAS) {
+        if (!usuarioAutenticado.getRol().permiteVentas()) {
             throw new RuntimeException("El usuario autenticado no tiene permisos para consultar reportes de clientes");
         }
     }
 
     private Integer resolverIdSucursalFiltro(Usuario usuarioAutenticado, Integer idSucursalRequest) {
-        if (usuarioAutenticado.getRol() == Rol.ADMINISTRADOR) {
-            if (idSucursalRequest == null) {
-                return null;
-            }
-            return obtenerSucursalActiva(idSucursalRequest).getIdSucursal();
-        }
-
-        Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
-        if (idSucursalRequest != null && !idSucursalRequest.equals(idSucursalUsuario)) {
-            throw new RuntimeException("No tiene permisos para consultar clientes de otra sucursal");
-        }
-        return idSucursalUsuario;
-    }
-
-    private Integer obtenerIdSucursalUsuario(Usuario usuarioAutenticado) {
-        if (usuarioAutenticado.getSucursal() == null || usuarioAutenticado.getSucursal().getIdSucursal() == null) {
-            throw new RuntimeException("El usuario autenticado no tiene sucursal asignada");
-        }
-        return usuarioAutenticado.getSucursal().getIdSucursal();
+        return usuarioSucursalAccessService.resolverIdSucursalFiltro(
+                usuarioAutenticado,
+                idSucursalRequest,
+                "No tiene permisos para consultar clientes de otra sucursal");
     }
 
     private Empresa resolverEmpresaContexto(Usuario usuarioAutenticado) {

@@ -34,9 +34,9 @@ public class UsuarioRolSchemaMigration implements ApplicationRunner {
 
             statement.execute("""
                     ALTER TABLE usuario
-                    MODIFY COLUMN rol ENUM('ADMINISTRADOR','VENTAS','ALMACEN','VENTAS_ALMACEN') NOT NULL
+                    MODIFY COLUMN rol ENUM('ADMINISTRADOR','VENTAS','ALMACEN','VENTAS_ALMACEN','SISTEMA') NOT NULL
                     """);
-            log.info("Columna usuario.rol normalizada para incluir VENTAS_ALMACEN");
+            log.info("Columna usuario.rol normalizada para incluir VENTAS_ALMACEN y SISTEMA");
         }
     }
 

@@ -7,7 +7,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.net.URI;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
 import java.time.DayOfWeek;
@@ -71,6 +70,7 @@ import com.sistemapos.sistematextil.model.HistorialStock;
 import com.sistemapos.sistematextil.model.MetodoPagoConfig;
 import com.sistemapos.sistematextil.model.Pago;
 import com.sistemapos.sistematextil.model.ProductoVariante;
+import com.sistemapos.sistematextil.model.SunatBajaLote;
 import com.sistemapos.sistematextil.model.Sucursal;
 import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.model.Venta;
@@ -106,6 +106,8 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class VentaService {
 
+    private static final BigDecimal MONTO_MAXIMO_BOLETA_ANONIMA = BigDecimal.valueOf(700);
+
     private static final BigDecimal CIEN = BigDecimal.valueOf(100);
     private static final BigDecimal CERO_MONETARIO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
     private static final String CODIGO_IGV_GRAVADO = "10";
@@ -123,10 +125,14 @@ public class VentaService {
     private final ClienteRepository clienteRepository;
     private final EmpresaRepository empresaRepository;
     private final StockMovimientoService stockMovimientoService;
+    private final PrecioOfertaService precioOfertaService;
     private final ApplicationEventPublisher applicationEventPublisher;
     private final SunatEmissionService sunatEmissionService;
+    private final SunatJobService sunatJobService;
     private final SunatDocumentStorageService sunatDocumentStorageService;
     private final SunatCdrParserService sunatCdrParserService;
+    private final S3StorageService s3StorageService;
+    private final UsuarioSucursalAccessService usuarioSucursalAccessService;
 
     @Value("${application.pagination.default-size:10}")
     private int defaultPageSize;
@@ -135,7 +141,7 @@ public class VentaService {
             String term,
             Integer idUsuario,
             Integer idCliente,
-            String tipoComprobante,
+            List<String> tiposComprobante,
             String periodo,
             LocalDate fecha,
             LocalDate desde,
@@ -151,14 +157,14 @@ public class VentaService {
                 termNormalizado,
                 idUsuario,
                 idCliente,
-                tipoComprobante,
+                tiposComprobante,
                 periodo,
                 fecha,
                 desde,
                 hasta,
                 idSucursal);
         Integer idUsuarioFiltro = resolverIdUsuarioListado(usuarioAutenticado, idUsuario, listarSinFiltros);
-        String tipoComprobanteFiltro = normalizarTipoComprobanteFiltro(tipoComprobante);
+        List<String> tiposComprobanteFiltro = normalizarTiposComprobanteFiltro(tiposComprobante);
         RangoFechas rangoFechasFiltro = resolverRangoFechasListado(periodo, fecha, desde, hasta);
         LocalDateTime fechaInicioFiltro = rangoFechasFiltro == null ? null : rangoFechasFiltro.desde().atStartOfDay();
         LocalDateTime fechaFinExclusiveFiltro = rangoFechasFiltro == null
@@ -174,7 +180,7 @@ public class VentaService {
                 idSucursalFiltro,
                 idUsuarioFiltro,
                 idClienteFiltro,
-                tipoComprobanteFiltro,
+                tiposComprobanteFiltro,
                 fechaInicioFiltro,
                 fechaFinExclusiveFiltro,
                 pageable);
@@ -190,6 +196,7 @@ public class VentaService {
             Integer idUsuario,
             Integer idSucursal,
             Integer idCliente,
+            List<String> tiposComprobante,
             boolean incluirAnuladas,
             String correoUsuarioAutenticado) {
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
@@ -203,7 +210,8 @@ public class VentaService {
                 hasta,
                 idUsuario,
                 idSucursal,
-                idCliente);
+                idCliente,
+                tiposComprobante);
         List<Venta> ventas = buscarVentasParaReporte(filtro, incluirAnuladas);
 
         return construirReporteVentas(ventas, filtro, incluirAnuladas);
@@ -217,6 +225,7 @@ public class VentaService {
             Integer idUsuario,
             Integer idSucursal,
             Integer idCliente,
+            List<String> tiposComprobante,
             boolean incluirAnuladas,
             String correoUsuarioAutenticado) {
         VentaReporteResponse reporte = obtenerReporteVentas(
@@ -227,6 +236,7 @@ public class VentaService {
                 idUsuario,
                 idSucursal,
                 idCliente,
+                tiposComprobante,
                 incluirAnuladas,
                 correoUsuarioAutenticado);
         return construirExcelReporteVentas(reporte);
@@ -240,6 +250,7 @@ public class VentaService {
             Integer idUsuario,
             Integer idSucursal,
             Integer idCliente,
+            List<String> tiposComprobante,
             boolean incluirAnuladas,
             String correoUsuarioAutenticado) {
         VentaReporteResponse reporte = obtenerReporteVentas(
@@ -250,6 +261,7 @@ public class VentaService {
                 idUsuario,
                 idSucursal,
                 idCliente,
+                tiposComprobante,
                 incluirAnuladas,
                 correoUsuarioAutenticado);
         List<Integer> ventaIds = reporte.detalleVentas().stream()
@@ -294,12 +306,12 @@ public class VentaService {
             document.open();
 
             agregarCabeceraComprobantePdf(document, venta);
-            document.add(new Paragraph(" "));
+            document.add(crearEspaciadorComprobantePdf(5f));
             agregarDatosClienteComprobantePdf(document, venta, pagos);
-            document.add(new Paragraph(" "));
+            document.add(crearEspaciadorComprobantePdf(5f));
             agregarDetalleComprobantePdf(document, detalles);
             agregarResumenComprobantePdf(document, venta, pagos);
-            document.add(new Paragraph(" "));
+            document.add(crearEspaciadorComprobantePdf(5f));
             agregarPieComprobantePdf(document, venta, pagos);
 
             document.close();
@@ -332,9 +344,9 @@ public class VentaService {
             agregarSeparadorTicket(document);
             agregarDetalleTicket(document, detalles);
             agregarSeparadorTicket(document);
-            agregarResumenTicket(document, venta);
+            agregarResumenTicket(document, venta, pagos);
             agregarSeparadorTicket(document);
-            agregarPieTicket(document, venta);
+            agregarPieTicket(document, venta, pagos);
 
             // Recortar la altura del documento al contenido real
             float alturaContenido = writer.getVerticalPosition(true);
@@ -355,9 +367,9 @@ public class VentaService {
             agregarSeparadorTicket(docFinal);
             agregarDetalleTicket(docFinal, detalles);
             agregarSeparadorTicket(docFinal);
-            agregarResumenTicket(docFinal, venta);
+            agregarResumenTicket(docFinal, venta, pagos);
             agregarSeparadorTicket(docFinal);
-            agregarPieTicket(docFinal, venta);
+            agregarPieTicket(docFinal, venta, pagos);
 
             docFinal.close();
             return outputFinal.toByteArray();
@@ -377,17 +389,15 @@ public class VentaService {
 
     private void agregarCabeceraTicket(Document document, Venta venta) throws DocumentException {
         Sucursal sucursal = venta.getSucursal();
-        String nombreEmpresa = sucursal != null && sucursal.getEmpresa() != null
-                ? valorTexto(sucursal.getEmpresa().getNombre()) : "";
-        String razonSocial = sucursal != null && sucursal.getEmpresa() != null
-                ? valorTexto(sucursal.getEmpresa().getRazonSocial()) : "";
-        String ruc = sucursal != null && sucursal.getEmpresa() != null
-                ? valorTexto(sucursal.getEmpresa().getRuc()) : "";
-        String direccion = sucursal != null ? valorTexto(sucursal.getDireccion()) : "";
-        String distrito = sucursal != null ? valorTexto(sucursal.getDistrito()) : "";
-        String provincia = sucursal != null ? valorTexto(sucursal.getProvincia()) : "";
-        String departamento = sucursal != null ? valorTexto(sucursal.getDepartamento()) : "";
-        String telefono = sucursal != null ? valorTexto(sucursal.getTelefono()) : "";
+        Empresa empresa = sucursal != null ? sucursal.getEmpresa() : null;
+        String nombreEmpresa = empresa != null ? valorTexto(empresa.getNombre()) : "";
+        String razonSocial = empresa != null ? valorTexto(empresa.getRazonSocial()) : "";
+        String ruc = empresa != null ? valorTexto(empresa.getRuc()) : "";
+        String direccion = empresa != null ? valorTexto(empresa.getDireccion()) : "";
+        String distrito = empresa != null ? valorTexto(empresa.getDistrito()) : "";
+        String provincia = empresa != null ? valorTexto(empresa.getProvincia()) : "";
+        String departamento = empresa != null ? valorTexto(empresa.getDepartamento()) : "";
+        String telefono = empresa != null ? valorTexto(empresa.getTelefono()) : "";
 
         // Logo o nombre empresa
         Image logo = cargarLogoEmpresaParaPdf(venta);
@@ -450,69 +460,109 @@ public class VentaService {
         String nombreCliente = cliente != null && !valorTexto(cliente.getNombres()).isBlank()
             ? valorTexto(cliente.getNombres()) : "GENERAL";
         String nroDocumento = cliente != null && !valorTexto(cliente.getNroDocumento()).isBlank()
-            ? valorTexto(cliente.getNroDocumento()) : "0";
+            ? valorTexto(cliente.getNroDocumento()) : "-";
         String fechaEmision = venta.getFecha() == null ? ""
                 : venta.getFecha().toLocalDate().format(DateTimeFormatter.ofPattern("dd/MM/yyyy"));
         String horaEmision = venta.getFecha() == null ? ""
                 : venta.getFecha().toLocalTime().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
-        String fechaVencimiento = fechaEmision;
         String direccionCliente = cliente != null && !valorTexto(cliente.getDireccion()).isBlank()
-            ? valorTexto(cliente.getDireccion()) : "";
+            ? valorTexto(cliente.getDireccion()) : "-";
         String vendedor = valorTexto(nombreUsuario(venta.getUsuario()));
+        String etiquetaDocumento = esFacturaPdf(venta) ? "RUC" : etiquetaTipoDocumentoPdf(cliente);
+        String fechaHora = (fechaEmision + " " + horaEmision).trim();
 
-        com.lowagie.text.Font fValor = fuentePdf(false, 6.5f);
+        PdfPTable tabla = new PdfPTable(new float[] { 2.6f, 5.4f });
+        tabla.setWidthPercentage(100);
+        tabla.setSpacingBefore(1f);
+        tabla.setSpacingAfter(1f);
 
-        agregarLineaTicket(document, "FECHA DE EMISION: " + fechaEmision, fValor);
-        agregarLineaTicket(document, "HORA DE EMISION: " + horaEmision, fValor);
-        agregarLineaTicket(document, "FECHA DE VENCIMIENTO: " + fechaVencimiento, fValor);
-        agregarLineaTicket(document, "CLIENTE: " + nombreCliente, fValor);
-        agregarLineaTicket(document, "DNI: " + nroDocumento, fValor);
-        agregarLineaTicket(document, "DIRECCION: " + direccionCliente, fValor);
-        agregarLineaTicket(document, "", fValor);
-        agregarLineaTicket(document, "VENDEDOR: " + vendedor, fValor);
-    }
+        agregarFilaDatoTicket(tabla, "Fecha y hora", fechaHora.isBlank() ? "-" : fechaHora);
+        agregarFilaDatoTicket(tabla, "Cliente", nombreCliente);
+        agregarFilaDatoTicket(tabla, etiquetaDocumento, nroDocumento);
+        if (!"-".equals(direccionCliente)) {
+            agregarFilaDatoTicket(tabla, "Direccion", direccionCliente);
+        }
+        agregarFilaDatoTicket(tabla, "Vendedor", vendedor.isBlank() ? "-" : vendedor);
 
-    private void agregarLineaTicket(Document document, String texto, com.lowagie.text.Font font) throws DocumentException {
-        Paragraph p = new Paragraph(texto, font);
-        p.setAlignment(Element.ALIGN_LEFT);
-        p.setSpacingBefore(1f);
-        document.add(p);
+        document.add(tabla);
     }
 
     private void agregarDetalleTicket(Document document, List<VentaDetalle> detalles) throws DocumentException {
-        com.lowagie.text.Font fHeader = fuentePdf(true, 6.5f);
-        com.lowagie.text.Font fItem = fuentePdf(false, 6.5f);
+        com.lowagie.text.Font fHeader = fuentePdf(true, 7.4f, Color.BLACK);
+        com.lowagie.text.Font fItem = fuentePdf(false, 7.1f);
+        com.lowagie.text.Font fMeta = fuentePdf(false, 6.2f, Color.BLACK);
 
-        // Encabezado: CANT  DESCRIPCION  P.UNIT  DSCTO  IMPORTE
-        PdfPTable header = new PdfPTable(new float[] { 1f, 4.1f, 1.3f, 1.3f, 1.5f });
+        PdfPTable header = new PdfPTable(new float[] { 1.2f, 5.6f, 1.8f });
         header.setWidthPercentage(100);
-        header.addCell(crearCeldaTicket("CANT", Element.ALIGN_CENTER, fHeader));
-        header.addCell(crearCeldaTicket("DESCRIPCION", Element.ALIGN_LEFT, fHeader));
-        header.addCell(crearCeldaTicket("P.UNIT", Element.ALIGN_RIGHT, fHeader));
-        header.addCell(crearCeldaTicket("DSCTO", Element.ALIGN_RIGHT, fHeader));
-        header.addCell(crearCeldaTicket("IMPORTE", Element.ALIGN_RIGHT, fHeader));
+        header.addCell(crearCeldaTicketHeader("CANT", Element.ALIGN_CENTER, fHeader));
+        header.addCell(crearCeldaTicketHeader("DETALLE", Element.ALIGN_LEFT, fHeader));
+        header.addCell(crearCeldaTicketHeader("TOTAL", Element.ALIGN_RIGHT, fHeader));
         document.add(header);
 
         for (VentaDetalle detalle : detalles) {
-            PdfPTable fila = new PdfPTable(new float[] { 1f, 4.1f, 1.3f, 1.3f, 1.5f });
+            PdfPTable fila = new PdfPTable(new float[] { 1.2f, 5.6f, 1.8f });
             fila.setWidthPercentage(100);
+            fila.setSpacingBefore(1f);
 
-            fila.addCell(crearCeldaTicket(String.valueOf(valorEntero(detalle.getCantidad())), Element.ALIGN_CENTER, fItem));
-            fila.addCell(crearCeldaTicket(descripcionDetalleParaPdf(detalle), Element.ALIGN_LEFT, fItem));
-            fila.addCell(crearCeldaTicket(formatearMonedaPdf(detalle.getPrecioUnitario()), Element.ALIGN_RIGHT, fItem));
+            fila.addCell(crearCeldaTicket(formatearCantidadDetallePdf(detalle), Element.ALIGN_CENTER, fItem));
+
+            PdfPCell detalleCell = new PdfPCell();
+            detalleCell.setBorder(Rectangle.NO_BORDER);
+            detalleCell.setPadding(1.5f);
+            detalleCell.setVerticalAlignment(Element.ALIGN_TOP);
+            Paragraph descripcion = new Paragraph(descripcionProductoDetalleParaPdf(detalle), fItem);
+            descripcion.setAlignment(Element.ALIGN_LEFT);
+            descripcion.setSpacingAfter(1f);
+            detalleCell.addElement(descripcion);
+
+            String meta = "COD: " + codigoDetalleParaPdf(detalle)
+                    + " | UND: " + unidadDetalleParaPdf(detalle)
+                    + " | P.U.: " + formatearMonedaPdf(detalle.getPrecioUnitario());
             BigDecimal descuento = detalle.getDescuento() != null ? detalle.getDescuento() : BigDecimal.ZERO;
-            fila.addCell(crearCeldaTicket(formatearMonedaPdf(descuento), Element.ALIGN_RIGHT, fItem));
-            BigDecimal importe = detalle.getTotalDetalle() != null ? detalle.getTotalDetalle() : detalle.getSubtotal();
+            if (descuento.compareTo(BigDecimal.ZERO) > 0) {
+                meta += " | DSCTO: " + formatearMonedaPdf(descuento);
+            }
+            Paragraph metaP = new Paragraph(meta, fMeta);
+            metaP.setAlignment(Element.ALIGN_LEFT);
+            detalleCell.addElement(metaP);
+            fila.addCell(detalleCell);
+
+            BigDecimal importe = totalBrutoDetallePdf(detalle);
             fila.addCell(crearCeldaTicket(formatearMonedaPdf(importe), Element.ALIGN_RIGHT, fItem));
 
             document.add(fila);
         }
     }
 
+    private PdfPCell crearCeldaTicketHeader(String texto, int alineacion, com.lowagie.text.Font font) {
+        PdfPCell cell = crearCeldaTicket(texto, alineacion, font);
+        cell.setBorder(Rectangle.BOTTOM);
+        cell.setBorderColor(Color.BLACK);
+        cell.setBorderWidthBottom(0.8f);
+        cell.setPaddingTop(3f);
+        cell.setPaddingBottom(3f);
+        return cell;
+    }
+
+    private void agregarFilaDatoTicket(PdfPTable tabla, String label, String valor) {
+        tabla.addCell(crearCeldaDatoTicket(label + ":", true));
+        tabla.addCell(crearCeldaDatoTicket(valor, false));
+    }
+
+    private PdfPCell crearCeldaDatoTicket(String texto, boolean bold) {
+        PdfPCell cell = new PdfPCell();
+        cell.setBorder(Rectangle.NO_BORDER);
+        cell.setPadding(1.6f);
+        Paragraph p = new Paragraph(valorTexto(texto), fuentePdf(bold, 7f));
+        p.setAlignment(Element.ALIGN_LEFT);
+        cell.addElement(p);
+        return cell;
+    }
+
     private PdfPCell crearCeldaTicket(String texto, int alineacion, com.lowagie.text.Font font) {
         PdfPCell cell = new PdfPCell();
         cell.setBorder(Rectangle.NO_BORDER);
-        cell.setPadding(1.5f);
+        cell.setPadding(1.8f);
         cell.setHorizontalAlignment(alineacion);
         cell.setVerticalAlignment(Element.ALIGN_MIDDLE);
         Paragraph p = new Paragraph(valorTexto(texto), font);
@@ -521,28 +571,26 @@ public class VentaService {
         return cell;
     }
 
-    private void agregarResumenTicket(Document document, Venta venta) throws DocumentException {
+    private void agregarResumenTicket(Document document, Venta venta, List<Pago> pagos) throws DocumentException {
         String simbolo = simboloMonedaPdf(venta.getMoneda());
-        com.lowagie.text.Font fNormal = fuentePdf(false, 7f);
-        com.lowagie.text.Font fTotal = fuentePdf(true, 9f);
+        com.lowagie.text.Font fNormal = fuentePdf(false, 7.4f);
+        com.lowagie.text.Font fTotal = fuentePdf(true, 9.6f);
 
         BigDecimal descuentoD = venta.getDescuentoTotal() != null ? venta.getDescuentoTotal() : BigDecimal.ZERO;
         boolean tieneDescuento = descuentoD.compareTo(BigDecimal.ZERO) > 0;
         boolean aplicaIgv = aplicaIgvSegunTipoComprobante(venta.getTipoComprobante());
-
-        BigDecimal subtotalBruto = venta.getTotal().add(descuentoD);
+        BigDecimal subtotalMostrar = tieneDescuento ? subtotalBrutoVentaPdf(venta) : moneda(venta.getSubtotal());
 
         if (!aplicaIgv) {
-            agregarFilaTotalTicket(document, "Subtotal " + simbolo, formatearMonedaPdf(subtotalBruto), fNormal);
             if (tieneDescuento) {
-                agregarFilaTotalTicket(document, "Descuento " + simbolo, "-" + formatearMonedaPdf(descuentoD), fNormal);
+                agregarFilaTotalTicket(document, "DESCUENTOS (-)", "-" + formatearMonedaPdf(descuentoD), fNormal);
             }
+            agregarFilaTotalTicket(document, "SUBTOTAL", formatearMonedaPdf(subtotalMostrar), fNormal);
         } else {
             if (tieneDescuento) {
-                agregarFilaTotalTicket(document, "Subtotal Bruto " + simbolo, formatearMonedaPdf(subtotalBruto), fNormal);
-                agregarFilaTotalTicket(document, "Descuento " + simbolo, "-" + formatearMonedaPdf(descuentoD), fNormal);
+                agregarFilaTotalTicket(document, "DESCUENTOS (-)", "-" + formatearMonedaPdf(descuentoD), fNormal);
             }
-            agregarFilaTotalTicket(document, "Op. Gravada " + simbolo, formatearMonedaPdf(venta.getSubtotal()), fNormal);
+            agregarFilaTotalTicket(document, "SUBTOTAL", formatearMonedaPdf(subtotalMostrar), fNormal);
             agregarFilaTotalTicket(document, "IGV (" + formatearDecimalPdf(venta.getIgvPorcentaje()) + "%) " + simbolo,
                     formatearMonedaPdf(venta.getIgv()), fNormal);
         }
@@ -551,7 +599,7 @@ public class VentaService {
 
         String monedaTexto = "PEN".equalsIgnoreCase(valorTexto(venta.getMoneda()).isBlank() ? "PEN" : venta.getMoneda())
                 ? "SOLES" : "DOLARES AMERICANOS";
-        Paragraph son = new Paragraph("Son: " + montoEnLetrasConMoneda(venta.getTotal(), monedaTexto), fuentePdf(false, 6f));
+        Paragraph son = new Paragraph("Son: " + montoEnLetrasConMoneda(venta.getTotal(), monedaTexto), fuentePdf(false, 6.6f));
         son.setSpacingBefore(3f);
         document.add(son);
     }
@@ -579,26 +627,26 @@ public class VentaService {
         document.add(fila);
     }
 
-    private void agregarPieTicket(Document document, Venta venta) throws DocumentException {
+    private void agregarPieTicket(Document document, Venta venta, List<Pago> pagos) throws DocumentException {
         Color colorGris = new Color(80, 80, 80);
         boolean esElectronica = requiereComprobanteElectronico(venta.getTipoComprobante());
 
-        // QR centrado
-        Image qr = generarQrComprobantePdf(venta);
-        if (qr != null) {
-            qr.scaleToFit(90f, 90f);
-            qr.setAlignment(Element.ALIGN_CENTER);
-            document.add(qr);
+        if (esElectronica) {
+            Image qr = generarQrComprobantePdf(venta);
+            if (qr != null) {
+                qr.scaleToFit(90f, 90f);
+                qr.setAlignment(Element.ALIGN_CENTER);
+                document.add(qr);
+            }
         }
 
-        // Hash
-        String hashCode = generarHashComprobantePdf(venta);
-        Paragraph hashP = new Paragraph("Hash: " + hashCode, fuentePdf(false, 5.5f, colorGris));
-        hashP.setAlignment(Element.ALIGN_CENTER);
-        hashP.setSpacingBefore(2f);
-        document.add(hashP);
-
         if (esElectronica) {
+            String hashCode = generarHashComprobantePdf(venta);
+            Paragraph hashP = new Paragraph("Hash: " + hashCode, fuentePdf(false, 5.5f, colorGris));
+            hashP.setAlignment(Element.ALIGN_CENTER);
+            hashP.setSpacingBefore(2f);
+            document.add(hashP);
+
             String tipoTexto = tituloComprobanteParaPdf(venta.getTipoComprobante());
             Paragraph rep = new Paragraph("Representacion impresa del comprobante electronico: " + tipoTexto,
                     fuentePdf(true, 5.5f, colorGris));
@@ -671,6 +719,52 @@ public class VentaService {
                 formato);
     }
 
+    public ArchivoDescargable descargarSunatBajaXml(Integer idVenta, String correoUsuarioAutenticado) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolLectura(usuarioAutenticado);
+
+        Venta venta = obtenerVentaConAlcance(idVenta, usuarioAutenticado);
+        SunatBajaLote lote = obtenerLoteBajaDisponible(venta);
+        if (lote.getSunatXmlKey() == null || lote.getSunatXmlKey().isBlank()) {
+            throw new RuntimeException("La baja SUNAT aun no tiene XML disponible");
+        }
+
+        byte[] contenido = sunatDocumentStorageService.download(lote.getSunatXmlKey());
+        return new ArchivoDescargable(
+                lote.getSunatXmlNombre() != null && !lote.getSunatXmlNombre().isBlank()
+                        ? lote.getSunatXmlNombre()
+                        : SunatComprobanteHelper.construirNombreArchivoXml(lote),
+                MediaType.APPLICATION_XML_VALUE,
+                contenido);
+    }
+
+    public ArchivoDescargable descargarSunatBajaCdr(Integer idVenta, String correoUsuarioAutenticado, String formato) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolLectura(usuarioAutenticado);
+
+        Venta venta = obtenerVentaConAlcance(idVenta, usuarioAutenticado);
+        SunatBajaLote lote = obtenerLoteBajaDisponible(venta);
+        if (lote.getSunatCdrKey() == null || lote.getSunatCdrKey().isBlank()) {
+            throw new RuntimeException("La baja SUNAT aun no tiene CDR disponible");
+        }
+
+        byte[] contenido = sunatDocumentStorageService.download(lote.getSunatCdrKey());
+        return construirArchivoDescargableCdr(
+                contenido,
+                lote.getSunatCdrNombre(),
+                SunatComprobanteHelper.construirNombreArchivoCdrXml(lote),
+                SunatComprobanteHelper.construirNombreArchivoCdrZip(lote),
+                formato);
+    }
+
+    private SunatBajaLote obtenerLoteBajaDisponible(Venta venta) {
+        SunatBajaLote lote = venta.getSunatBajaLote();
+        if (lote == null || lote.getIdSunatBajaLote() == null) {
+            throw new RuntimeException("La venta no tiene baja SUNAT asociada");
+        }
+        return lote;
+    }
+
     private ArchivoDescargable construirArchivoDescargableCdr(
             byte[] contenido,
             String nombreRegistrado,
@@ -734,25 +828,22 @@ public class VentaService {
 
     private void agregarCabeceraComprobantePdf(Document document, Venta venta) throws DocumentException {
         Sucursal sucursal = venta.getSucursal();
-        String nombreEmpresa = sucursal != null && sucursal.getEmpresa() != null
-                ? valorTexto(sucursal.getEmpresa().getNombre())
+        Empresa empresa = sucursal != null ? sucursal.getEmpresa() : null;
+        String nombreEmpresa = empresa != null
+                ? valorTexto(empresa.getNombre())
                 : "";
-        String razonSocial = sucursal != null && sucursal.getEmpresa() != null
-                ? valorTexto(sucursal.getEmpresa().getRazonSocial())
+        String razonSocial = empresa != null
+                ? valorTexto(empresa.getRazonSocial())
                 : "";
-        String ruc = sucursal != null && sucursal.getEmpresa() != null
-                ? valorTexto(sucursal.getEmpresa().getRuc())
+        String ruc = empresa != null
+                ? valorTexto(empresa.getRuc())
                 : "";
-        String direccion = sucursal != null ? valorTexto(sucursal.getDireccion()) : "";
-        String distrito = sucursal != null ? valorTexto(sucursal.getDistrito()) : "";
-        String provincia = sucursal != null ? valorTexto(sucursal.getProvincia()) : "";
-        String departamento = sucursal != null ? valorTexto(sucursal.getDepartamento()) : "";
-        String telefono = sucursal != null ? valorTexto(sucursal.getTelefono()) : "";
-        String correo = sucursal != null && !valorTexto(sucursal.getCorreo()).isBlank()
-                ? valorTexto(sucursal.getCorreo())
-                : sucursal != null && sucursal.getEmpresa() != null
-                        ? valorTexto(sucursal.getEmpresa().getCorreo())
-                        : "";
+        String direccion = empresa != null ? valorTexto(empresa.getDireccion()) : "";
+        String distrito = empresa != null ? valorTexto(empresa.getDistrito()) : "";
+        String provincia = empresa != null ? valorTexto(empresa.getProvincia()) : "";
+        String departamento = empresa != null ? valorTexto(empresa.getDepartamento()) : "";
+        String telefono = empresa != null ? valorTexto(empresa.getTelefono()) : "";
+        String correo = empresa != null ? valorTexto(empresa.getCorreo()) : "";
         String direccionCompleta = direccion;
         String ubicacion = construirUbicacionPdf(distrito, provincia, departamento);
         if (!direccionCompleta.isBlank() && !ubicacion.isBlank()) {
@@ -812,6 +903,13 @@ public class VentaService {
         tipoCell.setHorizontalAlignment(Element.ALIGN_CENTER);
         tipoCell.setVerticalAlignment(Element.ALIGN_MIDDLE);
 
+        if (!ruc.isBlank()) {
+            Paragraph pRucCabecera = new Paragraph("RUC: " + ruc, fuentePdf(true, 10.5f, colorPrimario));
+            pRucCabecera.setAlignment(Element.ALIGN_CENTER);
+            pRucCabecera.setSpacingAfter(6f);
+            tipoCell.addElement(pRucCabecera);
+        }
+
         Paragraph pTipo = new Paragraph(tituloComprobanteParaPdf(venta.getTipoComprobante()), fuentePdf(true, 15f, colorPrimario));
         pTipo.setAlignment(Element.ALIGN_CENTER);
         tipoCell.addElement(pTipo);
@@ -846,12 +944,6 @@ public class VentaService {
             nombre.setSpacingBefore(2f);
             cell.addElement(nombre);
         }
-        if (!ruc.isBlank()) {
-            Paragraph rucP = new Paragraph("RUC: " + ruc, fuentePdf(false, 10f));
-            rucP.setAlignment(Element.ALIGN_LEFT);
-            rucP.setSpacingBefore(2f);
-            cell.addElement(rucP);
-        }
         if (!direccion.isBlank()) {
             Paragraph direccionP = new Paragraph("Direccion: " + direccion, fuentePdf(false, 9.5f));
             direccionP.setAlignment(Element.ALIGN_LEFT);
@@ -876,35 +968,28 @@ public class VentaService {
         Cliente cliente = venta.getCliente();
         String nombreCliente = cliente != null && !valorTexto(cliente.getNombres()).isBlank()
                 ? valorTexto(cliente.getNombres())
-            : "GENERAL";
+                : "GENERAL";
         String nroDocumento = cliente != null && !valorTexto(cliente.getNroDocumento()).isBlank()
                 ? valorTexto(cliente.getNroDocumento())
-            : "0";
+                : "-";
         String direccionCliente = cliente != null && !valorTexto(cliente.getDireccion()).isBlank()
                 ? valorTexto(cliente.getDireccion())
-                : "";
+                : "-";
         String fechaEmision = venta.getFecha() == null
                 ? ""
                 : venta.getFecha().toLocalDate().format(DateTimeFormatter.ofPattern("dd/MM/yyyy"));
-        String horaEmision = venta.getFecha() == null
-            ? ""
-            : venta.getFecha().toLocalTime().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
-        String fechaVencimiento = fechaEmision;
-        String vendedor = valorTexto(nombreUsuario(venta.getUsuario()));
+        String tipoComprobante = normalizarAliasTipoComprobante(venta.getTipoComprobante());
+        boolean esFactura = "FACTURA".equals(tipoComprobante);
 
-        Color colorFondoInfo = new Color(245, 247, 250);
-
-        PdfPTable tabla = new PdfPTable(new float[] { 3.2f, 6.8f });
+        PdfPTable tabla = new PdfPTable(new float[] { 2.6f, 7.4f });
         tabla.setWidthPercentage(100);
+        tabla.setSpacingBefore(0f);
+        tabla.setSpacingAfter(2f);
 
-        agregarFilaSimpleDatosComprobantePdf(tabla, "FECHA DE EMISION:", fechaEmision, colorFondoInfo);
-        agregarFilaSimpleDatosComprobantePdf(tabla, "HORA DE EMISION:", horaEmision, colorFondoInfo);
-        agregarFilaSimpleDatosComprobantePdf(tabla, "FECHA DE VENCIMIENTO:", fechaVencimiento, colorFondoInfo);
-        agregarFilaSimpleDatosComprobantePdf(tabla, "CLIENTE:", nombreCliente, colorFondoInfo);
-        agregarFilaSimpleDatosComprobantePdf(tabla, "DNI:", nroDocumento, colorFondoInfo);
-        agregarFilaSimpleDatosComprobantePdf(tabla, "DIRECCION:", direccionCliente, colorFondoInfo);
-        agregarFilaSimpleDatosComprobantePdf(tabla, "", "", colorFondoInfo);
-        agregarFilaSimpleDatosComprobantePdf(tabla, "VENDEDOR:", vendedor, colorFondoInfo);
+        agregarFilaSimpleDatosComprobantePdf(tabla, "Fecha de emision:", fechaEmision, null);
+        agregarFilaSimpleDatosComprobantePdf(tabla, "Senor(es):", nombreCliente, null);
+        agregarFilaSimpleDatosComprobantePdf(tabla, esFactura ? "RUC:" : "Documento:", nroDocumento, null);
+        agregarFilaSimpleDatosComprobantePdf(tabla, "Direccion:", direccionCliente, null);
 
         document.add(tabla);
     }
@@ -915,31 +1000,30 @@ public class VentaService {
         }
 
     private void agregarDetalleComprobantePdf(Document document, List<VentaDetalle> detalles) throws DocumentException {
-        PdfPTable tabla = new PdfPTable(new float[] { 0.8f, 5.7f, 1.2f, 1.6f, 1.5f, 1.7f });
+        PdfPTable tabla = new PdfPTable(new float[] { 1.1f, 1.2f, 2.0f, 4.5f, 1.6f, 1.8f });
         tabla.setWidthPercentage(100);
         tabla.setHeaderRows(1);
         tabla.setSpacingBefore(4f);
 
         Color colorHeaderBg = new Color(60, 76, 102);
 
-        agregarHeaderDetalle(tabla, "Item", Element.ALIGN_CENTER, colorHeaderBg);
-        agregarHeaderDetalle(tabla, "Descripcion", Element.ALIGN_LEFT, colorHeaderBg);
-        agregarHeaderDetalle(tabla, "Cant.", Element.ALIGN_CENTER, colorHeaderBg);
-        agregarHeaderDetalle(tabla, "P. Unit.", Element.ALIGN_RIGHT, colorHeaderBg);
-        agregarHeaderDetalle(tabla, "Dscto.", Element.ALIGN_RIGHT, colorHeaderBg);
-        agregarHeaderDetalle(tabla, "Importe", Element.ALIGN_RIGHT, colorHeaderBg);
+        agregarHeaderDetalle(tabla, "CANT", Element.ALIGN_CENTER, colorHeaderBg);
+        agregarHeaderDetalle(tabla, "UNIDAD", Element.ALIGN_CENTER, colorHeaderBg);
+        agregarHeaderDetalle(tabla, "CODIGO", Element.ALIGN_CENTER, colorHeaderBg);
+        agregarHeaderDetalle(tabla, "DESCRIPCION", Element.ALIGN_LEFT, colorHeaderBg);
+        agregarHeaderDetalle(tabla, "P.UNIT", Element.ALIGN_RIGHT, colorHeaderBg);
+        agregarHeaderDetalle(tabla, "TOTAL", Element.ALIGN_RIGHT, colorHeaderBg);
 
         int fila = 1;
         for (VentaDetalle detalle : detalles) {
             Color bgFila = fila % 2 == 0 ? new Color(247, 249, 252) : null;
-            tabla.addCell(crearCeldaDetallePdf(String.valueOf(fila), Element.ALIGN_CENTER, bgFila));
-            tabla.addCell(crearCeldaDetallePdf(descripcionDetalleParaPdf(detalle), Element.ALIGN_LEFT, bgFila));
-            tabla.addCell(crearCeldaDetallePdf(String.valueOf(valorEntero(detalle.getCantidad())), Element.ALIGN_CENTER, bgFila));
+            tabla.addCell(crearCeldaDetallePdf(formatearCantidadDetallePdf(detalle), Element.ALIGN_CENTER, bgFila));
+            tabla.addCell(crearCeldaDetallePdf(unidadDetalleParaPdf(detalle), Element.ALIGN_CENTER, bgFila));
+            tabla.addCell(crearCeldaDetallePdf(codigoDetalleParaPdf(detalle), Element.ALIGN_CENTER, bgFila));
+            tabla.addCell(crearCeldaDetallePdf(descripcionProductoDetalleParaPdf(detalle), Element.ALIGN_LEFT, bgFila));
             tabla.addCell(crearCeldaDetallePdf(formatearMonedaPdf(detalle.getPrecioUnitario()), Element.ALIGN_RIGHT, bgFila));
-            BigDecimal descuento = detalle.getDescuento() != null ? detalle.getDescuento() : BigDecimal.ZERO;
-            tabla.addCell(crearCeldaDetallePdf(formatearMonedaPdf(descuento), Element.ALIGN_RIGHT, bgFila));
             tabla.addCell(crearCeldaDetallePdf(
-                    formatearMonedaPdf(detalle.getTotalDetalle() != null ? detalle.getTotalDetalle() : detalle.getSubtotal()),
+                    formatearMonedaPdf(totalBrutoDetallePdf(detalle)),
                     Element.ALIGN_RIGHT, bgFila));
             fila++;
         }
@@ -956,20 +1040,18 @@ public class VentaService {
         BigDecimal descuentoD = venta.getDescuentoTotal() != null ? venta.getDescuentoTotal() : BigDecimal.ZERO;
         boolean tieneDescuento = descuentoD.compareTo(BigDecimal.ZERO) > 0;
         boolean aplicaIgv = aplicaIgvSegunTipoComprobante(venta.getTipoComprobante());
-
-        BigDecimal subtotalBruto = venta.getTotal().add(descuentoD);
+        BigDecimal subtotalMostrar = tieneDescuento ? subtotalBrutoVentaPdf(venta) : moneda(venta.getSubtotal());
 
         if (!aplicaIgv) {
-            agregarFilaTotalComprobantePdf(totales, "Subtotal", formatearMonedaPdf(subtotalBruto));
             if (tieneDescuento) {
-                agregarFilaTotalComprobantePdf(totales, "Descuento", "-" + formatearMonedaPdf(descuentoD));
+                agregarFilaTotalComprobantePdf(totales, "DESCUENTOS (-)", "-" + formatearMonedaPdf(descuentoD));
             }
+            agregarFilaTotalComprobantePdf(totales, "SUBTOTAL", formatearMonedaPdf(subtotalMostrar));
         } else {
             if (tieneDescuento) {
-                agregarFilaTotalComprobantePdf(totales, "Subtotal Bruto", formatearMonedaPdf(subtotalBruto));
-                agregarFilaTotalComprobantePdf(totales, "Descuento", "-" + formatearMonedaPdf(descuentoD));
+                agregarFilaTotalComprobantePdf(totales, "DESCUENTOS (-)", "-" + formatearMonedaPdf(descuentoD));
             }
-            agregarFilaTotalComprobantePdf(totales, "Op. Gravada", formatearMonedaPdf(venta.getSubtotal()));
+            agregarFilaTotalComprobantePdf(totales, "SUBTOTAL", formatearMonedaPdf(subtotalMostrar));
             agregarFilaTotalComprobantePdf(totales, "IGV (" + formatearDecimalPdf(venta.getIgvPorcentaje()) + "%)",
                     formatearMonedaPdf(venta.getIgv()));
         }
@@ -1004,11 +1086,13 @@ public class VentaService {
 
         PdfPCell qrCell = crearCeldaBase(Rectangle.NO_BORDER, 0f);
         qrCell.setVerticalAlignment(Element.ALIGN_TOP);
-        Image qr = generarQrComprobantePdf(venta);
-        if (qr != null) {
-            qr.scaleToFit(120f, 120f);
-            qr.setAlignment(Element.ALIGN_LEFT);
-            qrCell.addElement(qr);
+        if (esElectronica) {
+            Image qr = generarQrComprobantePdf(venta);
+            if (qr != null) {
+                qr.scaleToFit(120f, 120f);
+                qr.setAlignment(Element.ALIGN_LEFT);
+                qrCell.addElement(qr);
+            }
         }
         pie.addCell(qrCell);
 
@@ -1016,12 +1100,12 @@ public class VentaService {
         infoCell.setVerticalAlignment(Element.ALIGN_TOP);
         infoCell.setPaddingLeft(10f);
 
-        String hashCode = generarHashComprobantePdf(venta);
-        Paragraph hashP = new Paragraph("Hash: " + hashCode, fuentePdf(false, 7.5f, colorGris));
-        hashP.setSpacingBefore(2f);
-        infoCell.addElement(hashP);
-
         if (esElectronica) {
+            String hashCode = generarHashComprobantePdf(venta);
+            Paragraph hashP = new Paragraph("Hash: " + hashCode, fuentePdf(false, 7.5f, colorGris));
+            hashP.setSpacingBefore(2f);
+            infoCell.addElement(hashP);
+
             String tipoTexto = tituloComprobanteParaPdf(venta.getTipoComprobante());
             Paragraph rep = new Paragraph(
                     "Representacion impresa del comprobante electronico: " + tipoTexto,
@@ -1056,13 +1140,24 @@ public class VentaService {
     }
 
     private PdfPCell crearCeldaDatoPdf(String texto, boolean bold, Color bgColor) {
-        PdfPCell cell = crearCeldaBase(Rectangle.NO_BORDER, 5f);
+        PdfPCell cell = crearCeldaBase(Rectangle.NO_BORDER, 2.5f);
         cell.setHorizontalAlignment(Element.ALIGN_LEFT);
         if (bgColor != null) {
             cell.setBackgroundColor(bgColor);
         }
-        cell.addElement(new Paragraph(valorTexto(texto), fuentePdf(bold, 9.5f)));
+        Paragraph paragraph = new Paragraph(valorTexto(texto), fuentePdf(bold, 9f));
+        paragraph.setSpacingBefore(0f);
+        paragraph.setSpacingAfter(0f);
+        cell.addElement(paragraph);
         return cell;
+    }
+
+    private Paragraph crearEspaciadorComprobantePdf(float leading) {
+        Paragraph spacer = new Paragraph(" ", fuentePdf(false, 4f));
+        spacer.setLeading(leading);
+        spacer.setSpacingBefore(0f);
+        spacer.setSpacingAfter(0f);
+        return spacer;
     }
 
     private void agregarHeaderDetalle(PdfPTable tabla, String texto, int alineacion, Color bgColor) {
@@ -1231,11 +1326,20 @@ public class VentaService {
         if (estado == SunatEstado.OBSERVADO) {
             return "Comprobante electronico aceptado con observaciones por SUNAT.";
         }
+        if (estado == SunatEstado.PENDIENTE_ENVIO || estado == SunatEstado.ENVIANDO) {
+            return "Comprobante electronico registrado y pendiente de envio a SUNAT.";
+        }
+        if (estado == SunatEstado.PENDIENTE_CDR || estado == SunatEstado.PENDIENTE) {
+            return "Comprobante electronico enviado y pendiente de constancia SUNAT.";
+        }
         if (estado == SunatEstado.RECHAZADO) {
             return "Comprobante electronico rechazado por SUNAT.";
         }
-        if (estado == SunatEstado.ERROR) {
-            return "Comprobante electronico generado con incidencia en el envio a SUNAT.";
+        if (estado == SunatEstado.ERROR_TRANSITORIO || estado == SunatEstado.ERROR) {
+            return "Comprobante electronico con error temporal de envio a SUNAT. Se reintentara automaticamente.";
+        }
+        if (estado == SunatEstado.ERROR_DEFINITIVO) {
+            return "Comprobante electronico con error definitivo. Requiere revision.";
         }
         return "Comprobante electronico generado y pendiente de validacion por SUNAT.";
     }
@@ -1272,15 +1376,56 @@ public class VentaService {
         return sb.isEmpty() ? "-" : sb.toString();
     }
 
+    private String descripcionProductoDetalleParaPdf(VentaDetalle detalle) {
+        if (detalle.getDescripcion() != null && !detalle.getDescripcion().isBlank()) {
+            return detalle.getDescripcion().trim();
+        }
+        return descripcionDetalleParaPdf(detalle);
+    }
+
+    private String codigoDetalleParaPdf(VentaDetalle detalle) {
+        ProductoVariante variante = detalle.getProductoVariante();
+        if (variante != null && variante.getSku() != null && !variante.getSku().isBlank()) {
+            return variante.getSku().trim();
+        }
+        return "-";
+    }
+
+    private String unidadDetalleParaPdf(VentaDetalle detalle) {
+        String unidad = detalle.getUnidadMedida();
+        if (unidad == null || unidad.isBlank()) {
+            return "NIU";
+        }
+        return unidad.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private String formatearCantidadDetallePdf(VentaDetalle detalle) {
+        int cantidad = detalle.getCantidad() == null ? 0 : detalle.getCantidad();
+        return BigDecimal.valueOf(cantidad).setScale(2, RoundingMode.HALF_UP).toPlainString();
+    }
+
+    private BigDecimal totalBrutoDetallePdf(VentaDetalle detalle) {
+        BigDecimal precioUnitario = moneda(detalle.getPrecioUnitario());
+        int cantidad = detalle.getCantidad() == null ? 0 : detalle.getCantidad();
+        return precioUnitario.multiply(BigDecimal.valueOf(cantidad)).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal subtotalBrutoVentaPdf(Venta venta) {
+        return moneda(venta.getTotal())
+                .add(moneda(venta.getDescuentoTotal()))
+                .setScale(2, RoundingMode.HALF_UP);
+    }
+
     private String construirContactoEmpresaPdf(Sucursal sucursal) {
-        if (sucursal == null) {
+        Empresa empresa = sucursal != null ? sucursal.getEmpresa() : null;
+        if (empresa == null) {
             return "";
         }
-        return valorTexto(sucursal.getDireccion())
+        return valorTexto(empresa.getDireccion())
                 + "  |  "
-                + valorTexto(sucursal.getTelefono())
+                + valorTexto(empresa.getTelefono())
                 + "  |  "
-                + valorTexto(sucursal.getCorreo());
+                + valorTexto(empresa.getCorreo());
     }
 
     private String construirTextoPagosPdf(List<Pago> pagos) {
@@ -1330,7 +1475,7 @@ public class VentaService {
 
         ImageIO.scanForPlugins();
 
-        try (InputStream stream = URI.create(logoUrl).toURL().openStream()) {
+        try (InputStream stream = s3StorageService.openStream(logoUrl)) {
             BufferedImage buffered = ImageIO.read(stream);
             if (buffered != null) {
                 ByteArrayOutputStream png = new ByteArrayOutputStream();
@@ -1459,7 +1604,6 @@ public class VentaService {
         String tipoComprobante = normalizarTipoComprobante(request.tipoComprobante());
         boolean aplicaIgv = aplicaIgvSegunTipoComprobante(tipoComprobante);
         Cliente cliente = resolverCliente(request.idCliente(), sucursalVenta);
-        validarClienteParaComprobanteElectronico(tipoComprobante, cliente);
         validarEmpresaParaComprobanteElectronico(tipoComprobante, sucursalVenta);
 
         List<DetalleCalculado> detallesCalculados = calcularDetalles(
@@ -1472,6 +1616,7 @@ public class VentaService {
                 request.tipoDescuento(),
                 request.igvPorcentaje(),
                 aplicaIgv);
+        validarClienteParaComprobanteElectronico(tipoComprobante, cliente, totales.total());
         List<DetalleCalculado> detallesFinales = aplicarTributosDetalle(detallesCalculados, totales);
         List<PagoCalculado> pagosCalculados = calcularPagos(request.pagos(), totales.total());
         String serieSolicitada = normalizarSerieObligatoria(request.serie());
@@ -1561,6 +1706,11 @@ public class VentaService {
             return;
         }
 
+        venta.setSunatEstado(SunatEstado.ENVIANDO);
+        venta.setSunatCodigo(null);
+        venta.setSunatMensaje("Procesando envio del comprobante a SUNAT.");
+        ventaRepository.save(venta);
+
         List<VentaDetalle> detalles = ventaDetalleRepository
                 .findByVenta_IdVentaAndDeletedAtIsNullOrderByIdVentaDetalleAsc(venta.getIdVenta());
 
@@ -1569,7 +1719,7 @@ public class VentaService {
             resultado = sunatEmissionService.emitir(venta, detalles);
         } catch (RuntimeException e) {
             resultado = new SunatEmissionResult(
-                    SunatEstado.ERROR,
+                    SunatEstado.ERROR_DEFINITIVO,
                     "EXCEPTION",
                     e.getMessage() == null ? "Ocurrio un error al emitir el comprobante en SUNAT" : e.getMessage(),
                     venta.getSunatHash(),
@@ -1595,7 +1745,11 @@ public class VentaService {
             throw new RuntimeException("La venta no requiere emision electronica SUNAT");
         }
 
-        procesarEmisionElectronica(venta.getIdVenta());
+        venta.setSunatEstado(SunatEstado.PENDIENTE_ENVIO);
+        venta.setSunatCodigo(null);
+        venta.setSunatMensaje("Reintento programado de envio a SUNAT.");
+        ventaRepository.save(venta);
+        sunatJobService.enqueueVenta(venta.getIdVenta());
 
         Venta ventaActualizada = obtenerVentaConAlcance(idVenta, usuarioAutenticado);
         List<VentaDetalle> detalles = ventaDetalleRepository
@@ -1644,7 +1798,7 @@ public class VentaService {
             }
 
             BigDecimal precioUnitario = item.precioUnitario() == null
-                    ? decimalDesdeDouble(precioVigenteVariante(variante))
+                    ? decimalDesdeDouble(precioVigenteVariante(variante, idSucursalVenta))
                     : decimalPositivo(item.precioUnitario(), "precioUnitario");
                 BigDecimal descuentoItem = item.descuento() == null
                     ? BigDecimal.ZERO
@@ -1842,19 +1996,23 @@ public class VentaService {
     }
 
     private Venta obtenerVentaConAlcance(Integer idVenta, Usuario usuarioAutenticado) {
-        if (esAdministrador(usuarioAutenticado)) {
-            return ventaRepository.findByIdVentaAndDeletedAtIsNull(idVenta)
-                    .orElseThrow(() -> new RuntimeException("Venta con ID " + idVenta + " no encontrada"));
-        }
-        Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
-        return ventaRepository.findByIdVentaAndDeletedAtIsNullAndSucursal_IdSucursal(idVenta, idSucursalUsuario)
+        Venta venta = ventaRepository.findByIdVentaAndDeletedAtIsNull(idVenta)
                 .orElseThrow(() -> new RuntimeException("Venta con ID " + idVenta + " no encontrada"));
+        Integer idSucursal = venta.getSucursal() != null ? venta.getSucursal().getIdSucursal() : null;
+        usuarioSucursalAccessService.validarSucursalPermitida(
+                usuarioAutenticado,
+                idSucursal,
+                "Venta con ID " + idVenta + " no encontrada");
+        return venta;
     }
 
     private Sucursal resolverSucursalParaVenta(Integer idSucursalRequest, Usuario usuarioAutenticado) {
         Integer idSucursalDestino = esAdministrador(usuarioAutenticado)
                 ? idSucursalRequeridaParaAdmin(idSucursalRequest)
-                : obtenerIdSucursalUsuario(usuarioAutenticado);
+                : usuarioSucursalAccessService.resolverIdSucursalPermitida(
+                        usuarioAutenticado,
+                        idSucursalRequest,
+                        "El usuario autenticado no tiene permisos para registrar ventas en otra sucursal");
         return sucursalRepository.findByIdSucursalAndDeletedAtIsNull(idSucursalDestino)
                 .filter(s -> "ACTIVO".equalsIgnoreCase(s.getEstado()))
                 .orElseThrow(() -> new RuntimeException("Sucursal no encontrada o inactiva"));
@@ -1872,20 +2030,19 @@ public class VentaService {
                 .orElseThrow(() -> new RuntimeException("Cliente no encontrado para la empresa de la sucursal"));
     }
 
-    private void validarClienteParaComprobanteElectronico(String tipoComprobante, Cliente cliente) {
+    private void validarClienteParaComprobanteElectronico(String tipoComprobante, Cliente cliente, BigDecimal totalVenta) {
         if (!requiereComprobanteElectronico(tipoComprobante)) {
             return;
         }
-        if (cliente == null) {
-            throw new RuntimeException("Cliente obligatorio para emitir " + tipoComprobante + " electronica");
-        }
-        if (cliente.getNombres() == null || cliente.getNombres().isBlank()) {
-            throw new RuntimeException("El cliente debe tener nombres para emitir " + tipoComprobante + " electronica");
-        }
-
-        TipoDocumento tipoDocumento = cliente.getTipoDocumento();
-        String nroDocumento = normalizarTexto(cliente.getNroDocumento(), 20);
         if ("FACTURA".equals(tipoComprobante)) {
+            if (cliente == null) {
+                throw new RuntimeException("Cliente obligatorio para emitir FACTURA electronica");
+            }
+            if (cliente.getNombres() == null || cliente.getNombres().isBlank()) {
+                throw new RuntimeException("El cliente debe tener nombres para emitir FACTURA electronica");
+            }
+            TipoDocumento tipoDocumento = cliente.getTipoDocumento();
+            String nroDocumento = normalizarTexto(cliente.getNroDocumento(), 20);
             if (tipoDocumento != TipoDocumento.RUC) {
                 throw new RuntimeException("La FACTURA electronica requiere un cliente con RUC");
             }
@@ -1895,12 +2052,35 @@ public class VentaService {
             return;
         }
 
+        if (cliente != null && (cliente.getNombres() == null || cliente.getNombres().isBlank())) {
+            throw new RuntimeException("El cliente debe tener nombres para emitir BOLETA electronica");
+        }
+        if (!requiereIdentificacionClienteParaBoleta(totalVenta, cliente)) {
+            return;
+        }
+        if (cliente == null) {
+            throw new RuntimeException("La BOLETA electronica requiere cliente identificado cuando supera S/ 700.00");
+        }
+        TipoDocumento tipoDocumento = cliente.getTipoDocumento();
+        String nroDocumento = normalizarTexto(cliente.getNroDocumento(), 20);
         if (tipoDocumento == null || tipoDocumento == TipoDocumento.SIN_DOC) {
-            throw new RuntimeException("La BOLETA electronica requiere cliente con documento de identidad");
+            throw new RuntimeException("La BOLETA electronica requiere documento de identidad cuando supera S/ 700.00");
         }
         if (nroDocumento == null || nroDocumento.isBlank()) {
-            throw new RuntimeException("La BOLETA electronica requiere numero de documento valido para el cliente");
+            throw new RuntimeException("La BOLETA electronica requiere numero de documento valido cuando supera S/ 700.00");
         }
+    }
+
+    private boolean requiereIdentificacionClienteParaBoleta(BigDecimal totalVenta, Cliente cliente) {
+        if (totalVenta != null && totalVenta.compareTo(MONTO_MAXIMO_BOLETA_ANONIMA) > 0) {
+            return true;
+        }
+        if (cliente == null) {
+            return false;
+        }
+        TipoDocumento tipoDocumento = cliente.getTipoDocumento();
+        String nroDocumento = normalizarTexto(cliente.getNroDocumento(), 20);
+        return tipoDocumento != null && tipoDocumento != TipoDocumento.SIN_DOC && nroDocumento != null && !nroDocumento.isBlank();
     }
 
     private void validarEmpresaParaComprobanteElectronico(String tipoComprobante, Sucursal sucursal) {
@@ -1916,6 +2096,20 @@ public class VentaService {
         }
         if (normalizarTexto(sucursal.getEmpresa().getRazonSocial(), 150) == null) {
             throw new RuntimeException("La empresa debe tener razon social para emitir comprobantes SUNAT");
+        }
+        String direccionEmpresa = normalizarTexto(sucursal.getEmpresa().getDireccion(), 255);
+        if (direccionEmpresa == null) {
+            throw new RuntimeException("La empresa debe tener direccion para emitir comprobantes SUNAT");
+        }
+        String ubigeoEmpresa = normalizarTexto(sucursal.getEmpresa().getUbigeo(), 6);
+        if (ubigeoEmpresa == null || ubigeoEmpresa.length() != 6) {
+            throw new RuntimeException("La empresa debe tener ubigeo de 6 digitos para emitir comprobantes SUNAT");
+        }
+        if (normalizarTexto(sucursal.getEmpresa().getDepartamento(), 100) == null
+                || normalizarTexto(sucursal.getEmpresa().getProvincia(), 100) == null
+                || normalizarTexto(sucursal.getEmpresa().getDistrito(), 100) == null) {
+            throw new RuntimeException(
+                    "La empresa debe tener departamento, provincia y distrito para emitir comprobantes SUNAT");
         }
     }
 
@@ -1945,7 +2139,7 @@ public class VentaService {
 
     private void aplicarResultadoSunat(Venta venta, SunatEmissionResult resultado) {
         if (resultado == null) {
-            venta.setSunatEstado(SunatEstado.ERROR);
+            venta.setSunatEstado(SunatEstado.ERROR_DEFINITIVO);
             venta.setSunatCodigo("NULL");
             venta.setSunatMensaje("SUNAT no devolvio respuesta.");
             venta.setSunatRespondidoAt(LocalDateTime.now());
@@ -2011,6 +2205,7 @@ public class VentaService {
                 venta.getTotal(),
                 venta.getEstado(),
                 venta.getSunatEstado(),
+                venta.getSunatBajaEstado(),
                 venta.getCliente() != null ? venta.getCliente().getIdCliente() : null,
                 nombreCliente,
                 venta.getUsuario() != null ? venta.getUsuario().getIdUsuario() : null,
@@ -2023,7 +2218,9 @@ public class VentaService {
 
     private VentaResponse toResponse(Venta venta, List<VentaDetalle> detalles, List<Pago> pagos) {
         List<VentaDetalleResponse> detalleResponses = detalles.stream()
-                .map(this::toDetalleResponse)
+                .map(detalle -> toDetalleResponse(
+                        detalle,
+                        venta.getSucursal() != null ? venta.getSucursal().getIdSucursal() : null))
                 .toList();
         List<VentaPagoResponse> pagoResponses = pagos.stream()
                 .map(this::toPagoResponse)
@@ -2054,6 +2251,14 @@ public class VentaService {
                 venta.getSunatCdrNombre(),
                 venta.getSunatEnviadoAt(),
                 venta.getSunatRespondidoAt(),
+                venta.getSunatBajaEstado(),
+                venta.getSunatBajaCodigo(),
+                venta.getSunatBajaMensaje(),
+                venta.getSunatBajaTicket(),
+                venta.getSunatBajaTipo(),
+                venta.getSunatBajaLote() != null ? venta.getSunatBajaLote().getIdSunatBajaLote() : null,
+                venta.getSunatBajaSolicitadaAt(),
+                venta.getSunatBajaRespondidaAt(),
                 venta.getCliente() != null ? venta.getCliente().getIdCliente() : null,
                 venta.getCliente() != null ? venta.getCliente().getNombres() : null,
                 venta.getUsuario() != null ? venta.getUsuario().getIdUsuario() : null,
@@ -2064,8 +2269,11 @@ public class VentaService {
                 pagoResponses);
     }
 
-    private VentaDetalleResponse toDetalleResponse(VentaDetalle detalle) {
+    private VentaDetalleResponse toDetalleResponse(VentaDetalle detalle, Integer idSucursal) {
         ProductoVariante variante = detalle.getProductoVariante();
+        PrecioOfertaService.ResultadoPrecioOferta precioResuelto = variante == null
+                ? PrecioOfertaService.ResultadoPrecioOferta.sinOferta()
+                : precioOfertaService.resolver(variante, idSucursal);
         return new VentaDetalleResponse(
                 detalle.getIdVentaDetalle(),
                 variante != null ? variante.getIdProductoVariante() : null,
@@ -2076,6 +2284,9 @@ public class VentaService {
                 variante != null ? variante.getPrecioOferta() : null,
                 variante != null ? variante.getOfertaInicio() : null,
                 variante != null ? variante.getOfertaFin() : null,
+                detalle.getPrecioUnitario(),
+                precioResuelto.tipoOfertaAplicada(),
+                precioResuelto.sucursalOfertaId(),
                 variante != null && variante.getColor() != null ? variante.getColor().getIdColor() : null,
                 variante != null && variante.getColor() != null ? variante.getColor().getNombre() : null,
                 variante != null && variante.getTalla() != null ? variante.getTalla().getIdTalla() : null,
@@ -2109,7 +2320,8 @@ public class VentaService {
             LocalDate hasta,
             Integer idUsuarioRequest,
             Integer idSucursalRequest,
-            Integer idClienteRequest) {
+            Integer idClienteRequest,
+            List<String> tiposComprobanteRequest) {
         AgrupacionReporte agrupacion = normalizarAgrupacionReporte(agrupar);
         PeriodoFiltro periodoFiltro = normalizarPeriodoFiltro(periodo);
         RangoFechas rango = resolverRangoFechas(periodoFiltro, desde, hasta);
@@ -2127,8 +2339,11 @@ public class VentaService {
                 nombreSucursalFiltro = sucursal.getNombre();
             }
         } else {
-            Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
-            Sucursal sucursal = sucursalRepository.findByIdSucursalAndDeletedAtIsNull(idSucursalUsuario)
+            Integer idSucursalPermitida = usuarioSucursalAccessService.resolverIdSucursalFiltro(
+                    usuarioAutenticado,
+                    idSucursalRequest,
+                    "El usuario autenticado no tiene permisos para consultar otra sucursal");
+            Sucursal sucursal = sucursalRepository.findByIdSucursalAndDeletedAtIsNull(idSucursalPermitida)
                     .orElseThrow(() -> new RuntimeException("Sucursal no encontrada"));
             idSucursalFiltro = sucursal.getIdSucursal();
             nombreSucursalFiltro = sucursal.getNombre();
@@ -2136,6 +2351,7 @@ public class VentaService {
 
         Usuario usuarioFiltro = resolverUsuarioFiltroReporte(usuarioAutenticado, idUsuarioRequest);
         Integer idClienteFiltro = resolverIdClienteFiltro(usuarioAutenticado, idClienteRequest, idSucursalFiltro);
+        List<String> tiposComprobanteFiltro = normalizarTiposComprobanteFiltro(tiposComprobanteRequest);
 
         return new FiltroReporteVentas(
                 agrupacion,
@@ -2146,7 +2362,8 @@ public class VentaService {
                 nombreSucursalFiltro,
                 usuarioFiltro != null ? usuarioFiltro.getIdUsuario() : null,
                 usuarioFiltro != null ? nombreUsuario(usuarioFiltro) : "TODOS",
-                idClienteFiltro);
+                idClienteFiltro,
+                tiposComprobanteFiltro);
     }
 
     private AgrupacionReporte normalizarAgrupacionReporte(String agrupar) {
@@ -2221,6 +2438,7 @@ public class VentaService {
                 filtro.idSucursal(),
                 filtro.idUsuario(),
                 filtro.idCliente(),
+                filtro.tiposComprobante(),
                 estadoFiltro,
                 fechaInicio,
                 fechaFinExclusive);
@@ -2485,6 +2703,8 @@ public class VentaService {
                 "Talla",
                 "Cantidad",
                 "PrecioUnitario",
+                "Descuento",
+                "IGV",
                 "Total"
         };
         for (int i = 0; i < headers.length; i++) {
@@ -2493,12 +2713,15 @@ public class VentaService {
         }
 
         BigDecimal totalItems = CERO_MONETARIO;
+        BigDecimal totalDescuentoItems = CERO_MONETARIO;
+        BigDecimal totalIgvItems = CERO_MONETARIO;
         for (VentaReporteResponse.DetalleItem venta : reporte.detalleVentas()) {
             Integer idVenta = venta.idVenta();
             if (idVenta == null) {
                 continue;
             }
             List<VentaDetalle> itemsVenta = detallesPorVenta.getOrDefault(idVenta, List.of());
+            boolean mostrarIgv = requiereComprobanteElectronico(normalizarAliasTipoComprobante(venta.tipoComprobante()));
             for (VentaDetalle detalle : itemsVenta) {
                 ProductoVariante variante = detalle.getProductoVariante();
                 Row r = sheet.createRow(rowIdx++);
@@ -2517,22 +2740,38 @@ public class VentaService {
                         : "");
                 r.createCell(7).setCellValue(detalle.getCantidad() == null ? 0 : detalle.getCantidad());
                 r.createCell(8).setCellValue(moneda(detalle.getPrecioUnitario()).doubleValue());
+                BigDecimal descuentoLinea = moneda(detalle.getDescuento());
+                r.createCell(9).setCellValue(descuentoLinea.doubleValue());
+                r.getCell(9).setCellStyle(moneyStyle);
+                totalDescuentoItems = totalDescuentoItems.add(descuentoLinea).setScale(2, RoundingMode.HALF_UP);
+                BigDecimal igvLinea = moneda(detalle.getIgvDetalle());
+                if (mostrarIgv) {
+                    r.createCell(10).setCellValue(igvLinea.doubleValue());
+                    r.getCell(10).setCellStyle(moneyStyle);
+                    totalIgvItems = totalIgvItems.add(igvLinea).setScale(2, RoundingMode.HALF_UP);
+                } else {
+                    r.createCell(10).setCellValue("");
+                }
                 BigDecimal totalLinea = detalle.getTotalDetalle() != null
                         ? detalle.getTotalDetalle()
                         : moneda(detalle.getSubtotal());
-                r.createCell(9).setCellValue(moneda(totalLinea).doubleValue());
+                r.createCell(11).setCellValue(moneda(totalLinea).doubleValue());
                 r.getCell(8).setCellStyle(moneyStyle);
-                r.getCell(9).setCellStyle(moneyStyle);
+                r.getCell(11).setCellStyle(moneyStyle);
                 totalItems = totalItems.add(moneda(totalLinea)).setScale(2, RoundingMode.HALF_UP);
             }
         }
 
         Row total = sheet.createRow(rowIdx);
         total.createCell(0).setCellValue("TOTAL");
-        total.createCell(9).setCellValue(totalItems.doubleValue());
+        total.createCell(9).setCellValue(totalDescuentoItems.doubleValue());
         total.getCell(9).setCellStyle(moneyStyle);
+        total.createCell(10).setCellValue(totalIgvItems.doubleValue());
+        total.getCell(10).setCellStyle(moneyStyle);
+        total.createCell(11).setCellValue(totalItems.doubleValue());
+        total.getCell(11).setCellStyle(moneyStyle);
 
-        for (int i = 0; i <= 9; i++) {
+        for (int i = 0; i <= 11; i++) {
             sheet.autoSizeColumn(i);
         }
     }
@@ -2949,28 +3188,11 @@ public class VentaService {
         return BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP);
     }
 
-    private Double precioVigenteVariante(ProductoVariante variante) {
+    private Double precioVigenteVariante(ProductoVariante variante, Integer idSucursal) {
         if (variante == null) {
             return 0d;
         }
-        Double precio = variante.getPrecio();
-        Double precioOferta = variante.getPrecioOferta();
-        if (precioOferta == null || precio == null || precioOferta <= 0 || precioOferta >= precio) {
-            return precio;
-        }
-        LocalDateTime ofertaInicio = variante.getOfertaInicio();
-        LocalDateTime ofertaFin = variante.getOfertaFin();
-        if (ofertaInicio == null && ofertaFin == null) {
-            return precioOferta;
-        }
-        if (ofertaInicio == null || ofertaFin == null) {
-            return precio;
-        }
-        LocalDateTime ahora = LocalDateTime.now();
-        if (ahora.isBefore(ofertaInicio) || ahora.isAfter(ofertaFin)) {
-            return precio;
-        }
-        return precioOferta;
+        return precioOfertaService.resolverPrecioVigente(variante, idSucursal);
     }
 
     private BigDecimal decimalPositivo(Double value, String field) {
@@ -3151,22 +3373,17 @@ public class VentaService {
                     .orElseThrow(() -> new RuntimeException("Sucursal no encontrada"));
         }
 
-        if (listarSinFiltros) {
-            return null;
-        }
-
-        Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
-        if (idSucursalRequest != null && !idSucursalUsuario.equals(idSucursalRequest)) {
-            throw new RuntimeException("El usuario autenticado no tiene permisos para filtrar por otra sucursal");
-        }
-        return idSucursalUsuario;
+        return usuarioSucursalAccessService.resolverIdSucursalFiltro(
+                usuarioAutenticado,
+                idSucursalRequest,
+                "El usuario autenticado no tiene permisos para filtrar por otra sucursal");
     }
 
     private boolean esListadoSinFiltros(
             String term,
             Integer idUsuario,
             Integer idCliente,
-            String tipoComprobante,
+            List<String> tiposComprobante,
             String periodo,
             LocalDate fecha,
             LocalDate desde,
@@ -3175,7 +3392,7 @@ public class VentaService {
         return term == null
                 && idUsuario == null
                 && idCliente == null
-                && (tipoComprobante == null || tipoComprobante.isBlank())
+                && (tiposComprobante == null || tiposComprobante.isEmpty())
                 && (periodo == null || periodo.isBlank())
                 && fecha == null
                 && desde == null
@@ -3183,13 +3400,17 @@ public class VentaService {
                 && idSucursal == null;
     }
 
-    private String normalizarTipoComprobanteFiltro(String tipoComprobante) {
-        if (tipoComprobante == null || tipoComprobante.isBlank()) {
+    private List<String> normalizarTiposComprobanteFiltro(List<String> tipos) {
+        if (tipos == null || tipos.isEmpty()) {
             return null;
         }
-        String normalized = normalizarAliasTipoComprobante(tipoComprobante);
-        validarTipoComprobantePermitido(normalized);
-        return normalized;
+        List<String> resultado = new ArrayList<>();
+        for (String tipo : tipos) {
+            String normalized = normalizarAliasTipoComprobante(tipo);
+            validarTipoComprobantePermitido(normalized);
+            resultado.add(normalized);
+        }
+        return resultado;
     }
 
     private RangoFechas resolverRangoFechasListado(
@@ -3281,32 +3502,27 @@ public class VentaService {
     }
 
     private void validarRolLectura(Usuario usuario) {
-        if (usuario.getRol() != Rol.ADMINISTRADOR
-                && usuario.getRol() != Rol.VENTAS) {
+        if (!usuario.getRol().permiteVentas()) {
             throw new RuntimeException("El usuario autenticado no tiene permisos para consultar ventas");
         }
     }
 
     private void validarRolVenta(Usuario usuario) {
-        if (usuario.getRol() != Rol.ADMINISTRADOR
-                && usuario.getRol() != Rol.VENTAS) {
+        if (!usuario.getRol().permiteVentas()) {
             throw new RuntimeException("El usuario autenticado no tiene permisos para registrar ventas");
         }
     }
 
     private boolean esAdministrador(Usuario usuario) {
-        return usuario.getRol() == Rol.ADMINISTRADOR;
+        return usuario.getRol().esAdministrador();
     }
 
     private boolean esVentas(Usuario usuario) {
-        return usuario.getRol() == Rol.VENTAS;
+        return usuario.getRol().operaVentas();
     }
 
     private Integer obtenerIdSucursalUsuario(Usuario usuario) {
-        if (usuario.getSucursal() == null || usuario.getSucursal().getIdSucursal() == null) {
-            throw new RuntimeException("El usuario autenticado no tiene sucursal asignada");
-        }
-        return usuario.getSucursal().getIdSucursal();
+        return usuarioSucursalAccessService.obtenerIdSucursalPrincipal(usuario);
     }
 
     private enum AgrupacionReporte {
@@ -3337,7 +3553,8 @@ public class VentaService {
             String nombreSucursal,
             Integer idUsuario,
             String nombreUsuario,
-            Integer idCliente) {
+            Integer idCliente,
+            List<String> tiposComprobante) {
     }
 
     private record AcumuladoPeriodo(

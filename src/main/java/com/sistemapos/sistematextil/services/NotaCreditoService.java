@@ -7,7 +7,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.net.URI;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
 import java.time.DayOfWeek;
@@ -53,11 +52,13 @@ import com.lowagie.text.pdf.PdfWriter;
 import com.sistemapos.sistematextil.config.SunatProperties;
 import com.sistemapos.sistematextil.model.Cliente;
 import com.sistemapos.sistematextil.model.ComprobanteConfig;
+import com.sistemapos.sistematextil.model.Empresa;
 import com.sistemapos.sistematextil.model.HistorialStock;
 import com.sistemapos.sistematextil.model.NotaCredito;
 import com.sistemapos.sistematextil.model.NotaCreditoDetalle;
 import com.sistemapos.sistematextil.model.ProductoVariante;
 import com.sistemapos.sistematextil.model.Sucursal;
+import com.sistemapos.sistematextil.model.SunatBajaLote;
 import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.model.Venta;
 import com.sistemapos.sistematextil.model.VentaDetalle;
@@ -69,14 +70,17 @@ import com.sistemapos.sistematextil.repositories.UsuarioRepository;
 import com.sistemapos.sistematextil.repositories.VentaDetalleRepository;
 import com.sistemapos.sistematextil.repositories.VentaRepository;
 import com.sistemapos.sistematextil.util.notacredito.NotaCreditoCreateRequest;
+import com.sistemapos.sistematextil.util.notacredito.NotaCreditoBajaResponse;
+import com.sistemapos.sistematextil.util.notacredito.NotaCreditoDetalleItemResponse;
+import com.sistemapos.sistematextil.util.notacredito.NotaCreditoDetalleResponse;
 import com.sistemapos.sistematextil.util.notacredito.NotaCreditoItemRequest;
 import com.sistemapos.sistematextil.util.notacredito.NotaCreditoListItemResponse;
 import com.sistemapos.sistematextil.util.notacredito.NotaCreditoResponse;
 import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
 import com.sistemapos.sistematextil.util.sunat.SunatComprobanteHelper;
 import com.sistemapos.sistematextil.util.sunat.SunatEstado;
-import com.sistemapos.sistematextil.util.usuario.Rol;
 import com.sistemapos.sistematextil.util.venta.VentaAnulacionResponse;
+import com.sistemapos.sistematextil.util.venta.VentaAnulacionRequest;
 
 import lombok.RequiredArgsConstructor;
 
@@ -127,6 +131,10 @@ public class NotaCreditoService {
 
     private static final Set<SunatEstado> ESTADOS_ACTIVOS_SUNAT = Set.of(
             SunatEstado.PENDIENTE,
+            SunatEstado.PENDIENTE_ENVIO,
+            SunatEstado.ENVIANDO,
+            SunatEstado.PENDIENTE_CDR,
+            SunatEstado.ERROR_TRANSITORIO,
             SunatEstado.ACEPTADO,
             SunatEstado.OBSERVADO);
 
@@ -140,10 +148,14 @@ public class NotaCreditoService {
     private final NotaCreditoRepository notaCreditoRepository;
     private final NotaCreditoDetalleRepository notaCreditoDetalleRepository;
     private final SunatNotaCreditoEmissionService sunatNotaCreditoEmissionService;
+    private final SunatJobService sunatJobService;
+    private final SunatBajaService sunatBajaService;
     private final SunatDocumentStorageService sunatDocumentStorageService;
     private final SunatCdrParserService sunatCdrParserService;
     private final SunatMontoTextoService sunatMontoTextoService;
     private final SunatProperties sunatProperties;
+    private final S3StorageService s3StorageService;
+    private final UsuarioSucursalAccessService usuarioSucursalAccessService;
 
     @Value("${application.pagination.default-size:10}")
     private int defaultPageSize;
@@ -165,7 +177,7 @@ public class NotaCreditoService {
         }
 
         if (!esRespuestaSunatValida(preparada.sunatEstado())) {
-            sunatNotaCreditoEmissionService.emitir(preparada.idNotaCredito());
+            sunatJobService.enqueueNotaCredito(preparada.idNotaCredito());
         }
 
         return transactionTemplate.execute(
@@ -201,7 +213,7 @@ public class NotaCreditoService {
         }
 
         if (!esRespuestaSunatValida(preparada.sunatEstado())) {
-            sunatNotaCreditoEmissionService.emitir(preparada.idNotaCredito());
+            sunatJobService.enqueueNotaCredito(preparada.idNotaCredito());
         }
 
         return transactionTemplate.execute(
@@ -210,6 +222,21 @@ public class NotaCreditoService {
                         preparada.idNotaCredito(),
                         codigoMotivo,
                         usuarioAutenticado));
+    }
+
+    public void procesarEmisionEnCola(Integer idNotaCredito) {
+        NotaCredito notaCredito = notaCreditoRepository.findByIdNotaCreditoAndDeletedAtIsNull(idNotaCredito)
+                .orElseThrow(() -> new RuntimeException("Nota de credito con ID " + idNotaCredito + " no encontrada"));
+        notaCredito.setSunatEstado(SunatEstado.ENVIANDO);
+        notaCredito.setSunatCodigo(null);
+        notaCredito.setSunatMensaje("Procesando envio de la nota de credito a SUNAT.");
+        notaCreditoRepository.save(notaCredito);
+        sunatNotaCreditoEmissionService.emitir(idNotaCredito);
+        transactionTemplate.executeWithoutResult(status -> aplicarEfectosPostSunatInterno(idNotaCredito));
+    }
+
+    public void aplicarEfectosPostSunat(Integer idNotaCredito) {
+        transactionTemplate.executeWithoutResult(status -> aplicarEfectosPostSunatInterno(idNotaCredito));
     }
 
     public PagedResponse<NotaCreditoListItemResponse> listarPaginado(
@@ -268,6 +295,36 @@ public class NotaCreditoService {
         return PagedResponse.fromPage(notas.map(this::toListItemResponse));
     }
 
+    public NotaCreditoBajaResponse darDeBaja(
+            Integer idNotaCredito,
+            VentaAnulacionRequest request,
+            String correoUsuarioAutenticado) {
+        String descripcionMotivo = normalizarDescripcion(request.descripcionMotivo());
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolNotaCredito(usuarioAutenticado);
+        if (!"01".equals(request.codigoMotivo())) {
+            throw new RuntimeException("Para dar de baja una nota de credito el codigoMotivo debe ser 01");
+        }
+        NotaCredito notaCredito = obtenerNotaCreditoConAlcance(idNotaCredito, usuarioAutenticado);
+        return sunatBajaService.solicitarBaja(notaCredito, descripcionMotivo, usuarioAutenticado);
+    }
+
+    public NotaCreditoBajaResponse consultarBajaSunat(Integer idNotaCredito, String correoUsuarioAutenticado) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolLecturaNotaCredito(usuarioAutenticado);
+        NotaCredito notaCredito = obtenerNotaCreditoConAlcance(idNotaCredito, usuarioAutenticado);
+        return sunatBajaService.consultarBajaPorNotaCredito(notaCredito);
+    }
+
+    public NotaCreditoDetalleResponse obtenerDetalle(Integer idNotaCredito, String correoUsuarioAutenticado) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolLecturaNotaCredito(usuarioAutenticado);
+        NotaCredito notaCredito = obtenerNotaCreditoConAlcance(idNotaCredito, usuarioAutenticado);
+        List<NotaCreditoDetalle> detalles = notaCreditoDetalleRepository
+                .findByNotaCredito_IdNotaCreditoAndDeletedAtIsNull(notaCredito.getIdNotaCredito());
+        return toDetalleResponse(notaCredito, detalles);
+    }
+
     public byte[] generarComprobantePdfA4(Integer idNotaCredito, String correoUsuarioAutenticado) {
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
         validarRolLecturaNotaCredito(usuarioAutenticado);
@@ -285,12 +342,12 @@ public class NotaCreditoService {
             document.open();
 
             agregarCabeceraComprobantePdf(document, notaCredito);
-            document.add(new Paragraph(" "));
+            document.add(crearEspaciadorComprobantePdf(5f));
             agregarDatosNotaCreditoPdf(document, notaCredito);
-            document.add(new Paragraph(" "));
+            document.add(crearEspaciadorComprobantePdf(5f));
             agregarDetalleNotaCreditoPdf(document, detalles);
             agregarResumenNotaCreditoPdf(document, notaCredito);
-            document.add(new Paragraph(" "));
+            document.add(crearEspaciadorComprobantePdf(5f));
             agregarPieNotaCreditoPdf(document, notaCredito, detalles);
 
             document.close();
@@ -340,6 +397,47 @@ public class NotaCreditoService {
                 notaCredito.getSunatCdrNombre(),
                 SunatComprobanteHelper.construirNombreArchivoCdrXml(notaCredito),
                 SunatComprobanteHelper.construirNombreArchivoCdrZip(notaCredito),
+                formato);
+    }
+
+    public VentaService.ArchivoDescargable descargarSunatBajaXml(Integer idNotaCredito, String correoUsuarioAutenticado) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolLecturaNotaCredito(usuarioAutenticado);
+
+        NotaCredito notaCredito = obtenerNotaCreditoConAlcance(idNotaCredito, usuarioAutenticado);
+        SunatBajaLote lote = obtenerLoteBajaDisponible(notaCredito);
+        if (lote.getSunatXmlKey() == null || lote.getSunatXmlKey().isBlank()) {
+            throw new RuntimeException("La baja SUNAT de la nota de credito aun no tiene XML disponible");
+        }
+
+        byte[] contenido = sunatDocumentStorageService.download(lote.getSunatXmlKey());
+        return new VentaService.ArchivoDescargable(
+                lote.getSunatXmlNombre() != null && !lote.getSunatXmlNombre().isBlank()
+                        ? lote.getSunatXmlNombre()
+                        : SunatComprobanteHelper.construirNombreArchivoXml(lote),
+                MediaType.APPLICATION_XML_VALUE,
+                contenido);
+    }
+
+    public VentaService.ArchivoDescargable descargarSunatBajaCdr(
+            Integer idNotaCredito,
+            String correoUsuarioAutenticado,
+            String formato) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolLecturaNotaCredito(usuarioAutenticado);
+
+        NotaCredito notaCredito = obtenerNotaCreditoConAlcance(idNotaCredito, usuarioAutenticado);
+        SunatBajaLote lote = obtenerLoteBajaDisponible(notaCredito);
+        if (lote.getSunatCdrKey() == null || lote.getSunatCdrKey().isBlank()) {
+            throw new RuntimeException("La baja SUNAT de la nota de credito aun no tiene CDR disponible");
+        }
+
+        byte[] contenido = sunatDocumentStorageService.download(lote.getSunatCdrKey());
+        return construirArchivoDescargableCdr(
+                contenido,
+                lote.getSunatCdrNombre(),
+                SunatComprobanteHelper.construirNombreArchivoCdrXml(lote),
+                SunatComprobanteHelper.construirNombreArchivoCdrZip(lote),
                 formato);
     }
 
@@ -438,15 +536,123 @@ public class NotaCreditoService {
                 notaCreditoDetalleRepository.countByNotaCredito_IdNotaCreditoAndDeletedAtIsNull(notaCredito.getIdNotaCredito()));
     }
 
+    private NotaCreditoDetalleResponse toDetalleResponse(NotaCredito notaCredito, List<NotaCreditoDetalle> detalles) {
+        Venta ventaReferencia = notaCredito.getVentaReferencia();
+        Cliente cliente = notaCredito.getCliente();
+        Usuario usuario = notaCredito.getUsuario();
+        Usuario usuarioAnulacion = notaCredito.getUsuarioAnulacion();
+        Sucursal sucursal = notaCredito.getSucursal();
+        Empresa empresa = sucursal != null ? sucursal.getEmpresa() : null;
+        SunatBajaLote loteBaja = notaCredito.getSunatBajaLote();
+
+        return new NotaCreditoDetalleResponse(
+                notaCredito.getIdNotaCredito(),
+                notaCredito.getFecha(),
+                notaCredito.getTipoComprobante(),
+                notaCredito.getSerie(),
+                notaCredito.getCorrelativo(),
+                SunatComprobanteHelper.numeroComprobante(notaCredito),
+                notaCredito.getMoneda(),
+                notaCredito.getCodigoMotivo(),
+                notaCredito.getDescripcionMotivo(),
+                notaCredito.getTipoDocumentoRef(),
+                notaCredito.getSerieRef(),
+                notaCredito.getCorrelativoRef(),
+                construirNumeroReferenciaPdf(notaCredito),
+                ventaReferencia != null ? ventaReferencia.getIdVenta() : null,
+                ventaReferencia != null ? SunatComprobanteHelper.numeroComprobante(ventaReferencia) : null,
+                ventaReferencia != null ? ventaReferencia.getTipoComprobante() : tipoComprobanteReferenciaPdf(notaCredito),
+                valorDecimal(notaCredito.getIgvPorcentaje()),
+                valorDecimal(notaCredito.getSubtotal()),
+                valorDecimal(notaCredito.getDescuentoTotal()),
+                valorDecimal(notaCredito.getIgv()),
+                valorDecimal(notaCredito.getTotal()),
+                notaCredito.getEstado(),
+                Boolean.TRUE.equals(notaCredito.getStockDevuelto()),
+                notaCredito.getSunatEstado(),
+                notaCredito.getSunatCodigo(),
+                notaCredito.getSunatMensaje(),
+                notaCredito.getSunatHash(),
+                notaCredito.getSunatTicket(),
+                notaCredito.getSunatXmlNombre(),
+                notaCredito.getSunatZipNombre(),
+                notaCredito.getSunatCdrNombre(),
+                notaCredito.getSunatEnviadoAt(),
+                notaCredito.getSunatRespondidoAt(),
+                notaCredito.getTipoAnulacion(),
+                notaCredito.getMotivoAnulacion(),
+                notaCredito.getAnuladoAt(),
+                usuarioAnulacion != null ? usuarioAnulacion.getIdUsuario() : null,
+                nombreUsuario(usuarioAnulacion),
+                notaCredito.getSunatBajaEstado(),
+                notaCredito.getSunatBajaCodigo(),
+                notaCredito.getSunatBajaMensaje(),
+                notaCredito.getSunatBajaTicket(),
+                notaCredito.getSunatBajaTipo(),
+                loteBaja != null ? loteBaja.getIdSunatBajaLote() : null,
+                loteBaja != null ? SunatComprobanteHelper.numeroLoteSunat(loteBaja) : null,
+                notaCredito.getSunatBajaSolicitadaAt(),
+                notaCredito.getSunatBajaRespondidaAt(),
+                cliente != null ? cliente.getIdCliente() : null,
+                cliente != null ? cliente.getTipoDocumento() : null,
+                cliente != null ? cliente.getNroDocumento() : null,
+                cliente != null ? cliente.getNombres() : null,
+                cliente != null ? cliente.getTelefono() : null,
+                cliente != null ? cliente.getCorreo() : null,
+                cliente != null ? cliente.getDireccion() : null,
+                usuario != null ? usuario.getIdUsuario() : null,
+                nombreUsuario(usuario),
+                sucursal != null ? sucursal.getIdSucursal() : null,
+                sucursal != null ? sucursal.getNombre() : null,
+                empresa != null ? empresa.getIdEmpresa() : null,
+                empresa != null ? empresa.getNombre() : null,
+                empresa != null ? empresa.getRuc() : null,
+                detalles.stream().map(this::toDetalleItemResponse).toList());
+    }
+
+    private NotaCreditoDetalleItemResponse toDetalleItemResponse(NotaCreditoDetalle detalle) {
+        ProductoVariante variante = detalle.getProductoVariante();
+        return new NotaCreditoDetalleItemResponse(
+                detalle.getIdNotaCreditoDetalle(),
+                detalle.getVentaDetalleReferencia() != null
+                        ? detalle.getVentaDetalleReferencia().getIdVentaDetalle()
+                        : null,
+                variante != null ? variante.getIdProductoVariante() : null,
+                variante != null && variante.getProducto() != null ? variante.getProducto().getIdProducto() : null,
+                variante != null && variante.getProducto() != null ? variante.getProducto().getNombre() : null,
+                detalle.getDescripcion(),
+                variante != null ? variante.getSku() : null,
+                variante != null && variante.getColor() != null ? variante.getColor().getIdColor() : null,
+                variante != null && variante.getColor() != null ? variante.getColor().getNombre() : null,
+                variante != null && variante.getTalla() != null ? variante.getTalla().getIdTalla() : null,
+                variante != null && variante.getTalla() != null ? variante.getTalla().getNombre() : null,
+                detalle.getCantidad(),
+                detalle.getUnidadMedida(),
+                detalle.getCodigoTipoAfectacionIgv(),
+                valorDecimal(detalle.getPrecioUnitario()),
+                valorDecimal(detalle.getDescuento()),
+                valorDecimal(detalle.getIgvDetalle()),
+                valorDecimal(detalle.getSubtotal()),
+                totalDetalle(detalle));
+    }
+
     private NotaCredito obtenerNotaCreditoConAlcance(Integer idNotaCredito, Usuario usuarioAutenticado) {
-        if (esAdministrador(usuarioAutenticado)) {
-            return notaCreditoRepository.findByIdNotaCreditoAndDeletedAtIsNull(idNotaCredito)
-                    .orElseThrow(() -> new RuntimeException("Nota de credito con ID " + idNotaCredito + " no encontrada"));
-        }
-        Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
-        return notaCreditoRepository
-                .findByIdNotaCreditoAndDeletedAtIsNullAndSucursal_IdSucursal(idNotaCredito, idSucursalUsuario)
+        NotaCredito notaCredito = notaCreditoRepository.findByIdNotaCreditoAndDeletedAtIsNull(idNotaCredito)
                 .orElseThrow(() -> new RuntimeException("Nota de credito con ID " + idNotaCredito + " no encontrada"));
+        Integer idSucursal = notaCredito.getSucursal() != null ? notaCredito.getSucursal().getIdSucursal() : null;
+        usuarioSucursalAccessService.validarSucursalPermitida(
+                usuarioAutenticado,
+                idSucursal,
+                "Nota de credito con ID " + idNotaCredito + " no encontrada");
+        return notaCredito;
+    }
+
+    private SunatBajaLote obtenerLoteBajaDisponible(NotaCredito notaCredito) {
+        SunatBajaLote lote = notaCredito.getSunatBajaLote();
+        if (lote == null || lote.getIdSunatBajaLote() == null) {
+            throw new RuntimeException("La nota de credito no tiene baja SUNAT asociada");
+        }
+        return lote;
     }
 
     private String normalizarTerminoBusqueda(String term) {
@@ -486,7 +692,7 @@ public class NotaCreditoService {
 
     private Integer resolverIdUsuarioListado(Usuario usuarioAutenticado, Integer idUsuarioRequest, boolean listarSinFiltros) {
         Integer idUsuarioFiltro = normalizarIdUsuarioFiltro(idUsuarioRequest);
-        if (usuarioAutenticado.getRol() != Rol.VENTAS) {
+        if (!usuarioAutenticado.getRol().operaVentas()) {
             return idUsuarioFiltro;
         }
         if (listarSinFiltros) {
@@ -524,15 +730,10 @@ public class NotaCreditoService {
             return idSucursalRequest;
         }
 
-        if (listarSinFiltros) {
-            return null;
-        }
-
-        Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
-        if (idSucursalRequest != null && !idSucursalUsuario.equals(idSucursalRequest)) {
-            throw new RuntimeException("El usuario autenticado no tiene permisos para filtrar por otra sucursal");
-        }
-        return idSucursalUsuario;
+        return usuarioSucursalAccessService.resolverIdSucursalFiltro(
+                usuarioAutenticado,
+                idSucursalRequest,
+                "El usuario autenticado no tiene permisos para filtrar por otra sucursal");
     }
 
     private boolean esListadoSinFiltros(
@@ -628,25 +829,22 @@ public class NotaCreditoService {
 
     private void agregarCabeceraComprobantePdf(Document document, NotaCredito notaCredito) throws DocumentException {
         Sucursal sucursal = notaCredito.getSucursal();
-        String nombreEmpresa = sucursal != null && sucursal.getEmpresa() != null
-                ? valorTexto(sucursal.getEmpresa().getNombre())
+        Empresa empresa = sucursal != null ? sucursal.getEmpresa() : null;
+        String nombreEmpresa = empresa != null
+                ? valorTexto(empresa.getNombre())
                 : "";
-        String razonSocial = sucursal != null && sucursal.getEmpresa() != null
-                ? valorTexto(sucursal.getEmpresa().getRazonSocial())
+        String razonSocial = empresa != null
+                ? valorTexto(empresa.getRazonSocial())
                 : "";
-        String ruc = sucursal != null && sucursal.getEmpresa() != null
-                ? valorTexto(sucursal.getEmpresa().getRuc())
+        String ruc = empresa != null
+                ? valorTexto(empresa.getRuc())
                 : "";
-        String direccion = sucursal != null ? valorTexto(sucursal.getDireccion()) : "";
-        String distrito = sucursal != null ? valorTexto(sucursal.getDistrito()) : "";
-        String provincia = sucursal != null ? valorTexto(sucursal.getProvincia()) : "";
-        String departamento = sucursal != null ? valorTexto(sucursal.getDepartamento()) : "";
-        String telefono = sucursal != null ? valorTexto(sucursal.getTelefono()) : "";
-        String correo = sucursal != null && !valorTexto(sucursal.getCorreo()).isBlank()
-                ? valorTexto(sucursal.getCorreo())
-                : sucursal != null && sucursal.getEmpresa() != null
-                        ? valorTexto(sucursal.getEmpresa().getCorreo())
-                        : "";
+        String direccion = empresa != null ? valorTexto(empresa.getDireccion()) : "";
+        String distrito = empresa != null ? valorTexto(empresa.getDistrito()) : "";
+        String provincia = empresa != null ? valorTexto(empresa.getProvincia()) : "";
+        String departamento = empresa != null ? valorTexto(empresa.getDepartamento()) : "";
+        String telefono = empresa != null ? valorTexto(empresa.getTelefono()) : "";
+        String correo = empresa != null ? valorTexto(empresa.getCorreo()) : "";
         String direccionCompleta = direccion;
         String ubicacion = construirUbicacionPdf(distrito, provincia, departamento);
         if (!direccionCompleta.isBlank() && !ubicacion.isBlank()) {
@@ -704,6 +902,13 @@ public class NotaCreditoService {
         tipoCell.setHorizontalAlignment(Element.ALIGN_CENTER);
         tipoCell.setVerticalAlignment(Element.ALIGN_MIDDLE);
 
+        if (!ruc.isBlank()) {
+            Paragraph pRucCabecera = new Paragraph("RUC: " + ruc, fuentePdf(true, 10.5f, colorPrimario));
+            pRucCabecera.setAlignment(Element.ALIGN_CENTER);
+            pRucCabecera.setSpacingAfter(6f);
+            tipoCell.addElement(pRucCabecera);
+        }
+
         Paragraph pTipo = new Paragraph("NOTA DE CREDITO ELECTRONICA", fuentePdf(true, 15f, colorPrimario));
         pTipo.setAlignment(Element.ALIGN_CENTER);
         tipoCell.addElement(pTipo);
@@ -738,12 +943,6 @@ public class NotaCreditoService {
             nombre.setSpacingBefore(2f);
             cell.addElement(nombre);
         }
-        if (!ruc.isBlank()) {
-            Paragraph rucP = new Paragraph("RUC: " + ruc, fuentePdf(false, 10f));
-            rucP.setAlignment(Element.ALIGN_LEFT);
-            rucP.setSpacingBefore(2f);
-            cell.addElement(rucP);
-        }
         if (!direccion.isBlank()) {
             Paragraph direccionP = new Paragraph("Direccion: " + direccion, fuentePdf(false, 9.5f));
             direccionP.setAlignment(Element.ALIGN_LEFT);
@@ -769,78 +968,54 @@ public class NotaCreditoService {
         Venta ventaReferencia = notaCredito.getVentaReferencia();
         String nombreCliente = cliente != null && !valorTexto(cliente.getNombres()).isBlank()
                 ? valorTexto(cliente.getNombres())
-                : "CLIENTE";
-        String tipoDoc = etiquetaTipoDocumentoPdf(cliente);
+                : "GENERAL";
         String nroDocumento = cliente != null && !valorTexto(cliente.getNroDocumento()).isBlank()
                 ? valorTexto(cliente.getNroDocumento())
                 : "-";
         String direccionCliente = cliente != null && !valorTexto(cliente.getDireccion()).isBlank()
                 ? valorTexto(cliente.getDireccion())
-                : "";
+                : "-";
         String fechaEmision = notaCredito.getFecha() == null
                 ? ""
                 : notaCredito.getFecha().toLocalDate().format(DateTimeFormatter.ofPattern("dd/MM/yyyy"));
-        String horaEmision = notaCredito.getFecha() == null
-                ? ""
-                : notaCredito.getFecha().toLocalTime().format(DateTimeFormatter.ofPattern("HH:mm:ss"));
-        String moneda = normalizarMonedaPdf(notaCredito.getMoneda());
-        String numeroReferencia = ventaReferencia != null
-                ? SunatComprobanteHelper.numeroComprobante(ventaReferencia)
-                : construirNumeroReferenciaPdf(notaCredito);
-        String tipoReferencia = ventaReferencia != null
-                ? valorTexto(ventaReferencia.getTipoComprobante())
-                : tipoComprobanteReferenciaPdf(notaCredito);
-        String estadoSunat = notaCredito.getSunatEstado() == null ? "-" : notaCredito.getSunatEstado().name();
-        String stockDevuelto = Boolean.TRUE.equals(notaCredito.getStockDevuelto()) ? "SI" : "NO";
-
-        Color colorFondoInfo = new Color(245, 247, 250);
-        PdfPTable tabla = new PdfPTable(new float[] { 2.2f, 4.3f, 2f, 2.3f });
+        boolean esFactura = ventaReferencia != null
+                ? TIPO_FACTURA.equals(normalizarTipoComprobante(ventaReferencia.getTipoComprobante()))
+                : "01".equals(valorTexto(notaCredito.getTipoDocumentoRef()));
+        PdfPTable tabla = new PdfPTable(new float[] { 2.6f, 7.4f });
         tabla.setWidthPercentage(100);
+        tabla.setSpacingBefore(0f);
+        tabla.setSpacingAfter(2f);
 
-        agregarFilaDatosComprobantePdf(tabla, "Cliente", nombreCliente, "Fecha", fechaEmision, colorFondoInfo);
-        agregarFilaDatosComprobantePdf(tabla, tipoDoc, nroDocumento, "Hora", horaEmision, colorFondoInfo);
-        agregarFilaDatosComprobantePdf(
-                tabla,
-                "Direccion",
-                direccionCliente.isBlank() ? "-" : direccionCliente,
-                "Moneda",
-                moneda,
-                colorFondoInfo);
-        agregarFilaDatosComprobantePdf(tabla, "Comprobante ref.", numeroReferencia, "Tipo ref.", tipoReferencia, colorFondoInfo);
-        agregarFilaDatosComprobantePdf(tabla, "Codigo motivo", valorTexto(notaCredito.getCodigoMotivo()), "Estado SUNAT", estadoSunat, colorFondoInfo);
-        agregarFilaDatosComprobantePdf(
-                tabla,
-                "Motivo",
-                valorTexto(notaCredito.getDescripcionMotivo()),
-                "Stock devuelto",
-                stockDevuelto,
-                colorFondoInfo);
+        agregarFilaSimpleDatosComprobantePdf(tabla, "Fecha de emision:", fechaEmision, null);
+        agregarFilaSimpleDatosComprobantePdf(tabla, "Senor(es):", nombreCliente, null);
+        agregarFilaSimpleDatosComprobantePdf(tabla, esFactura ? "RUC:" : "Documento:", nroDocumento, null);
+        agregarFilaSimpleDatosComprobantePdf(tabla, "Direccion:", direccionCliente, null);
 
         document.add(tabla);
     }
 
     private void agregarDetalleNotaCreditoPdf(Document document, List<NotaCreditoDetalle> detalles) throws DocumentException {
-        PdfPTable tabla = new PdfPTable(new float[] { 0.8f, 5.7f, 1.2f, 1.6f, 1.5f, 1.7f });
+        PdfPTable tabla = new PdfPTable(new float[] { 1.1f, 1.2f, 2.0f, 4.5f, 1.6f, 1.8f });
         tabla.setWidthPercentage(100);
         tabla.setHeaderRows(1);
         tabla.setSpacingBefore(4f);
 
         Color colorHeaderBg = new Color(60, 76, 102);
-        agregarHeaderDetalle(tabla, "Item", Element.ALIGN_CENTER, colorHeaderBg);
-        agregarHeaderDetalle(tabla, "Descripcion", Element.ALIGN_LEFT, colorHeaderBg);
-        agregarHeaderDetalle(tabla, "Cant.", Element.ALIGN_CENTER, colorHeaderBg);
-        agregarHeaderDetalle(tabla, "P. Unit.", Element.ALIGN_RIGHT, colorHeaderBg);
-        agregarHeaderDetalle(tabla, "Dscto.", Element.ALIGN_RIGHT, colorHeaderBg);
-        agregarHeaderDetalle(tabla, "Importe", Element.ALIGN_RIGHT, colorHeaderBg);
+        agregarHeaderDetalle(tabla, "CANT", Element.ALIGN_CENTER, colorHeaderBg);
+        agregarHeaderDetalle(tabla, "UNIDAD", Element.ALIGN_CENTER, colorHeaderBg);
+        agregarHeaderDetalle(tabla, "CODIGO", Element.ALIGN_CENTER, colorHeaderBg);
+        agregarHeaderDetalle(tabla, "DESCRIPCION", Element.ALIGN_LEFT, colorHeaderBg);
+        agregarHeaderDetalle(tabla, "P.UNIT", Element.ALIGN_RIGHT, colorHeaderBg);
+        agregarHeaderDetalle(tabla, "TOTAL", Element.ALIGN_RIGHT, colorHeaderBg);
 
         int fila = 1;
         for (NotaCreditoDetalle detalle : detalles) {
             Color bgFila = fila % 2 == 0 ? new Color(247, 249, 252) : null;
-            tabla.addCell(crearCeldaDetallePdf(String.valueOf(fila), Element.ALIGN_CENTER, bgFila));
-            tabla.addCell(crearCeldaDetallePdf(descripcionDetalleParaPdf(detalle), Element.ALIGN_LEFT, bgFila));
-            tabla.addCell(crearCeldaDetallePdf(String.valueOf(valorEntero(detalle.getCantidad())), Element.ALIGN_CENTER, bgFila));
+            tabla.addCell(crearCeldaDetallePdf(formatearCantidadDetallePdf(detalle), Element.ALIGN_CENTER, bgFila));
+            tabla.addCell(crearCeldaDetallePdf(unidadDetalleParaPdf(detalle), Element.ALIGN_CENTER, bgFila));
+            tabla.addCell(crearCeldaDetallePdf(codigoDetalleParaPdf(detalle), Element.ALIGN_CENTER, bgFila));
+            tabla.addCell(crearCeldaDetallePdf(descripcionProductoDetalleParaPdf(detalle), Element.ALIGN_LEFT, bgFila));
             tabla.addCell(crearCeldaDetallePdf(formatearMonedaPdf(detalle.getPrecioUnitario()), Element.ALIGN_RIGHT, bgFila));
-            tabla.addCell(crearCeldaDetallePdf(formatearMonedaPdf(detalle.getDescuento()), Element.ALIGN_RIGHT, bgFila));
             tabla.addCell(crearCeldaDetallePdf(formatearMonedaPdf(totalDetalle(detalle)), Element.ALIGN_RIGHT, bgFila));
             fila++;
         }
@@ -854,10 +1029,10 @@ public class NotaCreditoService {
         totales.setHorizontalAlignment(Element.ALIGN_RIGHT);
         totales.setSpacingBefore(6f);
 
-        agregarFilaTotalComprobantePdf(totales, "Subtotal", formatearMonedaPdf(notaCredito.getSubtotal()));
         if (notaCredito.getDescuentoTotal() != null && notaCredito.getDescuentoTotal().compareTo(BigDecimal.ZERO) > 0) {
-            agregarFilaTotalComprobantePdf(totales, "Descuento", "-" + formatearMonedaPdf(notaCredito.getDescuentoTotal()));
+            agregarFilaTotalComprobantePdf(totales, "DESCUENTOS (-)", "-" + formatearMonedaPdf(notaCredito.getDescuentoTotal()));
         }
+        agregarFilaTotalComprobantePdf(totales, "SUBTOTAL", formatearMonedaPdf(notaCredito.getSubtotal()));
         agregarFilaTotalComprobantePdf(
                 totales,
                 "IGV (" + formatearDecimalPdf(notaCredito.getIgvPorcentaje()) + "%)",
@@ -945,13 +1120,21 @@ public class NotaCreditoService {
     }
 
     private PdfPCell crearCeldaDatoPdf(String texto, boolean bold, Color bgColor) {
-        PdfPCell cell = crearCeldaBase(Rectangle.NO_BORDER, 5f);
+        PdfPCell cell = crearCeldaBase(Rectangle.NO_BORDER, 2.5f);
         cell.setHorizontalAlignment(Element.ALIGN_LEFT);
         if (bgColor != null) {
             cell.setBackgroundColor(bgColor);
         }
-        cell.addElement(new Paragraph(valorTexto(texto), fuentePdf(bold, 9.5f)));
+        Paragraph paragraph = new Paragraph(valorTexto(texto), fuentePdf(bold, 9f));
+        paragraph.setSpacingBefore(0f);
+        paragraph.setSpacingAfter(0f);
+        cell.addElement(paragraph);
         return cell;
+    }
+
+    private void agregarFilaSimpleDatosComprobantePdf(PdfPTable tabla, String label, String valor, Color bgColor) {
+        tabla.addCell(crearCeldaDatoPdf(label, true, bgColor));
+        tabla.addCell(crearCeldaDatoPdf(valor, false, bgColor));
     }
 
     private void agregarHeaderDetalle(PdfPTable tabla, String texto, int alineacion, Color bgColor) {
@@ -1082,10 +1265,63 @@ public class NotaCreditoService {
             return detalle.getDescripcion().trim();
         }
         ProductoVariante variante = detalle.getProductoVariante();
-        if (variante != null && variante.getProducto() != null && variante.getProducto().getNombre() != null) {
-            return variante.getProducto().getNombre().trim();
+        if (variante == null) {
+            return "ITEM";
         }
-        return "ITEM";
+
+        StringBuilder sb = new StringBuilder();
+        if (variante.getProducto() != null && variante.getProducto().getNombre() != null) {
+            sb.append(variante.getProducto().getNombre().trim());
+        }
+        if (variante.getColor() != null && variante.getColor().getNombre() != null) {
+            if (sb.length() > 0) {
+                sb.append(" - ");
+            }
+            sb.append(variante.getColor().getNombre().trim());
+        }
+        if (variante.getTalla() != null && variante.getTalla().getNombre() != null) {
+            if (sb.length() > 0) {
+                sb.append(" - ");
+            }
+            sb.append(variante.getTalla().getNombre().trim());
+        }
+        return sb.isEmpty() ? "ITEM" : sb.toString();
+    }
+
+    private String descripcionProductoDetalleParaPdf(NotaCreditoDetalle detalle) {
+        if (detalle.getDescripcion() != null && !detalle.getDescripcion().isBlank()) {
+            return detalle.getDescripcion().trim();
+        }
+        return descripcionDetalleParaPdf(detalle);
+    }
+
+    private String codigoDetalleParaPdf(NotaCreditoDetalle detalle) {
+        ProductoVariante variante = detalle.getProductoVariante();
+        if (variante != null && variante.getSku() != null && !variante.getSku().isBlank()) {
+            return variante.getSku().trim();
+        }
+        return "-";
+    }
+
+    private String unidadDetalleParaPdf(NotaCreditoDetalle detalle) {
+        String unidad = detalle.getUnidadMedida();
+        if (unidad == null || unidad.isBlank()) {
+            return "NIU";
+        }
+        return unidad.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private String formatearCantidadDetallePdf(NotaCreditoDetalle detalle) {
+        int cantidad = detalle.getCantidad() == null ? 0 : detalle.getCantidad();
+        return BigDecimal.valueOf(cantidad).setScale(2, RoundingMode.HALF_UP).toPlainString();
+    }
+
+    private Paragraph crearEspaciadorComprobantePdf(float leading) {
+        Paragraph spacer = new Paragraph(" ", fuentePdf(false, 4f));
+        spacer.setLeading(leading);
+        spacer.setSpacingBefore(0f);
+        spacer.setSpacingAfter(0f);
+        return spacer;
     }
 
     private String formatearMonedaPdf(BigDecimal monto) {
@@ -1161,7 +1397,7 @@ public class NotaCreditoService {
         }
 
         ImageIO.scanForPlugins();
-        try (InputStream stream = URI.create(logoUrl).toURL().openStream()) {
+        try (InputStream stream = s3StorageService.openStream(logoUrl)) {
             BufferedImage buffered = ImageIO.read(stream);
             if (buffered != null) {
                 ByteArrayOutputStream png = new ByteArrayOutputStream();
@@ -1306,7 +1542,7 @@ public class NotaCreditoService {
         notaCredito.setIgv(sumar(lineas, DetalleNotaCreditoPlan::igvDetalle));
         notaCredito.setTotal(sumar(lineas, DetalleNotaCreditoPlan::totalDetalle));
         notaCredito.setEstado(ESTADO_EMITIDA);
-        notaCredito.setSunatEstado(SunatEstado.PENDIENTE);
+        notaCredito.setSunatEstado(SunatEstado.PENDIENTE_ENVIO);
         notaCredito.setStockDevuelto(false);
         notaCredito.setActivo("ACTIVO");
 
@@ -1368,12 +1604,11 @@ public class NotaCreditoService {
                     venta.getMotivoAnulacion(),
                     venta.getAnuladoAt(),
                     true,
-                    notaCredito.getIdNotaCredito(),
-                    SunatComprobanteHelper.numeroComprobante(notaCredito),
-                    notaCredito.getTipoComprobante(),
-                    notaCredito.getSunatEstado(),
-                    notaCredito.getSunatCodigo(),
-                    notaCredito.getSunatMensaje(),
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
                     "Nota de credito emitida correctamente. Venta anulada y stock revertido.");
         }
 
@@ -1386,12 +1621,11 @@ public class NotaCreditoService {
                 venta.getMotivoAnulacion(),
                 venta.getAnuladoAt(),
                 false,
-                notaCredito.getIdNotaCredito(),
-                SunatComprobanteHelper.numeroComprobante(notaCredito),
-                notaCredito.getTipoComprobante(),
-                notaCredito.getSunatEstado(),
-                notaCredito.getSunatCodigo(),
-                notaCredito.getSunatMensaje(),
+                null,
+                null,
+                null,
+                null,
+                null,
                 mensajeSegunEstadoSunat(notaCredito.getSunatEstado(), false));
     }
 
@@ -1435,6 +1669,43 @@ public class NotaCreditoService {
                 notaCredito.getSunatCodigo(),
                 notaCredito.getSunatMensaje(),
                 mensajeSegunEstadoSunat(notaCredito.getSunatEstado(), CODIGOS_DEVUELVEN_STOCK.contains(codigoMotivo)));
+    }
+
+    private void aplicarEfectosPostSunatInterno(Integer idNotaCredito) {
+        NotaCredito notaCredito = notaCreditoRepository.findByIdNotaCreditoAndDeletedAtIsNull(idNotaCredito)
+                .orElseThrow(() -> new RuntimeException("Nota de credito con ID " + idNotaCredito + " no encontrada"));
+
+        if (!esRespuestaSunatValida(notaCredito.getSunatEstado())) {
+            return;
+        }
+
+        Venta ventaReferencia = notaCredito.getVentaReferencia();
+        if (ventaReferencia == null || ventaReferencia.getIdVenta() == null) {
+            throw new RuntimeException("La nota de credito no tiene venta de referencia valida");
+        }
+
+        Usuario usuarioResponsable = notaCredito.getUsuario() != null
+                ? notaCredito.getUsuario()
+                : ventaReferencia.getUsuario();
+        if (usuarioResponsable == null) {
+            throw new RuntimeException("La nota de credito no tiene usuario responsable para aplicar efectos");
+        }
+
+        String codigoMotivo = normalizarCodigoMotivo(notaCredito.getCodigoMotivo());
+        if (CODIGO_ANULACION_OPERACION.equals(codigoMotivo)) {
+            finalizarAnulacionConNotaCredito(
+                    ventaReferencia.getIdVenta(),
+                    notaCredito.getIdNotaCredito(),
+                    notaCredito.getDescripcionMotivo(),
+                    usuarioResponsable);
+            return;
+        }
+
+        finalizarNotaCreditoGeneral(
+                ventaReferencia.getIdVenta(),
+                notaCredito.getIdNotaCredito(),
+                codigoMotivo,
+                usuarioResponsable);
     }
 
     private void aplicarEstadoVentaSegunNotaCredito(
@@ -1755,13 +2026,14 @@ public class NotaCreditoService {
     }
 
     private Venta obtenerVentaConAlcanceForUpdate(Integer idVenta, Usuario usuarioAutenticado) {
-        if (esAdministrador(usuarioAutenticado)) {
-            return ventaRepository.findByIdVentaForUpdate(idVenta)
-                    .orElseThrow(() -> new RuntimeException("Venta con ID " + idVenta + " no encontrada"));
-        }
-        Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
-        return ventaRepository.findByIdVentaAndSucursalForUpdate(idVenta, idSucursalUsuario)
+        Venta venta = ventaRepository.findByIdVentaForUpdate(idVenta)
                 .orElseThrow(() -> new RuntimeException("Venta con ID " + idVenta + " no encontrada"));
+        Integer idSucursal = venta.getSucursal() != null ? venta.getSucursal().getIdSucursal() : null;
+        usuarioSucursalAccessService.validarSucursalPermitida(
+                usuarioAutenticado,
+                idSucursal,
+                "Venta con ID " + idVenta + " no encontrada");
+        return venta;
     }
 
     private Usuario obtenerUsuarioAutenticado(String correoUsuarioAutenticado) {
@@ -1773,26 +2045,23 @@ public class NotaCreditoService {
     }
 
     private void validarRolNotaCredito(Usuario usuario) {
-        if (usuario.getRol() != Rol.ADMINISTRADOR && usuario.getRol() != Rol.VENTAS) {
+        if (!usuario.getRol().permiteVentas()) {
             throw new RuntimeException("El usuario autenticado no tiene permisos para emitir notas de credito");
         }
     }
 
     private void validarRolLecturaNotaCredito(Usuario usuario) {
-        if (usuario.getRol() != Rol.ADMINISTRADOR && usuario.getRol() != Rol.VENTAS) {
+        if (!usuario.getRol().permiteVentas()) {
             throw new RuntimeException("El usuario autenticado no tiene permisos para consultar notas de credito");
         }
     }
 
     private boolean esAdministrador(Usuario usuario) {
-        return usuario.getRol() == Rol.ADMINISTRADOR;
+        return usuario.getRol().esAdministrador();
     }
 
     private Integer obtenerIdSucursalUsuario(Usuario usuario) {
-        if (usuario.getSucursal() == null || usuario.getSucursal().getIdSucursal() == null) {
-            throw new RuntimeException("El usuario autenticado no tiene sucursal asignada");
-        }
-        return usuario.getSucursal().getIdSucursal();
+        return usuarioSucursalAccessService.obtenerIdSucursalPrincipal(usuario);
     }
 
     private String normalizarCodigoMotivo(String codigoMotivo) {
@@ -1870,24 +2139,39 @@ public class NotaCreditoService {
         if (estado == SunatEstado.OBSERVADO) {
             return "Comprobante electronico aceptado con observaciones por SUNAT.";
         }
+        if (estado == SunatEstado.PENDIENTE_ENVIO || estado == SunatEstado.ENVIANDO) {
+            return "Comprobante electronico registrado y pendiente de envio a SUNAT.";
+        }
+        if (estado == SunatEstado.PENDIENTE_CDR || estado == SunatEstado.PENDIENTE) {
+            return "Comprobante electronico enviado y pendiente de constancia SUNAT.";
+        }
         if (estado == SunatEstado.RECHAZADO) {
             return "Comprobante electronico rechazado por SUNAT.";
         }
-        if (estado == SunatEstado.ERROR) {
-            return "Comprobante electronico generado con incidencia en el envio a SUNAT.";
+        if (estado == SunatEstado.ERROR_TRANSITORIO || estado == SunatEstado.ERROR) {
+            return "Comprobante electronico con error temporal de envio a SUNAT. Se reintentara automaticamente.";
+        }
+        if (estado == SunatEstado.ERROR_DEFINITIVO) {
+            return "Comprobante electronico con error definitivo. Requiere revision.";
         }
         return "Comprobante electronico generado y pendiente de validacion por SUNAT.";
     }
 
     private String mensajeSegunEstadoSunat(SunatEstado estado, boolean devuelveStock) {
-        if (estado == SunatEstado.PENDIENTE) {
+        if (estado == SunatEstado.PENDIENTE
+                || estado == SunatEstado.PENDIENTE_ENVIO
+                || estado == SunatEstado.ENVIANDO
+                || estado == SunatEstado.PENDIENTE_CDR) {
             return "La nota de credito fue registrada y queda pendiente de envio o respuesta SUNAT. La venta sigue activa.";
         }
         if (estado == SunatEstado.RECHAZADO) {
             return "SUNAT rechazo la nota de credito. La venta sigue activa.";
         }
-        if (estado == SunatEstado.ERROR) {
-            return "No se pudo completar el envio de la nota de credito a SUNAT. La venta sigue activa.";
+        if (estado == SunatEstado.ERROR_TRANSITORIO || estado == SunatEstado.ERROR) {
+            return "No se pudo completar el envio de la nota de credito a SUNAT por una incidencia temporal. Se reintentara automaticamente.";
+        }
+        if (estado == SunatEstado.ERROR_DEFINITIVO) {
+            return "La nota de credito presenta un error definitivo y requiere revision manual. La venta sigue activa.";
         }
         if (devuelveStock) {
             return "Nota de credito emitida correctamente. Stock revertido.";

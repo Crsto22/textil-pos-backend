@@ -39,6 +39,7 @@ public class TrasladoService {
     private final ProductoVarianteRepository productoVarianteRepository;
     private final UsuarioRepository usuarioRepository;
     private final StockMovimientoService stockMovimientoService;
+    private final UsuarioSucursalAccessService usuarioSucursalAccessService;
 
     @Value("${application.pagination.default-size:10}")
     private int defaultPageSize;
@@ -143,22 +144,18 @@ public class TrasladoService {
     }
 
     private Integer resolverIdSucursalFiltro(Usuario usuario, Integer idSucursalRequest) {
-        if (usuario.getRol().esAdministrador()) {
-            return idSucursalRequest;
-        }
-        Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuario);
-        if (idSucursalRequest != null && !idSucursalUsuario.equals(idSucursalRequest)) {
-            throw new RuntimeException("No tiene permisos para consultar otra sucursal");
-        }
-        return idSucursalUsuario;
+        return usuarioSucursalAccessService.resolverIdSucursalFiltro(
+                usuario,
+                idSucursalRequest,
+                "No tiene permisos para consultar otra sucursal");
     }
 
     private void validarAlcanceTraslado(Usuario usuario, Integer idSucursalOrigen, Integer idSucursalDestino) {
         if (usuario.getRol().esAdministrador()) {
             return;
         }
-        Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuario);
-        if (!idSucursalUsuario.equals(idSucursalOrigen) && !idSucursalUsuario.equals(idSucursalDestino)) {
+        Set<Integer> idsPermitidos = usuarioSucursalAccessService.obtenerIdsSucursalesPermitidas(usuario);
+        if (!idsPermitidos.contains(idSucursalOrigen) && !idsPermitidos.contains(idSucursalDestino)) {
             throw new RuntimeException("Solo puede registrar traslados donde participe su propia sucursal");
         }
     }
@@ -184,10 +181,7 @@ public class TrasladoService {
     }
 
     private Integer obtenerIdSucursalUsuario(Usuario usuario) {
-        if (usuario.getSucursal() == null || usuario.getSucursal().getIdSucursal() == null) {
-            throw new RuntimeException("El usuario autenticado no tiene sucursal asignada");
-        }
-        return usuario.getSucursal().getIdSucursal();
+        return usuarioSucursalAccessService.obtenerIdSucursalPrincipal(usuario);
     }
 
     private TrasladoResponse toResponse(Traslado traslado) {

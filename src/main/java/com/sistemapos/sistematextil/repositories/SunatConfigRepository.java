@@ -12,4 +12,6 @@ public interface SunatConfigRepository extends JpaRepository<SunatConfig, Intege
     List<SunatConfig> findByEmpresa_IdEmpresaAndDeletedAtIsNullOrderByIdSunatConfigAsc(Integer idEmpresa);
 
     Optional<SunatConfig> findByIdSunatConfigAndDeletedAtIsNull(Integer idSunatConfig);
+
+    Optional<SunatConfig> findByEmpresa_IdEmpresaAndDeletedAtIsNullAndActivo(Integer idEmpresa, String activo);
 }

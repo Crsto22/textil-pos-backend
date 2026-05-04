@@ -18,7 +18,26 @@ import com.sistemapos.sistematextil.util.producto.ProductoVarianteStockSucursalR
 
 public interface ProductoVarianteRepository extends JpaRepository<ProductoVariante, Integer> {
 
-    List<ProductoVariante> findByDeletedAtIsNull();
+    @Query("""
+            SELECT v
+            FROM ProductoVariante v
+            JOIN v.producto p
+            WHERE v.deletedAt IS NULL
+              AND p.deletedAt IS NULL
+            ORDER BY
+              CASE
+                WHEN EXISTS (
+                    SELECT 1
+                    FROM SucursalStock ssStock
+                    WHERE ssStock.productoVariante = v
+                      AND ssStock.cantidad > 0
+                ) THEN 0
+                ELSE 1
+              END ASC,
+              v.createdAt DESC,
+              v.idProductoVariante DESC
+            """)
+    List<ProductoVariante> findByDeletedAtIsNullOrderByStockDescCreatedAtDescIdProductoVarianteDesc();
 
     @Query("""
             SELECT DISTINCT v
@@ -27,13 +46,39 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
             WHERE v.deletedAt IS NULL
               AND v.producto.deletedAt IS NULL
               AND ss.sucursal.idSucursal = :idSucursal
-            ORDER BY v.idProductoVariante ASC
+            ORDER BY
+              CASE WHEN ss.cantidad > 0 THEN 0 ELSE 1 END ASC,
+              v.createdAt DESC,
+              v.idProductoVariante DESC
             """)
     List<ProductoVariante> findByDeletedAtIsNullAndSucursal_IdSucursal(@Param("idSucursal") Integer idSucursal);
 
     List<ProductoVariante> findByProductoIdProducto(Integer idProducto);
 
     List<ProductoVariante> findByProductoIdProductoAndDeletedAtIsNull(Integer idProducto);
+
+    @Query("""
+            SELECT v
+            FROM ProductoVariante v
+            JOIN v.producto p
+            WHERE p.idProducto = :idProducto
+              AND v.deletedAt IS NULL
+              AND p.deletedAt IS NULL
+            ORDER BY
+              CASE
+                WHEN EXISTS (
+                    SELECT 1
+                    FROM SucursalStock ssStock
+                    WHERE ssStock.productoVariante = v
+                      AND ssStock.cantidad > 0
+                ) THEN 0
+                ELSE 1
+              END ASC,
+              v.createdAt DESC,
+              v.idProductoVariante DESC
+            """)
+    List<ProductoVariante> findByProductoIdProductoAndDeletedAtIsNullOrderByStockDescCreatedAtDescIdProductoVarianteDesc(
+            @Param("idProducto") Integer idProducto);
 
     @Query("""
             SELECT DISTINCT v
@@ -43,7 +88,10 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
               AND v.deletedAt IS NULL
               AND v.producto.deletedAt IS NULL
               AND ss.sucursal.idSucursal = :idSucursal
-            ORDER BY v.idProductoVariante ASC
+            ORDER BY
+              CASE WHEN ss.cantidad > 0 THEN 0 ELSE 1 END ASC,
+              v.createdAt DESC,
+              v.idProductoVariante DESC
             """)
     List<ProductoVariante> findByProductoIdProductoAndDeletedAtIsNullAndSucursal_IdSucursal(
             @Param("idProducto") Integer idProducto,
@@ -124,6 +172,31 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
     List<ProductoVariante> findByPrecioOfertaIsNotNullAndOfertaFinLessThanEqualAndDeletedAtIsNull(LocalDateTime fechaHora);
 
     Page<ProductoVariante> findByPrecioOfertaIsNotNullAndDeletedAtIsNull(Pageable pageable);
+
+    @Query("""
+            SELECT v
+            FROM ProductoVariante v
+            WHERE v.deletedAt IS NULL
+              AND (
+                    v.precioOferta IS NOT NULL
+                    OR EXISTS (
+                        SELECT 1
+                        FROM ProductoVarianteOfertaSucursal vos
+                        WHERE vos.productoVariante = v
+                          AND vos.sucursal.idSucursal = :idSucursal
+                          AND vos.deletedAt IS NULL
+                    )
+              )
+              AND EXISTS (
+                    SELECT 1
+                    FROM SucursalStock ss
+                    WHERE ss.productoVariante = v
+                      AND ss.sucursal.idSucursal = :idSucursal
+              )
+            """)
+    Page<ProductoVariante> findConOfertaConfiguradaPorSucursal(
+            @Param("idSucursal") Integer idSucursal,
+            Pageable pageable);
 
     @Query("""
             SELECT v
@@ -245,8 +318,15 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
               AND (:idProductoExcluir IS NULL OR v.producto.idProducto <> :idProductoExcluir)
             """)
     boolean existsCodigoBarrasParaOtroProducto(
+            @Param("idSucursal") Integer idSucursal,
             @Param("codigoBarras") String codigoBarras,
             @Param("idProductoExcluir") Integer idProductoExcluir);
+
+    default boolean existsCodigoBarrasParaOtroProducto(
+            String codigoBarras,
+            Integer idProductoExcluir) {
+        return existsCodigoBarrasParaOtroProducto(null, codigoBarras, idProductoExcluir);
+    }
 
     @Query("""
             SELECT COUNT(v) > 0
@@ -431,8 +511,8 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
                     FROM ProductoVariante v
                     JOIN FETCH v.producto p
                     LEFT JOIN FETCH p.categoria
-                    LEFT JOIN FETCH v.color
-                    LEFT JOIN FETCH v.talla
+                    LEFT JOIN FETCH v.color c
+                    LEFT JOIN FETCH v.talla t
                     WHERE v.deletedAt IS NULL
                       AND p.deletedAt IS NULL
                       AND (:idCategoria IS NULL OR p.categoria.idCategoria = :idCategoria)
@@ -442,10 +522,39 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
                             OR LOWER(p.nombre) LIKE LOWER(CONCAT('%', :term, '%'))
                             OR v.sku LIKE CONCAT(:term, '%')
                             OR v.codigoBarras LIKE CONCAT(:term, '%')
+                            OR (
+                                (:token1 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigoBarras, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''))) LIKE LOWER(CONCAT('%', :token1, '%')))
+                                AND (:token2 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigoBarras, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''))) LIKE LOWER(CONCAT('%', :token2, '%')))
+                                AND (:token3 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigoBarras, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''))) LIKE LOWER(CONCAT('%', :token3, '%')))
+                                AND (:token4 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigoBarras, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''))) LIKE LOWER(CONCAT('%', :token4, '%')))
+                                AND (:token5 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigoBarras, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''))) LIKE LOWER(CONCAT('%', :token5, '%')))
+                                AND (:token6 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigoBarras, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''))) LIKE LOWER(CONCAT('%', :token6, '%')))
+                            )
                       )
                       AND (
                             :conOferta IS NULL
-                            OR (:conOferta = true AND v.precioOferta IS NOT NULL AND (v.ofertaInicio IS NULL OR v.ofertaInicio <= CURRENT_TIMESTAMP) AND (v.ofertaFin IS NULL OR v.ofertaFin >= CURRENT_TIMESTAMP))
+                            OR (
+                                :conOferta = true AND (
+                                    (
+                                        v.precioOferta IS NOT NULL
+                                        AND (v.ofertaInicio IS NULL OR v.ofertaInicio <= CURRENT_TIMESTAMP)
+                                        AND (v.ofertaFin IS NULL OR v.ofertaFin >= CURRENT_TIMESTAMP)
+                                    )
+                                    OR (
+                                        :idSucursal IS NOT NULL
+                                        AND EXISTS (
+                                            SELECT 1
+                                            FROM ProductoVarianteOfertaSucursal vos
+                                            WHERE vos.productoVariante = v
+                                              AND vos.sucursal.idSucursal = :idSucursal
+                                              AND vos.deletedAt IS NULL
+                                              AND vos.precioOferta IS NOT NULL
+                                              AND (vos.ofertaInicio IS NULL OR vos.ofertaInicio <= CURRENT_TIMESTAMP)
+                                              AND (vos.ofertaFin IS NULL OR vos.ofertaFin >= CURRENT_TIMESTAMP)
+                                        )
+                                    )
+                                )
+                            )
                       )
                       AND (
                             :soloDisponibles IS NULL
@@ -462,11 +571,30 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
                                   )
                             )
                       )
+                    ORDER BY
+                      CASE
+                        WHEN EXISTS (
+                            SELECT 1
+                            FROM SucursalStock ssStock
+                            JOIN ssStock.sucursal sStock
+                            WHERE ssStock.productoVariante = v
+                              AND ssStock.cantidad > 0
+                              AND (
+                                    (:idSucursal IS NOT NULL AND sStock.idSucursal = :idSucursal)
+                                    OR (:idSucursal IS NULL AND (:tipoSucursal IS NULL OR sStock.tipo = :tipoSucursal))
+                              )
+                        ) THEN 0
+                        ELSE 1
+                      END ASC,
+                      v.createdAt DESC,
+                      v.idProductoVariante DESC
                     """,
             countQuery = """
                     SELECT COUNT(DISTINCT v.idProductoVariante)
                     FROM ProductoVariante v
                     JOIN v.producto p
+                    LEFT JOIN v.color c
+                    LEFT JOIN v.talla t
                     WHERE v.deletedAt IS NULL
                       AND p.deletedAt IS NULL
                       AND (:idCategoria IS NULL OR p.categoria.idCategoria = :idCategoria)
@@ -476,10 +604,39 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
                             OR LOWER(p.nombre) LIKE LOWER(CONCAT('%', :term, '%'))
                             OR v.sku LIKE CONCAT(:term, '%')
                             OR v.codigoBarras LIKE CONCAT(:term, '%')
+                            OR (
+                                (:token1 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigoBarras, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''))) LIKE LOWER(CONCAT('%', :token1, '%')))
+                                AND (:token2 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigoBarras, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''))) LIKE LOWER(CONCAT('%', :token2, '%')))
+                                AND (:token3 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigoBarras, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''))) LIKE LOWER(CONCAT('%', :token3, '%')))
+                                AND (:token4 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigoBarras, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''))) LIKE LOWER(CONCAT('%', :token4, '%')))
+                                AND (:token5 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigoBarras, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''))) LIKE LOWER(CONCAT('%', :token5, '%')))
+                                AND (:token6 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigoBarras, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''))) LIKE LOWER(CONCAT('%', :token6, '%')))
+                            )
                       )
                       AND (
                             :conOferta IS NULL
-                            OR (:conOferta = true AND v.precioOferta IS NOT NULL AND (v.ofertaInicio IS NULL OR v.ofertaInicio <= CURRENT_TIMESTAMP) AND (v.ofertaFin IS NULL OR v.ofertaFin >= CURRENT_TIMESTAMP))
+                            OR (
+                                :conOferta = true AND (
+                                    (
+                                        v.precioOferta IS NOT NULL
+                                        AND (v.ofertaInicio IS NULL OR v.ofertaInicio <= CURRENT_TIMESTAMP)
+                                        AND (v.ofertaFin IS NULL OR v.ofertaFin >= CURRENT_TIMESTAMP)
+                                    )
+                                    OR (
+                                        :idSucursal IS NOT NULL
+                                        AND EXISTS (
+                                            SELECT 1
+                                            FROM ProductoVarianteOfertaSucursal vos
+                                            WHERE vos.productoVariante = v
+                                              AND vos.sucursal.idSucursal = :idSucursal
+                                              AND vos.deletedAt IS NULL
+                                              AND vos.precioOferta IS NOT NULL
+                                              AND (vos.ofertaInicio IS NULL OR vos.ofertaInicio <= CURRENT_TIMESTAMP)
+                                              AND (vos.ofertaFin IS NULL OR vos.ofertaFin >= CURRENT_TIMESTAMP)
+                                        )
+                                    )
+                                )
+                            )
                       )
                       AND (
                             :soloDisponibles IS NULL
@@ -499,6 +656,12 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
                     """)
     Page<ProductoVariante> buscarResumenPaginado(
             @Param("term") String term,
+            @Param("token1") String token1,
+            @Param("token2") String token2,
+            @Param("token3") String token3,
+            @Param("token4") String token4,
+            @Param("token5") String token5,
+            @Param("token6") String token6,
             @Param("idSucursal") Integer idSucursal,
             @Param("idCategoria") Integer idCategoria,
             @Param("idColor") Integer idColor,
@@ -596,6 +759,12 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
             WHERE v.deletedAt IS NULL
               AND EXISTS (
                     SELECT 1
+                    FROM HistorialStock hs
+                    WHERE hs.productoVariante = v
+                      AND (:idSucursal IS NULL OR hs.sucursal.idSucursal = :idSucursal)
+              )
+              AND EXISTS (
+                    SELECT 1
                     FROM SucursalStock ss
                     WHERE ss.productoVariante = v
                     GROUP BY ss.productoVariante.idProductoVariante
@@ -613,6 +782,12 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
             SELECT COUNT(v.idProductoVariante)
             FROM ProductoVariante v
             WHERE v.deletedAt IS NULL
+              AND EXISTS (
+                    SELECT 1
+                    FROM HistorialStock hs
+                    WHERE hs.productoVariante = v
+                      AND (:idSucursal IS NULL OR hs.sucursal.idSucursal = :idSucursal)
+              )
               AND EXISTS (
                     SELECT 1
                     FROM SucursalStock ss
@@ -670,14 +845,22 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
                         ELSE 0
                     END
                 ), 0),
-                COALESCE(MAX(s.nombre), 'MULTISUCURSAL')
+                v.sku,
+                p.idProducto,
+                v.color.idColor
             FROM ProductoVariante v
             JOIN v.producto p
             LEFT JOIN SucursalStock ss ON ss.productoVariante = v
             LEFT JOIN ss.sucursal s
             WHERE v.deletedAt IS NULL
               AND p.deletedAt IS NULL
-            GROUP BY v.idProductoVariante, p.nombre, v.color.nombre, v.talla.nombre
+              AND EXISTS (
+                    SELECT 1
+                    FROM HistorialStock hs
+                    WHERE hs.productoVariante = v
+                      AND (:idSucursal IS NULL OR hs.sucursal.idSucursal = :idSucursal)
+              )
+            GROUP BY v.idProductoVariante, p.nombre, v.color.nombre, v.talla.nombre, v.sku, p.idProducto, v.color.idColor
             HAVING COALESCE(SUM(
                 CASE
                     WHEN :idSucursal IS NULL OR s.idSucursal = :idSucursal THEN ss.cantidad
@@ -700,14 +883,22 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
                         ELSE 0
                     END
                 ), 0),
-                COALESCE(MAX(s.nombre), 'MULTISUCURSAL')
+                v.sku,
+                p.idProducto,
+                v.color.idColor
             FROM ProductoVariante v
             JOIN v.producto p
             LEFT JOIN SucursalStock ss ON ss.productoVariante = v
             LEFT JOIN ss.sucursal s
             WHERE v.deletedAt IS NULL
               AND p.deletedAt IS NULL
-            GROUP BY v.idProductoVariante, p.nombre, v.color.nombre, v.talla.nombre
+              AND EXISTS (
+                    SELECT 1
+                    FROM HistorialStock hs
+                    WHERE hs.productoVariante = v
+                      AND (:idSucursal IS NULL OR hs.sucursal.idSucursal = :idSucursal)
+              )
+            GROUP BY v.idProductoVariante, p.nombre, v.color.nombre, v.talla.nombre, v.sku, p.idProducto, v.color.idColor
             HAVING COALESCE(SUM(
                 CASE
                     WHEN :idSucursal IS NULL OR s.idSucursal = :idSucursal THEN ss.cantidad

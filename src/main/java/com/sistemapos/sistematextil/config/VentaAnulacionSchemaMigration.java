@@ -29,11 +29,42 @@ public class VentaAnulacionSchemaMigration implements ApplicationRunner {
         try (Connection connection = dataSource.getConnection();
                 Statement statement = connection.createStatement()) {
             limpiarTablasBaja(connection, statement);
+            asegurarSunatConfig(connection, statement);
             migrarVenta(connection, statement);
             asegurarNotaCredito(connection, statement);
             asegurarNotaCreditoDetalle(connection, statement);
             asegurarConfiguracionesComprobante(connection, statement);
             asegurarIndicesGlobalesDocumentos(connection, statement);
+        }
+    }
+
+    private void asegurarSunatConfig(Connection connection, Statement statement) throws Exception {
+        if (!tableExists(connection, "sunat_config")) {
+            return;
+        }
+
+        if (!columnExists(connection, "sunat_config", "url_consulta_ticket")) {
+            statement.execute("""
+                    ALTER TABLE sunat_config
+                    ADD COLUMN url_consulta_ticket VARCHAR(255) DEFAULT NULL AFTER url_bill_service
+                    """);
+            log.info("Columna sunat_config.url_consulta_ticket creada");
+        }
+
+        if (!columnExists(connection, "sunat_config", "url_api_token")) {
+            statement.execute("""
+                    ALTER TABLE sunat_config
+                    ADD COLUMN url_api_token VARCHAR(255) DEFAULT NULL AFTER url_consulta_ticket
+                    """);
+            log.info("Columna sunat_config.url_api_token creada");
+        }
+
+        if (!columnExists(connection, "sunat_config", "url_api_cpe")) {
+            statement.execute("""
+                    ALTER TABLE sunat_config
+                    ADD COLUMN url_api_cpe VARCHAR(255) DEFAULT NULL AFTER url_api_token
+                    """);
+            log.info("Columna sunat_config.url_api_cpe creada");
         }
     }
 
@@ -320,7 +351,7 @@ public class VentaAnulacionSchemaMigration implements ApplicationRunner {
 
         statement.execute("""
                 ALTER TABLE comprobante_config
-                MODIFY COLUMN tipo_comprobante ENUM('NOTA DE VENTA','BOLETA','FACTURA','NOTA_CREDITO_BOLETA','NOTA_CREDITO_FACTURA','COTIZACION') NOT NULL
+                MODIFY COLUMN tipo_comprobante ENUM('NOTA DE VENTA','BOLETA','FACTURA','NOTA_CREDITO_BOLETA','NOTA_CREDITO_FACTURA','COTIZACION','GUIA_REMISION') NOT NULL
                 """);
 
         statement.executeUpdate("""

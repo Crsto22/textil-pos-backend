@@ -4,6 +4,8 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 
+import com.sistemapos.sistematextil.util.sunat.SunatBajaEstado;
+import com.sistemapos.sistematextil.util.sunat.SunatBajaTipo;
 import com.sistemapos.sistematextil.util.sunat.SunatEstado;
 
 public record VentaResponse(
@@ -31,6 +33,14 @@ public record VentaResponse(
         String sunatCdrNombre,
         LocalDateTime sunatEnviadoAt,
         LocalDateTime sunatRespondidoAt,
+        SunatBajaEstado sunatBajaEstado,
+        String sunatBajaCodigo,
+        String sunatBajaMensaje,
+        String sunatBajaTicket,
+        SunatBajaTipo sunatBajaTipo,
+        Integer sunatBajaLoteId,
+        LocalDateTime sunatBajaSolicitadaAt,
+        LocalDateTime sunatBajaRespondidaAt,
         Integer idCliente,
         String nombreCliente,
         Integer idUsuario,

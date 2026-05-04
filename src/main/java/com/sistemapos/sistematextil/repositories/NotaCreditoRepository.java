@@ -1,5 +1,6 @@
 package com.sistemapos.sistematextil.repositories;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -10,6 +11,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import com.sistemapos.sistematextil.model.NotaCredito;
+import com.sistemapos.sistematextil.util.sunat.SunatEstado;
 
 public interface NotaCreditoRepository extends JpaRepository<NotaCredito, Integer> {
 
@@ -74,4 +76,21 @@ public interface NotaCreditoRepository extends JpaRepository<NotaCredito, Intege
     Integer obtenerMaxCorrelativoPorDocumento(
             @Param("tipoComprobante") String tipoComprobante,
             @Param("serie") String serie);
+
+    @Query("""
+            SELECT nc.idNotaCredito
+            FROM NotaCredito nc
+            WHERE nc.deletedAt IS NULL
+              AND nc.sunatEstado IN :estadosSunat
+              AND NOT EXISTS (
+                    SELECT 1
+                    FROM SunatJob j
+                    WHERE j.tipoDocumento = com.sistemapos.sistematextil.util.sunat.SunatJobTipoDocumento.NOTA_CREDITO
+                      AND j.documentoId = nc.idNotaCredito
+              )
+            ORDER BY nc.updatedAt ASC, nc.idNotaCredito ASC
+            """)
+    List<Integer> findPendingSunatIdsWithoutJob(
+            @Param("estadosSunat") Collection<SunatEstado> estadosSunat,
+            Pageable pageable);
 }

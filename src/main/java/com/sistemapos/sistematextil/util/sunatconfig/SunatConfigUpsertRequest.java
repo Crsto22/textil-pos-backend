@@ -18,6 +18,15 @@ public record SunatConfigUpsertRequest(
         @Size(max = 255, message = "urlBillService no debe superar 255 caracteres")
         String urlBillService,
 
+        @Size(max = 255, message = "urlConsultaTicket no debe superar 255 caracteres")
+        String urlConsultaTicket,
+
+        @Size(max = 255, message = "urlApiToken no debe superar 255 caracteres")
+        String urlApiToken,
+
+        @Size(max = 255, message = "urlApiCpe no debe superar 255 caracteres")
+        String urlApiCpe,
+
         @Size(max = 255, message = "certificadoPassword no debe superar 255 caracteres")
         String certificadoPassword,
 

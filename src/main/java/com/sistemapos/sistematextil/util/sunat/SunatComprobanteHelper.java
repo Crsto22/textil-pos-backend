@@ -2,6 +2,7 @@ package com.sistemapos.sistematextil.util.sunat;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.format.DateTimeFormatter;
 import java.util.Base64;
 import java.util.Comparator;
 import java.util.List;
@@ -10,11 +11,14 @@ import java.util.StringJoiner;
 
 import com.sistemapos.sistematextil.model.Cliente;
 import com.sistemapos.sistematextil.model.NotaCredito;
+import com.sistemapos.sistematextil.model.SunatBajaLote;
 import com.sistemapos.sistematextil.model.Venta;
 import com.sistemapos.sistematextil.model.VentaDetalle;
 import com.sistemapos.sistematextil.util.cliente.TipoDocumento;
 
 public final class SunatComprobanteHelper {
+
+    private static final DateTimeFormatter LOTE_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd");
 
     private SunatComprobanteHelper() {
     }
@@ -25,7 +29,10 @@ public final class SunatComprobanteHelper {
                 ? valorTexto(venta.getSucursal().getEmpresa().getRuc())
                 : "";
         TipoDocumento tipoDocumento = cliente != null ? cliente.getTipoDocumento() : null;
-        String nroCliente = cliente != null ? valorTexto(cliente.getNroDocumento()) : "";
+        String nroCliente = cliente != null ? valorTexto(cliente.getNroDocumento()) : "-";
+        if (nroCliente.isBlank()) {
+            nroCliente = "-";
+        }
         String fecha = venta.getFecha() == null ? "" : venta.getFecha().toLocalDate().toString();
 
         return String.join("|",
@@ -46,7 +53,10 @@ public final class SunatComprobanteHelper {
                 ? valorTexto(notaCredito.getSucursal().getEmpresa().getRuc())
                 : "";
         TipoDocumento tipoDocumento = cliente != null ? cliente.getTipoDocumento() : null;
-        String nroCliente = cliente != null ? valorTexto(cliente.getNroDocumento()) : "";
+        String nroCliente = cliente != null ? valorTexto(cliente.getNroDocumento()) : "-";
+        if (nroCliente.isBlank()) {
+            nroCliente = "-";
+        }
         String fecha = notaCredito.getFecha() == null ? "" : notaCredito.getFecha().toLocalDate().toString();
 
         return String.join("|",
@@ -157,6 +167,22 @@ public final class SunatComprobanteHelper {
         return "R-" + construirBaseNombreArchivo(notaCredito) + ".xml";
     }
 
+    public static String construirNombreArchivoXml(SunatBajaLote lote) {
+        return construirBaseNombreArchivo(lote) + ".xml";
+    }
+
+    public static String construirNombreArchivoZip(SunatBajaLote lote) {
+        return construirBaseNombreArchivo(lote) + ".zip";
+    }
+
+    public static String construirNombreArchivoCdrZip(SunatBajaLote lote) {
+        return "R-" + construirBaseNombreArchivo(lote) + ".zip";
+    }
+
+    public static String construirNombreArchivoCdrXml(SunatBajaLote lote) {
+        return "R-" + construirBaseNombreArchivo(lote) + ".xml";
+    }
+
     public static String carpetaTipoComprobante(Venta venta) {
         if (venta == null || venta.getTipoComprobante() == null) {
             return "comprobante";
@@ -175,6 +201,16 @@ public final class SunatComprobanteHelper {
         return "notas-credito";
     }
 
+    public static String carpetaTipoComprobante(SunatBajaLote lote) {
+        if (lote == null || lote.getTipoEnvio() == null) {
+            return "bajas";
+        }
+        return switch (lote.getTipoEnvio()) {
+            case RA -> "bajas-ra";
+            case RC -> "bajas-rc";
+        };
+    }
+
     private static String construirBaseNombreArchivo(Venta venta) {
         String ruc = venta.getSucursal() != null && venta.getSucursal().getEmpresa() != null
                 ? valorTexto(venta.getSucursal().getEmpresa().getRuc())
@@ -189,6 +225,11 @@ public final class SunatComprobanteHelper {
                 ? valorTexto(notaCredito.getSucursal().getEmpresa().getRuc())
                 : "SINRUC";
         return ruc + "-07-" + numeroComprobante(notaCredito);
+    }
+
+    private static String construirBaseNombreArchivo(SunatBajaLote lote) {
+        String ruc = lote.getEmpresa() != null ? valorTexto(lote.getEmpresa().getRuc()) : "SINRUC";
+        return ruc + "-" + numeroLoteSunat(lote);
     }
 
     public static String numeroComprobante(Venta venta) {
@@ -217,6 +258,23 @@ public final class SunatComprobanteHelper {
             return serie;
         }
         return serie + "-" + correlativo;
+    }
+
+    public static String numeroLoteSunat(SunatBajaLote lote) {
+        if (lote == null || lote.getTipoEnvio() == null) {
+            return "";
+        }
+        String fecha = lote.getFechaGeneracion() == null ? "" : lote.getFechaGeneracion().format(LOTE_DATE_FORMAT);
+        String correlativo = lote.getCorrelativo() == null
+                ? ""
+                : String.format(Locale.ROOT, "%03d", lote.getCorrelativo());
+        if (fecha.isBlank()) {
+            return lote.getTipoEnvio().name();
+        }
+        if (correlativo.isBlank()) {
+            return lote.getTipoEnvio().name() + "-" + fecha;
+        }
+        return lote.getTipoEnvio().name() + "-" + fecha + "-" + correlativo;
     }
 
     private static String valorTexto(Object valor) {

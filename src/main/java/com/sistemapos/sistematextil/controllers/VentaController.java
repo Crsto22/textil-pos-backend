@@ -3,6 +3,7 @@ package com.sistemapos.sistematextil.controllers;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
 import java.util.Map;
 
 import org.springframework.format.annotation.DateTimeFormat;
@@ -55,20 +56,20 @@ public class VentaController {
             @RequestParam(name = "q", required = false) String q,
             @RequestParam(name = "idUsuario", required = false) Integer idUsuario,
             @RequestParam(name = "idCliente", required = false) Integer idCliente,
-            @RequestParam(name = "tipoComprobante", required = false) String tipoComprobante,
+            @RequestParam(name = "tipoComprobante", required = false) List<String> tiposComprobante,
             @RequestParam(name = "periodo", required = false) String periodo,
             @RequestParam(name = "fecha", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha,
             @RequestParam(name = "desde", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate desde,
             @RequestParam(name = "hasta", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hasta,
             @RequestParam(name = "idSucursal", required = false) Integer idSucursal,
-            @RequestParam(defaultValue = "0") int page) {
+            @RequestParam(name = "page", defaultValue = "0") int page) {
         try {
             PagedResponse<VentaListItemResponse> response = ventaService
                     .listarPaginado(
                             q,
                             idUsuario,
                             idCliente,
-                            tipoComprobante,
+                            tiposComprobante,
                             periodo,
                             fecha,
                             desde,
@@ -94,6 +95,7 @@ public class VentaController {
             @RequestParam(name = "idUsuario", required = false) Integer idUsuario,
             @RequestParam(name = "idSucursal", required = false) Integer idSucursal,
             @RequestParam(name = "idCliente", required = false) Integer idCliente,
+            @RequestParam(name = "tipoComprobante", required = false) List<String> tiposComprobante,
             @RequestParam(name = "incluirAnuladas", defaultValue = "false") boolean incluirAnuladas) {
         try {
             VentaReporteResponse response = ventaService.obtenerReporteVentas(
@@ -104,6 +106,7 @@ public class VentaController {
                     idUsuario,
                     idSucursal,
                     idCliente,
+                    tiposComprobante,
                     incluirAnuladas,
                     obtenerCorreoAutenticado(authentication));
             return ResponseEntity.ok(response);
@@ -144,6 +147,7 @@ public class VentaController {
             @RequestParam(name = "idUsuario", required = false) Integer idUsuario,
             @RequestParam(name = "idSucursal", required = false) Integer idSucursal,
             @RequestParam(name = "idCliente", required = false) Integer idCliente,
+            @RequestParam(name = "tipoComprobante", required = false) List<String> tiposComprobante,
             @RequestParam(name = "incluirAnuladas", defaultValue = "false") boolean incluirAnuladas) {
         try {
             byte[] archivo = ventaService.exportarReportePdfVentas(
@@ -154,6 +158,7 @@ public class VentaController {
                     idUsuario,
                     idSucursal,
                     idCliente,
+                    tiposComprobante,
                     incluirAnuladas,
                     obtenerCorreoAutenticado(authentication));
 
@@ -183,6 +188,7 @@ public class VentaController {
             @RequestParam(name = "idUsuario", required = false) Integer idUsuario,
             @RequestParam(name = "idSucursal", required = false) Integer idSucursal,
             @RequestParam(name = "idCliente", required = false) Integer idCliente,
+            @RequestParam(name = "tipoComprobante", required = false) List<String> tiposComprobante,
             @RequestParam(name = "incluirAnuladas", defaultValue = "false") boolean incluirAnuladas) {
         try {
             byte[] archivo = ventaService.exportarReporteVentasExcel(
@@ -193,6 +199,7 @@ public class VentaController {
                     idUsuario,
                     idSucursal,
                     idCliente,
+                    tiposComprobante,
                     incluirAnuladas,
                     obtenerCorreoAutenticado(authentication));
 
@@ -302,6 +309,43 @@ public class VentaController {
         }
     }
 
+    @GetMapping(value = "/{id}/sunat/baja/xml", produces = MediaType.APPLICATION_XML_VALUE)
+    public ResponseEntity<?> descargarSunatBajaXml(
+            Authentication authentication,
+            @PathVariable Integer id) {
+        try {
+            VentaService.ArchivoDescargable archivo = ventaService
+                    .descargarSunatBajaXml(id, obtenerCorreoAutenticado(authentication));
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + archivo.nombreArchivo() + "\"")
+                    .contentType(MediaType.APPLICATION_XML)
+                    .body(archivo.bytes());
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al descargar XML de baja SUNAT" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
+    @GetMapping(value = "/{id}/sunat/baja/cdr", produces = { MediaType.APPLICATION_XML_VALUE, "application/zip" })
+    public ResponseEntity<?> descargarSunatBajaCdr(
+            Authentication authentication,
+            @PathVariable Integer id,
+            @RequestParam(name = "formato", required = false) String formato) {
+        try {
+            VentaService.ArchivoDescargable archivo = ventaService
+                    .descargarSunatBajaCdr(id, obtenerCorreoAutenticado(authentication), formato);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + archivo.nombreArchivo() + "\"")
+                    .contentType(MediaType.parseMediaType(archivo.contentType()))
+                    .body(archivo.bytes());
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al descargar CDR de baja SUNAT" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
     @PostMapping("/insertar")
     public ResponseEntity<?> insertar(
             Authentication authentication,
@@ -341,6 +385,21 @@ public class VentaController {
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al anular venta" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
+    @PostMapping("/{id}/sunat/baja/consultar-ticket")
+    public ResponseEntity<?> consultarTicketBajaSunat(
+            Authentication authentication,
+            @PathVariable Integer id) {
+        try {
+            VentaAnulacionResponse response = ventaAnulacionService
+                    .consultarBajaSunat(id, obtenerCorreoAutenticado(authentication));
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al consultar ticket de baja SUNAT" : e.getMessage();
             HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
             return ResponseEntity.status(status).body(Map.of("message", message));
         }

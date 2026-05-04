@@ -26,4 +26,22 @@ public interface TrasladoRepository extends JpaRepository<Traslado, Integer> {
             ORDER BY t.fecha DESC, t.idTraslado DESC
             """)
     Page<Traslado> listarConFiltros(@Param("idSucursal") Integer idSucursal, Pageable pageable);
+
+    @Query(
+            value = """
+                    SELECT COUNT(*), COALESCE(SUM(cantidad), 0)
+                    FROM traslado
+                    WHERE id_sucursal_destino = :idSucursal
+                    """,
+            nativeQuery = true)
+    Object[] obtenerResumenEntradas(@Param("idSucursal") Integer idSucursal);
+
+    @Query(
+            value = """
+                    SELECT COUNT(*), COALESCE(SUM(cantidad), 0)
+                    FROM traslado
+                    WHERE id_sucursal_origen = :idSucursal
+                    """,
+            nativeQuery = true)
+    Object[] obtenerResumenSalidas(@Param("idSucursal") Integer idSucursal);
 }

@@ -1,0 +1,75 @@
+package com.sistemapos.sistematextil.util.notacredito;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.List;
+
+import com.sistemapos.sistematextil.util.cliente.TipoDocumento;
+import com.sistemapos.sistematextil.util.sunat.SunatBajaEstado;
+import com.sistemapos.sistematextil.util.sunat.SunatBajaTipo;
+import com.sistemapos.sistematextil.util.sunat.SunatEstado;
+
+public record NotaCreditoDetalleResponse(
+        Integer idNotaCredito,
+        LocalDateTime fecha,
+        String tipoComprobante,
+        String serie,
+        Integer correlativo,
+        String numeroNotaCredito,
+        String moneda,
+        String codigoMotivo,
+        String descripcionMotivo,
+        String tipoDocumentoRef,
+        String serieRef,
+        Integer correlativoRef,
+        String numeroDocumentoReferencia,
+        Integer idVentaReferencia,
+        String numeroVentaReferencia,
+        String tipoComprobanteVentaReferencia,
+        BigDecimal igvPorcentaje,
+        BigDecimal subtotal,
+        BigDecimal descuentoTotal,
+        BigDecimal igv,
+        BigDecimal total,
+        String estado,
+        boolean stockDevuelto,
+        SunatEstado sunatEstado,
+        String sunatCodigo,
+        String sunatMensaje,
+        String sunatHash,
+        String sunatTicket,
+        String sunatXmlNombre,
+        String sunatZipNombre,
+        String sunatCdrNombre,
+        LocalDateTime sunatEnviadoAt,
+        LocalDateTime sunatRespondidoAt,
+        String tipoAnulacion,
+        String motivoAnulacion,
+        LocalDateTime anuladoAt,
+        Integer idUsuarioAnulacion,
+        String nombreUsuarioAnulacion,
+        SunatBajaEstado sunatBajaEstado,
+        String sunatBajaCodigo,
+        String sunatBajaMensaje,
+        String sunatBajaTicket,
+        SunatBajaTipo sunatBajaTipo,
+        Integer sunatBajaLoteId,
+        String sunatBajaLote,
+        LocalDateTime sunatBajaSolicitadaAt,
+        LocalDateTime sunatBajaRespondidaAt,
+        Integer idCliente,
+        TipoDocumento tipoDocumentoCliente,
+        String nroDocumentoCliente,
+        String nombreCliente,
+        String telefonoCliente,
+        String correoCliente,
+        String direccionCliente,
+        Integer idUsuario,
+        String nombreUsuario,
+        Integer idSucursal,
+        String nombreSucursal,
+        Integer idEmpresa,
+        String nombreEmpresa,
+        String rucEmpresa,
+        List<NotaCreditoDetalleItemResponse> detalles) {
+}

@@ -26,6 +26,7 @@ public class SucursalStockService {
     private final SucursalStockRepository sucursalStockRepository;
     private final UsuarioRepository usuarioRepository;
     private final StockMovimientoService stockMovimientoService;
+    private final UsuarioSucursalAccessService usuarioSucursalAccessService;
 
     public List<SucursalStockResponse> listar(Integer idSucursal, String q, String correoUsuarioAutenticado) {
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
@@ -104,17 +105,10 @@ public class SucursalStockService {
     }
 
     private Integer resolverIdSucursalPermitida(Usuario usuario, Integer idSucursalRequest) {
-        if (idSucursalRequest == null) {
-            throw new RuntimeException("Ingrese idSucursal");
-        }
-        if (usuario.getRol().esAdministrador()) {
-            return idSucursalRequest;
-        }
-        Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuario);
-        if (!idSucursalUsuario.equals(idSucursalRequest)) {
-            throw new RuntimeException("No tiene permisos para gestionar otra sucursal");
-        }
-        return idSucursalUsuario;
+        return usuarioSucursalAccessService.resolverIdSucursalPermitida(
+                usuario,
+                idSucursalRequest,
+                "No tiene permisos para gestionar otra sucursal");
     }
 
     private Usuario obtenerUsuarioAutenticado(String correoUsuarioAutenticado) {
@@ -123,13 +117,6 @@ public class SucursalStockService {
         }
         return usuarioRepository.findByCorreoAndDeletedAtIsNull(correoUsuarioAutenticado)
                 .orElseThrow(() -> new RuntimeException("Usuario autenticado no encontrado"));
-    }
-
-    private Integer obtenerIdSucursalUsuario(Usuario usuario) {
-        if (usuario.getSucursal() == null || usuario.getSucursal().getIdSucursal() == null) {
-            throw new RuntimeException("El usuario autenticado no tiene sucursal asignada");
-        }
-        return usuario.getSucursal().getIdSucursal();
     }
 
     private SucursalStockResponse toResponse(SucursalStock stock) {

@@ -7,6 +7,7 @@ import org.springframework.context.annotation.Configuration;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.S3ClientBuilder;
 import software.amazon.awssdk.services.s3.S3Client;
 
 @Configuration
@@ -23,13 +24,15 @@ public class AwsConfig {
 
     @Bean
     public S3Client s3Client() {
-        if (accessKey == null || accessKey.isBlank() || secretKey == null || secretKey.isBlank()) {
-            throw new IllegalStateException("AWS_ACCESS_KEY y AWS_SECRET_KEY deben estar configurados");
+        S3ClientBuilder builder = S3Client.builder()
+                .region(Region.of(region));
+
+        if (accessKey != null && !accessKey.isBlank()
+                && secretKey != null && !secretKey.isBlank()) {
+            builder.credentialsProvider(StaticCredentialsProvider.create(
+                    AwsBasicCredentials.create(accessKey, secretKey)));
         }
-        return S3Client.builder()
-                .region(Region.of(region))
-                .credentialsProvider(StaticCredentialsProvider.create(
-                        AwsBasicCredentials.create(accessKey, secretKey)))
-                .build();
+
+        return builder.build();
     }
 }

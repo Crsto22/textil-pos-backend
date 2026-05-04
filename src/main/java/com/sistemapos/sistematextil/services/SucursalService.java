@@ -67,10 +67,12 @@ public class SucursalService {
 
         Sucursal sucursal = new Sucursal();
         sucursal.setNombre(nombreNormalizado);
-        sucursal.setCiudad(resolverCiudad(request.ciudad(), request.descripcion(), request.distrito(), request.provincia()));
+        sucursal.setCiudad(normalizarTexto(request.ciudad()));
         sucursal.setDireccion(request.direccion().trim());
         sucursal.setTelefono(request.telefono().trim());
         sucursal.setCorreo(request.correo().trim());
+        sucursal.setUbigeo(normalizarUbigeoObligatorio(request.ubigeo()));
+        sucursal.setCodigoEstablecimientoSunat(normalizarCodigoSunat(request.codigoEstablecimientoSunat()));
         sucursal.setTipo(resolverTipo(request.tipo()));
         sucursal.setEstado("ACTIVO");
         sucursal.setFechaCreacion(LocalDateTime.now());
@@ -93,10 +95,12 @@ public class SucursalService {
                 .orElseThrow(() -> new RuntimeException("Empresa no encontrada"));
 
         sucursal.setNombre(nombreNormalizado);
-        sucursal.setCiudad(resolverCiudad(request.ciudad(), request.descripcion(), request.distrito(), request.provincia()));
+        sucursal.setCiudad(normalizarTexto(request.ciudad()));
         sucursal.setDireccion(request.direccion().trim());
         sucursal.setTelefono(request.telefono().trim());
         sucursal.setCorreo(request.correo().trim());
+        sucursal.setUbigeo(normalizarUbigeoObligatorio(request.ubigeo()));
+        sucursal.setCodigoEstablecimientoSunat(normalizarCodigoSunat(request.codigoEstablecimientoSunat()));
         sucursal.setTipo(resolverTipo(request.tipo()));
         sucursal.setEstado(request.estado().toUpperCase());
         sucursal.setEmpresa(empresa);
@@ -158,14 +162,10 @@ public class SucursalService {
                 sucursal.getNombre(),
                 sucursal.getCiudad(),
                 sucursal.getTipo() != null ? sucursal.getTipo().name() : null,
-                sucursal.getDescripcion(),
                 sucursal.getDireccion(),
                 sucursal.getTelefono(),
                 sucursal.getCorreo(),
                 sucursal.getUbigeo(),
-                sucursal.getDepartamento(),
-                sucursal.getProvincia(),
-                sucursal.getDistrito(),
                 sucursal.getCodigoEstablecimientoSunat(),
                 sucursal.getEstado(),
                 sucursal.getFechaCreacion(),
@@ -197,23 +197,23 @@ public class SucursalService {
         return normalizado == null ? null : normalizado.toUpperCase();
     }
 
-    private String resolverCiudad(String ciudad, String descripcion, String distrito, String provincia) {
-        String ciudadNormalizada = normalizarTexto(ciudad);
-        if (ciudadNormalizada != null) {
-            return ciudadNormalizada;
+    private String normalizarUbigeoObligatorio(String ubigeo) {
+        String ubigeoNormalizado = normalizarCodigo(ubigeo);
+        if (ubigeoNormalizado == null || !ubigeoNormalizado.matches("\\d{6}")) {
+            throw new RuntimeException("El ubigeo es obligatorio y debe tener 6 digitos");
         }
+        return ubigeoNormalizado;
+    }
 
-        String descripcionNormalizada = normalizarTexto(descripcion);
-        if (descripcionNormalizada != null) {
-            return descripcionNormalizada;
+    private String normalizarCodigoSunat(String codigoEstablecimientoSunat) {
+        String codigo = normalizarCodigo(codigoEstablecimientoSunat);
+        if (codigo == null) {
+            return null;
         }
-
-        String distritoNormalizado = normalizarTexto(distrito);
-        if (distritoNormalizado != null) {
-            return distritoNormalizado;
+        if (!codigo.matches("\\d{4}")) {
+            throw new RuntimeException("El codigoEstablecimientoSunat debe tener 4 digitos");
         }
-
-        return normalizarTexto(provincia);
+        return codigo;
     }
 
     private SucursalTipo resolverTipo(String tipo) {

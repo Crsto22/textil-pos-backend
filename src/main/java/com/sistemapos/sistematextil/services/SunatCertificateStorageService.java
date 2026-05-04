@@ -15,6 +15,7 @@ import java.util.Set;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import com.sistemapos.sistematextil.config.StorageProperties;
 import com.sistemapos.sistematextil.config.SunatProperties;
 import com.sistemapos.sistematextil.model.Empresa;
 
@@ -28,6 +29,7 @@ public class SunatCertificateStorageService {
     private static final Set<String> EXT_PERMITIDAS = Set.of("pfx", "p12");
 
     private final SunatProperties sunatProperties;
+    private final StorageProperties storageProperties;
 
     public StoredCertificate store(Empresa empresa, MultipartFile file) {
         validarArchivo(file);
@@ -50,7 +52,7 @@ public class SunatCertificateStorageService {
                 Files.copy(input, destino, StandardCopyOption.REPLACE_EXISTING);
             }
 
-            return new StoredCertificate(destino.toAbsolutePath().toString(), fileName);
+            return new StoredCertificate(buildStoredPath(destino), fileName);
         } catch (IOException e) {
             throw new RuntimeException("No se pudo guardar el certificado digital");
         }
@@ -72,7 +74,7 @@ public class SunatCertificateStorageService {
         if (storedPath == null || storedPath.isBlank()) {
             throw new RuntimeException("No hay certificado digital configurado");
         }
-        Path path = Paths.get(storedPath.trim()).toAbsolutePath().normalize();
+        Path path = toAbsoluteStoredPath(storedPath);
         if (!Files.exists(path)) {
             throw new RuntimeException("El certificado digital configurado no existe en disco");
         }
@@ -109,7 +111,7 @@ public class SunatCertificateStorageService {
 
     private Path resolveBasePath() {
         String configured = sunatProperties.getCertBasePath();
-        Path defaultPath = Paths.get("storage/sunat/certificados").toAbsolutePath().normalize();
+        Path defaultPath = resolveStorageBasePath().resolve("sunat").resolve("certificados");
         if (configured == null || configured.isBlank()) {
             return ensureDirectory(defaultPath);
         }
@@ -145,8 +147,35 @@ public class SunatCertificateStorageService {
             return null;
         }
         Path base = resolveBasePath();
-        Path path = Paths.get(storedPath.trim()).toAbsolutePath().normalize();
+        Path path = toAbsoluteStoredPath(storedPath);
         return path.startsWith(base) ? path : null;
+    }
+
+    private String buildStoredPath(Path path) {
+        Path absolutePath = path.toAbsolutePath().normalize();
+        Path storageBasePath = resolveStorageBasePath();
+        if (absolutePath.startsWith(storageBasePath)) {
+            String relativePath = storageBasePath.relativize(absolutePath).toString().replace("\\", "/");
+            return "/storage/" + relativePath;
+        }
+        return absolutePath.toString();
+    }
+
+    private Path toAbsoluteStoredPath(String storedPath) {
+        String trimmed = storedPath.trim();
+        if (trimmed.startsWith("/storage/")) {
+            String relativePath = trimmed.substring("/storage/".length());
+            return resolveStorageBasePath().resolve(relativePath).toAbsolutePath().normalize();
+        }
+        return Paths.get(trimmed).toAbsolutePath().normalize();
+    }
+
+    private Path resolveStorageBasePath() {
+        String configured = storageProperties.getBasePath();
+        Path basePath = configured == null || configured.isBlank()
+                ? Paths.get("storage")
+                : Paths.get(configured.trim());
+        return basePath.toAbsolutePath().normalize();
     }
 
     public record StoredCertificate(

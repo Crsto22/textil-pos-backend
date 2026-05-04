@@ -19,6 +19,12 @@ public record ProductoVarianteOfertaListItemResponse(
         Double precioOferta,
         LocalDateTime ofertaInicio,
         LocalDateTime ofertaFin,
+        Double precioVigente,
+        TipoOfertaAplicada tipoOfertaAplicada,
+        Integer sucursalOfertaId,
+        Integer usuarioCreacionId,
+        String usuarioCreacionNombre,
+        String usuarioCreacionCorreo,
         String imagenUrl,
         Integer stock,
         String estado

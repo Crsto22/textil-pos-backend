@@ -4,6 +4,8 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 import com.sistemapos.sistematextil.model.converter.EstadoActivoConverter;
+import com.sistemapos.sistematextil.util.sunat.SunatBajaEstado;
+import com.sistemapos.sistematextil.util.sunat.SunatBajaTipo;
 import com.sistemapos.sistematextil.util.sunat.SunatEstado;
 
 import jakarta.persistence.Column;
@@ -136,6 +138,46 @@ public class NotaCredito {
     @Column(name = "sunat_respondido_at")
     private LocalDateTime sunatRespondidoAt;
 
+    @Column(name = "tipo_anulacion", length = 20)
+    private String tipoAnulacion;
+
+    @Column(name = "motivo_anulacion", length = 255)
+    private String motivoAnulacion;
+
+    @Column(name = "anulado_at")
+    private LocalDateTime anuladoAt;
+
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "id_usuario_anulacion")
+    private Usuario usuarioAnulacion;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "sunat_baja_estado", length = 20)
+    private SunatBajaEstado sunatBajaEstado;
+
+    @Column(name = "sunat_baja_codigo", length = 20)
+    private String sunatBajaCodigo;
+
+    @Column(name = "sunat_baja_mensaje", length = 500)
+    private String sunatBajaMensaje;
+
+    @Column(name = "sunat_baja_ticket", length = 120)
+    private String sunatBajaTicket;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "sunat_baja_tipo", length = 10)
+    private SunatBajaTipo sunatBajaTipo;
+
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "sunat_baja_lote_id")
+    private SunatBajaLote sunatBajaLote;
+
+    @Column(name = "sunat_baja_solicitada_at")
+    private LocalDateTime sunatBajaSolicitadaAt;
+
+    @Column(name = "sunat_baja_respondida_at")
+    private LocalDateTime sunatBajaRespondidaAt;
+
     @Column(name = "stock_devuelto", nullable = false)
     private Boolean stockDevuelto;
 
@@ -169,7 +211,7 @@ public class NotaCredito {
             this.estado = "EMITIDA";
         }
         if (this.sunatEstado == null) {
-            this.sunatEstado = SunatEstado.PENDIENTE;
+            this.sunatEstado = SunatEstado.PENDIENTE_ENVIO;
         }
         if (this.stockDevuelto == null) {
             this.stockDevuelto = false;

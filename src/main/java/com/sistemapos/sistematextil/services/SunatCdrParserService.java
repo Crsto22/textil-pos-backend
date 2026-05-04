@@ -74,6 +74,12 @@ public class SunatCdrParserService {
         try {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             factory.setNamespaceAware(true);
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            factory.setXIncludeAware(false);
+            factory.setExpandEntityReferences(false);
             Document document = factory.newDocumentBuilder()
                     .parse(new ByteArrayInputStream(xmlBytes));
 
@@ -89,7 +95,7 @@ public class SunatCdrParserService {
                 mensaje.append(String.join(" | ", notes));
             }
 
-            return new SunatCdrResult(resolveEstado(code), code, mensaje.toString());
+            return new SunatCdrResult(resolveEstado(code, notes), code, mensaje.toString());
         } catch (RuntimeException e) {
             throw e;
         } catch (Exception e) {
@@ -97,14 +103,17 @@ public class SunatCdrParserService {
         }
     }
 
-    private SunatEstado resolveEstado(String code) {
+    private SunatEstado resolveEstado(String code, List<String> notes) {
         if (code == null || code.isBlank()) {
-            return SunatEstado.ERROR;
+            return SunatEstado.ERROR_DEFINITIVO;
         }
         if ("0".equals(code.trim())) {
+            if (notes != null && !notes.isEmpty()) {
+                return SunatEstado.OBSERVADO;
+            }
             return SunatEstado.ACEPTADO;
         }
-        return SunatEstado.OBSERVADO;
+        return SunatEstado.RECHAZADO;
     }
 
     private byte[] readAll(ZipInputStream input) throws Exception {

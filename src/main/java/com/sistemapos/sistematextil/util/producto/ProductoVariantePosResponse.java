@@ -15,6 +15,8 @@ public record ProductoVariantePosResponse(
         LocalDateTime ofertaInicio,
         LocalDateTime ofertaFin,
         Double precioVigente,
+        TipoOfertaAplicada tipoOfertaAplicada,
+        Integer sucursalOfertaId,
         ProductoItem producto,
         ColorItem color,
         TallaItem talla,

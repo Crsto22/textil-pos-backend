@@ -16,7 +16,6 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,6 +24,7 @@ import com.sistemapos.sistematextil.model.Color;
 import com.sistemapos.sistematextil.model.Producto;
 import com.sistemapos.sistematextil.model.ProductoColorImagen;
 import com.sistemapos.sistematextil.model.ProductoVariante;
+import com.sistemapos.sistematextil.model.ProductoVarianteOfertaSucursal;
 import com.sistemapos.sistematextil.model.Sucursal;
 import com.sistemapos.sistematextil.model.SucursalStock;
 import com.sistemapos.sistematextil.model.SucursalTipo;
@@ -79,6 +79,7 @@ public class ProductoService {
     private final ProductoVarianteRepository productoVarianteRepository;
     private final ProductoColorImagenRepository productoColorImagenRepository;
     private final SucursalStockRepository sucursalStockRepository;
+    private final PrecioOfertaService precioOfertaService;
     private final ColorService colorService;
     private final TallaService tallaService;
     private final S3StorageService s3StorageService;
@@ -101,7 +102,7 @@ public class ProductoService {
         Integer idSucursalFiltro = resolverSucursalCatalogo(idSucursal);
         Sucursal sucursalContexto = obtenerSucursalContextoCatalogo(idSucursalFiltro);
         Page<Producto> productos = buscarProductos(null, idCategoria, idColor, conOferta, idSucursalFiltro, false, page);
-        Map<Integer, VarianteCatalogo> catalogo = obtenerCatalogoPorProductos(productos.getContent(), idSucursalFiltro, false);
+        Map<Integer, VarianteCatalogo> catalogo = obtenerCatalogoPorProductos(productos.getContent(), idSucursalFiltro, false, false);
 
         return PagedResponse.fromPage(productos.map(producto -> toListItemResponse(
                 producto,
@@ -235,7 +236,7 @@ public class ProductoService {
         producto.setDeletedAt(null);
 
         Producto guardado = productoRepository.save(producto);
-        List<ProductoVariante> variantes = construirVariantes(guardado, request.variantes(), null);
+        List<ProductoVariante> variantes = construirVariantes(guardado, request.variantes(), null, usuario);
         if (!variantes.isEmpty()) {
             productoVarianteRepository.saveAllAndFlush(variantes);
         }
@@ -270,7 +271,8 @@ public class ProductoService {
         List<ProductoVariante> variantes = sincronizarVariantes(
                 actualizado,
                 productoVarianteRepository.findByProductoIdProducto(idProducto),
-                request.variantes());
+                request.variantes(),
+                usuario);
         productoVarianteRepository.saveAllAndFlush(variantes);
         for (ProductoVariante variante : variantesActivas(variantes)) {
             if (variante.getColor() != null && variante.getColor().getIdColor() != null) {
@@ -421,9 +423,16 @@ public class ProductoService {
             Integer idSucursalFiltro,
             boolean soloDisponibles,
             int page) {
-        PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idProducto").ascending());
+        PageRequest pageable = PageRequest.of(page, defaultPageSize);
+        List<String> tokens = tokensBusqueda(term);
         return productoRepository.buscarConFiltros(
                 term,
+                token(tokens, 0),
+                token(tokens, 1),
+                token(tokens, 2),
+                token(tokens, 3),
+                token(tokens, 4),
+                token(tokens, 5),
                 idSucursalFiltro,
                 idCategoria,
                 idColor,
@@ -472,6 +481,8 @@ public class ProductoService {
                         varianteIds,
                         idSucursalFiltro,
                         resolverTipoSucursalCatalogo(idSucursalFiltro));
+        Map<Integer, ProductoVarianteOfertaSucursal> ofertasSucursal = precioOfertaService
+                .obtenerOfertasSucursalPorVariantes(varianteIds, idSucursalFiltro);
 
         Map<Integer, List<StockSucursalVentaResumen>> stocksPorVariante = agruparStocksVenta(stocks);
         Map<ProductoColorKey, ProductoColorImagenResumen> imagenesPrincipales = resolverImagenesPrincipales(productoIds);
@@ -483,7 +494,20 @@ public class ProductoService {
             }
             VarianteCatalogoBuilder builder = builders.computeIfAbsent(row.productoId(), unused -> new VarianteCatalogoBuilder());
             builder.acumularReferencia(row);
-            builder.acumularPrecio(resolverPrecioVigente(row.precio(), row.precioOferta(), row.ofertaInicio(), row.ofertaFin()));
+            ProductoVarianteOfertaSucursal ofertaSucursal = ofertasSucursal.get(row.varianteId());
+            Double precioVigente = ofertaSucursal == null
+                    ? resolverPrecioVigente(row.precio(), row.precioOferta(), row.ofertaInicio(), row.ofertaFin())
+                    : precioOfertaService.resolverPrecioVigente(
+                            row.precio(),
+                            ofertaSucursal.getPrecioOferta(),
+                            ofertaSucursal.getOfertaInicio(),
+                            ofertaSucursal.getOfertaFin());
+            if (ofertaSucursal == null
+                    || precioVigente == null
+                    || Objects.equals(precioVigente, row.precio())) {
+                precioVigente = resolverPrecioVigente(row.precio(), row.precioOferta(), row.ofertaInicio(), row.ofertaFin());
+            }
+            builder.acumularPrecio(precioVigente);
             if (incluirColores) {
                 builder.acumularColor(row, stocksPorVariante.getOrDefault(row.varianteId(), List.of()), imagenesPrincipales);
             }
@@ -499,7 +523,8 @@ public class ProductoService {
     private List<ProductoVariante> construirVariantes(
             Producto producto,
             List<ProductoVarianteCreateItem> items,
-            Integer idProductoExcluir) {
+            Integer idProductoExcluir,
+            Usuario usuarioAutenticado) {
         if (items == null || items.isEmpty()) {
             return List.of();
         }
@@ -561,6 +586,9 @@ public class ProductoService {
             variante.setPrecioOferta(precioOferta);
             variante.setOfertaInicio(ofertaInicio);
             variante.setOfertaFin(ofertaFin);
+            if (precioOferta != null) {
+                variante.setUsuarioCreacion(usuarioAutenticado);
+            }
             variante.setEstado(ESTADO_ACTIVO);
             variante.setActivo(ESTADO_ACTIVO);
             variante.setDeletedAt(null);
@@ -573,7 +601,8 @@ public class ProductoService {
     private List<ProductoVariante> sincronizarVariantes(
             Producto producto,
             List<ProductoVariante> existentes,
-            List<ProductoVarianteCreateItem> items) {
+            List<ProductoVarianteCreateItem> items,
+            Usuario usuarioAutenticado) {
         Map<String, ProductoVariante> porClave = new HashMap<>();
         for (ProductoVariante existente : existentes) {
             if (existente.getColor() == null || existente.getTalla() == null) {
@@ -638,6 +667,7 @@ public class ProductoService {
             destino.setCodigoBarras(codigoBarras);
             destino.setPrecio(item.precio());
             destino.setPrecioMayor(precioMayor);
+            actualizarUsuarioCreacionOferta(destino, precioOferta, usuarioAutenticado);
             destino.setPrecioOferta(precioOferta);
             destino.setOfertaInicio(ofertaInicio);
             destino.setOfertaFin(ofertaFin);
@@ -928,6 +958,21 @@ public class ProductoService {
         return trimmed.isEmpty() ? null : trimmed;
     }
 
+    private List<String> tokensBusqueda(String term) {
+        if (term == null) {
+            return List.of();
+        }
+        return java.util.Arrays.stream(term.split("\\s+"))
+                .map(String::trim)
+                .filter(token -> !token.isBlank())
+                .limit(6)
+                .toList();
+    }
+
+    private String token(List<String> tokens, int index) {
+        return index < tokens.size() ? tokens.get(index) : null;
+    }
+
     private String normalizarRequerido(String value, String message) {
         String normalizado = normalizar(value);
         if (normalizado == null) {
@@ -980,6 +1025,19 @@ public class ProductoService {
         }
         if (ofertaInicio != null && ofertaFin != null && !ofertaFin.isAfter(ofertaInicio)) {
             throw new RuntimeException("ofertaFin debe ser mayor a ofertaInicio");
+        }
+    }
+
+    private void actualizarUsuarioCreacionOferta(
+            ProductoVariante variante,
+            Double precioOferta,
+            Usuario usuarioAutenticado) {
+        if (precioOferta == null) {
+            variante.setUsuarioCreacion(null);
+            return;
+        }
+        if (variante.getPrecioOferta() == null) {
+            variante.setUsuarioCreacion(usuarioAutenticado);
         }
     }
 
@@ -1057,7 +1115,7 @@ public class ProductoService {
             try {
                 s3StorageService.deleteByUrl(url);
             } catch (RuntimeException e) {
-                log.warn("No se pudo eliminar imagen obsoleta en S3: {}", url, e);
+                log.warn("No se pudo eliminar imagen obsoleta del almacenamiento administrado: {}", url, e);
             }
         }
     }

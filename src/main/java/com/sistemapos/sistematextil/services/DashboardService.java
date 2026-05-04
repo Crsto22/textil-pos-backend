@@ -6,21 +6,30 @@ import java.sql.Date;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 import org.springframework.stereotype.Service;
 
 import com.sistemapos.sistematextil.model.Sucursal;
 import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.repositories.CotizacionRepository;
+import com.sistemapos.sistematextil.repositories.HistorialStockRepository;
 import com.sistemapos.sistematextil.repositories.PagoRepository;
+import com.sistemapos.sistematextil.repositories.ProductoColorImagenRepository;
 import com.sistemapos.sistematextil.repositories.ProductoVarianteRepository;
 import com.sistemapos.sistematextil.repositories.SucursalRepository;
+import com.sistemapos.sistematextil.repositories.SucursalStockRepository;
+import com.sistemapos.sistematextil.repositories.TrasladoRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
 import com.sistemapos.sistematextil.repositories.VentaDetalleRepository;
 import com.sistemapos.sistematextil.repositories.VentaRepository;
@@ -31,6 +40,7 @@ import com.sistemapos.sistematextil.util.dashboard.DashboardSerieItem;
 import com.sistemapos.sistematextil.util.dashboard.DashboardStockCeroItem;
 import com.sistemapos.sistematextil.util.dashboard.DashboardTopProductoItem;
 import com.sistemapos.sistematextil.util.dashboard.DashboardVentasResponse;
+import com.sistemapos.sistematextil.util.producto.ProductoImagenColorRow;
 import com.sistemapos.sistematextil.util.usuario.Rol;
 
 import lombok.RequiredArgsConstructor;
@@ -47,23 +57,51 @@ public class DashboardService {
     private final VentaDetalleRepository ventaDetalleRepository;
     private final PagoRepository pagoRepository;
     private final CotizacionRepository cotizacionRepository;
+    private final HistorialStockRepository historialStockRepository;
+    private final ProductoColorImagenRepository productoColorImagenRepository;
     private final ProductoVarianteRepository productoVarianteRepository;
     private final SucursalRepository sucursalRepository;
+    private final SucursalStockRepository sucursalStockRepository;
+    private final TrasladoRepository trasladoRepository;
+    private final SistemaDashboardService sistemaDashboardService;
+    private final UsuarioSucursalAccessService usuarioSucursalAccessService;
+    private static final DateTimeFormatter FORMATO_HORA = DateTimeFormatter.ofPattern("HH:00");
+    private static final DateTimeFormatter FORMATO_MES = DateTimeFormatter.ofPattern("yyyy-MM");
 
-    public Object obtenerDashboard(String filtro, Integer idSucursalRequest, String correoUsuarioAutenticado) {
+    public Object obtenerDashboard(
+            String filtro,
+            LocalDate desdeRequest,
+            LocalDate hastaRequest,
+            Integer idSucursalRequest,
+            String correoUsuarioAutenticado) {
         Usuario usuario = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        if (usuario.getRol() == Rol.SISTEMA) {
+            return sistemaDashboardService.obtenerDashboard();
+        }
+
         Integer idSucursal = resolverIdSucursalFiltro(usuario, idSucursalRequest);
+        Sucursal sucursalConsultada = idSucursal != null ? obtenerSucursalActiva(idSucursal) : null;
+
+        if (sucursalConsultada != null && sucursalConsultada.getTipo() == com.sistemapos.sistematextil.model.SucursalTipo.ALMACEN) {
+            return construirDashboardAlmacen(usuario, idSucursal);
+        }
 
         return switch (usuario.getRol()) {
-            case ADMINISTRADOR -> construirDashboardAdmin(usuario, filtro, idSucursal);
-            case VENTAS -> construirDashboardVentas(usuario, filtro, idSucursal);
+            case ADMINISTRADOR -> construirDashboardAdmin(usuario, filtro, desdeRequest, hastaRequest, idSucursal);
+            case VENTAS -> construirDashboardVentas(usuario, filtro, desdeRequest, hastaRequest, idSucursal);
             case ALMACEN -> construirDashboardAlmacen(usuario, idSucursal);
-            case VENTAS_ALMACEN -> construirDashboardVentas(usuario, filtro, idSucursal);
+            case VENTAS_ALMACEN -> construirDashboardVentas(usuario, filtro, desdeRequest, hastaRequest, idSucursal);
+            case SISTEMA -> sistemaDashboardService.obtenerDashboard();
         };
     }
 
-    private DashboardAdminResponse construirDashboardAdmin(Usuario usuario, String filtro, Integer idSucursal) {
-        RangoFechas rango = resolverRangoFechas(filtro);
+    private DashboardAdminResponse construirDashboardAdmin(
+            Usuario usuario,
+            String filtro,
+            LocalDate desdeRequest,
+            LocalDate hastaRequest,
+            Integer idSucursal) {
+        RangoFechas rango = resolverRangoFechas(filtro, desdeRequest, hastaRequest);
         String nombreSucursal = resolverNombreSucursal(idSucursal);
         LocalDateTime desde = rango.desde().atStartOfDay();
         LocalDateTime hastaExclusiva = rango.hastaExclusiva();
@@ -97,10 +135,19 @@ public class DashboardService {
                         desde,
                         hastaExclusiva));
 
-        List<DashboardSerieItem> ventasPorFecha = construirSerieContinua(
-                rango.desde(),
-                rango.hasta(),
+        List<DashboardSerieItem> ventasPorFecha = construirSerieVentas(
+                rango,
+                ventaRepository.obtenerVentasPorHora(
+                        idSucursal,
+                        null,
+                        desde,
+                        hastaExclusiva),
                 ventaRepository.obtenerVentasPorFecha(
+                        idSucursal,
+                        null,
+                        desde,
+                        hastaExclusiva),
+                ventaRepository.obtenerVentasPorMes(
                         idSucursal,
                         null,
                         desde,
@@ -162,8 +209,13 @@ public class DashboardService {
                         prontosAgotarse));
     }
 
-    private DashboardVentasResponse construirDashboardVentas(Usuario usuario, String filtro, Integer idSucursal) {
-        RangoFechas rango = resolverRangoFechas(filtro);
+    private DashboardVentasResponse construirDashboardVentas(
+            Usuario usuario,
+            String filtro,
+            LocalDate desdeRequest,
+            LocalDate hastaRequest,
+            Integer idSucursal) {
+        RangoFechas rango = resolverRangoFechas(filtro, desdeRequest, hastaRequest);
         Integer idUsuario = usuario.getIdUsuario();
 
         BigDecimal misVentasTotales = asegurarMoneda(
@@ -192,10 +244,19 @@ public class DashboardService {
                         rango.desde().atStartOfDay(),
                         rango.hastaExclusiva()));
 
-        List<DashboardSerieItem> misVentasPorFecha = construirSerieContinua(
-                rango.desde(),
-                rango.hasta(),
+        List<DashboardSerieItem> misVentasPorFecha = construirSerieVentas(
+                rango,
+                ventaRepository.obtenerVentasPorHora(
+                        idSucursal,
+                        idUsuario,
+                        rango.desde().atStartOfDay(),
+                        rango.hastaExclusiva()),
                 ventaRepository.obtenerVentasPorFecha(
+                        idSucursal,
+                        idUsuario,
+                        rango.desde().atStartOfDay(),
+                        rango.hastaExclusiva()),
+                ventaRepository.obtenerVentasPorMes(
                         idSucursal,
                         idUsuario,
                         rango.desde().atStartOfDay(),
@@ -222,27 +283,46 @@ public class DashboardService {
     }
 
     private DashboardAlmacenResponse construirDashboardAlmacen(Usuario usuario, Integer idSucursal) {
+        Sucursal sucursal = obtenerSucursalActiva(idSucursal);
 
         long variantesAgotadas = productoVarianteRepository.contarVariantesAgotadas(idSucursal);
         long stockBajo = productoVarianteRepository.contarStockBajo(idSucursal, UMBRAL_STOCK_BAJO);
         long totalFisicoEnTienda = productoVarianteRepository.sumarStockTotal(idSucursal);
         long variantesDisponibles = productoVarianteRepository.contarVariantesDisponibles(idSucursal);
 
-        List<DashboardStockCeroItem> reposicionUrgente = mapStockCero(
-                productoVarianteRepository.listarReposicionUrgente(idSucursal));
+        List<DashboardStockCeroItem> reposicionUrgente = unirStockCritico(
+                mapStockCero(productoVarianteRepository.listarReposicionUrgente(idSucursal)),
+                mapStockCero(productoVarianteRepository.listarStockBajoResumen(idSucursal, UMBRAL_STOCK_BAJO))).stream()
+                .sorted(Comparator
+                        .comparing(DashboardStockCeroItem::stock, Comparator.nullsLast(Integer::compareTo))
+                        .thenComparing(DashboardStockCeroItem::producto, Comparator.nullsLast(String::compareToIgnoreCase)))
+                .limit(10)
+                .toList();
 
         List<DashboardTopProductoItem> topMayorSalida = mapTopProductos(
-                ventaDetalleRepository.obtenerTopProductosVendidos(idSucursal, null, null, null));
+                historialStockRepository.obtenerTopProductosConSalida(idSucursal));
+        DashboardAlmacenResponse.ResumenMovimientos resumenMovimientos = construirResumenMovimientosAlmacen(idSucursal);
+        List<DashboardAlmacenResponse.MovimientoRecienteItem> ultimosMovimientos = historialStockRepository
+                .findTop10BySucursalIdSucursalOrderByFechaDesc(idSucursal).stream()
+                .map(this::mapMovimientoReciente)
+                .toList();
+        List<DashboardAlmacenResponse.StockActualItem> topStockActual = mapTopStockActual(
+                sucursalStockRepository.obtenerTopStockActual(idSucursal));
 
         return new DashboardAlmacenResponse(
                 "ALMACEN",
                 "TIEMPO_REAL",
+                idSucursal,
+                sucursal.getNombre(),
                 variantesAgotadas,
                 stockBajo,
                 totalFisicoEnTienda,
                 variantesDisponibles,
                 reposicionUrgente,
-                topMayorSalida);
+                topMayorSalida,
+                resumenMovimientos,
+                ultimosMovimientos,
+                topStockActual);
     }
 
     private Usuario obtenerUsuarioAutenticado(String correoUsuarioAutenticado) {
@@ -254,25 +334,10 @@ public class DashboardService {
     }
 
     private Integer resolverIdSucursalFiltro(Usuario usuario, Integer idSucursalRequest) {
-        if (usuario.getRol() == Rol.ADMINISTRADOR) {
-            if (idSucursalRequest == null) {
-                return null;
-            }
-            return obtenerSucursalActiva(idSucursalRequest).getIdSucursal();
-        }
-
-        Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuario);
-        if (idSucursalRequest != null && !idSucursalRequest.equals(idSucursalUsuario)) {
-            throw new RuntimeException("El usuario autenticado no tiene permisos para consultar otra sucursal");
-        }
-        return idSucursalUsuario;
-    }
-
-    private Integer obtenerIdSucursalUsuario(Usuario usuario) {
-        if (usuario.getSucursal() == null || usuario.getSucursal().getIdSucursal() == null) {
-            throw new RuntimeException("El usuario autenticado no tiene sucursal asignada");
-        }
-        return usuario.getSucursal().getIdSucursal();
+        return usuarioSucursalAccessService.resolverIdSucursalFiltro(
+                usuario,
+                idSucursalRequest,
+                "El usuario autenticado no tiene permisos para consultar otra sucursal");
     }
 
     private String resolverNombreSucursal(Integer idSucursal) {
@@ -287,7 +352,19 @@ public class DashboardService {
                 .orElseThrow(() -> new RuntimeException("Sucursal no encontrada"));
     }
 
-    private RangoFechas resolverRangoFechas(String filtro) {
+    private RangoFechas resolverRangoFechas(String filtro, LocalDate desdeRequest, LocalDate hastaRequest) {
+        if (desdeRequest != null || hastaRequest != null) {
+            LocalDate desde = desdeRequest != null ? desdeRequest : hastaRequest;
+            LocalDate hasta = hastaRequest != null ? hastaRequest : desdeRequest;
+            if (desde == null || hasta == null) {
+                throw new RuntimeException("Envie 'desde' y/o 'hasta' validos");
+            }
+            if (desde.isAfter(hasta)) {
+                throw new RuntimeException("La fecha 'desde' no puede ser mayor a 'hasta'");
+            }
+            return new RangoFechas("RANGO_FECHAS", desde, hasta);
+        }
+
         String filtroNormalizado = normalizarFiltro(filtro);
         LocalDate hoy = LocalDate.now();
 
@@ -296,9 +373,8 @@ public class DashboardService {
             case "ULT_7_DIAS" -> new RangoFechas("ULT_7_DIAS", hoy.minusDays(6), hoy);
             case "ULT_14_DIAS" -> new RangoFechas("ULT_14_DIAS", hoy.minusDays(13), hoy);
             case "ULT_30_DIAS" -> new RangoFechas("ULT_30_DIAS", hoy.minusDays(29), hoy);
-            case "ULT_12_MESES" -> new RangoFechas("ULT_12_MESES", hoy.minusMonths(12).plusDays(1), hoy);
             default -> throw new RuntimeException(
-                    "Filtro invalido. Use: HOY, ULT_7_DIAS, ULT_14_DIAS, ULT_30_DIAS, ULT_12_MESES");
+                    "Filtro invalido. Use: HOY, ULT_7_DIAS, ULT_14_DIAS, ULT_30_DIAS o envie desde/hasta");
         };
     }
 
@@ -322,10 +398,6 @@ public class DashboardService {
         if ("ULT30DIAS".equals(f) || "ULT_30".equals(f) || "30_DIAS".equals(f)) {
             return "ULT_30_DIAS";
         }
-        if ("ULT12MESES".equals(f) || "12_MESES".equals(f) || "12MESES".equals(f)) {
-            return "ULT_12_MESES";
-        }
-
         return f;
     }
 
@@ -396,17 +468,92 @@ public class DashboardService {
     }
 
     private List<DashboardStockCeroItem> mapStockCero(List<Object[]> rows) {
+        Map<ProductoColorKey, ImagenPrincipalData> imagenesPorProductoColor = resolverImagenesPorProductoColor(rows);
         List<DashboardStockCeroItem> items = new ArrayList<>();
         for (Object[] row : rows) {
+            ProductoColorKey key = new ProductoColorKey(toInteger(row[6]), toInteger(row[7]));
+            ImagenPrincipalData imagen = imagenesPorProductoColor.get(key);
             items.add(new DashboardStockCeroItem(
                     toInteger(row[0]),
                     row[1] == null ? "-" : row[1].toString(),
                     row[2] == null ? "-" : row[2].toString(),
                     row[3] == null ? "-" : row[3].toString(),
                     toInteger(row[4]),
-                    row[5] == null ? "-" : row[5].toString()));
+                    row[5] == null ? "-" : row[5].toString(),
+                    imagen != null ? imagen.url() : null,
+                    imagen != null ? imagen.urlThumb() : null));
         }
         return items;
+    }
+
+    private Map<ProductoColorKey, ImagenPrincipalData> resolverImagenesPorProductoColor(List<Object[]> rows) {
+        Set<Integer> productoIds = new HashSet<>();
+        Set<ProductoColorKey> keys = new HashSet<>();
+
+        for (Object[] row : rows) {
+            Integer productoId = toInteger(row[6]);
+            Integer colorId = toInteger(row[7]);
+            if (productoId == null || colorId == null) {
+                continue;
+            }
+            productoIds.add(productoId);
+            keys.add(new ProductoColorKey(productoId, colorId));
+        }
+
+        if (productoIds.isEmpty()) {
+            return Map.of();
+        }
+
+        List<ProductoImagenColorRow> rowsImagen = productoColorImagenRepository
+                .obtenerResumenPorProductos(new ArrayList<>(productoIds));
+
+        Map<ProductoColorKey, ImagenPick> picks = new HashMap<>();
+        for (ProductoImagenColorRow row : rowsImagen) {
+            ProductoColorKey key = new ProductoColorKey(row.productoId(), row.colorId());
+            if (!keys.contains(key)) {
+                continue;
+            }
+
+            String url = preferirNoVacio(row.url(), row.urlThumb());
+            String urlThumb = preferirNoVacio(row.urlThumb(), row.url());
+            if (url == null && urlThumb == null) {
+                continue;
+            }
+
+            ImagenPick actual = picks.get(key);
+            boolean esPrincipal = Boolean.TRUE.equals(row.esPrincipal());
+            int orden = row.orden() == null ? Integer.MAX_VALUE : row.orden();
+
+            if (actual == null || debeReemplazarImagen(actual, esPrincipal, orden)) {
+                picks.put(key, new ImagenPick(url, urlThumb, orden, esPrincipal));
+            }
+        }
+
+        Map<ProductoColorKey, ImagenPrincipalData> resultado = new HashMap<>();
+        for (Map.Entry<ProductoColorKey, ImagenPick> entry : picks.entrySet()) {
+            resultado.put(entry.getKey(), new ImagenPrincipalData(entry.getValue().url(), entry.getValue().urlThumb()));
+        }
+        return resultado;
+    }
+
+    private boolean debeReemplazarImagen(ImagenPick actual, boolean esPrincipalNueva, int ordenNuevo) {
+        if (esPrincipalNueva && !actual.esPrincipal()) {
+            return true;
+        }
+        if (!esPrincipalNueva && actual.esPrincipal()) {
+            return false;
+        }
+        return ordenNuevo < actual.orden();
+    }
+
+    private String preferirNoVacio(String valorPrincipal, String valorAlterno) {
+        if (valorPrincipal != null && !valorPrincipal.isBlank()) {
+            return valorPrincipal;
+        }
+        if (valorAlterno != null && !valorAlterno.isBlank()) {
+            return valorAlterno;
+        }
+        return null;
     }
 
     private List<DashboardStockCeroItem> limitarStockCritico(List<DashboardStockCeroItem> items) {
@@ -418,7 +565,95 @@ public class DashboardService {
                 .toList();
     }
 
-    private List<DashboardSerieItem> construirSerieContinua(LocalDate desde, LocalDate hasta, List<Object[]> rows) {
+    private List<DashboardStockCeroItem> unirStockCritico(
+            List<DashboardStockCeroItem> agotados,
+            List<DashboardStockCeroItem> stockBajo) {
+        Map<Integer, DashboardStockCeroItem> items = new LinkedHashMap<>();
+        for (DashboardStockCeroItem item : agotados) {
+            items.put(item.idProductoVariante(), item);
+        }
+        for (DashboardStockCeroItem item : stockBajo) {
+            items.putIfAbsent(item.idProductoVariante(), item);
+        }
+        return new ArrayList<>(items.values());
+    }
+
+    private DashboardAlmacenResponse.ResumenMovimientos construirResumenMovimientosAlmacen(Integer idSucursal) {
+        Object[] resumenHistorial = normalizarFilaResumen(historialStockRepository.obtenerResumenMovimientos(idSucursal), 6);
+        Object[] resumenEntradas = normalizarFilaResumen(trasladoRepository.obtenerResumenEntradas(idSucursal), 2);
+        Object[] resumenSalidas = normalizarFilaResumen(trasladoRepository.obtenerResumenSalidas(idSucursal), 2);
+
+        return new DashboardAlmacenResponse.ResumenMovimientos(
+                toLong(resumenHistorial[0]),
+                toLong(resumenHistorial[1]),
+                toLong(resumenHistorial[2]),
+                toLong(resumenHistorial[3]),
+                toLong(resumenHistorial[4]),
+                toLong(resumenHistorial[5]),
+                toLong(resumenEntradas[0]),
+                toLong(resumenEntradas[1]),
+                toLong(resumenSalidas[0]),
+                toLong(resumenSalidas[1]));
+    }
+
+    private Object[] normalizarFilaResumen(Object[] row, int sizeEsperado) {
+        if (row == null) {
+            return new Object[sizeEsperado];
+        }
+        if (row.length == 1 && row[0] instanceof Object[] nestedRow) {
+            return nestedRow;
+        }
+        return row;
+    }
+
+    private DashboardAlmacenResponse.MovimientoRecienteItem mapMovimientoReciente(com.sistemapos.sistematextil.model.HistorialStock historial) {
+        return new DashboardAlmacenResponse.MovimientoRecienteItem(
+                historial.getIdHistorial(),
+                historial.getFecha(),
+                historial.getTipoMovimiento() == null ? null : historial.getTipoMovimiento().name(),
+                historial.getMotivo(),
+                historial.getProductoVariante() == null ? null : historial.getProductoVariante().getIdProductoVariante(),
+                historial.getProductoVariante() == null || historial.getProductoVariante().getProducto() == null
+                        ? "-"
+                        : historial.getProductoVariante().getProducto().getNombre(),
+                historial.getProductoVariante() == null || historial.getProductoVariante().getColor() == null
+                        ? "-"
+                        : historial.getProductoVariante().getColor().getNombre(),
+                historial.getProductoVariante() == null || historial.getProductoVariante().getTalla() == null
+                        ? "-"
+                        : historial.getProductoVariante().getTalla().getNombre(),
+                historial.getCantidad(),
+                historial.getStockAnterior(),
+                historial.getStockNuevo());
+    }
+
+    private List<DashboardAlmacenResponse.StockActualItem> mapTopStockActual(List<Object[]> rows) {
+        List<DashboardAlmacenResponse.StockActualItem> items = new ArrayList<>();
+        for (Object[] row : rows) {
+            items.add(new DashboardAlmacenResponse.StockActualItem(
+                    toInteger(row[0]),
+                    row[1] == null ? "-" : row[1].toString(),
+                    row[2] == null ? "-" : row[2].toString(),
+                    row[3] == null ? "-" : row[3].toString(),
+                    toLong(row[4])));
+        }
+        return items;
+    }
+
+    private List<DashboardSerieItem> construirSerieVentas(
+            RangoFechas rango,
+            List<Object[]> rowsPorHora,
+            List<Object[]> rowsPorDia,
+            List<Object[]> rowsPorMes) {
+        GranularidadSerie granularidad = rango.granularidadSerie();
+        return switch (granularidad) {
+            case HORA -> construirSeriePorHora(rango.desde(), rowsPorHora);
+            case MES -> construirSeriePorMes(rango.desde(), rango.hasta(), rowsPorMes);
+            case DIA -> construirSeriePorDia(rango.desde(), rango.hasta(), rowsPorDia);
+        };
+    }
+
+    private List<DashboardSerieItem> construirSeriePorDia(LocalDate desde, LocalDate hasta, List<Object[]> rows) {
         Map<LocalDate, BigDecimal> montosPorFecha = new LinkedHashMap<>();
         LocalDate cursor = desde;
         while (!cursor.isAfter(hasta)) {
@@ -436,7 +671,69 @@ public class DashboardService {
 
         List<DashboardSerieItem> serie = new ArrayList<>();
         for (Map.Entry<LocalDate, BigDecimal> entry : montosPorFecha.entrySet()) {
-            serie.add(new DashboardSerieItem(entry.getKey(), entry.getValue()));
+            serie.add(new DashboardSerieItem(
+                    entry.getKey(),
+                    entry.getKey().toString(),
+                    GranularidadSerie.DIA.name(),
+                    entry.getValue()));
+        }
+        return serie;
+    }
+
+    private List<DashboardSerieItem> construirSeriePorHora(LocalDate fecha, List<Object[]> rows) {
+        Map<Integer, BigDecimal> montosPorHora = new LinkedHashMap<>();
+        for (int hora = 0; hora < 24; hora++) {
+            montosPorHora.put(hora, CERO_MONETARIO);
+        }
+
+        for (Object[] row : rows) {
+            Integer hora = toInteger(row[0]);
+            BigDecimal monto = toBigDecimal(row[1]);
+            if (hora != null && montosPorHora.containsKey(hora)) {
+                montosPorHora.put(hora, monto);
+            }
+        }
+
+        List<DashboardSerieItem> serie = new ArrayList<>();
+        for (Map.Entry<Integer, BigDecimal> entry : montosPorHora.entrySet()) {
+            LocalDateTime fechaHora = fecha.atTime(entry.getKey(), 0);
+            serie.add(new DashboardSerieItem(
+                    fecha,
+                    fechaHora.format(FORMATO_HORA),
+                    GranularidadSerie.HORA.name(),
+                    entry.getValue()));
+        }
+        return serie;
+    }
+
+    private List<DashboardSerieItem> construirSeriePorMes(LocalDate desde, LocalDate hasta, List<Object[]> rows) {
+        Map<YearMonth, BigDecimal> montosPorMes = new LinkedHashMap<>();
+        YearMonth cursor = YearMonth.from(desde);
+        YearMonth fin = YearMonth.from(hasta);
+        while (!cursor.isAfter(fin)) {
+            montosPorMes.put(cursor, CERO_MONETARIO);
+            cursor = cursor.plusMonths(1);
+        }
+
+        for (Object[] row : rows) {
+            LocalDate fecha = toLocalDate(row[0]);
+            BigDecimal monto = toBigDecimal(row[1]);
+            if (fecha != null) {
+                YearMonth yearMonth = YearMonth.from(fecha);
+                if (montosPorMes.containsKey(yearMonth)) {
+                    montosPorMes.put(yearMonth, monto);
+                }
+            }
+        }
+
+        List<DashboardSerieItem> serie = new ArrayList<>();
+        for (Map.Entry<YearMonth, BigDecimal> entry : montosPorMes.entrySet()) {
+            LocalDate fecha = entry.getKey().atDay(1);
+            serie.add(new DashboardSerieItem(
+                    fecha,
+                    fecha.format(FORMATO_MES),
+                    GranularidadSerie.MES.name(),
+                    entry.getValue()));
         }
         return serie;
     }
@@ -518,5 +815,27 @@ public class DashboardService {
         private LocalDateTime hastaExclusiva() {
             return hasta.plusDays(1).atStartOfDay();
         }
+
+        private GranularidadSerie granularidadSerie() {
+            if (desde.equals(hasta)) {
+                return GranularidadSerie.HORA;
+            }
+            return desde.plusMonths(2).isBefore(hasta) ? GranularidadSerie.MES : GranularidadSerie.DIA;
+        }
+    }
+
+    private record ProductoColorKey(Integer productoId, Integer colorId) {
+    }
+
+    private record ImagenPrincipalData(String url, String urlThumb) {
+    }
+
+    private record ImagenPick(String url, String urlThumb, int orden, boolean esPrincipal) {
+    }
+
+    private enum GranularidadSerie {
+        HORA,
+        DIA,
+        MES
     }
 }

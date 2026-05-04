@@ -22,7 +22,7 @@ public interface UsuarioRepository extends JpaRepository <Usuario, Integer>{
     Optional<Usuario> findByTelefono(String telefono);
     Optional<Usuario> findByDniAndDeletedAtIsNull(String dni);
     Optional<Usuario> findByTelefonoAndDeletedAtIsNull(String telefono);
-    Page<Usuario> findByDeletedAtIsNull(Pageable pageable);
+    Page<Usuario> findByDeletedAtIsNullAndRolNot(Rol rol, Pageable pageable);
     @Query("""
         SELECT u
         FROM Usuario u
@@ -37,15 +37,44 @@ public interface UsuarioRepository extends JpaRepository <Usuario, Integer>{
                 OR u.dni LIKE CONCAT(:term, '%')
           )
           AND (:rol IS NULL OR u.rol = :rol)
-          AND (:idSucursal IS NULL OR s.idSucursal = :idSucursal)
+          AND (:rolExcluido IS NULL OR u.rol <> :rolExcluido)
+          AND (
+                :idSucursal IS NULL
+                OR s.idSucursal = :idSucursal
+                OR EXISTS (
+                      SELECT 1
+                      FROM UsuarioSucursal us
+                      WHERE us.usuario = u
+                        AND us.sucursal.idSucursal = :idSucursal
+                )
+          )
         """)
     Page<Usuario> buscarConFiltros(
             @Param("term") String term,
             @Param("rol") Rol rol,
+            @Param("rolExcluido") Rol rolExcluido,
             @Param("idSucursal") Integer idSucursal,
             Pageable pageable);
     Optional<Usuario> findByIdUsuarioAndDeletedAtIsNull(Integer idUsuario);
-    long countBySucursalIdSucursalAndDeletedAtIsNullAndEstado(Integer idSucursal, String estado);
+    @Query("""
+            SELECT COUNT(DISTINCT u)
+            FROM Usuario u
+            LEFT JOIN u.sucursal s
+            WHERE u.deletedAt IS NULL
+              AND u.estado = :estado
+              AND (
+                    s.idSucursal = :idSucursal
+                    OR EXISTS (
+                          SELECT 1
+                          FROM UsuarioSucursal us
+                          WHERE us.usuario = u
+                            AND us.sucursal.idSucursal = :idSucursal
+                    )
+              )
+            """)
+    long countBySucursalIdSucursalAndDeletedAtIsNullAndEstado(
+            @Param("idSucursal") Integer idSucursal,
+            @Param("estado") String estado);
 
     @Query(value = """
             SELECT
@@ -53,7 +82,15 @@ public interface UsuarioRepository extends JpaRepository <Usuario, Integer>{
               CONCAT(u.nombre, ' ', u.apellido) AS nombreCompleto,
               u.foto_perfil_url AS fotoPerfilUrl
             FROM usuario u
-            WHERE u.id_sucursal = :idSucursal
+            WHERE (
+                    u.id_sucursal = :idSucursal
+                    OR EXISTS (
+                        SELECT 1
+                        FROM usuario_sucursal us
+                        WHERE us.id_usuario = u.id_usuario
+                          AND us.id_sucursal = :idSucursal
+                    )
+                  )
               AND u.deleted_at IS NULL
               AND u.activo = 1
             ORDER BY RAND()
@@ -81,7 +118,7 @@ public interface UsuarioRepository extends JpaRepository <Usuario, Integer>{
               AND (:fechaInicio IS NULL OR v.fecha >= :fechaInicio)
               AND (:fechaFinExclusive IS NULL OR v.fecha < :fechaFinExclusive)
             WHERE u.deleted_at IS NULL
-              AND u.rol IN ('ADMINISTRADOR', 'VENTAS')
+              AND u.rol IN ('ADMINISTRADOR', 'VENTAS', 'VENTAS_ALMACEN')
               AND (
                     :idSucursal IS NULL
                     OR u.id_sucursal = :idSucursal
@@ -117,7 +154,7 @@ public interface UsuarioRepository extends JpaRepository <Usuario, Integer>{
             JOIN usuario u ON u.id_usuario = v.id_usuario
             WHERE v.deleted_at IS NULL
               AND u.deleted_at IS NULL
-              AND u.rol IN ('ADMINISTRADOR', 'VENTAS')
+              AND u.rol IN ('ADMINISTRADOR', 'VENTAS', 'VENTAS_ALMACEN')
               AND (:idSucursal IS NULL OR v.id_sucursal = :idSucursal)
               AND (:fechaInicio IS NULL OR v.fecha >= :fechaInicio)
               AND (:fechaFinExclusive IS NULL OR v.fecha < :fechaFinExclusive)

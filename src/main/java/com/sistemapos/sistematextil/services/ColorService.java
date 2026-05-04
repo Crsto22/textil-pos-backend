@@ -19,6 +19,9 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class ColorService {
 
+    private static final String ESTADO_ACTIVO = "ACTIVO";
+    private static final String ESTADO_INACTIVO = "INACTIVO";
+
     private final ColorRepository colorRepository;
 
     @Value("${application.pagination.default-size:10}")
@@ -26,8 +29,8 @@ public class ColorService {
 
     public PagedResponse<Color> listarPaginado(int page) {
         validarPagina(page);
-        PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idColor").ascending());
-        Page<Color> colores = colorRepository.findAll(pageable);
+        PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idColor").descending());
+        Page<Color> colores = colorRepository.findByDeletedAtIsNullAndEstadoOrderByIdColorDesc(ESTADO_ACTIVO, pageable);
         return PagedResponse.fromPage(colores);
     }
 
@@ -38,13 +41,16 @@ public class ColorService {
             return listarPaginado(page);
         }
 
-        PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idColor").ascending());
-        Page<Color> colores = colorRepository.findByNombreContainingIgnoreCase(term, pageable);
+        PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idColor").descending());
+        Page<Color> colores = colorRepository.findByDeletedAtIsNullAndEstadoAndNombreContainingIgnoreCaseOrderByIdColorDesc(
+                ESTADO_ACTIVO,
+                term,
+                pageable);
         return PagedResponse.fromPage(colores);
     }
 
     public Color obtenerPorId(Integer id) {
-        return colorRepository.findById(id)
+        return colorRepository.findByIdColorAndDeletedAtIsNullAndEstado(id, ESTADO_ACTIVO)
                 .orElseThrow(() -> new RuntimeException("Color con ID " + id + " no encontrado"));
     }
 
@@ -59,14 +65,28 @@ public class ColorService {
             throw new RuntimeException("El codigo del color es obligatorio");
         }
 
-        if (colorRepository.existsByNombreIgnoreCase(nombre)) {
-            throw new RuntimeException("El color '" + nombre + "' ya existe");
+        Color colorExistente = colorRepository.findByNombreIgnoreCase(nombre).orElse(null);
+        if (colorExistente != null) {
+            if (estaDisponible(colorExistente)) {
+                throw new RuntimeException("El color '" + nombre + "' ya existe");
+            }
+
+            colorExistente.setNombre(nombre);
+            colorExistente.setCodigo(codigo);
+            colorExistente.setEstado(ESTADO_ACTIVO);
+            colorExistente.setDeletedAt(null);
+            try {
+                return colorRepository.save(colorExistente);
+            } catch (DataIntegrityViolationException e) {
+                throw new RuntimeException("El color '" + nombre + "' ya existe");
+            }
         }
 
         Color color = new Color();
         color.setNombre(nombre);
         color.setCodigo(codigo);
-        color.setEstado("ACTIVO");
+        color.setEstado(ESTADO_ACTIVO);
+        color.setDeletedAt(null);
 
         try {
             return colorRepository.save(color);
@@ -87,12 +107,18 @@ public class ColorService {
             throw new RuntimeException("El codigo del color es obligatorio");
         }
 
-        if (colorRepository.existsByNombreIgnoreCaseAndIdColorNot(nombre, id)) {
-            throw new RuntimeException("El color '" + nombre + "' ya existe");
+        Color colorConMismoNombre = colorRepository.findByNombreIgnoreCase(nombre).orElse(null);
+        if (colorConMismoNombre != null && !colorConMismoNombre.getIdColor().equals(id)) {
+            if (estaDisponible(colorConMismoNombre)) {
+                throw new RuntimeException("El color '" + nombre + "' ya existe");
+            }
+            throw new RuntimeException("Ya existe un color eliminado con el nombre '" + nombre + "'");
         }
 
         color.setNombre(nombre);
         color.setCodigo(codigo);
+        color.setEstado(ESTADO_ACTIVO);
+        color.setDeletedAt(null);
 
         try {
             return colorRepository.save(color);
@@ -104,11 +130,9 @@ public class ColorService {
     @Transactional
     public void eliminar(Integer id) {
         Color color = obtenerPorId(id);
-        if (colorRepository.estaEnUso(id)) {
-            throw new RuntimeException("No se puede eliminar el color '" + color.getNombre()
-                    + "' porque esta asociado a productos. Te sugiero desactivarlo.");
-        }
-        colorRepository.deleteById(id);
+        color.setEstado(ESTADO_INACTIVO);
+        color.setDeletedAt(java.time.LocalDateTime.now());
+        colorRepository.save(color);
     }
 
     private void validarPagina(int page) {
@@ -123,5 +147,9 @@ public class ColorService {
         }
         String trimmed = value.trim();
         return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private boolean estaDisponible(Color color) {
+        return color.getDeletedAt() == null && ESTADO_ACTIVO.equalsIgnoreCase(color.getEstado());
     }
 }

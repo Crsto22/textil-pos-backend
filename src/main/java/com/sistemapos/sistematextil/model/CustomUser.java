@@ -8,6 +8,8 @@ import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 
+import com.sistemapos.sistematextil.util.usuario.Rol;
+
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
@@ -19,7 +21,14 @@ public class CustomUser implements UserDetails {
 
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
-        return List.of(new SimpleGrantedAuthority(usuario.getRol().name()));
+        Rol rol = usuario.getRol();
+        if (rol == Rol.VENTAS_ALMACEN) {
+            return List.of(
+                    new SimpleGrantedAuthority(Rol.VENTAS_ALMACEN.name()),
+                    new SimpleGrantedAuthority(Rol.VENTAS.name()),
+                    new SimpleGrantedAuthority(Rol.ALMACEN.name()));
+        }
+        return List.of(new SimpleGrantedAuthority(rol.name()));
     }
 
     @Override

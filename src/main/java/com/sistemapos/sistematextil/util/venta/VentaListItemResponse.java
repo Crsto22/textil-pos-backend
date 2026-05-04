@@ -3,6 +3,7 @@ package com.sistemapos.sistematextil.util.venta;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+import com.sistemapos.sistematextil.util.sunat.SunatBajaEstado;
 import com.sistemapos.sistematextil.util.sunat.SunatEstado;
 
 public record VentaListItemResponse(
@@ -15,6 +16,7 @@ public record VentaListItemResponse(
         BigDecimal total,
         String estado,
         SunatEstado sunatEstado,
+        SunatBajaEstado sunatBajaEstado,
         Integer idCliente,
         String nombreCliente,
         Integer idUsuario,

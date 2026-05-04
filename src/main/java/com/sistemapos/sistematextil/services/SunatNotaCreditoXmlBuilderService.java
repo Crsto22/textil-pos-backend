@@ -124,15 +124,7 @@ public class SunatNotaCreditoXmlBuilderService {
         if (isBlank(empresa.getRazonSocial())) {
             throw new RuntimeException("La empresa emisora debe tener razon social");
         }
-        if (sucursal == null || isBlank(sucursal.getDireccion())) {
-            throw new RuntimeException("La sucursal emisora debe tener direccion");
-        }
-        if (isBlank(sucursal.getUbigeo()) || sucursal.getUbigeo().trim().length() != 6) {
-            throw new RuntimeException("La sucursal emisora debe tener ubigeo de 6 digitos");
-        }
-        if (isBlank(sucursal.getDepartamento()) || isBlank(sucursal.getProvincia()) || isBlank(sucursal.getDistrito())) {
-            throw new RuntimeException("La sucursal emisora debe tener departamento, provincia y distrito");
-        }
+        validarDatosSunatEmpresa(empresa);
 
         Cliente cliente = notaCredito.getCliente();
         if (cliente == null) {
@@ -216,17 +208,17 @@ public class SunatNotaCreditoXmlBuilderService {
         appendText(document, partyLegalEntity, NS_CBC, "cbc:RegistrationName", empresa.getRazonSocial().trim());
 
         Element registrationAddress = appendElement(document, partyLegalEntity, NS_CAC, "cac:RegistrationAddress");
-        appendText(document, registrationAddress, NS_CBC, "cbc:ID", sucursal.getUbigeo().trim(),
+        appendText(document, registrationAddress, NS_CBC, "cbc:ID", empresa.getUbigeo().trim(),
                 "schemeName", "Ubigeos",
                 "schemeAgencyName", "PE:INEI");
-        appendText(document, registrationAddress, NS_CBC, "cbc:AddressTypeCode", codigoEstablecimiento(sucursal),
+        appendText(document, registrationAddress, NS_CBC, "cbc:AddressTypeCode", codigoEstablecimiento(empresa),
                 "listName", "Establecimientos anexos");
-        appendText(document, registrationAddress, NS_CBC, "cbc:CitySubdivisionName", sucursal.getDistrito().trim());
-        appendText(document, registrationAddress, NS_CBC, "cbc:CityName", sucursal.getProvincia().trim());
-        appendText(document, registrationAddress, NS_CBC, "cbc:CountrySubentity", sucursal.getDepartamento().trim());
-        appendText(document, registrationAddress, NS_CBC, "cbc:District", sucursal.getDistrito().trim());
+        appendText(document, registrationAddress, NS_CBC, "cbc:CitySubdivisionName", empresa.getDistrito().trim());
+        appendText(document, registrationAddress, NS_CBC, "cbc:CityName", empresa.getProvincia().trim());
+        appendText(document, registrationAddress, NS_CBC, "cbc:CountrySubentity", empresa.getDepartamento().trim());
+        appendText(document, registrationAddress, NS_CBC, "cbc:District", empresa.getDistrito().trim());
         Element addressLine = appendElement(document, registrationAddress, NS_CAC, "cac:AddressLine");
-        appendText(document, addressLine, NS_CBC, "cbc:Line", sucursal.getDireccion().trim());
+        appendText(document, addressLine, NS_CBC, "cbc:Line", empresa.getDireccion().trim());
         Element country = appendElement(document, registrationAddress, NS_CAC, "cac:Country");
         appendText(document, country, NS_CBC, "cbc:IdentificationCode", "PE",
                 "listID", "ISO 3166-1",
@@ -441,11 +433,23 @@ public class SunatNotaCreditoXmlBuilderService {
         return empresa.getRazonSocial().trim();
     }
 
-    private String codigoEstablecimiento(Sucursal sucursal) {
-        if (sucursal == null || isBlank(sucursal.getCodigoEstablecimientoSunat())) {
+    private void validarDatosSunatEmpresa(Empresa empresa) {
+        if (empresa == null || isBlank(empresa.getDireccion())) {
+            throw new RuntimeException("La empresa emisora debe tener direccion");
+        }
+        if (isBlank(empresa.getUbigeo()) || empresa.getUbigeo().trim().length() != 6) {
+            throw new RuntimeException("La empresa emisora debe tener ubigeo de 6 digitos");
+        }
+        if (isBlank(empresa.getDepartamento()) || isBlank(empresa.getProvincia()) || isBlank(empresa.getDistrito())) {
+            throw new RuntimeException("La empresa emisora debe tener departamento, provincia y distrito");
+        }
+    }
+
+    private String codigoEstablecimiento(Empresa empresa) {
+        if (empresa == null || isBlank(empresa.getCodigoEstablecimientoSunat())) {
             return "0000";
         }
-        return sucursal.getCodigoEstablecimientoSunat().trim();
+        return empresa.getCodigoEstablecimientoSunat().trim();
     }
 
     private String signatureId(NotaCredito notaCredito) {

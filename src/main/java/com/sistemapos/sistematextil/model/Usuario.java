@@ -94,6 +94,10 @@ public class Usuario {
     @JoinColumn(name = "id_sucursal", nullable = true)
     private Sucursal sucursal;
 
+    @ManyToOne(optional = true)
+    @JoinColumn(name = "id_turno", nullable = true)
+    private Turno turno;
+
     
     @PrePersist
     protected void onCreate() {

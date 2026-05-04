@@ -3,6 +3,7 @@ package com.sistemapos.sistematextil.services;
 import java.io.ByteArrayOutputStream;
 import java.io.ByteArrayInputStream;
 import java.io.FileInputStream;
+import java.nio.file.Path;
 import java.security.KeyStore;
 import java.security.PrivateKey;
 import java.security.cert.X509Certificate;
@@ -44,6 +45,9 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class SunatXmlSignatureService {
 
+    private static final String EXCLUSIVE_C14N_ALGORITHM = "http://www.w3.org/2001/10/xml-exc-c14n#";
+    private static final String RSA_SHA256_ALGORITHM = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256";
+
     private final SunatCertificateStorageService sunatCertificateStorageService;
     private final SunatSecretCryptoService sunatSecretCryptoService;
 
@@ -60,8 +64,9 @@ public class SunatXmlSignatureService {
             throw new RuntimeException("La configuracion SUNAT no tiene certificadoPassword");
         }
 
-        try (FileInputStream input = new FileInputStream(
-                sunatCertificateStorageService.resolveStoredPath(config.getCertificadoUrl()).toFile())) {
+        Path certificatePath = sunatCertificateStorageService.resolveStoredPath(config.getCertificadoUrl());
+
+        try (FileInputStream input = new FileInputStream(certificatePath.toFile())) {
             KeyStore keyStore = KeyStore.getInstance("PKCS12");
             keyStore.load(input, password.toCharArray());
 
@@ -84,18 +89,18 @@ public class SunatXmlSignatureService {
             XMLSignatureFactory factory = XMLSignatureFactory.getInstance("DOM");
             Reference reference = factory.newReference(
                     "",
-                    factory.newDigestMethod(DigestMethod.SHA1, null),
+                    factory.newDigestMethod(DigestMethod.SHA256, null),
                     List.of(
                             factory.newTransform(Transform.ENVELOPED, (TransformParameterSpec) null),
-                            factory.newTransform(CanonicalizationMethod.INCLUSIVE, (TransformParameterSpec) null)),
+                            factory.newTransform(EXCLUSIVE_C14N_ALGORITHM, (TransformParameterSpec) null)),
                     null,
                     null);
 
             SignedInfo signedInfo = factory.newSignedInfo(
                     factory.newCanonicalizationMethod(
-                            CanonicalizationMethod.INCLUSIVE,
+                            EXCLUSIVE_C14N_ALGORITHM,
                             (C14NMethodParameterSpec) null),
-                    factory.newSignatureMethod(SignatureMethod.RSA_SHA1, null),
+                    factory.newSignatureMethod(RSA_SHA256_ALGORITHM, null),
                     List.of(reference));
 
             KeyInfoFactory keyInfoFactory = factory.getKeyInfoFactory();
@@ -115,7 +120,7 @@ public class SunatXmlSignatureService {
         } catch (RuntimeException e) {
             throw e;
         } catch (Exception e) {
-            throw new RuntimeException("No se pudo firmar el XML SUNAT");
+            throw new RuntimeException("No se pudo firmar el XML SUNAT: " + e.getMessage(), e);
         }
     }
 
@@ -164,13 +169,19 @@ public class SunatXmlSignatureService {
         } catch (RuntimeException e) {
             throw e;
         } catch (Exception e) {
-            throw new RuntimeException("No se pudo validar localmente la firma XML generada");
+            throw new RuntimeException("No se pudo validar localmente la firma XML generada: " + e.getMessage(), e);
         }
     }
 
     private Document parse(byte[] xmlBytes) throws Exception {
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
         factory.setNamespaceAware(true);
+        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+        factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        factory.setXIncludeAware(false);
+        factory.setExpandEntityReferences(false);
         return factory.newDocumentBuilder().parse(new ByteArrayInputStream(xmlBytes));
     }
 

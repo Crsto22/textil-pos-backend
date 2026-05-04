@@ -4,6 +4,8 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 import com.sistemapos.sistematextil.model.converter.EstadoActivoConverter;
+import com.sistemapos.sistematextil.util.sunat.SunatBajaEstado;
+import com.sistemapos.sistematextil.util.sunat.SunatBajaTipo;
 import com.sistemapos.sistematextil.util.sunat.SunatEstado;
 
 import jakarta.persistence.Column;
@@ -45,10 +47,6 @@ public class Venta {
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "id_usuario", nullable = false)
     private Usuario usuario;
-
-    @ManyToOne(fetch = FetchType.EAGER)
-    @JoinColumn(name = "id_canal_venta")
-    private CanalVenta canalVenta;
 
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "id_cliente")
@@ -139,6 +137,33 @@ public class Venta {
     @Column(name = "sunat_respondido_at")
     private LocalDateTime sunatRespondidoAt;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "sunat_baja_estado", length = 20)
+    private SunatBajaEstado sunatBajaEstado;
+
+    @Column(name = "sunat_baja_codigo", length = 20)
+    private String sunatBajaCodigo;
+
+    @Column(name = "sunat_baja_mensaje", length = 500)
+    private String sunatBajaMensaje;
+
+    @Column(name = "sunat_baja_ticket", length = 120)
+    private String sunatBajaTicket;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "sunat_baja_tipo", length = 10)
+    private SunatBajaTipo sunatBajaTipo;
+
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "sunat_baja_lote_id")
+    private SunatBajaLote sunatBajaLote;
+
+    @Column(name = "sunat_baja_solicitada_at")
+    private LocalDateTime sunatBajaSolicitadaAt;
+
+    @Column(name = "sunat_baja_respondida_at")
+    private LocalDateTime sunatBajaRespondidaAt;
+
     @Convert(converter = EstadoActivoConverter.class)
     @Column(name = "activo", nullable = false)
     private String activo;
@@ -187,7 +212,7 @@ public class Venta {
             this.estado = "EMITIDA";
         }
         if (this.sunatEstado == null) {
-            this.sunatEstado = requiereComprobanteElectronico() ? SunatEstado.PENDIENTE : SunatEstado.NO_APLICA;
+            this.sunatEstado = requiereComprobanteElectronico() ? SunatEstado.PENDIENTE_ENVIO : SunatEstado.NO_APLICA;
         }
         if (this.activo == null || this.activo.isBlank()) {
             this.activo = "ACTIVO";

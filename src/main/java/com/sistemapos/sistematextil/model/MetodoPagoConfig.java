@@ -1,18 +1,23 @@
 package com.sistemapos.sistematextil.model;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 import com.sistemapos.sistematextil.model.converter.EstadoActivoConverter;
 
+import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.OneToMany;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import jakarta.persistence.OrderBy;
 import jakarta.validation.constraints.NotBlank;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -36,6 +41,9 @@ public class MetodoPagoConfig {
     @Column(unique = true, length = 50)
     private String nombre;
 
+    @Column(length = 255)
+    private String descripcion;
+
     @Convert(converter = EstadoActivoConverter.class)
     @Column(name = "activo", nullable = false)
     private String estado = "ACTIVO";
@@ -48,6 +56,10 @@ public class MetodoPagoConfig {
 
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
+
+    @OneToMany(mappedBy = "metodoPago", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("idMetodoPagoCuenta ASC")
+    private List<MetodoPagoCuenta> cuentas = new ArrayList<>();
 
     @PrePersist
     protected void onCreate() {
@@ -64,5 +76,21 @@ public class MetodoPagoConfig {
     @PreUpdate
     protected void onUpdate() {
         this.updatedAt = LocalDateTime.now();
+    }
+
+    public void setCuentas(List<MetodoPagoCuenta> cuentas) {
+        this.cuentas.clear();
+        if (cuentas == null) {
+            return;
+        }
+        cuentas.forEach(this::addCuenta);
+    }
+
+    public void addCuenta(MetodoPagoCuenta cuenta) {
+        if (cuenta == null) {
+            return;
+        }
+        cuenta.setMetodoPago(this);
+        this.cuentas.add(cuenta);
     }
 }

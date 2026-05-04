@@ -31,6 +31,7 @@ public class ImportacionProductoHistorialService {
     private final ImportacionProductoHistorialRepository historialRepository;
     private final UsuarioRepository usuarioRepository;
     private final SucursalRepository sucursalRepository;
+    private final UsuarioSucursalAccessService usuarioSucursalAccessService;
 
     @Value("${application.pagination.default-size:10}")
     private int defaultPageSize;
@@ -218,39 +219,16 @@ public class ImportacionProductoHistorialService {
     }
 
     private void validarRolPermitido(Usuario usuario) {
-        if (usuario.getRol() != Rol.ADMINISTRADOR
-                && usuario.getRol() != Rol.VENTAS
-                && usuario.getRol() != Rol.ALMACEN) {
+        if (!usuario.getRol().permiteVentas() && !usuario.getRol().permiteAlmacen()) {
             throw new RuntimeException("El usuario autenticado no tiene permisos para listar historial de importaciones");
         }
     }
 
-    private Integer obtenerIdSucursalUsuario(Usuario usuario) {
-        if (usuario.getSucursal() == null || usuario.getSucursal().getIdSucursal() == null) {
-            throw new RuntimeException("El usuario autenticado no tiene sucursal asignada");
-        }
-        return usuario.getSucursal().getIdSucursal();
-    }
-
-    private boolean esAdministrador(Usuario usuario) {
-        return usuario.getRol() == Rol.ADMINISTRADOR;
-    }
-
     private Integer resolverIdSucursalFiltroListado(Usuario usuarioAutenticado, Integer idSucursalRequest) {
-        if (esAdministrador(usuarioAutenticado)) {
-            if (idSucursalRequest == null) {
-                return null;
-            }
-            return sucursalRepository.findByIdSucursalAndDeletedAtIsNull(idSucursalRequest)
-                    .orElseThrow(() -> new RuntimeException("Sucursal no encontrada"))
-                    .getIdSucursal();
-        }
-
-        Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
-        if (idSucursalRequest != null && !idSucursalUsuario.equals(idSucursalRequest)) {
-            throw new RuntimeException("No tiene permisos para consultar otra sucursal");
-        }
-        return idSucursalUsuario;
+        return usuarioSucursalAccessService.resolverIdSucursalFiltro(
+                usuarioAutenticado,
+                idSucursalRequest,
+                "No tiene permisos para consultar otra sucursal");
     }
 
     private String normalizarNombreArchivo(String nombreArchivo) {

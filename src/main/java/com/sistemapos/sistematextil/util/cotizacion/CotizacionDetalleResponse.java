@@ -3,6 +3,8 @@ package com.sistemapos.sistematextil.util.cotizacion;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+import com.sistemapos.sistematextil.util.producto.TipoOfertaAplicada;
+
 public record CotizacionDetalleResponse(
         Integer idCotizacionDetalle,
         Integer idProductoVariante,
@@ -12,6 +14,9 @@ public record CotizacionDetalleResponse(
         Double precioOferta,
         LocalDateTime ofertaInicio,
         LocalDateTime ofertaFin,
+        BigDecimal precioVigente,
+        TipoOfertaAplicada tipoOfertaAplicada,
+        Integer sucursalOfertaId,
         Integer idColor,
         String color,
         Integer idTalla,

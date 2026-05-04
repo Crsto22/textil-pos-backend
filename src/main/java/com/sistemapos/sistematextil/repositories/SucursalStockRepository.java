@@ -75,4 +75,27 @@ public interface SucursalStockRepository extends JpaRepository<SucursalStock, In
             ORDER BY v.idProductoVariante ASC, s.idSucursal ASC
             """)
     List<SucursalStock> listarPorVariantes(@Param("idsProductoVariante") List<Integer> idsProductoVariante);
+
+    @Query(
+            value = """
+                    SELECT
+                        pv.id_producto_variante,
+                        p.nombre AS producto,
+                        COALESCE(c.nombre, '-') AS color,
+                        COALESCE(t.nombre, '-') AS talla,
+                        ss.cantidad
+                    FROM sucursal_stock ss
+                    JOIN producto_variante pv ON pv.id_producto_variante = ss.id_producto_variante
+                    JOIN producto p ON p.producto_id = pv.producto_id
+                    LEFT JOIN colores c ON c.color_id = pv.color_id
+                    LEFT JOIN tallas t ON t.talla_id = pv.talla_id
+                    WHERE ss.id_sucursal = :idSucursal
+                      AND ss.cantidad > 0
+                      AND pv.deleted_at IS NULL
+                      AND p.deleted_at IS NULL
+                    ORDER BY ss.cantidad DESC, p.nombre ASC, pv.id_producto_variante ASC
+                    LIMIT 5
+                    """,
+            nativeQuery = true)
+    List<Object[]> obtenerTopStockActual(@Param("idSucursal") Integer idSucursal);
 }

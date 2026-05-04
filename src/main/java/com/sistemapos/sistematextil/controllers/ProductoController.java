@@ -31,6 +31,7 @@ import com.sistemapos.sistematextil.util.producto.ProductoCreateRequest;
 import com.sistemapos.sistematextil.util.producto.ProductoDetalleResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoImagenEditResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoImagenUploadResponse;
+import com.sistemapos.sistematextil.util.producto.ProductoImportRequest;
 import com.sistemapos.sistematextil.util.producto.ProductoImportResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoListadoResumenResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoListItemResponse;
@@ -202,13 +203,13 @@ public class ProductoController {
         }
     }
 
-    @PostMapping(value = "/importar", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<?> importarDesdeExcel(
+    @PostMapping(value = "/importar", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<?> importar(
             Authentication authentication,
-            @RequestParam("file") MultipartFile file) {
+            @Valid @RequestBody ProductoImportRequest request) {
         try {
             ProductoImportResponse response = productoImportService
-                    .importarDesdeExcel(file, obtenerCorreoAutenticado(authentication));
+                    .importar(request, obtenerCorreoAutenticado(authentication));
             return ResponseEntity.status(HttpStatus.CREATED).body(response);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al importar productos" : e.getMessage();

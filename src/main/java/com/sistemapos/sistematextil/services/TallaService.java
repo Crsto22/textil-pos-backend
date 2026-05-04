@@ -19,6 +19,9 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class TallaService {
 
+    private static final String ESTADO_ACTIVO = "ACTIVO";
+    private static final String ESTADO_INACTIVO = "INACTIVO";
+
     private final TallaRepository tallaRepository;
 
     @Value("${application.pagination.default-size:10}")
@@ -26,8 +29,8 @@ public class TallaService {
 
     public PagedResponse<Talla> listarPaginado(int page) {
         validarPagina(page);
-        PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idTalla").ascending());
-        Page<Talla> tallas = tallaRepository.findAll(pageable);
+        PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idTalla").descending());
+        Page<Talla> tallas = tallaRepository.findByDeletedAtIsNullAndEstadoOrderByIdTallaDesc(ESTADO_ACTIVO, pageable);
         return PagedResponse.fromPage(tallas);
     }
 
@@ -38,13 +41,16 @@ public class TallaService {
             return listarPaginado(page);
         }
 
-        PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idTalla").ascending());
-        Page<Talla> tallas = tallaRepository.findByNombreContainingIgnoreCase(term, pageable);
+        PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idTalla").descending());
+        Page<Talla> tallas = tallaRepository.findByDeletedAtIsNullAndEstadoAndNombreContainingIgnoreCaseOrderByIdTallaDesc(
+                ESTADO_ACTIVO,
+                term,
+                pageable);
         return PagedResponse.fromPage(tallas);
     }
 
     public Talla obtenerPorId(Integer id) {
-        return tallaRepository.findById(id)
+        return tallaRepository.findByIdTallaAndDeletedAtIsNullAndEstado(id, ESTADO_ACTIVO)
                 .orElseThrow(() -> new RuntimeException("Talla con ID " + id + " no encontrada"));
     }
 
@@ -55,13 +61,26 @@ public class TallaService {
             throw new RuntimeException("El nombre de la talla es obligatorio");
         }
 
-        if (tallaRepository.existsByNombreIgnoreCase(nombre)) {
-            throw new RuntimeException("La talla '" + nombre + "' ya existe");
+        Talla tallaExistente = tallaRepository.findByNombreIgnoreCase(nombre).orElse(null);
+        if (tallaExistente != null) {
+            if (estaDisponible(tallaExistente)) {
+                throw new RuntimeException("La talla '" + nombre + "' ya existe");
+            }
+
+            tallaExistente.setNombre(nombre);
+            tallaExistente.setEstado(ESTADO_ACTIVO);
+            tallaExistente.setDeletedAt(null);
+            try {
+                return tallaRepository.save(tallaExistente);
+            } catch (DataIntegrityViolationException e) {
+                throw new RuntimeException("La talla '" + nombre + "' ya existe");
+            }
         }
 
         Talla talla = new Talla();
         talla.setNombre(nombre);
-        talla.setEstado("ACTIVO");
+        talla.setEstado(ESTADO_ACTIVO);
+        talla.setDeletedAt(null);
 
         try {
             return tallaRepository.save(talla);
@@ -78,11 +97,17 @@ public class TallaService {
             throw new RuntimeException("El nombre de la talla es obligatorio");
         }
 
-        if (tallaRepository.existsByNombreIgnoreCaseAndIdTallaNot(nombre, id)) {
-            throw new RuntimeException("La talla '" + nombre + "' ya existe");
+        Talla tallaConMismoNombre = tallaRepository.findByNombreIgnoreCase(nombre).orElse(null);
+        if (tallaConMismoNombre != null && !tallaConMismoNombre.getIdTalla().equals(id)) {
+            if (estaDisponible(tallaConMismoNombre)) {
+                throw new RuntimeException("La talla '" + nombre + "' ya existe");
+            }
+            throw new RuntimeException("Ya existe una talla eliminada con el nombre '" + nombre + "'");
         }
 
         talla.setNombre(nombre);
+        talla.setEstado(ESTADO_ACTIVO);
+        talla.setDeletedAt(null);
         try {
             return tallaRepository.save(talla);
         } catch (DataIntegrityViolationException e) {
@@ -93,13 +118,9 @@ public class TallaService {
     @Transactional
     public void eliminar(Integer id) {
         Talla talla = obtenerPorId(id);
-
-        if (tallaRepository.estaEnUso(id)) {
-            throw new RuntimeException("No se puede eliminar la talla '" + talla.getNombre()
-                    + "' porque ya esta asociada a productos. Te sugiero desactivarla.");
-        }
-
-        tallaRepository.deleteById(id);
+        talla.setEstado(ESTADO_INACTIVO);
+        talla.setDeletedAt(java.time.LocalDateTime.now());
+        tallaRepository.save(talla);
     }
 
     private void validarPagina(int page) {
@@ -114,5 +135,9 @@ public class TallaService {
         }
         String trimmed = value.trim();
         return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private boolean estaDisponible(Talla talla) {
+        return talla.getDeletedAt() == null && ESTADO_ACTIVO.equalsIgnoreCase(talla.getEstado());
     }
 }

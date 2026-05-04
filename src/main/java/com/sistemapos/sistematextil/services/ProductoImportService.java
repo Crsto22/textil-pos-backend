@@ -1,13 +1,11 @@
 package com.sistemapos.sistematextil.services;
 
-import java.io.IOException;
-import java.io.InputStream;
 import java.math.BigDecimal;
 import java.text.Normalizer;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -15,16 +13,9 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-import org.apache.poi.ss.usermodel.Cell;
-import org.apache.poi.ss.usermodel.DataFormatter;
-import org.apache.poi.ss.usermodel.Row;
-import org.apache.poi.ss.usermodel.Sheet;
-import org.apache.poi.ss.usermodel.Workbook;
-import org.apache.poi.ss.usermodel.WorkbookFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.multipart.MultipartFile;
 
 import com.sistemapos.sistematextil.model.Categoria;
 import com.sistemapos.sistematextil.model.Color;
@@ -40,7 +31,11 @@ import com.sistemapos.sistematextil.repositories.ProductoVarianteRepository;
 import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.repositories.TallaRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
+import com.sistemapos.sistematextil.util.producto.ProductoImportConfigRequest;
+import com.sistemapos.sistematextil.util.producto.ProductoImportProductoRequest;
+import com.sistemapos.sistematextil.util.producto.ProductoImportRequest;
 import com.sistemapos.sistematextil.util.producto.ProductoImportResponse;
+import com.sistemapos.sistematextil.util.producto.ProductoImportVarianteRequest;
 import com.sistemapos.sistematextil.util.usuario.Rol;
 
 import lombok.RequiredArgsConstructor;
@@ -49,20 +44,7 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class ProductoImportService {
 
-    private static final Set<String> EXTENSIONES_PERMITIDAS = Set.of(".xlsx", ".xls");
-    private static final DataFormatter DATA_FORMATTER = new DataFormatter(Locale.US);
-
-    private static final String H_SKU = "sku";
-    private static final String H_NOMBRE_PRODUCTO = "nombreproducto";
-    private static final String H_DESCRIPCION = "descripcion";
-    private static final String H_CATEGORIA_NOMBRE = "categorianombre";
-    private static final String H_COLOR_NOMBRE = "colornombre";
-    private static final String H_COLOR_HEX = "colorhex";
-    private static final String H_TALLA_NOMBRE = "tallanombre";
-    private static final String H_PRECIO = "precio";
-    private static final String H_PRECIO_OFERTA = "preciooferta";
-    private static final String H_STOCK = "stock";
-    private static final String H_SUCURSAL = "sucursal";
+    private static final String ORIGEN_IMPORTACION_JSON = "frontend_json_import";
 
     private final UsuarioRepository usuarioRepository;
     private final SucursalRepository sucursalRepository;
@@ -73,35 +55,33 @@ public class ProductoImportService {
     private final ColorRepository colorRepository;
     private final TallaRepository tallaRepository;
     private final ImportacionProductoHistorialService importacionProductoHistorialService;
+    private final StockMovimientoService stockMovimientoService;
+    private final UsuarioSucursalAccessService usuarioSucursalAccessService;
 
     @Transactional
-    public ProductoImportResponse importarDesdeExcel(MultipartFile file, String correoUsuarioAutenticado) {
+    public ProductoImportResponse importar(ProductoImportRequest request, String correoUsuarioAutenticado) {
         long inicioMillis = System.currentTimeMillis();
-        String nombreArchivo = obtenerNombreArchivoSeguro(file);
-        long tamanoBytes = obtenerTamanoSeguro(file);
         Usuario usuario = null;
         int filasProcesadas = 0;
         ResumenImportacion resumen = new ResumenImportacion();
 
         try {
-            validarArchivo(file);
+            validarRequest(request);
             usuario = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
             validarRolPermitido(usuario);
 
-            List<FilaExcel> filas = leerFilas(file, usuario);
+            Sucursal sucursalDestino = resolverSucursalDestino(request.configuracionImportacion(), usuario);
+            List<FilaImportacion> filas = normalizarFilas(request, sucursalDestino);
             filasProcesadas = filas.size();
-            if (filas.isEmpty()) {
-                throw new RuntimeException("El archivo no contiene filas de productos");
-            }
 
-            Map<ProductoClave, ProductoAgrupado> productosAgrupados = agruparFilas(filas, usuario);
-            resumen = persistirAgrupados(productosAgrupados);
+            Map<ProductoClave, ProductoAgrupado> productosAgrupados = agruparFilas(filas);
+            resumen = persistirAgrupados(productosAgrupados, usuario);
 
             importacionProductoHistorialService.registrarExitosa(
                     usuario,
-                    resolverIdSucursalHistorial(usuario),
-                    nombreArchivo,
-                    tamanoBytes,
+                    sucursalDestino.getIdSucursal(),
+                    ORIGEN_IMPORTACION_JSON,
+                    0L,
                     filasProcesadas,
                     resumen.productosCreados,
                     resumen.productosActualizados,
@@ -119,22 +99,26 @@ public class ProductoImportService {
                     resumen.coloresCreados,
                     resumen.tallasCreadas);
         } catch (RuntimeException e) {
-            registrarFalloSinInterrumpir(
-                    usuario,
-                    nombreArchivo,
-                    tamanoBytes,
-                    filasProcesadas,
-                    resumen,
-                    inicioMillis,
-                    e);
+            registrarFalloSinInterrumpir(usuario, request, filasProcesadas, resumen, inicioMillis, e);
             throw e;
+        }
+    }
+
+    private void validarRequest(ProductoImportRequest request) {
+        if (request == null) {
+            throw new RuntimeException("Debe enviar datos de importacion");
+        }
+        if (request.configuracionImportacion() == null) {
+            throw new RuntimeException("Debe enviar configuracionImportacion");
+        }
+        if (request.productos() == null || request.productos().isEmpty()) {
+            throw new RuntimeException("Debe enviar productos");
         }
     }
 
     private void registrarFalloSinInterrumpir(
             Usuario usuario,
-            String nombreArchivo,
-            long tamanoBytes,
+            ProductoImportRequest request,
             int filasProcesadas,
             ResumenImportacion resumen,
             long inicioMillis,
@@ -142,12 +126,24 @@ public class ProductoImportService {
         if (usuario == null || usuario.getIdUsuario() == null) {
             return;
         }
+
+        Integer idSucursal = null;
+        if (request != null && request.configuracionImportacion() != null) {
+            try {
+                idSucursal = resolverIdSucursalHistorial(request.configuracionImportacion(), usuario);
+            } catch (RuntimeException ignored) {
+                idSucursal = resolverIdSucursalHistorialDesdeUsuario(usuario);
+            }
+        } else {
+            idSucursal = resolverIdSucursalHistorialDesdeUsuario(usuario);
+        }
+
         try {
             importacionProductoHistorialService.registrarFallida(
                     usuario,
-                    resolverIdSucursalHistorial(usuario),
-                    nombreArchivo,
-                    tamanoBytes,
+                    idSucursal,
+                    ORIGEN_IMPORTACION_JSON,
+                    0L,
                     filasProcesadas,
                     resumen.productosCreados,
                     resumen.productosActualizados,
@@ -158,18 +154,22 @@ public class ProductoImportService {
                     causa.getMessage(),
                     calcularDuracionMs(inicioMillis));
         } catch (RuntimeException ignored) {
-            // Si el historial falla, no se reemplaza el error original de la importacion.
+            // Si historial falla, no tapar error original.
         }
     }
 
-    private Integer resolverIdSucursalHistorial(Usuario usuario) {
-        if (usuario == null || usuario.getRol() == Rol.ADMINISTRADOR) {
+    private Integer resolverIdSucursalHistorial(ProductoImportConfigRequest config, Usuario usuario) {
+        return resolverSucursalDestino(config, usuario).getIdSucursal();
+    }
+
+    private Integer resolverIdSucursalHistorialDesdeUsuario(Usuario usuario) {
+        if (usuario == null) {
             return null;
         }
-        if (usuario.getSucursal() == null) {
+        if (usuario.getRol().esAdministrador()) {
             return null;
         }
-        return usuario.getSucursal().getIdSucursal();
+        return usuario.getSucursal() == null ? null : usuario.getSucursal().getIdSucursal();
     }
 
     private int calcularDuracionMs(long inicioMillis) {
@@ -183,36 +183,6 @@ public class ProductoImportService {
         return (int) duracion;
     }
 
-    private String obtenerNombreArchivoSeguro(MultipartFile file) {
-        if (file == null || file.getOriginalFilename() == null || file.getOriginalFilename().isBlank()) {
-            return "archivo_sin_nombre.xlsx";
-        }
-        String nombre = file.getOriginalFilename().trim();
-        return nombre.length() > 255 ? nombre.substring(0, 255) : nombre;
-    }
-
-    private long obtenerTamanoSeguro(MultipartFile file) {
-        if (file == null) {
-            return 0L;
-        }
-        return Math.max(file.getSize(), 0L);
-    }
-
-    private void validarArchivo(MultipartFile file) {
-        if (file == null || file.isEmpty()) {
-            throw new RuntimeException("Debe enviar un archivo Excel");
-        }
-        String fileName = file.getOriginalFilename();
-        if (fileName == null || fileName.isBlank()) {
-            throw new RuntimeException("Nombre de archivo invalido");
-        }
-        String lower = fileName.toLowerCase();
-        boolean extensionValida = EXTENSIONES_PERMITIDAS.stream().anyMatch(lower::endsWith);
-        if (!extensionValida) {
-            throw new RuntimeException("Formato de archivo no permitido. Use .xlsx o .xls");
-        }
-    }
-
     private Usuario obtenerUsuarioAutenticado(String correoUsuarioAutenticado) {
         if (correoUsuarioAutenticado == null || correoUsuarioAutenticado.isBlank()) {
             throw new RuntimeException("No autenticado");
@@ -222,151 +192,133 @@ public class ProductoImportService {
     }
 
     private void validarRolPermitido(Usuario usuario) {
-        if (usuario.getRol() != Rol.ADMINISTRADOR
-                && usuario.getRol() != Rol.VENTAS
-                && usuario.getRol() != Rol.ALMACEN) {
+        if (!usuario.getRol().permiteVentas() && !usuario.getRol().permiteAlmacen()) {
             throw new RuntimeException("El usuario autenticado no tiene permisos para importar productos");
         }
     }
 
-    private List<FilaExcel> leerFilas(MultipartFile file, Usuario usuario) {
-        try (InputStream input = file.getInputStream(); Workbook workbook = WorkbookFactory.create(input)) {
-            Sheet sheet = workbook.getNumberOfSheets() > 0 ? workbook.getSheetAt(0) : null;
-            if (sheet == null) {
-                throw new RuntimeException("No se encontro una hoja en el archivo");
+    private Sucursal resolverSucursalDestino(ProductoImportConfigRequest config, Usuario usuario) {
+        if (usuario.getRol().esAdministrador()) {
+            Integer idSucursal = config.idSucursalDestino();
+            if (idSucursal == null) {
+                throw new RuntimeException("configuracionImportacion.idSucursalDestino es obligatorio");
             }
-
-            Row headerRow = sheet.getRow(0);
-            if (headerRow == null) {
-                throw new RuntimeException("El archivo no contiene encabezados");
+            Sucursal sucursal = sucursalRepository.findByIdSucursalAndDeletedAtIsNull(idSucursal)
+                    .orElseThrow(() -> new RuntimeException("Sucursal destino no encontrada"));
+            if (!"ACTIVO".equalsIgnoreCase(sucursal.getEstado())) {
+                throw new RuntimeException("La sucursal destino esta INACTIVA");
             }
-            Map<String, Integer> headers = leerHeaders(headerRow);
-            validarHeadersRequeridos(headers, usuario);
-
-            List<FilaExcel> filas = new ArrayList<>();
-            int lastRow = sheet.getLastRowNum();
-            for (int i = 1; i <= lastRow; i++) {
-                Row row = sheet.getRow(i);
-                if (filaVacia(row, headers)) {
-                    continue;
-                }
-                int rowNumber = i + 1;
-                filas.add(leerFila(row, headers, rowNumber));
-            }
-            return filas;
-        } catch (IOException e) {
-            throw new RuntimeException("No se pudo leer el archivo Excel");
-        } catch (RuntimeException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new RuntimeException("El archivo Excel tiene un formato invalido");
+            return sucursal;
         }
+
+        Integer idSucursalDestino = usuarioSucursalAccessService.resolverIdSucursalPermitida(
+                usuario,
+                config.idSucursalDestino(),
+                "No tiene permisos para importar en otra sucursal");
+        Sucursal sucursalDestino = sucursalRepository.findByIdSucursalAndDeletedAtIsNull(idSucursalDestino)
+                .orElseThrow(() -> new RuntimeException("Sucursal destino no encontrada"));
+        if (!"ACTIVO".equalsIgnoreCase(sucursalDestino.getEstado())) {
+            throw new RuntimeException("La sucursal destino esta INACTIVA");
+        }
+        return sucursalDestino;
     }
 
-    private Map<String, Integer> leerHeaders(Row headerRow) {
-        Map<String, Integer> headers = new HashMap<>();
-        short lastCellNum = headerRow.getLastCellNum();
-        for (int i = 0; i < lastCellNum; i++) {
-            String raw = texto(headerRow.getCell(i));
-            if (raw == null) {
-                continue;
+    private List<FilaImportacion> normalizarFilas(ProductoImportRequest request, Sucursal sucursalDestino) {
+        List<FilaImportacion> filas = new ArrayList<>();
+        int fila = 1;
+
+        for (ProductoImportProductoRequest producto : request.productos()) {
+            if (producto == null) {
+                throw new RuntimeException("Producto invalido en posicion " + fila);
             }
-            headers.put(normalizarClave(raw), i);
+            if (producto.variantes() == null || producto.variantes().isEmpty()) {
+                throw new RuntimeException("Producto '" + safe(producto.nombreProducto()) + "' no tiene variantes");
+            }
+
+            String nombreProducto = requerido(producto.nombreProducto(), "nombreProducto", fila);
+            validarLongitudMaxima(nombreProducto, 150, "nombreProducto", fila);
+
+            String descripcion = opcional(producto.descripcion());
+            validarLongitudMaxima(descripcion, 500, "descripcion", fila);
+
+            String categoriaNombre = limpiarTextoCatalogo(requerido(producto.categoriaNombre(), "categoriaNombre", fila));
+            validarLongitudMaxima(categoriaNombre, 100, "categoriaNombre", fila);
+
+            for (ProductoImportVarianteRequest variante : producto.variantes()) {
+                filas.add(construirFilaImportacion(
+                        fila,
+                        request.configuracionImportacion(),
+                        sucursalDestino,
+                        nombreProducto,
+                        descripcion,
+                        categoriaNombre,
+                        variante));
+                fila++;
+            }
         }
-        return headers;
+
+        if (filas.isEmpty()) {
+            throw new RuntimeException("El payload no contiene filas de productos");
+        }
+        return filas;
     }
 
-    private void validarHeadersRequeridos(Map<String, Integer> headers, Usuario usuario) {
-        List<String> requeridos = List.of(
-                H_SKU,
-                H_NOMBRE_PRODUCTO,
-                H_CATEGORIA_NOMBRE,
-                H_COLOR_NOMBRE,
-                H_COLOR_HEX,
-                H_TALLA_NOMBRE,
-                H_PRECIO,
-                H_STOCK);
-
-        if (usuario != null && usuario.getRol() == Rol.ADMINISTRADOR) {
-            requeridos = new ArrayList<>(requeridos);
-            requeridos.add(H_SUCURSAL);
+    private FilaImportacion construirFilaImportacion(
+            int fila,
+            ProductoImportConfigRequest config,
+            Sucursal sucursalDestino,
+            String nombreProducto,
+            String descripcion,
+            String categoriaNombre,
+            ProductoImportVarianteRequest variante) {
+        if (variante == null) {
+            throw new RuntimeException("Variante invalida en producto '" + nombreProducto + "'");
         }
+        String colorNombre = limpiarTextoCatalogo(requerido(variante.colorNombre(), "colorNombre", fila));
+        validarLongitudMaxima(colorNombre, 50, "colorNombre", fila);
 
-        for (String header : requeridos) {
-            if (!headers.containsKey(header)) {
-                throw new RuntimeException("Falta la columna requerida '" + headerOriginal(header) + "'");
-            }
-        }
-    }
+        String tallaNombre = limpiarTextoCatalogo(requerido(variante.tallaNombre(), "tallaNombre", fila));
+        validarLongitudMaxima(tallaNombre, 20, "tallaNombre", fila);
 
-    private FilaExcel leerFila(Row row, Map<String, Integer> headers, int rowNumber) {
-        String sku = requerido(texto(row.getCell(headers.get(H_SKU))), "sku", rowNumber);
-        validarLongitudMaxima(sku, 100, "sku", rowNumber);
+        String colorHex = opcional(variante.colorHex());
+        validarLongitudMaxima(colorHex, 20, "colorHex", fila);
+        colorHex = normalizarHex(colorHex, fila);
 
-        String nombreProducto = requerido(texto(row.getCell(headers.get(H_NOMBRE_PRODUCTO))), "nombreProducto", rowNumber);
-        validarLongitudMaxima(nombreProducto, 150, "nombreProducto", rowNumber);
+        BigDecimal precio = decimalRequerido(variante.precio(), "precio", fila);
+        BigDecimal precioMayor = decimalOpcionalNoNegativo(variante.precioMayor(), "precioMayor", fila);
+        validarPrecioMayor(precio, precioMayor, fila);
+        int stock = enteroNoNegativo(variante.stock(), "stock", fila);
 
-        Integer idxDescripcion = headers.get(H_DESCRIPCION);
-        String descripcion = idxDescripcion == null ? null : opcional(texto(row.getCell(idxDescripcion)));
-        validarLongitudMaxima(descripcion, 500, "descripcion", rowNumber);
+        String sku = requerido(variante.sku(), "sku", fila);
+        validarLongitudMaxima(sku, 100, "sku", fila);
 
-        String categoriaNombre = requerido(texto(row.getCell(headers.get(H_CATEGORIA_NOMBRE))), "categoriaNombre", rowNumber);
-        categoriaNombre = limpiarTextoCatalogo(categoriaNombre);
-        validarLongitudMaxima(categoriaNombre, 50, "categoriaNombre", rowNumber);
+        String codigoBarras = requerido(variante.codigoBarras(), "codigoBarras", fila);
+        validarLongitudMaxima(codigoBarras, 100, "codigoBarras", fila);
 
-        String colorNombre = requerido(texto(row.getCell(headers.get(H_COLOR_NOMBRE))), "colorNombre", rowNumber);
-        colorNombre = limpiarTextoCatalogo(colorNombre);
-        validarLongitudMaxima(colorNombre, 50, "colorNombre", rowNumber);
-
-        String colorHex = opcional(texto(row.getCell(headers.get(H_COLOR_HEX))));
-        validarLongitudMaxima(colorHex, 20, "colorHex", rowNumber);
-
-        String tallaNombre = requerido(texto(row.getCell(headers.get(H_TALLA_NOMBRE))), "tallaNombre", rowNumber);
-        tallaNombre = limpiarTextoCatalogo(tallaNombre);
-        validarLongitudMaxima(tallaNombre, 20, "tallaNombre", rowNumber);
-
-        BigDecimal precio = decimal(row.getCell(headers.get(H_PRECIO)), "precio", rowNumber);
-        BigDecimal precioOferta = decimalOpcionalNoNegativo(row.getCell(headers.get(H_PRECIO_OFERTA)), "precioOferta", rowNumber);
-        validarPrecioOferta(precio, precioOferta, rowNumber);
-        int stock = enteroNoNegativo(row.getCell(headers.get(H_STOCK)), "stock", rowNumber);
-        String sucursal = opcional(texto(row.getCell(headers.get(H_SUCURSAL))));
-        validarLongitudMaxima(sucursal, 100, "sucursal", rowNumber);
-
-        return new FilaExcel(
-                rowNumber,
-                sku,
+        return new FilaImportacion(
+                fila,
+                sucursalDestino,
                 nombreProducto,
                 descripcion,
                 categoriaNombre,
                 colorNombre,
                 colorHex,
                 tallaNombre,
+                sku,
+                codigoBarras,
                 precio,
-                precioOferta,
-                stock,
-                sucursal);
+                precioMayor,
+                stock);
     }
 
-    private boolean filaVacia(Row row, Map<String, Integer> headers) {
-        if (row == null) {
-            return true;
-        }
-        for (Integer index : headers.values()) {
-            String value = texto(row.getCell(index));
-            if (value != null && !value.isBlank()) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private Map<ProductoClave, ProductoAgrupado> agruparFilas(List<FilaExcel> filas, Usuario usuario) {
+    private Map<ProductoClave, ProductoAgrupado> agruparFilas(List<FilaImportacion> filas) {
         Map<ProductoClave, ProductoAgrupado> agrupados = new LinkedHashMap<>();
         Map<SkuSucursalClave, Integer> skuPorSucursal = new HashMap<>();
-        for (FilaExcel fila : filas) {
-            Sucursal sucursal = resolverSucursal(fila, usuario);
+        Map<CodigoBarrasSucursalClave, Integer> codigoPorSucursal = new HashMap<>();
+
+        for (FilaImportacion fila : filas) {
             String skuNormalizado = normalizarComparable(fila.sku());
-            SkuSucursalClave skuClave = new SkuSucursalClave(sucursal.getIdSucursal(), skuNormalizado);
+            SkuSucursalClave skuClave = new SkuSucursalClave(fila.sucursal().getIdSucursal(), skuNormalizado);
             Integer filaDuplicadaSku = skuPorSucursal.putIfAbsent(skuClave, fila.fila());
             if (filaDuplicadaSku != null) {
                 throw new RuntimeException("Fila " + fila.fila()
@@ -374,41 +326,51 @@ public class ProductoImportService {
                         + "' ya fue enviado en la fila " + filaDuplicadaSku + " para la misma sucursal");
             }
 
+            String codigoBarrasNormalizado = normalizarComparable(fila.codigoBarras());
+            if (codigoBarrasNormalizado != null) {
+                CodigoBarrasSucursalClave codigoClave = new CodigoBarrasSucursalClave(
+                        fila.sucursal().getIdSucursal(),
+                        codigoBarrasNormalizado);
+                Integer filaDuplicadaCodigo = codigoPorSucursal.putIfAbsent(codigoClave, fila.fila());
+                if (filaDuplicadaCodigo != null) {
+                    throw new RuntimeException("Fila " + fila.fila()
+                            + ": el codigoBarras '" + fila.codigoBarras()
+                            + "' ya fue enviado en la fila " + filaDuplicadaCodigo + " para la misma sucursal");
+                }
+            }
+
             ProductoClave clave = new ProductoClave(
-                    sucursal.getIdSucursal(),
+                    fila.sucursal().getIdSucursal(),
                     normalizarComparable(fila.nombreProducto()),
                     normalizarComparable(fila.categoriaNombre()));
 
             ProductoAgrupado actual = agrupados.get(clave);
             if (actual == null) {
-                actual = ProductoAgrupado.crear(fila, sucursal);
+                actual = ProductoAgrupado.crear(fila);
                 agrupados.put(clave, actual);
-            } else {
-                if (actual.descripcion() == null && fila.descripcion() != null) {
-                    actual = actual.conDescripcion(fila.descripcion());
-                    agrupados.put(clave, actual);
-                }
+            } else if (actual.descripcion() == null && fila.descripcion() != null) {
+                actual = actual.conDescripcion(fila.descripcion());
+                agrupados.put(clave, actual);
             }
             actual.agregarVariante(fila);
         }
+
         return agrupados;
     }
 
-    private ResumenImportacion persistirAgrupados(Map<ProductoClave, ProductoAgrupado> agrupados) {
+    private ResumenImportacion persistirAgrupados(Map<ProductoClave, ProductoAgrupado> agrupados, Usuario usuario) {
         ResumenImportacion resumen = new ResumenImportacion();
 
         for (ProductoAgrupado agrupado : agrupados.values()) {
             Categoria categoria = resolverCategoria(agrupado, resumen);
             Optional<Producto> existente = productoRepository
-                    .findFirstBySucursal_IdSucursalAndCategoria_IdCategoriaAndNombreIgnoreCaseAndDeletedAtIsNullOrderByIdProductoAsc(
-                            agrupado.sucursal().getIdSucursal(),
+                    .findFirstByCategoria_IdCategoriaAndNombreIgnoreCaseAndDeletedAtIsNullOrderByIdProductoAsc(
                             categoria.getIdCategoria(),
                             agrupado.nombreProducto());
-            Producto producto = existente.orElseGet(Producto::new);
 
+            Producto producto = existente.orElseGet(Producto::new);
             if (existente.isEmpty()) {
                 producto.setFechaCreacion(LocalDateTime.now());
-                producto.setEstado("ACTIVO");
                 resumen.productosCreados++;
             } else {
                 resumen.productosActualizados++;
@@ -431,7 +393,7 @@ public class ProductoImportService {
                 throw new RuntimeException("Fila " + agrupado.filaBase() + ": no se pudo guardar el producto por datos duplicados");
             }
 
-            resumen.variantesGuardadas += sincronizarVariantesImportadas(guardado, agrupado, resumen);
+            resumen.variantesGuardadas += sincronizarVariantesImportadas(guardado, agrupado, resumen, usuario);
         }
 
         return resumen;
@@ -440,11 +402,13 @@ public class ProductoImportService {
     private int sincronizarVariantesImportadas(
             Producto producto,
             ProductoAgrupado agrupado,
-            ResumenImportacion resumen) {
+            ResumenImportacion resumen,
+            Usuario usuario) {
         List<ProductoVariante> existentes = productoVarianteRepository.findByProductoIdProducto(producto.getIdProducto());
 
         Map<String, ProductoVariante> existentesPorCombinacion = new HashMap<>();
         Map<String, ProductoVariante> existentesPorSku = new HashMap<>();
+        Map<String, ProductoVariante> existentesPorCodigoBarras = new HashMap<>();
         for (ProductoVariante existente : existentes) {
             if (existente == null) {
                 continue;
@@ -454,19 +418,24 @@ public class ProductoImportService {
             if (colorId != null && tallaId != null) {
                 existentesPorCombinacion.put(colorId + "-" + tallaId, existente);
             }
-
             String skuExistente = normalizarComparable(existente.getSku());
             if (skuExistente != null) {
                 existentesPorSku.putIfAbsent(skuExistente, existente);
+            }
+            String codigoBarrasExistente = normalizarComparable(existente.getCodigoBarras());
+            if (codigoBarrasExistente != null) {
+                existentesPorCodigoBarras.putIfAbsent(codigoBarrasExistente, existente);
             }
         }
 
         LocalDateTime now = LocalDateTime.now();
         Set<String> combinaciones = new HashSet<>();
         Set<String> skusNormalizados = new HashSet<>();
+        Set<String> codigosNormalizados = new HashSet<>();
         Set<Integer> idsActivos = new HashSet<>();
         Set<Integer> coloresTocados = new HashSet<>();
         List<ProductoVariante> variantesParaPersistir = new ArrayList<>();
+        Map<String, Integer> stockObjetivoPorCombinacion = new HashMap<>();
 
         for (VarianteFila varianteFila : agrupado.variantes().values()) {
             Color color = resolverColor(varianteFila, resumen);
@@ -509,18 +478,44 @@ public class ProductoImportService {
                         + "' ya existe en otra variante de este producto y no se puede reasignar");
             }
 
+            String codigoBarrasKey = normalizarComparable(varianteFila.codigoBarras());
+            ProductoVariante varianteCodigoExistente = codigoBarrasKey == null
+                    ? null
+                    : existentesPorCodigoBarras.get(codigoBarrasKey);
+            if (codigoBarrasKey != null) {
+                if (!codigosNormalizados.add(codigoBarrasKey)) {
+                    throw new RuntimeException("Fila " + varianteFila.fila()
+                            + ": no puede repetir codigoBarras dentro del mismo producto");
+                }
+                if (productoVarianteRepository.existsCodigoBarrasParaOtroProducto(
+                        agrupado.sucursal().getIdSucursal(),
+                        varianteFila.codigoBarras(),
+                        producto.getIdProducto())) {
+                    throw new RuntimeException("Fila " + varianteFila.fila()
+                            + ": el codigoBarras '" + varianteFila.codigoBarras() + "' ya existe en la sucursal");
+                }
+                if (varianteCodigoExistente != null
+                        && (varianteExistente == null
+                        || !varianteCodigoExistente.getIdProductoVariante().equals(varianteExistente.getIdProductoVariante()))) {
+                    throw new RuntimeException("Fila " + varianteFila.fila()
+                            + ": el codigoBarras '" + varianteFila.codigoBarras()
+                            + "' ya existe en otra variante de este producto y no se puede reasignar");
+                }
+            }
+
             ProductoVariante variante = varianteExistente != null ? varianteExistente : new ProductoVariante();
             variante.setProducto(producto);
             variante.setSucursal(agrupado.sucursal());
             variante.setColor(color);
             variante.setTalla(talla);
             variante.setSku(varianteFila.sku());
-            variante.setCodigoBarras(null);
+            variante.setCodigoBarras(varianteFila.codigoBarras());
             variante.setPrecio(varianteFila.precio().doubleValue());
-            variante.setPrecioMayor(null);
-            variante.setPrecioOferta(varianteFila.precioOferta() == null ? null : varianteFila.precioOferta().doubleValue());
+            variante.setPrecioMayor(varianteFila.precioMayor() == null ? null : varianteFila.precioMayor().doubleValue());
+            variante.setPrecioOferta(null);
             variante.setOfertaInicio(null);
             variante.setOfertaFin(null);
+            variante.setUsuarioCreacion(null);
             variante.setStock(varianteFila.stock());
             variante.setEstado(resolverEstadoVarianteSegunStock(varianteFila.stock()));
             variante.setActivo("ACTIVO");
@@ -530,6 +525,7 @@ public class ProductoImportService {
             if (variante.getIdProductoVariante() != null) {
                 idsActivos.add(variante.getIdProductoVariante());
             }
+            stockObjetivoPorCombinacion.put(combinacionKey, varianteFila.stock());
             variantesParaPersistir.add(variante);
         }
 
@@ -540,7 +536,7 @@ public class ProductoImportService {
             if (idsActivos.contains(existente.getIdProductoVariante())) {
                 continue;
             }
-            existente.setEstado(resolverEstadoVarianteSegunStock(existente.getStock()));
+            existente.setEstado("INACTIVO");
             existente.setActivo("INACTIVO");
             existente.setDeletedAt(now);
             if (existente.getColor() != null && existente.getColor().getIdColor() != null) {
@@ -550,9 +546,33 @@ public class ProductoImportService {
         }
 
         try {
-            productoVarianteRepository.saveAll(variantesParaPersistir);
+            productoVarianteRepository.saveAllAndFlush(variantesParaPersistir);
         } catch (DataIntegrityViolationException e) {
             throw new RuntimeException("Fila " + agrupado.filaBase() + ": variantes repetidas para el mismo producto");
+        }
+
+        for (ProductoVariante variante : variantesParaPersistir) {
+            if (variante == null || variante.getIdProductoVariante() == null || variante.getSucursal() == null) {
+                continue;
+            }
+            Integer stockObjetivo = variante.getDeletedAt() == null
+                    ? stockObjetivoPorCombinacion.get(claveVariante(variante))
+                    : 0;
+            if (stockObjetivo == null) {
+                stockObjetivo = 0;
+            }
+            stockMovimientoService.ajustar(
+                    variante.getSucursal().getIdSucursal(),
+                    variante.getIdProductoVariante(),
+                    stockObjetivo,
+                    "IMPORTACION JSON - " + variante.getSku(),
+                    usuario);
+            variante.setStock(stockObjetivo);
+            variante.setEstado(resolverEstadoVarianteSegunStock(stockObjetivo));
+        }
+
+        if (!variantesParaPersistir.isEmpty()) {
+            productoVarianteRepository.saveAll(variantesParaPersistir);
         }
 
         for (Integer colorId : coloresTocados) {
@@ -562,18 +582,32 @@ public class ProductoImportService {
         return agrupado.variantes().size();
     }
 
+    private String claveVariante(ProductoVariante variante) {
+        Integer colorId = variante.getColor() != null ? variante.getColor().getIdColor() : null;
+        Integer tallaId = variante.getTalla() != null ? variante.getTalla().getIdTalla() : null;
+        return colorId + "-" + tallaId;
+    }
+
     private Categoria resolverCategoria(ProductoAgrupado agrupado, ResumenImportacion resumen) {
         String categoriaNombre = agrupado.categoriaNombre();
-        Categoria categoriaExistente = buscarCategoriaExistenteFlexible(
-                agrupado.sucursal().getIdSucursal(),
-                categoriaNombre);
+        Categoria categoriaExistente = buscarCategoriaExistenteFlexible(categoriaNombre);
         if (categoriaExistente != null) {
-            Categoria categoria = categoriaExistente;
-            if (!"ACTIVO".equalsIgnoreCase(categoria.getEstado())) {
-                throw new RuntimeException("Fila " + agrupado.filaBase()
-                        + ": la categoria '" + categoria.getNombreCategoria() + "' esta INACTIVA");
+            if (!estaDisponible(categoriaExistente)) {
+                categoriaExistente.setNombreCategoria(categoriaNombre);
+                categoriaExistente.setEstado("ACTIVO");
+                categoriaExistente.setDeletedAt(null);
+                try {
+                    Categoria reactivada = categoriaRepository.saveAndFlush(categoriaExistente);
+                    resumen.categoriasCreadas++;
+                    return reactivada;
+                } catch (DataIntegrityViolationException e) {
+                    String detalle = obtenerDetalleError(e);
+                    throw new RuntimeException("Fila " + agrupado.filaBase()
+                            + ": no se pudo reactivar la categoria '" + categoriaNombre
+                            + "'. Detalle: " + detalle);
+                }
             }
-            return categoria;
+            return categoriaExistente;
         }
 
         Categoria categoria = new Categoria();
@@ -593,10 +627,13 @@ public class ProductoImportService {
         }
     }
 
-    private Categoria buscarCategoriaExistenteFlexible(Integer idSucursal, String nombreCategoria) {
-        List<Categoria> categorias = categoriaRepository.findBySucursal_IdSucursal(idSucursal);
+    private Categoria buscarCategoriaExistenteFlexible(String nombreCategoria) {
+        List<Categoria> categorias = categoriaRepository.findAll();
         String objetivo = normalizarTextoComparacion(nombreCategoria);
         for (Categoria categoria : categorias) {
+            if (categoria == null) {
+                continue;
+            }
             String actual = normalizarTextoComparacion(categoria.getNombreCategoria());
             if (objetivo.equals(actual)) {
                 return categoria;
@@ -609,12 +646,31 @@ public class ProductoImportService {
         String colorNombre = varianteFila.colorNombre();
         Optional<Color> existente = colorRepository.findByNombreIgnoreCase(colorNombre);
         if (existente.isPresent()) {
-            return existente.get();
+            Color color = existente.get();
+            if (!estaDisponible(color)) {
+                color.setNombre(colorNombre);
+                color.setCodigo(varianteFila.colorHex());
+                color.setEstado("ACTIVO");
+                color.setDeletedAt(null);
+                try {
+                    Color reactivado = colorRepository.saveAndFlush(color);
+                    resumen.coloresCreados++;
+                    return reactivado;
+                } catch (DataIntegrityViolationException e) {
+                    throw new RuntimeException("Fila " + varianteFila.fila()
+                            + ": no se pudo reactivar el color '" + colorNombre + "'");
+                }
+            }
+            if ((color.getCodigo() == null || color.getCodigo().isBlank()) && varianteFila.colorHex() != null) {
+                color.setCodigo(varianteFila.colorHex());
+                return colorRepository.save(color);
+            }
+            return color;
         }
 
         Color color = new Color();
         color.setNombre(colorNombre);
-        color.setCodigo(normalizarHex(varianteFila.colorHex(), varianteFila.fila()));
+        color.setCodigo(varianteFila.colorHex());
         color.setEstado("ACTIVO");
 
         try {
@@ -631,7 +687,21 @@ public class ProductoImportService {
         String tallaNombre = varianteFila.tallaNombre();
         Optional<Talla> existente = tallaRepository.findByNombreIgnoreCase(tallaNombre);
         if (existente.isPresent()) {
-            return existente.get();
+            Talla talla = existente.get();
+            if (!estaDisponible(talla)) {
+                talla.setNombre(tallaNombre);
+                talla.setEstado("ACTIVO");
+                talla.setDeletedAt(null);
+                try {
+                    Talla reactivada = tallaRepository.saveAndFlush(talla);
+                    resumen.tallasCreadas++;
+                    return reactivada;
+                } catch (DataIntegrityViolationException e) {
+                    throw new RuntimeException("Fila " + varianteFila.fila()
+                            + ": no se pudo reactivar la talla '" + tallaNombre + "'");
+                }
+            }
+            return talla;
         }
 
         Talla talla = new Talla();
@@ -648,49 +718,16 @@ public class ProductoImportService {
         }
     }
 
-    private Sucursal resolverSucursal(FilaExcel fila, Usuario usuario) {
-        if (usuario.getRol() == Rol.ADMINISTRADOR) {
-            String nombreSucursal = requerido(fila.sucursal(), "sucursal", fila.fila());
-            Sucursal sucursal = sucursalRepository.findByNombreIgnoreCaseAndDeletedAtIsNull(nombreSucursal)
-                    .orElseThrow(() -> new RuntimeException(
-                            "Fila " + fila.fila() + ": sucursal '" + nombreSucursal + "' no existe"));
-            if (!"ACTIVO".equalsIgnoreCase(sucursal.getEstado())) {
-                throw new RuntimeException("Fila " + fila.fila() + ": la sucursal '" + nombreSucursal + "' esta INACTIVA");
-            }
-            return sucursal;
-        }
-
-        if (usuario.getSucursal() == null || usuario.getSucursal().getIdSucursal() == null) {
-            throw new RuntimeException("El usuario autenticado no tiene sucursal asignada");
-        }
-
-        Sucursal sucursalUsuario = sucursalRepository.findByIdSucursalAndDeletedAtIsNull(usuario.getSucursal().getIdSucursal())
-                .orElseThrow(() -> new RuntimeException("Sucursal del usuario autenticado no encontrada"));
-
-        // Para VENTAS/ALMACEN la sucursal siempre se toma del token.
-        // La columna "sucursal" del Excel se ignora (si viene o no viene).
-        return sucursalUsuario;
-    }
-
     private String normalizarHex(String hex, int fila) {
         String value = opcional(hex);
         if (value == null) {
             return null;
         }
-
-        String normalized = value.startsWith("#") ? value.toUpperCase() : ("#" + value.toUpperCase());
+        String normalized = value.startsWith("#") ? value.toUpperCase(Locale.ROOT) : ("#" + value.toUpperCase(Locale.ROOT));
         if (!normalized.matches("^#[0-9A-F]{6}$")) {
             throw new RuntimeException("Fila " + fila + ": colorHex invalido. Use formato #RRGGBB");
         }
         return normalized;
-    }
-
-    private String normalizarComparable(String value) {
-        return opcional(value) == null ? null : opcional(value).toLowerCase(Locale.ROOT);
-    }
-
-    private String resolverEstadoVarianteSegunStock(int stock) {
-        return stock <= 0 ? "AGOTADO" : "ACTIVO";
     }
 
     private String requerido(String value, String field, int fila) {
@@ -728,6 +765,61 @@ public class ProductoImportService {
         return sinNoBreakSpace.replaceAll("\\s+", " ").trim();
     }
 
+    private BigDecimal decimalRequerido(String value, String field, int fila) {
+        String normalized = requerido(value, field, fila).replace(",", ".");
+        try {
+            BigDecimal parsed = new BigDecimal(normalized);
+            if (parsed.compareTo(BigDecimal.ZERO) < 0) {
+                throw new RuntimeException("Fila " + fila + ": '" + field + "' no puede ser negativo");
+            }
+            return parsed;
+        } catch (NumberFormatException ex) {
+            throw new RuntimeException("Fila " + fila + ": '" + field + "' debe ser numerico");
+        }
+    }
+
+    private BigDecimal decimalOpcionalNoNegativo(String value, String field, int fila) {
+        String raw = opcional(value);
+        if (raw == null) {
+            return null;
+        }
+        String normalized = raw.replace(",", ".");
+        try {
+            BigDecimal parsed = new BigDecimal(normalized);
+            if (parsed.compareTo(BigDecimal.ZERO) < 0) {
+                throw new RuntimeException("Fila " + fila + ": '" + field + "' no puede ser negativo");
+            }
+            return parsed;
+        } catch (NumberFormatException ex) {
+            throw new RuntimeException("Fila " + fila + ": '" + field + "' debe ser numerico");
+        }
+    }
+
+    private int enteroNoNegativo(String value, String field, int fila) {
+        BigDecimal parsed = decimalRequerido(value, field, fila);
+        try {
+            return parsed.intValueExact();
+        } catch (ArithmeticException ex) {
+            throw new RuntimeException("Fila " + fila + ": '" + field + "' debe ser entero");
+        }
+    }
+
+    private void validarPrecioMayor(BigDecimal precio, BigDecimal precioMayor, int fila) {
+        if (precioMayor == null) {
+            return;
+        }
+        if (precioMayor.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new RuntimeException("Fila " + fila + ": 'precioMayor' debe ser mayor a 0");
+        }
+        if (precioMayor.compareTo(precio) >= 0) {
+            throw new RuntimeException("Fila " + fila + ": 'precioMayor' debe ser menor a 'precio'");
+        }
+    }
+
+    private String normalizarComparable(String value) {
+        return opcional(value) == null ? null : opcional(value).toLowerCase(Locale.ROOT);
+    }
+
     private String normalizarTextoComparacion(String value) {
         String limpio = limpiarTextoCatalogo(value);
         if (limpio == null) {
@@ -747,72 +839,40 @@ public class ProductoImportService {
         return msg.length() > 250 ? msg.substring(0, 250) : msg;
     }
 
-    private String texto(Cell cell) {
-        if (cell == null) {
-            return null;
-        }
-        String value = DATA_FORMATTER.formatCellValue(cell);
-        return value == null ? null : value.trim();
+    private String resolverEstadoVarianteSegunStock(int stock) {
+        return stock <= 0 ? "INACTIVO" : "ACTIVO";
     }
 
-    private BigDecimal decimal(Cell cell, String field, int fila) {
-        String value = requerido(texto(cell), field, fila).replace(",", ".");
-        try {
-            BigDecimal parsed = new BigDecimal(value);
-            if (parsed.compareTo(BigDecimal.ZERO) < 0) {
-                throw new RuntimeException("Fila " + fila + ": '" + field + "' no puede ser negativo");
-            }
-            return parsed;
-        } catch (NumberFormatException ex) {
-            throw new RuntimeException("Fila " + fila + ": '" + field + "' debe ser numerico");
-        }
+    private String safe(String value) {
+        return value == null ? "" : value;
     }
 
-    private int enteroNoNegativo(Cell cell, String field, int fila) {
-        BigDecimal parsed = decimal(cell, field, fila);
-        try {
-            return parsed.intValueExact();
-        } catch (ArithmeticException ex) {
-            throw new RuntimeException("Fila " + fila + ": '" + field + "' debe ser entero");
-        }
+    private boolean estaDisponible(Categoria categoria) {
+        return categoria.getDeletedAt() == null && "ACTIVO".equalsIgnoreCase(categoria.getEstado());
     }
 
-    private String normalizarClave(String header) {
-        return header == null
-                ? ""
-                : header
-                        .trim()
-                        .toLowerCase(Locale.ROOT)
-                        .replace(" ", "")
-                        .replace("_", "")
-                        .replace("-", "");
+    private boolean estaDisponible(Color color) {
+        return color.getDeletedAt() == null && "ACTIVO".equalsIgnoreCase(color.getEstado());
     }
 
-    private String headerOriginal(String headerNormalizado) {
-        return switch (headerNormalizado) {
-            case H_NOMBRE_PRODUCTO -> "nombreProducto";
-            case H_CATEGORIA_NOMBRE -> "categoriaNombre";
-            case H_COLOR_NOMBRE -> "colorNombre";
-            case H_COLOR_HEX -> "colorHex";
-            case H_TALLA_NOMBRE -> "tallaNombre";
-            case H_PRECIO_OFERTA -> "precioOferta";
-            default -> headerNormalizado;
-        };
+    private boolean estaDisponible(Talla talla) {
+        return talla.getDeletedAt() == null && "ACTIVO".equalsIgnoreCase(talla.getEstado());
     }
 
-    private record FilaExcel(
+    private record FilaImportacion(
             int fila,
-            String sku,
+            Sucursal sucursal,
             String nombreProducto,
             String descripcion,
             String categoriaNombre,
             String colorNombre,
             String colorHex,
             String tallaNombre,
+            String sku,
+            String codigoBarras,
             BigDecimal precio,
-            BigDecimal precioOferta,
-            int stock,
-            String sucursal
+            BigDecimal precioMayor,
+            int stock
     ) {
     }
 
@@ -826,17 +886,21 @@ public class ProductoImportService {
     private record SkuSucursalClave(Integer idSucursal, String skuNormalizado) {
     }
 
+    private record CodigoBarrasSucursalClave(Integer idSucursal, String codigoBarrasNormalizado) {
+    }
+
     private record VarianteClave(String colorNormalizado, String tallaNormalizada) {
     }
 
     private record VarianteFila(
             int fila,
             String sku,
+            String codigoBarras,
             String colorNombre,
             String colorHex,
             String tallaNombre,
             BigDecimal precio,
-            BigDecimal precioOferta,
+            BigDecimal precioMayor,
             int stock
     ) {
     }
@@ -849,11 +913,11 @@ public class ProductoImportService {
             String categoriaNombre,
             Map<VarianteClave, VarianteFila> variantes
     ) {
-        private static ProductoAgrupado crear(FilaExcel fila, Sucursal sucursal) {
+        private static ProductoAgrupado crear(FilaImportacion fila) {
             Map<VarianteClave, VarianteFila> variantes = new LinkedHashMap<>();
             return new ProductoAgrupado(
                     fila.fila(),
-                    sucursal,
+                    fila.sucursal(),
                     fila.nombreProducto(),
                     fila.descripcion(),
                     fila.categoriaNombre(),
@@ -870,7 +934,7 @@ public class ProductoImportService {
                     this.variantes);
         }
 
-        private void agregarVariante(FilaExcel fila) {
+        private void agregarVariante(FilaImportacion fila) {
             VarianteClave clave = new VarianteClave(
                     lower(fila.colorNombre()),
                     lower(fila.tallaNombre()));
@@ -881,18 +945,18 @@ public class ProductoImportService {
             variantes.put(clave, new VarianteFila(
                     fila.fila(),
                     fila.sku(),
+                    fila.codigoBarras(),
                     fila.colorNombre(),
                     fila.colorHex(),
                     fila.tallaNombre(),
                     fila.precio(),
-                    fila.precioOferta(),
+                    fila.precioMayor(),
                     fila.stock()));
         }
 
         private static String lower(String value) {
             return value == null ? "" : value.toLowerCase(Locale.ROOT);
         }
-
     }
 
     private static class ResumenImportacion {
@@ -902,34 +966,5 @@ public class ProductoImportService {
         private int categoriasCreadas;
         private int coloresCreados;
         private int tallasCreadas;
-    }
-
-    private BigDecimal decimalOpcionalNoNegativo(Cell cell, String field, int fila) {
-        String raw = texto(cell);
-        if (raw == null || raw.isBlank()) {
-            return null;
-        }
-        String value = raw.replace(",", ".");
-        try {
-            BigDecimal parsed = new BigDecimal(value);
-            if (parsed.compareTo(BigDecimal.ZERO) < 0) {
-                throw new RuntimeException("Fila " + fila + ": '" + field + "' no puede ser negativo");
-            }
-            return parsed;
-        } catch (NumberFormatException ex) {
-            throw new RuntimeException("Fila " + fila + ": '" + field + "' debe ser numerico");
-        }
-    }
-
-    private void validarPrecioOferta(BigDecimal precio, BigDecimal precioOferta, int fila) {
-        if (precioOferta == null) {
-            return;
-        }
-        if (precioOferta.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new RuntimeException("Fila " + fila + ": 'precioOferta' debe ser mayor a 0");
-        }
-        if (precio == null || precioOferta.compareTo(precio) >= 0) {
-            throw new RuntimeException("Fila " + fila + ": 'precioOferta' debe ser menor a 'precio'");
-        }
     }
 }

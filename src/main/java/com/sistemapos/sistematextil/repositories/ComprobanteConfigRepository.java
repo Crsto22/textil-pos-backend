@@ -48,6 +48,10 @@ public interface ComprobanteConfigRepository extends JpaRepository<ComprobanteCo
             String tipoComprobante,
             String serie);
 
+    Optional<ComprobanteConfig> findTopByTipoComprobanteAndDeletedAtIsNullAndActivoOrderByIdComprobanteAsc(
+            String tipoComprobante,
+            String activo);
+
     @Query(
             value = """
                     SELECT *

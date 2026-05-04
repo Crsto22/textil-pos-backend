@@ -43,6 +43,7 @@ public class SunatNotaCreditoEmissionService {
     private final SunatDocumentStorageService sunatDocumentStorageService;
     private final SunatSoapClientService sunatSoapClientService;
     private final SunatCdrParserService sunatCdrParserService;
+    private final SunatErrorClassifierService sunatErrorClassifierService;
 
     public SunatEmissionResult emitir(Integer idNotaCredito) {
         NotaCredito notaCredito = notaCreditoRepository.findByIdNotaCreditoAndDeletedAtIsNull(idNotaCredito)
@@ -62,13 +63,13 @@ public class SunatNotaCreditoEmissionService {
         }
 
         LocalDateTime now = LocalDateTime.now();
-        notaCredito.setSunatEstado(SunatEstado.ERROR);
+        notaCredito.setSunatEstado(SunatEstado.ERROR_DEFINITIVO);
         notaCredito.setSunatCodigo("CONFIG");
         notaCredito.setSunatMensaje("Modo SUNAT no soportado: " + mode);
         notaCredito.setSunatRespondidoAt(now);
         notaCreditoRepository.save(notaCredito);
         return new SunatEmissionResult(
-                SunatEstado.ERROR,
+                SunatEstado.ERROR_DEFINITIVO,
                 "CONFIG",
                 notaCredito.getSunatMensaje(),
                 notaCredito.getSunatHash(),
@@ -83,13 +84,14 @@ public class SunatNotaCreditoEmissionService {
     }
 
     private SunatEmissionResult emitirDeshabilitado(NotaCredito notaCredito) {
-        notaCredito.setSunatEstado(SunatEstado.PENDIENTE);
-        notaCredito.setSunatMensaje("Integracion SUNAT deshabilitada. La nota de credito queda pendiente de envio.");
+        notaCredito.setSunatEstado(SunatEstado.ERROR_DEFINITIVO);
+        notaCredito.setSunatCodigo("DISABLED");
+        notaCredito.setSunatMensaje("Integracion SUNAT deshabilitada. Active la configuracion para emitir la nota de credito.");
         notaCredito.setSunatXmlNombre(SunatComprobanteHelper.construirNombreArchivoXml(notaCredito));
         notaCreditoRepository.save(notaCredito);
         return new SunatEmissionResult(
-                SunatEstado.PENDIENTE,
-                null,
+                SunatEstado.ERROR_DEFINITIVO,
+                "DISABLED",
                 notaCredito.getSunatMensaje(),
                 notaCredito.getSunatHash(),
                 notaCredito.getSunatTicket(),
@@ -163,7 +165,7 @@ public class SunatNotaCreditoEmissionService {
                             soapResponse.cdrZipFileName(),
                             soapResponse.cdrZipBytes());
                 } catch (RuntimeException storageError) {
-                    cdrMessage = cdrMessage + " | CDR recibido pero no se pudo guardar en S3";
+                    cdrMessage = cdrMessage + " | CDR recibido pero no se pudo guardar en disco local";
                 }
 
                 notaCredito.setSunatEstado(cdrResult.estado());
@@ -210,14 +212,15 @@ public class SunatNotaCreditoEmissionService {
                         respondedAt);
             } catch (RuntimeException e) {
                 LocalDateTime respondedAt = LocalDateTime.now();
-                notaCredito.setSunatEstado(SunatEstado.ERROR);
+                SunatEstado estadoError = sunatErrorClassifierService.classify(e.getMessage());
+                notaCredito.setSunatEstado(estadoError);
                 notaCredito.setSunatCodigo("ENVIO");
                 notaCredito.setSunatMensaje(normalizarTexto(e.getMessage()));
                 notaCredito.setSunatRespondidoAt(respondedAt);
                 notaCreditoRepository.save(notaCredito);
 
                 return new SunatEmissionResult(
-                        SunatEstado.ERROR,
+                        estadoError,
                         "ENVIO",
                         notaCredito.getSunatMensaje(),
                         signedXml.digestValue(),
@@ -232,14 +235,14 @@ public class SunatNotaCreditoEmissionService {
             }
         } catch (RuntimeException e) {
             LocalDateTime now = LocalDateTime.now();
-            notaCredito.setSunatEstado(SunatEstado.ERROR);
+            notaCredito.setSunatEstado(SunatEstado.ERROR_DEFINITIVO);
             notaCredito.setSunatCodigo("CONFIG");
             notaCredito.setSunatMensaje(normalizarTexto(e.getMessage()));
             notaCredito.setSunatRespondidoAt(now);
             notaCreditoRepository.save(notaCredito);
 
             return new SunatEmissionResult(
-                    SunatEstado.ERROR,
+                    SunatEstado.ERROR_DEFINITIVO,
                     "CONFIG",
                     notaCredito.getSunatMensaje(),
                     notaCredito.getSunatHash(),

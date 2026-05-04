@@ -13,9 +13,18 @@ import com.sistemapos.sistematextil.model.Color;
 @Repository
 public interface ColorRepository extends JpaRepository<Color, Integer> {
 
+    Page<Color> findByDeletedAtIsNullAndEstadoOrderByIdColorDesc(String estado, Pageable pageable);
+
+    Page<Color> findByDeletedAtIsNullAndEstadoAndNombreContainingIgnoreCaseOrderByIdColorDesc(
+            String estado,
+            String nombre,
+            Pageable pageable);
+
     Page<Color> findByNombreContainingIgnoreCase(String nombre, Pageable pageable);
 
     Optional<Color> findByNombreIgnoreCase(String nombre);
+
+    Optional<Color> findByIdColorAndDeletedAtIsNullAndEstado(Integer idColor, String estado);
 
     boolean existsByNombreIgnoreCase(String nombre);
 

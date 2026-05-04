@@ -66,7 +66,7 @@ public class EmpresaService {
         empresa.setFechaCreacion(original.getFechaCreacion() != null ? original.getFechaCreacion() : LocalDateTime.now());
         empresa.setDeletedAt(original.getDeletedAt());
 
-        if (empresa.getLogoUrl() == null) {
+        if (esTextoVacio(empresa.getLogoUrl())) {
             empresa.setLogoUrl(original.getLogoUrl());
         }
         if (empresa.getGeneraFacturacionElectronica() == null) {
@@ -147,6 +147,10 @@ public class EmpresaService {
         }
         String normalizado = valor.trim();
         return normalizado.isEmpty() ? null : normalizado;
+    }
+
+    private boolean esTextoVacio(String valor) {
+        return valor == null || valor.trim().isEmpty();
     }
 
     private byte[] convertirAWebp(byte[] input) throws IOException {

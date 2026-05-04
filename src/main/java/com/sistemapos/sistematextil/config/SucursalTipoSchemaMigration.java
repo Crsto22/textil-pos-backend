@@ -44,7 +44,7 @@ public class SucursalTipoSchemaMigration implements ApplicationRunner {
         }
         statement.execute("""
                 ALTER TABLE sucursal
-                ADD COLUMN tipo ENUM('VENTA','ALMACEN') DEFAULT 'VENTA' AFTER codigo_establecimiento_sunat
+                ADD COLUMN tipo ENUM('VENTA','ALMACEN') DEFAULT 'VENTA' AFTER ubigeo
                 """);
         log.info("Columna sucursal.tipo creada");
     }

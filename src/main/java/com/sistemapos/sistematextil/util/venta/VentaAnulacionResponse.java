@@ -2,7 +2,7 @@ package com.sistemapos.sistematextil.util.venta;
 
 import java.time.LocalDateTime;
 
-import com.sistemapos.sistematextil.util.sunat.SunatEstado;
+import com.sistemapos.sistematextil.util.sunat.SunatBajaEstado;
 
 public record VentaAnulacionResponse(
         Integer idVenta,
@@ -13,11 +13,10 @@ public record VentaAnulacionResponse(
         String motivoAnulacion,
         LocalDateTime fechaAnulacion,
         boolean stockDevuelto,
-        Integer idNotaCredito,
-        String numeroNotaCredito,
-        String tipoComprobanteNotaCredito,
-        SunatEstado sunatEstadoNotaCredito,
-        String sunatCodigoNotaCredito,
-        String sunatMensajeNotaCredito,
+        SunatBajaEstado sunatBajaEstado,
+        String sunatBajaCodigo,
+        String sunatBajaMensaje,
+        String sunatBajaTicket,
+        String sunatBajaLote,
         String message) {
 }

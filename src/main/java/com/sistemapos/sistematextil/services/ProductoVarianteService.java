@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -33,20 +34,26 @@ import com.sistemapos.sistematextil.model.Color;
 import com.sistemapos.sistematextil.model.Producto;
 import com.sistemapos.sistematextil.model.ProductoColorImagen;
 import com.sistemapos.sistematextil.model.ProductoVariante;
+import com.sistemapos.sistematextil.model.ProductoVarianteOfertaSucursal;
 import com.sistemapos.sistematextil.model.Sucursal;
 import com.sistemapos.sistematextil.model.SucursalTipo;
 import com.sistemapos.sistematextil.model.Talla;
 import com.sistemapos.sistematextil.repositories.ProductoColorImagenRepository;
+import com.sistemapos.sistematextil.repositories.ProductoVarianteOfertaSucursalRepository;
 import com.sistemapos.sistematextil.repositories.ProductoVarianteRepository;
 import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
 import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoImagenColorRow;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteDisponibleExcelRow;
+import com.sistemapos.sistematextil.util.producto.ProductoVarianteListadoResumenPageResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteListadoResumenResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaListItemResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaLoteItemRequest;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaLoteUpdateRequest;
+import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaSucursalLoteItemRequest;
+import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaSucursalLoteUpdateRequest;
+import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaSucursalUpdateRequest;
 import com.sistemapos.sistematextil.util.producto.ProductoVariantePosResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteStockSucursalRow;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteOfertaUpdateRequest;
@@ -64,12 +71,13 @@ import lombok.RequiredArgsConstructor;
 public class ProductoVarianteService {
 
     private static final String ESTADO_VARIANTE_ACTIVA = "ACTIVO";
-    private static final String ESTADO_VARIANTE_AGOTADA = "AGOTADO";
+    private static final String ESTADO_VARIANTE_INACTIVA = "INACTIVO";
     private static final String VALOR_ACTIVO = "ACTIVO";
     private static final String VALOR_INACTIVO = "INACTIVO";
     private static final DateTimeFormatter FECHA_HORA_EXCEL = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final ProductoVarianteRepository repository;
+    private final ProductoVarianteOfertaSucursalRepository productoVarianteOfertaSucursalRepository;
     private final ProductoColorImagenRepository productoColorImagenRepository;
     private final ProductoService productoService;
     private final TallaService tallaService;
@@ -77,6 +85,8 @@ public class ProductoVarianteService {
     private final SucursalRepository sucursalRepository;
     private final UsuarioRepository usuarioRepository;
     private final StockMovimientoService stockMovimientoService;
+    private final PrecioOfertaService precioOfertaService;
+    private final UsuarioSucursalAccessService usuarioSucursalAccessService;
 
     @PersistenceContext
     private final EntityManager entityManager;
@@ -87,14 +97,14 @@ public class ProductoVarianteService {
     public List<ProductoVariante> listarTodas(Integer idSucursal) {
         Integer idSucursalFiltro = normalizarIdSucursalFiltro(idSucursal);
         return idSucursalFiltro == null
-                ? repository.findByDeletedAtIsNull()
+                ? repository.findByDeletedAtIsNullOrderByStockDescCreatedAtDescIdProductoVarianteDesc()
                 : repository.findByDeletedAtIsNullAndSucursal_IdSucursal(idSucursalFiltro);
     }
 
     public List<ProductoVariante> listarPorProducto(Integer idProducto, Integer idSucursal) {
         Integer idSucursalFiltro = normalizarIdSucursalFiltro(idSucursal);
         return idSucursalFiltro == null
-                ? repository.findByProductoIdProductoAndDeletedAtIsNull(idProducto)
+                ? repository.findByProductoIdProductoAndDeletedAtIsNullOrderByStockDescCreatedAtDescIdProductoVarianteDesc(idProducto)
                 : repository.findByProductoIdProductoAndDeletedAtIsNullAndSucursal_IdSucursal(idProducto, idSucursalFiltro);
     }
 
@@ -123,10 +133,21 @@ public class ProductoVarianteService {
         validarVarianteVendibleParaEscaneo(varianteEscaneable);
 
         Map<ProductoColorKey, ImagenDetalleGroup> imagenes = resolverImagenesDetallePorProductoColor(List.of(varianteEscaneable));
-        return toPosResponse(varianteEscaneable, imagenes);
+        ProductoVarianteOfertaSucursal ofertaSucursal = precioOfertaService.obtenerOfertaSucursal(
+                varianteEscaneable.getIdProductoVariante(),
+                idSucursalFiltro);
+        return toPosResponse(varianteEscaneable, imagenes, ofertaSucursal);
     }
 
-    public PagedResponse<ProductoVarianteListadoResumenResponse> listarResumenPaginado(
+    public ProductoVariante obtenerVarianteEditableConAlcance(
+            Integer idProductoVariante,
+            String correoUsuarioAutenticado) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolEdicion(usuarioAutenticado);
+        return obtenerVarianteConAlcance(idProductoVariante, usuarioAutenticado);
+    }
+
+    public ProductoVarianteListadoResumenPageResponse listarResumenPaginado(
             String q,
             int page,
             Integer idCategoria,
@@ -141,9 +162,16 @@ public class ProductoVarianteService {
         String term = normalizar(q);
         int pageSize = defaultPageSize > 0 ? defaultPageSize : 10;
         Integer idSucursalFiltro = resolverIdSucursalFiltro(usuarioAutenticado, idSucursal);
-        PageRequest pageable = PageRequest.of(page, pageSize, Sort.by("idProductoVariante").ascending());
+        PageRequest pageable = PageRequest.of(page, pageSize);
+        List<String> tokens = tokensBusqueda(term);
         Page<ProductoVariante> variantes = repository.buscarResumenPaginado(
                 term,
+                token(tokens, 0),
+                token(tokens, 1),
+                token(tokens, 2),
+                token(tokens, 3),
+                token(tokens, 4),
+                token(tokens, 5),
                 idSucursalFiltro,
                 idCategoria,
                 idColor,
@@ -159,29 +187,57 @@ public class ProductoVarianteService {
         List<ProductoVarianteStockSucursalRow> stockRows = varianteIds.isEmpty()
                 ? List.of()
                 : repository.obtenerStocksCatalogoPorVariantes(varianteIds, idSucursalFiltro, SucursalTipo.VENTA);
+        Map<Integer, ProductoVarianteOfertaSucursal> ofertasSucursal = precioOfertaService
+                .obtenerOfertasSucursalPorVariantes(varianteIds, idSucursalFiltro);
         Map<Integer, List<StockSucursalVentaResumen>> stocksPorVariante = agruparStocksVenta(stockRows);
         Sucursal sucursalContexto = idSucursalFiltro == null
                 ? null
                 : sucursalRepository.findByIdSucursalAndDeletedAtIsNull(idSucursalFiltro).orElse(null);
-        return PagedResponse.fromPage(variantes.map(variante -> toListadoResumenResponse(
+        Page<ProductoVarianteListadoResumenResponse> pageResponse = variantes.map(variante -> toListadoResumenResponse(
                 variante,
                 imagenes,
                 stocksPorVariante.getOrDefault(variante.getIdProductoVariante(), List.of()),
-                sucursalContexto)));
+                sucursalContexto,
+                false,
+                ofertasSucursal.get(variante.getIdProductoVariante())));
+        return ProductoVarianteListadoResumenPageResponse.fromPage(
+                pageResponse,
+                construirImagenesPorColorResponse(imagenes));
     }
 
-    public PagedResponse<ProductoVarianteOfertaListItemResponse> listarConOfertaPaginado(int page, Integer idSucursal) {
+    public PagedResponse<ProductoVarianteOfertaListItemResponse> listarConOfertaPaginado(
+            int page,
+            Integer idSucursal,
+            String correoUsuarioAutenticado) {
         validarPagina(page);
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolPermitido(usuarioAutenticado);
         int pageSize = defaultPageSize > 0 ? defaultPageSize : 10;
-        PageRequest pageable = PageRequest.of(page, pageSize, Sort.by("idProductoVariante").ascending());
-        Integer idSucursalFiltro = normalizarIdSucursalFiltro(idSucursal);
+        PageRequest pageable = PageRequest.of(page, pageSize, ordenVariantesPorCreacionDesc());
+        Integer idSucursalFiltro = resolverIdSucursalFiltro(usuarioAutenticado, idSucursal);
         Page<ProductoVariante> variantes = idSucursalFiltro == null
                 ? repository.findByPrecioOfertaIsNotNullAndDeletedAtIsNull(pageable)
                 : repository.findByPrecioOfertaIsNotNullAndDeletedAtIsNullAndSucursal_IdSucursal(
                         idSucursalFiltro,
                         pageable);
         Map<ProductoColorKey, String> imagenes = resolverImagenesPorProductoColor(variantes.getContent());
-        return PagedResponse.fromPage(variantes.map(variante -> toOfertaListItemResponse(variante, imagenes)));
+        Sucursal sucursalContexto = idSucursalFiltro == null ? null : obtenerSucursalValidaParaFiltro(idSucursalFiltro);
+        return PagedResponse.fromPage(variantes.map(variante -> toOfertaListItemResponse(
+                sincronizarVarianteSucursal(variante, sucursalContexto),
+                imagenes,
+                null)));
+    }
+
+    private Sort ordenVariantesPorCreacionDesc() {
+        return Sort.by(
+                Sort.Order.desc("createdAt"),
+                Sort.Order.desc("idProductoVariante"));
+    }
+
+    private Sort ordenOfertasSucursalPorCreacionDesc() {
+        return Sort.by(
+                Sort.Order.desc("createdAt"),
+                Sort.Order.desc("idProductoVarianteOfertaSucursal"));
     }
 
     public byte[] exportarDisponiblesExcel(String correoUsuarioAutenticado, Integer idSucursal) {
@@ -206,17 +262,29 @@ public class ProductoVarianteService {
         List<ProductoVariante> variantesVencidas = repository
                 .findByPrecioOfertaIsNotNullAndOfertaFinLessThanEqualAndDeletedAtIsNull(ahora);
 
-        if (variantesVencidas.isEmpty()) {
-            return;
-        }
-
         for (ProductoVariante variante : variantesVencidas) {
             variante.setPrecioOferta(null);
             variante.setOfertaInicio(null);
             variante.setOfertaFin(null);
+            variante.setUsuarioCreacion(null);
         }
 
-        repository.saveAll(variantesVencidas);
+        if (!variantesVencidas.isEmpty()) {
+            repository.saveAll(variantesVencidas);
+        }
+
+        List<ProductoVarianteOfertaSucursal> ofertasSucursalVencidas = productoVarianteOfertaSucursalRepository
+                .findByPrecioOfertaIsNotNullAndOfertaFinLessThanEqualAndDeletedAtIsNull(ahora);
+        for (ProductoVarianteOfertaSucursal ofertaSucursal : ofertasSucursalVencidas) {
+            ofertaSucursal.setPrecioOferta(null);
+            ofertaSucursal.setOfertaInicio(null);
+            ofertaSucursal.setOfertaFin(null);
+            ofertaSucursal.setUsuarioCreacion(null);
+            ofertaSucursal.setDeletedAt(ahora);
+        }
+        if (!ofertasSucursalVencidas.isEmpty()) {
+            productoVarianteOfertaSucursalRepository.saveAll(ofertasSucursalVencidas);
+        }
     }
 
     @Transactional
@@ -306,6 +374,7 @@ public class ProductoVarianteService {
         destino.setPrecioOferta(precioOferta);
         destino.setOfertaInicio(ofertaInicio);
         destino.setOfertaFin(ofertaFin);
+        destino.setUsuarioCreacion(null);
         destino.setStock(variante.getStock());
         destino.setEstado(resolverEstadoVarianteSegunStock(variante.getStock()));
         destino.setActivo(VALOR_ACTIVO);
@@ -360,9 +429,6 @@ public class ProductoVarianteService {
         if (idProducto == null) {
             throw new RuntimeException("La variante no tiene producto asociado");
         }
-        if (idSucursal == null) {
-            throw new RuntimeException("La variante no tiene sucursal asociada");
-        }
 
         Color color = colorService.obtenerPorId(request.colorId());
         if (!"ACTIVO".equalsIgnoreCase(color.getEstado())) {
@@ -376,26 +442,27 @@ public class ProductoVarianteService {
 
         String sku = normalizarRequerido(request.sku(), "El SKU es obligatorio");
         String codigoBarras = normalizar(request.codigoBarras());
-        if (repository.existsBySucursalIdSucursalAndSkuAndIdProductoVarianteNot(idSucursal, sku, id)) {
-            throw new RuntimeException("El SKU '" + sku + "' ya existe en esta sucursal");
-        }
-        if (codigoBarras != null
-                && repository.existsBySucursalIdSucursalAndCodigoBarrasAndIdProductoVarianteNot(
-                        idSucursal,
-                        codigoBarras,
-                        id)) {
-            throw new RuntimeException("El codigo de barras '" + codigoBarras + "' ya existe en esta sucursal");
-        }
-
-        boolean combinacionDuplicada = repository
-                .existsByProductoIdProductoAndTallaIdTallaAndColorIdColorAndSucursalIdSucursalAndIdProductoVarianteNot(
-                        idProducto,
-                        talla.getIdTalla(),
-                        color.getIdColor(),
-                        idSucursal,
-                        id);
-        if (combinacionDuplicada) {
-            throw new RuntimeException("Ya existe esta variante (talla/color) en esta sucursal");
+        if (idSucursal != null) {
+            if (repository.existsBySucursalIdSucursalAndSkuAndIdProductoVarianteNot(idSucursal, sku, id)) {
+                throw new RuntimeException("El SKU '" + sku + "' ya existe en esta sucursal");
+            }
+            if (codigoBarras != null
+                    && repository.existsBySucursalIdSucursalAndCodigoBarrasAndIdProductoVarianteNot(
+                            idSucursal,
+                            codigoBarras,
+                            id)) {
+                throw new RuntimeException("El codigo de barras '" + codigoBarras + "' ya existe en esta sucursal");
+            }
+            boolean combinacionDuplicada = repository
+                    .existsByProductoIdProductoAndTallaIdTallaAndColorIdColorAndSucursalIdSucursalAndIdProductoVarianteNot(
+                            idProducto,
+                            talla.getIdTalla(),
+                            color.getIdColor(),
+                            idSucursal,
+                            id);
+            if (combinacionDuplicada) {
+                throw new RuntimeException("Ya existe esta variante (talla/color) en esta sucursal");
+            }
         }
 
         Double precioMayor = normalizarPrecioMayor(request.precioMayor());
@@ -416,12 +483,15 @@ public class ProductoVarianteService {
         variante.setCodigoBarras(codigoBarras);
         variante.setPrecio(request.precio());
         variante.setPrecioMayor(precioMayor);
+        actualizarUsuarioCreacionOferta(variante, precioOferta, usuarioAutenticado);
         variante.setPrecioOferta(precioOferta);
         variante.setOfertaInicio(ofertaInicio);
         variante.setOfertaFin(ofertaFin);
-        int stockSolicitado = sumarStocksSolicitados(request.stocksSucursales());
-        variante.setStock(stockSolicitado);
-        variante.setEstado(resolverEstadoVarianteSegunStock(stockSolicitado));
+        if (request.stocksSucursales() != null && !request.stocksSucursales().isEmpty()) {
+            int stockSolicitado = sumarStocksSolicitados(request.stocksSucursales());
+            variante.setStock(stockSolicitado);
+            variante.setEstado(resolverEstadoVarianteSegunStock(stockSolicitado));
+        }
 
         ProductoVariante actualizada = repository.save(variante);
 
@@ -430,20 +500,27 @@ public class ProductoVarianteService {
         }
 
         Map<ProductoColorKey, ImagenDetalleGroup> imagenes = resolverImagenesDetallePorProductoColor(List.of(actualizada));
-        return toListadoResumenResponse(actualizada, imagenes);
+        return toListadoResumenResponse(actualizada, imagenes, List.of(), null, true, null);
     }
 
-    public ProductoVariante actualizarOferta(Integer id, ProductoVarianteOfertaUpdateRequest request) {
-        ProductoVariante variante = repository.findByIdProductoVarianteAndDeletedAtIsNull(id)
-                .orElseThrow(() -> new RuntimeException("Variante no encontrada"));
+    public ProductoVariante actualizarOferta(
+            Integer id,
+            ProductoVarianteOfertaUpdateRequest request,
+            String correoUsuarioAutenticado) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolPermitido(usuarioAutenticado);
+        ProductoVariante variante = obtenerVarianteConAlcance(id, usuarioAutenticado);
 
-        aplicarOferta(variante, request.precioOferta(), request.ofertaInicio(), request.ofertaFin());
+        aplicarOferta(variante, request.precioOferta(), request.ofertaInicio(), request.ofertaFin(), usuarioAutenticado);
         return repository.save(variante);
     }
 
     @Transactional
     public List<ProductoVarianteOfertaListItemResponse> actualizarOfertasLote(
-            ProductoVarianteOfertaLoteUpdateRequest request) {
+            ProductoVarianteOfertaLoteUpdateRequest request,
+            String correoUsuarioAutenticado) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolPermitido(usuarioAutenticado);
         Set<Integer> idsUnicos = new HashSet<>();
         List<Integer> idsSolicitados = new ArrayList<>();
 
@@ -456,7 +533,11 @@ public class ProductoVarianteService {
             idsSolicitados.add(idProductoVariante);
         }
 
-        List<ProductoVariante> variantes = repository.findByIdProductoVarianteInAndDeletedAtIsNull(idsSolicitados);
+        List<ProductoVariante> variantes = esAdministrador(usuarioAutenticado)
+                ? repository.findByIdProductoVarianteInAndDeletedAtIsNull(idsSolicitados)
+                : idsSolicitados.stream()
+                        .map(id -> obtenerVarianteConAlcance(id, usuarioAutenticado))
+                        .toList();
         if (variantes.size() != idsSolicitados.size()) {
             Set<Integer> idsEncontrados = variantes.stream()
                     .map(ProductoVariante::getIdProductoVariante)
@@ -478,15 +559,98 @@ public class ProductoVarianteService {
         List<ProductoVariante> actualizadas = new ArrayList<>();
         for (ProductoVarianteOfertaLoteItemRequest item : request.items()) {
             ProductoVariante variante = variantesPorId.get(item.idProductoVariante());
-            aplicarOferta(variante, item.precioOferta(), item.ofertaInicio(), item.ofertaFin());
+            aplicarOferta(variante, item.precioOferta(), item.ofertaInicio(), item.ofertaFin(), usuarioAutenticado);
             actualizadas.add(variante);
         }
 
         repository.saveAll(actualizadas);
         Map<ProductoColorKey, String> imagenes = resolverImagenesPorProductoColor(actualizadas);
         return actualizadas.stream()
-                .map(variante -> toOfertaListItemResponse(variante, imagenes))
+                .map(variante -> toOfertaListItemResponse(variante, imagenes, null))
                 .toList();
+    }
+
+    public ProductoVarianteOfertaSucursal actualizarOfertaSucursal(
+            Integer idProductoVariante,
+            Integer idSucursal,
+            ProductoVarianteOfertaSucursalUpdateRequest request,
+            String correoUsuarioAutenticado) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolPermitido(usuarioAutenticado);
+        Integer idSucursalDestino = resolverIdSucursalFiltro(usuarioAutenticado, idSucursal);
+        ProductoVariante variante = obtenerVarianteConAlcance(idProductoVariante, usuarioAutenticado);
+        return guardarOfertaSucursal(
+                variante,
+                idSucursalDestino,
+                request.precioOferta(),
+                request.ofertaInicio(),
+                request.ofertaFin(),
+                usuarioAutenticado);
+    }
+
+    @Transactional
+    public List<ProductoVarianteOfertaListItemResponse> actualizarOfertasSucursalLote(
+            ProductoVarianteOfertaSucursalLoteUpdateRequest request,
+            String correoUsuarioAutenticado) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolPermitido(usuarioAutenticado);
+        Set<String> claves = new HashSet<>();
+        Map<Integer, ProductoVariante> variantesCache = new HashMap<>();
+        List<OfertaSucursalContexto> ofertasRespuesta = new ArrayList<>();
+
+        for (ProductoVarianteOfertaSucursalLoteItemRequest item : request.items()) {
+            Integer idSucursalDestino = resolverIdSucursalFiltro(usuarioAutenticado, item.idSucursal());
+            String clave = item.idProductoVariante() + "-" + idSucursalDestino;
+            if (!claves.add(clave)) {
+                throw new RuntimeException("No puede repetir la misma variante y sucursal en la misma actualizacion");
+            }
+
+            ProductoVariante variante = variantesCache.computeIfAbsent(
+                    item.idProductoVariante(),
+                    id -> obtenerVarianteConAlcance(id, usuarioAutenticado));
+            ProductoVarianteOfertaSucursal oferta = guardarOfertaSucursal(
+                    variante,
+                    idSucursalDestino,
+                    item.precioOferta(),
+                    item.ofertaInicio(),
+                    item.ofertaFin(),
+                    usuarioAutenticado);
+            Sucursal sucursalContexto = oferta != null ? oferta.getSucursal() : obtenerSucursalValidaParaFiltro(idSucursalDestino);
+            ofertasRespuesta.add(new OfertaSucursalContexto(
+                    sincronizarVarianteSucursal(variante, sucursalContexto),
+                    oferta));
+        }
+
+        Map<ProductoColorKey, String> imagenes = resolverImagenesPorProductoColor(
+                ofertasRespuesta.stream().map(OfertaSucursalContexto::variante).toList());
+        return ofertasRespuesta.stream()
+                .map(item -> toOfertaListItemResponse(
+                        item.variante(),
+                        imagenes,
+                        item.ofertaSucursal()))
+                .toList();
+    }
+
+    public PagedResponse<ProductoVarianteOfertaListItemResponse> listarOfertasSucursalPaginado(
+            int page,
+            Integer idSucursal,
+            String correoUsuarioAutenticado) {
+        validarPagina(page);
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolPermitido(usuarioAutenticado);
+        Integer idSucursalFiltro = resolverIdSucursalFiltro(usuarioAutenticado, idSucursal);
+        int pageSize = defaultPageSize > 0 ? defaultPageSize : 10;
+        PageRequest pageable = PageRequest.of(page, pageSize, ordenOfertasSucursalPorCreacionDesc());
+        Page<ProductoVarianteOfertaSucursal> ofertas = productoVarianteOfertaSucursalRepository
+                .findActivasPorSucursal(idSucursalFiltro, pageable);
+        List<ProductoVariante> variantes = ofertas.getContent().stream()
+                .map(oferta -> sincronizarVarianteSucursal(oferta.getProductoVariante(), oferta.getSucursal()))
+                .toList();
+        Map<ProductoColorKey, String> imagenes = resolverImagenesPorProductoColor(variantes);
+        return PagedResponse.fromPage(ofertas.map(oferta -> toOfertaListItemResponse(
+                sincronizarVarianteSucursal(oferta.getProductoVariante(), oferta.getSucursal()),
+                imagenes,
+                oferta)));
     }
 
     public void eliminar(Integer id) {
@@ -524,8 +688,23 @@ public class ProductoVarianteService {
         return trimmed.isEmpty() ? null : trimmed;
     }
 
+    private List<String> tokensBusqueda(String term) {
+        if (term == null) {
+            return List.of();
+        }
+        return java.util.Arrays.stream(term.split("\\s+"))
+                .map(String::trim)
+                .filter(token -> !token.isBlank())
+                .limit(6)
+                .toList();
+    }
+
+    private String token(List<String> tokens, int index) {
+        return index < tokens.size() ? tokens.get(index) : null;
+    }
+
     private String resolverEstadoVarianteSegunStock(Integer stock) {
-        return stock != null && stock <= 0 ? ESTADO_VARIANTE_AGOTADA : ESTADO_VARIANTE_ACTIVA;
+        return stock != null && stock <= 0 ? ESTADO_VARIANTE_INACTIVA : ESTADO_VARIANTE_ACTIVA;
     }
 
     private Usuario obtenerUsuarioAutenticado(String correoUsuarioAutenticado) {
@@ -536,23 +715,11 @@ public class ProductoVarianteService {
                 .orElseThrow(() -> new RuntimeException("Usuario autenticado no encontrado"));
     }
 
-    private Integer obtenerIdSucursalUsuario(Usuario usuario) {
-        if (usuario.getSucursal() == null || usuario.getSucursal().getIdSucursal() == null) {
-            throw new RuntimeException("El usuario autenticado no tiene sucursal asignada");
-        }
-        return usuario.getSucursal().getIdSucursal();
-    }
-
     private Integer resolverIdSucursalFiltro(Usuario usuarioAutenticado, Integer idSucursalRequest) {
-        if (esAdministrador(usuarioAutenticado)) {
-            return normalizarIdSucursalFiltro(idSucursalRequest);
-        }
-
-        Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
-        if (idSucursalRequest != null && !idSucursalUsuario.equals(idSucursalRequest)) {
-            throw new RuntimeException("No tiene permisos para consultar otra sucursal");
-        }
-        return idSucursalUsuario;
+        return usuarioSucursalAccessService.resolverIdSucursalFiltro(
+                usuarioAutenticado,
+                idSucursalRequest,
+                "No tiene permisos para consultar otra sucursal");
     }
 
     private Integer normalizarIdSucursalFiltro(Integer idSucursalRequest) {
@@ -566,18 +733,10 @@ public class ProductoVarianteService {
     }
 
     private Integer resolverIdSucursalEscaneo(Usuario usuarioAutenticado, Integer idSucursalRequest) {
-        if (esAdministrador(usuarioAutenticado)) {
-            if (idSucursalRequest == null) {
-                throw new RuntimeException("Ingrese idSucursal");
-            }
-            return normalizarIdSucursalFiltro(idSucursalRequest);
-        }
-
-        Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
-        if (idSucursalRequest != null && !idSucursalUsuario.equals(idSucursalRequest)) {
-            throw new RuntimeException("No tiene permisos para consultar otra sucursal");
-        }
-        return idSucursalUsuario;
+        return usuarioSucursalAccessService.resolverIdSucursalPermitida(
+                usuarioAutenticado,
+                idSucursalRequest,
+                "No tiene permisos para consultar otra sucursal");
     }
 
     private Sucursal obtenerSucursalValidaParaFiltro(Integer idSucursal) {
@@ -586,35 +745,36 @@ public class ProductoVarianteService {
     }
 
     private ProductoVariante obtenerVarianteConAlcance(Integer idProductoVariante, Usuario usuarioAutenticado) {
-        if (esAdministrador(usuarioAutenticado)) {
-            return repository.findByIdProductoVarianteAndDeletedAtIsNull(idProductoVariante)
-                    .orElseThrow(() -> new RuntimeException("Variante no encontrada"));
-        }
-
-        Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
-        return repository.findByIdProductoVarianteAndDeletedAtIsNullAndSucursal_IdSucursal(
-                idProductoVariante,
-                idSucursalUsuario)
+        ProductoVariante variante = repository.findByIdProductoVarianteAndDeletedAtIsNull(idProductoVariante)
                 .orElseThrow(() -> new RuntimeException("Variante no encontrada"));
+        Integer idSucursal = variante.getSucursal() != null ? variante.getSucursal().getIdSucursal() : null;
+        usuarioSucursalAccessService.validarSucursalPermitida(
+                usuarioAutenticado,
+                idSucursal,
+                "Variante no encontrada");
+        return variante;
     }
 
     private void validarRolPermitido(Usuario usuario) {
-        if (usuario.getRol() != Rol.ADMINISTRADOR
-                && usuario.getRol() != Rol.VENTAS
-                && usuario.getRol() != Rol.ALMACEN) {
+        if (!usuario.getRol().permiteVentas() && !usuario.getRol().permiteAlmacen()) {
             throw new RuntimeException("El usuario autenticado no tiene permisos para gestionar productos");
         }
     }
 
+    private void validarRolEdicion(Usuario usuario) {
+        if (!usuario.getRol().permiteAlmacen()) {
+            throw new RuntimeException("El usuario autenticado no tiene permisos para editar imagenes de variantes");
+        }
+    }
+
     private void validarRolPermitidoEscaneo(Usuario usuario) {
-        if (usuario.getRol() != Rol.ADMINISTRADOR
-                && usuario.getRol() != Rol.VENTAS) {
+        if (!usuario.getRol().permiteVentas()) {
             throw new RuntimeException("El usuario autenticado no tiene permisos para escanear productos");
         }
     }
 
     private boolean esAdministrador(Usuario usuario) {
-        return usuario.getRol() == Rol.ADMINISTRADOR;
+        return usuario.getRol().esAdministrador();
     }
 
     private void validarVarianteVendibleParaEscaneo(ProductoVariante variante) {
@@ -770,13 +930,7 @@ public class ProductoVarianteService {
     }
 
     private Double normalizarPrecioOferta(Double precioOferta) {
-        if (precioOferta == null) {
-            return null;
-        }
-        if (precioOferta <= 0) {
-            throw new RuntimeException("El precio de oferta debe ser mayor a 0");
-        }
-        return precioOferta;
+        return precioOfertaService.normalizarPrecioOferta(precioOferta);
     }
 
     private Double normalizarPrecioMayor(Double precioMayor) {
@@ -806,24 +960,7 @@ public class ProductoVarianteService {
             Double precioOferta,
             LocalDateTime ofertaInicio,
             LocalDateTime ofertaFin) {
-        if (precioOferta == null) {
-            if (ofertaInicio != null || ofertaFin != null) {
-                throw new RuntimeException("No puede registrar ofertaInicio/ofertaFin sin precioOferta");
-            }
-            return;
-        }
-        if (precio == null) {
-            throw new RuntimeException("El precio es obligatorio para validar el precio de oferta");
-        }
-        if (precioOferta >= precio) {
-            throw new RuntimeException("El precio de oferta debe ser menor al precio regular");
-        }
-        if ((ofertaInicio == null) != (ofertaFin == null)) {
-            throw new RuntimeException("Debe enviar ofertaInicio y ofertaFin juntas");
-        }
-        if (ofertaInicio != null && ofertaFin != null && !ofertaFin.isAfter(ofertaInicio)) {
-            throw new RuntimeException("ofertaFin debe ser mayor a ofertaInicio");
-        }
+        precioOfertaService.validarPrecioOferta(precio, precioOferta, ofertaInicio, ofertaFin);
     }
 
     private int sumarStocksSolicitados(
@@ -842,20 +979,86 @@ public class ProductoVarianteService {
             ProductoVariante variante,
             Double precioOfertaSolicitado,
             LocalDateTime ofertaInicioSolicitada,
-            LocalDateTime ofertaFinSolicitada) {
+            LocalDateTime ofertaFinSolicitada,
+            Usuario usuarioAutenticado) {
         Double precioOferta = normalizarPrecioOferta(precioOfertaSolicitado);
         LocalDateTime ofertaInicio = ofertaInicioSolicitada;
         LocalDateTime ofertaFin = ofertaFinSolicitada;
+        boolean sinOfertaAnterior = variante.getPrecioOferta() == null;
 
         validarPrecioOferta(variante.getPrecio(), precioOferta, ofertaInicio, ofertaFin);
         if (precioOferta == null) {
             ofertaInicio = null;
             ofertaFin = null;
+            variante.setUsuarioCreacion(null);
+        } else if (sinOfertaAnterior) {
+            variante.setUsuarioCreacion(usuarioAutenticado);
         }
 
         variante.setPrecioOferta(precioOferta);
         variante.setOfertaInicio(ofertaInicio);
         variante.setOfertaFin(ofertaFin);
+    }
+
+    private void actualizarUsuarioCreacionOferta(
+            ProductoVariante variante,
+            Double precioOferta,
+            Usuario usuarioAutenticado) {
+        if (precioOferta == null) {
+            variante.setUsuarioCreacion(null);
+            return;
+        }
+        if (variante.getPrecioOferta() == null) {
+            variante.setUsuarioCreacion(usuarioAutenticado);
+        }
+    }
+
+    private ProductoVarianteOfertaSucursal guardarOfertaSucursal(
+            ProductoVariante variante,
+            Integer idSucursal,
+            Double precioOfertaSolicitado,
+            LocalDateTime ofertaInicioSolicitada,
+            LocalDateTime ofertaFinSolicitada,
+            Usuario usuarioAutenticado) {
+        Double precioOferta = normalizarPrecioOferta(precioOfertaSolicitado);
+        LocalDateTime ofertaInicio = ofertaInicioSolicitada;
+        LocalDateTime ofertaFin = ofertaFinSolicitada;
+        validarPrecioOferta(variante.getPrecio(), precioOferta, ofertaInicio, ofertaFin);
+
+        ProductoVarianteOfertaSucursal oferta = productoVarianteOfertaSucursalRepository
+                .findByProductoVarianteIdProductoVarianteAndSucursalIdSucursal(
+                        variante.getIdProductoVariante(),
+                        idSucursal)
+                .orElseGet(() -> {
+                    ProductoVarianteOfertaSucursal nueva = new ProductoVarianteOfertaSucursal();
+                    nueva.setProductoVariante(variante);
+                    nueva.setSucursal(obtenerSucursalValidaParaFiltro(idSucursal));
+                    return nueva;
+                });
+        boolean ofertaNueva = oferta.getIdProductoVarianteOfertaSucursal() == null
+                || oferta.getDeletedAt() != null
+                || oferta.getPrecioOferta() == null;
+
+        if (precioOferta == null) {
+            if (oferta.getIdProductoVarianteOfertaSucursal() == null) {
+                return null;
+            }
+            oferta.setPrecioOferta(null);
+            oferta.setOfertaInicio(null);
+            oferta.setOfertaFin(null);
+            oferta.setUsuarioCreacion(null);
+            oferta.setDeletedAt(LocalDateTime.now());
+            return productoVarianteOfertaSucursalRepository.save(oferta);
+        }
+
+        oferta.setDeletedAt(null);
+        if (ofertaNueva) {
+            oferta.setUsuarioCreacion(usuarioAutenticado);
+        }
+        oferta.setPrecioOferta(precioOferta);
+        oferta.setOfertaInicio(ofertaInicio);
+        oferta.setOfertaFin(ofertaFin);
+        return productoVarianteOfertaSucursalRepository.save(oferta);
     }
 
     private Map<ProductoColorKey, String> resolverImagenesPorProductoColor(List<ProductoVariante> variantes) {
@@ -976,13 +1179,14 @@ public class ProductoVarianteService {
         Map<ProductoColorKey, ImagenDetalleGroup> result = new HashMap<>();
         for (Map.Entry<ProductoColorKey, List<ProductoVarianteListadoResumenResponse.ImagenItem>> entry : agrupadas.entrySet()) {
             List<ProductoVarianteListadoResumenResponse.ImagenItem> sorted = entry.getValue().stream()
-                    .sorted(Comparator
-                            .comparing((ProductoVarianteListadoResumenResponse.ImagenItem image) -> !Boolean.TRUE.equals(image.esPrincipal()))
-                            .thenComparing(image -> image.orden() == null ? Integer.MAX_VALUE : image.orden())
-                            .thenComparing(image -> image.idColorImagen() == null ? Integer.MAX_VALUE : image.idColorImagen()))
-                    .toList();
-            ProductoVarianteListadoResumenResponse.ImagenItem principal = sorted.isEmpty() ? null : sorted.get(0);
-            result.put(entry.getKey(), new ImagenDetalleGroup(principal, sorted));
+                      .sorted(Comparator
+                              .comparing((ProductoVarianteListadoResumenResponse.ImagenItem image) -> !Boolean.TRUE.equals(image.esPrincipal()))
+                              .thenComparing(image -> image.orden() == null ? Integer.MAX_VALUE : image.orden())
+                              .thenComparing(image -> image.idColorImagen() == null ? Integer.MAX_VALUE : image.idColorImagen()))
+                      .toList();
+            List<ProductoVarianteListadoResumenResponse.ImagenItem> deduplicadas = deduplicarImagenes(sorted);
+            ProductoVarianteListadoResumenResponse.ImagenItem principal = deduplicadas.isEmpty() ? null : deduplicadas.get(0);
+            result.put(entry.getKey(), new ImagenDetalleGroup(principal, deduplicadas));
         }
         return result;
     }
@@ -1003,14 +1207,16 @@ public class ProductoVarianteService {
     private ProductoVarianteListadoResumenResponse toListadoResumenResponse(
             ProductoVariante variante,
             Map<ProductoColorKey, ImagenDetalleGroup> imagenes) {
-        return toListadoResumenResponse(variante, imagenes, List.of(), null);
+        return toListadoResumenResponse(variante, imagenes, List.of(), null, true, null);
     }
 
     private ProductoVarianteListadoResumenResponse toListadoResumenResponse(
             ProductoVariante variante,
             Map<ProductoColorKey, ImagenDetalleGroup> imagenes,
             List<StockSucursalVentaResumen> stocksSucursalesVenta,
-            Sucursal sucursalContexto) {
+            Sucursal sucursalContexto,
+            boolean incluirImagenesEmbebidas,
+            ProductoVarianteOfertaSucursal ofertaSucursal) {
         Producto producto = variante.getProducto();
         Integer productoId = producto != null ? producto.getIdProducto() : null;
         Integer colorId = variante.getColor() != null ? variante.getColor().getIdColor() : null;
@@ -1072,6 +1278,8 @@ public class ProductoVarianteService {
                         .mapToInt(Integer::intValue)
                         .sum();
 
+        PrecioOfertaService.ResultadoPrecioOferta precioResuelto = precioOfertaService.resolver(variante, ofertaSucursal);
+
         return new ProductoVarianteListadoResumenResponse(
                 variante.getIdProductoVariante(),
                 variante.getSku(),
@@ -1081,19 +1289,61 @@ public class ProductoVarianteService {
                 stocksSucursalesVenta,
                 variante.getPrecio(),
                 variante.getPrecioMayor(),
-                variante.getPrecioOferta(),
-                variante.getOfertaInicio(),
-                variante.getOfertaFin(),
-                resolverPrecioVigente(
-                        variante.getPrecio(),
-                        variante.getPrecioOferta(),
-                        variante.getOfertaInicio(),
-                        variante.getOfertaFin()),
+                precioResuelto.precioOfertaAplicada(),
+                precioResuelto.ofertaInicioAplicada(),
+                precioResuelto.ofertaFinAplicada(),
+                precioResuelto.precioVigente(),
+                precioResuelto.tipoOfertaAplicada(),
+                precioResuelto.sucursalOfertaId(),
                 productoItem,
                 color,
                 talla,
-                imagenGroup != null ? imagenGroup.imagenPrincipal() : null,
-                imagenGroup != null ? imagenGroup.imagenes() : List.of());
+                key != null ? new ProductoVarianteListadoResumenResponse.GrupoImagenRef(
+                        key.value(),
+                        key.productoId(),
+                        key.colorId()) : null,
+                incluirImagenesEmbebidas && imagenGroup != null ? imagenGroup.imagenPrincipal() : null,
+                incluirImagenesEmbebidas && imagenGroup != null ? imagenGroup.imagenes() : List.of());
+    }
+
+    private List<ProductoVarianteListadoResumenPageResponse.ImagenGrupoItem> construirImagenesPorColorResponse(
+            Map<ProductoColorKey, ImagenDetalleGroup> imagenes) {
+        if (imagenes == null || imagenes.isEmpty()) {
+            return List.of();
+        }
+        return imagenes.entrySet().stream()
+                .sorted(Comparator
+                        .comparing((Map.Entry<ProductoColorKey, ImagenDetalleGroup> entry) -> entry.getKey().productoId())
+                        .thenComparing(entry -> entry.getKey().colorId()))
+                .map(entry -> new ProductoVarianteListadoResumenPageResponse.ImagenGrupoItem(
+                        entry.getKey().value(),
+                        entry.getKey().productoId(),
+                        entry.getKey().colorId(),
+                        entry.getValue().imagenPrincipal(),
+                        entry.getValue().imagenes()))
+                .toList();
+    }
+
+    private List<ProductoVarianteListadoResumenResponse.ImagenItem> deduplicarImagenes(
+            List<ProductoVarianteListadoResumenResponse.ImagenItem> imagenes) {
+        if (imagenes == null || imagenes.isEmpty()) {
+            return List.of();
+        }
+        Map<String, ProductoVarianteListadoResumenResponse.ImagenItem> unicas = new LinkedHashMap<>();
+        for (ProductoVarianteListadoResumenResponse.ImagenItem imagen : imagenes) {
+            if (imagen == null) {
+                continue;
+            }
+            String key = imagen.idColorImagen() != null
+                    ? "ID:" + imagen.idColorImagen()
+                    : "URL:" + safe(imagen.url()) + "|" + safe(imagen.urlThumb());
+            unicas.putIfAbsent(key, imagen);
+        }
+        return List.copyOf(unicas.values());
+    }
+
+    private String safe(String value) {
+        return value == null ? "" : value;
     }
 
     private Double resolverPrecioVigente(
@@ -1101,29 +1351,18 @@ public class ProductoVarianteService {
             Double precioOferta,
             LocalDateTime ofertaInicio,
             LocalDateTime ofertaFin) {
-        if (precioOferta == null || precio == null || precioOferta <= 0 || precioOferta >= precio) {
-            return precio;
-        }
-        if (ofertaInicio == null && ofertaFin == null) {
-            return precioOferta;
-        }
-        if (ofertaInicio == null || ofertaFin == null) {
-            return precio;
-        }
-        LocalDateTime ahora = LocalDateTime.now();
-        if (ahora.isBefore(ofertaInicio) || ahora.isAfter(ofertaFin)) {
-            return precio;
-        }
-        return precioOferta;
+        return precioOfertaService.resolverPrecioVigente(precio, precioOferta, ofertaInicio, ofertaFin);
     }
 
     private ProductoVarianteOfertaListItemResponse toOfertaListItemResponse(
             ProductoVariante variante,
-            Map<ProductoColorKey, String> imagenes) {
+            Map<ProductoColorKey, String> imagenes,
+            ProductoVarianteOfertaSucursal ofertaSucursal) {
         Integer productoId = variante.getProducto() != null ? variante.getProducto().getIdProducto() : null;
         String productoNombre = variante.getProducto() != null ? variante.getProducto().getNombre() : null;
-        Integer sucursalId = variante.getSucursal() != null ? variante.getSucursal().getIdSucursal() : null;
-        String sucursalNombre = variante.getSucursal() != null ? variante.getSucursal().getNombre() : null;
+        Sucursal sucursalOferta = ofertaSucursal != null ? ofertaSucursal.getSucursal() : variante.getSucursal();
+        Integer sucursalId = sucursalOferta != null ? sucursalOferta.getIdSucursal() : null;
+        String sucursalNombre = sucursalOferta != null ? sucursalOferta.getNombre() : null;
         Integer colorId = variante.getColor() != null ? variante.getColor().getIdColor() : null;
         String colorNombre = variante.getColor() != null ? variante.getColor().getNombre() : null;
         String colorHex = variante.getColor() != null ? variante.getColor().getCodigo() : null;
@@ -1132,6 +1371,16 @@ public class ProductoVarianteService {
         String imagenUrl = productoId != null && colorId != null
                 ? imagenes.get(new ProductoColorKey(productoId, colorId))
                 : null;
+
+        PrecioOfertaService.ResultadoPrecioOferta precioResuelto = precioOfertaService.resolver(variante, ofertaSucursal);
+        Usuario usuarioCreacion = ofertaSucursal != null
+                ? ofertaSucursal.getUsuarioCreacion()
+                : variante.getUsuarioCreacion();
+        Integer usuarioCreacionId = usuarioCreacion != null ? usuarioCreacion.getIdUsuario() : null;
+        String usuarioCreacionNombre = usuarioCreacion != null
+                ? nombreCompletoUsuario(usuarioCreacion)
+                : null;
+        String usuarioCreacionCorreo = usuarioCreacion != null ? usuarioCreacion.getCorreo() : null;
 
         return new ProductoVarianteOfertaListItemResponse(
                 variante.getIdProductoVariante(),
@@ -1147,17 +1396,31 @@ public class ProductoVarianteService {
                 tallaId,
                 tallaNombre,
                 variante.getPrecio(),
-                variante.getPrecioOferta(),
-                variante.getOfertaInicio(),
-                variante.getOfertaFin(),
+                precioResuelto.precioOfertaAplicada(),
+                precioResuelto.ofertaInicioAplicada(),
+                precioResuelto.ofertaFinAplicada(),
+                precioResuelto.precioVigente(),
+                precioResuelto.tipoOfertaAplicada(),
+                precioResuelto.sucursalOfertaId(),
+                usuarioCreacionId,
+                usuarioCreacionNombre,
+                usuarioCreacionCorreo,
                 imagenUrl,
                 variante.getStock(),
                 variante.getEstado());
     }
 
+    private String nombreCompletoUsuario(Usuario usuario) {
+        String nombre = usuario.getNombre() == null ? "" : usuario.getNombre().trim();
+        String apellido = usuario.getApellido() == null ? "" : usuario.getApellido().trim();
+        String completo = (nombre + " " + apellido).trim();
+        return completo.isEmpty() ? null : completo;
+    }
+
     private ProductoVariantePosResponse toPosResponse(
             ProductoVariante variante,
-            Map<ProductoColorKey, ImagenDetalleGroup> imagenes) {
+            Map<ProductoColorKey, ImagenDetalleGroup> imagenes,
+            ProductoVarianteOfertaSucursal ofertaSucursal) {
         Producto producto = variante.getProducto();
         Integer productoId = producto != null ? producto.getIdProducto() : null;
         Integer colorId = variante.getColor() != null ? variante.getColor().getIdColor() : null;
@@ -1191,6 +1454,8 @@ public class ProductoVarianteService {
                                 imagenGroup.imagenPrincipal().urlThumb())
                         : null;
 
+        PrecioOfertaService.ResultadoPrecioOferta precioResuelto = precioOfertaService.resolver(variante, ofertaSucursal);
+
         return new ProductoVariantePosResponse(
                 variante.getIdProductoVariante(),
                 variante.getSucursal() != null ? variante.getSucursal().getIdSucursal() : null,
@@ -1200,21 +1465,29 @@ public class ProductoVarianteService {
                 variante.getEstado(),
                 variante.getPrecio(),
                 variante.getPrecioMayor(),
-                variante.getPrecioOferta(),
-                variante.getOfertaInicio(),
-                variante.getOfertaFin(),
-                resolverPrecioVigente(
-                        variante.getPrecio(),
-                        variante.getPrecioOferta(),
-                        variante.getOfertaInicio(),
-                        variante.getOfertaFin()),
+                precioResuelto.precioOfertaAplicada(),
+                precioResuelto.ofertaInicioAplicada(),
+                precioResuelto.ofertaFinAplicada(),
+                precioResuelto.precioVigente(),
+                precioResuelto.tipoOfertaAplicada(),
+                precioResuelto.sucursalOfertaId(),
                 productoItem,
                 colorItem,
                 tallaItem,
                 imagenPrincipal);
     }
 
+    private ProductoVariante sincronizarVarianteSucursal(ProductoVariante variante, Sucursal sucursal) {
+        if (variante != null) {
+            variante.setSucursal(sucursal);
+        }
+        return variante;
+    }
+
     private record ProductoColorKey(Integer productoId, Integer colorId) {
+        private String value() {
+            return productoId + "-" + colorId;
+        }
     }
 
     private record ImagenDetalleGroup(
@@ -1223,5 +1496,10 @@ public class ProductoVarianteService {
     }
 
     private record ImagenPick(String url, int orden, boolean esPrincipal) {
+    }
+
+    private record OfertaSucursalContexto(
+            ProductoVariante variante,
+            ProductoVarianteOfertaSucursal ofertaSucursal) {
     }
 }

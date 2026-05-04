@@ -98,7 +98,7 @@ public class UsuarioReporteService {
     }
 
     private void validarAcceso(Usuario usuarioAutenticado) {
-        if (usuarioAutenticado.getRol() != Rol.ADMINISTRADOR) {
+        if (!usuarioAutenticado.getRol().esAdministrador()) {
             throw new RuntimeException("El usuario autenticado no tiene permisos para consultar reportes de usuarios");
         }
     }

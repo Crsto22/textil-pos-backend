@@ -1,6 +1,11 @@
 package com.sistemapos.sistematextil.util.auth;
 
 import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.util.List;
+
+import com.sistemapos.sistematextil.util.turno.DiaSemana;
+import com.sistemapos.sistematextil.util.usuario.SucursalPermitidaResponse;
 
 public record MeResponse(
         Integer idUsuario,
@@ -13,7 +18,13 @@ public record MeResponse(
         String rol,
         LocalDateTime fechaCreacion,
         Integer idSucursal,
-        String nombreSucursal
+        String nombreSucursal,
+        List<SucursalPermitidaResponse> sucursalesPermitidas,
+        Integer idTurno,
+        String nombreTurno,
+        LocalTime horaInicioTurno,
+        LocalTime horaFinTurno,
+        List<DiaSemana> diasTurno
 ) {
 }
 

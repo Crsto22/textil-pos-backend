@@ -31,6 +31,10 @@ public class JwtService {
         claims.put("rol", user.getRol().name());
         claims.put("idUsuario", user.getIdUsuario());
         claims.put("idSucursal", user.getSucursal() != null ? user.getSucursal().getIdSucursal() : null);
+        if (user.getTurno() != null) {
+            claims.put("idTurno", user.getTurno().getIdTurno());
+            claims.put("nombreTurno", user.getTurno().getNombre());
+        }
         return buildToken(claims, customUser, jwtConfig.getAccessTokenExpirationInMillis());
     }
 

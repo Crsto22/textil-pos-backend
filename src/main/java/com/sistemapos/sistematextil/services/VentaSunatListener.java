@@ -12,10 +12,10 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class VentaSunatListener {
 
-    private final VentaService ventaService;
+    private final SunatJobService sunatJobService;
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onVentaRegistrada(VentaRegistradaEvent event) {
-        ventaService.procesarEmisionElectronica(event.idVenta());
+        sunatJobService.enqueueVenta(event.idVenta());
     }
 }

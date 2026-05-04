@@ -15,7 +15,6 @@ import com.sistemapos.sistematextil.repositories.UsuarioRepository;
 import com.sistemapos.sistematextil.repositories.VentaDetalleRepository;
 import com.sistemapos.sistematextil.repositories.VentaRepository;
 import com.sistemapos.sistematextil.util.sunat.SunatComprobanteHelper;
-import com.sistemapos.sistematextil.util.usuario.Rol;
 import com.sistemapos.sistematextil.util.venta.VentaAnulacionRequest;
 import com.sistemapos.sistematextil.util.venta.VentaAnulacionResponse;
 
@@ -37,8 +36,9 @@ public class VentaAnulacionService {
     private final VentaRepository ventaRepository;
     private final VentaDetalleRepository ventaDetalleRepository;
     private final UsuarioRepository usuarioRepository;
-    private final NotaCreditoService notaCreditoService;
     private final StockMovimientoService stockMovimientoService;
+    private final SunatBajaService sunatBajaService;
+    private final UsuarioSucursalAccessService usuarioSucursalAccessService;
 
     public VentaAnulacionResponse anular(Integer idVenta, VentaAnulacionRequest request, String correoUsuarioAutenticado) {
         String descripcionMotivo = normalizarDescripcion(request.descripcionMotivo());
@@ -60,11 +60,24 @@ public class VentaAnulacionService {
             throw new RuntimeException("Para anular una venta electronica el codigoMotivo debe ser 01");
         }
 
-        return notaCreditoService.anularConNotaCreditoTotal(
-                idVenta,
-                request.serie(),
-                descripcionMotivo,
-                usuarioAutenticado);
+        return transactionTemplate.execute(status -> anularComprobanteElectronico(idVenta, descripcionMotivo, usuarioAutenticado));
+    }
+
+    public VentaAnulacionResponse consultarBajaSunat(Integer idVenta, String correoUsuarioAutenticado) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolAnulacion(usuarioAutenticado);
+        return transactionTemplate.execute(status -> {
+            Venta venta = obtenerVentaConAlcanceForUpdate(idVenta, usuarioAutenticado);
+            return sunatBajaService.consultarBajaPorVenta(venta);
+        });
+    }
+
+    private VentaAnulacionResponse anularComprobanteElectronico(
+            Integer idVenta,
+            String descripcionMotivo,
+            Usuario usuarioAutenticado) {
+        Venta venta = obtenerVentaConAlcanceForUpdate(idVenta, usuarioAutenticado);
+        return sunatBajaService.solicitarBaja(venta, descripcionMotivo, usuarioAutenticado);
     }
 
     private VentaAnulacionResponse anularNotaVenta(Integer idVenta, String descripcionMotivo, Usuario usuarioAutenticado) {
@@ -89,7 +102,6 @@ public class VentaAnulacionService {
                 venta.getMotivoAnulacion(),
                 venta.getAnuladoAt(),
                 true,
-                null,
                 null,
                 null,
                 null,
@@ -142,23 +154,25 @@ public class VentaAnulacionService {
     }
 
     private Venta obtenerVentaConAlcance(Integer idVenta, Usuario usuarioAutenticado) {
-        if (esAdministrador(usuarioAutenticado)) {
-            return ventaRepository.findByIdVentaAndDeletedAtIsNull(idVenta)
-                    .orElseThrow(() -> new RuntimeException("Venta con ID " + idVenta + " no encontrada"));
-        }
-        Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
-        return ventaRepository.findByIdVentaAndDeletedAtIsNullAndSucursal_IdSucursal(idVenta, idSucursalUsuario)
+        Venta venta = ventaRepository.findByIdVentaAndDeletedAtIsNull(idVenta)
                 .orElseThrow(() -> new RuntimeException("Venta con ID " + idVenta + " no encontrada"));
+        Integer idSucursal = venta.getSucursal() != null ? venta.getSucursal().getIdSucursal() : null;
+        usuarioSucursalAccessService.validarSucursalPermitida(
+                usuarioAutenticado,
+                idSucursal,
+                "Venta con ID " + idVenta + " no encontrada");
+        return venta;
     }
 
     private Venta obtenerVentaConAlcanceForUpdate(Integer idVenta, Usuario usuarioAutenticado) {
-        if (esAdministrador(usuarioAutenticado)) {
-            return ventaRepository.findByIdVentaForUpdate(idVenta)
-                    .orElseThrow(() -> new RuntimeException("Venta con ID " + idVenta + " no encontrada"));
-        }
-        Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
-        return ventaRepository.findByIdVentaAndSucursalForUpdate(idVenta, idSucursalUsuario)
+        Venta venta = ventaRepository.findByIdVentaForUpdate(idVenta)
                 .orElseThrow(() -> new RuntimeException("Venta con ID " + idVenta + " no encontrada"));
+        Integer idSucursal = venta.getSucursal() != null ? venta.getSucursal().getIdSucursal() : null;
+        usuarioSucursalAccessService.validarSucursalPermitida(
+                usuarioAutenticado,
+                idSucursal,
+                "Venta con ID " + idVenta + " no encontrada");
+        return venta;
     }
 
     private Usuario obtenerUsuarioAutenticado(String correoUsuarioAutenticado) {
@@ -170,20 +184,17 @@ public class VentaAnulacionService {
     }
 
     private void validarRolAnulacion(Usuario usuario) {
-        if (usuario.getRol() != Rol.ADMINISTRADOR && usuario.getRol() != Rol.VENTAS) {
+        if (!usuario.getRol().permiteVentas()) {
             throw new RuntimeException("El usuario autenticado no tiene permisos para anular ventas");
         }
     }
 
     private boolean esAdministrador(Usuario usuario) {
-        return usuario.getRol() == Rol.ADMINISTRADOR;
+        return usuario.getRol().esAdministrador();
     }
 
     private Integer obtenerIdSucursalUsuario(Usuario usuario) {
-        if (usuario.getSucursal() == null || usuario.getSucursal().getIdSucursal() == null) {
-            throw new RuntimeException("El usuario autenticado no tiene sucursal asignada");
-        }
-        return usuario.getSucursal().getIdSucursal();
+        return usuarioSucursalAccessService.obtenerIdSucursalPrincipal(usuario);
     }
 
     private String normalizarTipoComprobante(String tipoComprobante) {

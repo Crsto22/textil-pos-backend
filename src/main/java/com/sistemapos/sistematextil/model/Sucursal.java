@@ -83,7 +83,7 @@ public class Sucursal {
     @Transient
     private String descripcion;
 
-    @Transient
+    @Column(name = "ubigeo", length = 6)
     private String ubigeo;
 
     @Transient
@@ -95,7 +95,7 @@ public class Sucursal {
     @Transient
     private String distrito;
 
-    @Transient
+    @Column(name = "codigo_establecimiento_sunat", length = 4)
     private String codigoEstablecimientoSunat;
 
     @PrePersist
@@ -131,10 +131,7 @@ public class Sucursal {
     }
 
     public String getUbigeo() {
-        if (this.ubigeo != null && !this.ubigeo.isBlank()) {
-            return this.ubigeo;
-        }
-        return this.empresa != null ? this.empresa.getUbigeo() : null;
+        return this.ubigeo;
     }
 
     public void setUbigeo(String ubigeo) {
@@ -175,10 +172,7 @@ public class Sucursal {
     }
 
     public String getCodigoEstablecimientoSunat() {
-        if (this.codigoEstablecimientoSunat != null && !this.codigoEstablecimientoSunat.isBlank()) {
-            return this.codigoEstablecimientoSunat;
-        }
-        return this.empresa != null ? this.empresa.getCodigoEstablecimientoSunat() : null;
+        return this.codigoEstablecimientoSunat;
     }
 
     public void setCodigoEstablecimientoSunat(String codigoEstablecimientoSunat) {

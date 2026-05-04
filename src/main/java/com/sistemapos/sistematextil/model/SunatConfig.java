@@ -53,6 +53,12 @@ public class SunatConfig {
     @Column(name = "url_consulta_ticket", length = 255)
     private String urlConsultaTicket;
 
+    @Column(name = "url_api_token", length = 255)
+    private String urlApiToken;
+
+    @Column(name = "url_api_cpe", length = 255)
+    private String urlApiCpe;
+
     @Column(name = "certificado_url", length = 600)
     private String certificadoUrl;
 

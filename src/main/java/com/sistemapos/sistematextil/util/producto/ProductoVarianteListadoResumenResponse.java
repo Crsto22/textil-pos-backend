@@ -16,9 +16,12 @@ public record ProductoVarianteListadoResumenResponse(
         LocalDateTime ofertaInicio,
         LocalDateTime ofertaFin,
         Double precioVigente,
+        TipoOfertaAplicada tipoOfertaAplicada,
+        Integer sucursalOfertaId,
         ProductoItem producto,
         ColorItem color,
         TallaItem talla,
+        GrupoImagenRef grupoImagen,
         ImagenItem imagenPrincipal,
         List<ImagenItem> imagenes
 ) {
@@ -55,6 +58,13 @@ public record ProductoVarianteListadoResumenResponse(
     public record TallaItem(
             Integer idTalla,
             String nombre
+    ) {
+    }
+
+    public record GrupoImagenRef(
+            String key,
+            Integer idProducto,
+            Integer idColor
     ) {
     }
 

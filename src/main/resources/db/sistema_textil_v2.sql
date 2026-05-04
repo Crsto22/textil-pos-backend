@@ -36,6 +36,9 @@ CREATE TABLE IF NOT EXISTS sunat_config (
   usuario_sol VARCHAR(50) NOT NULL,
   clave_sol VARCHAR(255) NOT NULL,
   url_bill_service VARCHAR(255) DEFAULT NULL,
+  url_consulta_ticket VARCHAR(255) DEFAULT NULL,
+  url_api_token VARCHAR(255) DEFAULT NULL,
+  url_api_cpe VARCHAR(255) DEFAULT NULL,
   certificado_url VARCHAR(600) DEFAULT NULL,
   certificado_password VARCHAR(255) DEFAULT NULL,
   client_id VARCHAR(255) DEFAULT NULL,
@@ -81,11 +84,39 @@ CREATE TABLE IF NOT EXISTS sucursal (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- =========================
+-- TURNO
+-- =========================
+CREATE TABLE IF NOT EXISTS turno (
+  id_turno INT(11) NOT NULL AUTO_INCREMENT,
+  nombre VARCHAR(80) NOT NULL,
+  hora_inicio TIME NOT NULL,
+  hora_fin TIME NOT NULL,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  deleted_at DATETIME(6) DEFAULT NULL,
+  PRIMARY KEY (id_turno),
+  KEY idx_turno_nombre (nombre)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE IF NOT EXISTS turno_dia (
+  id_turno_dia INT(11) NOT NULL AUTO_INCREMENT,
+  id_turno INT(11) NOT NULL,
+  dia_semana ENUM('LUNES','MARTES','MIERCOLES','JUEVES','VIERNES','SABADO','DOMINGO') NOT NULL,
+  PRIMARY KEY (id_turno_dia),
+  UNIQUE KEY uk_turno_dia_turno_dia (id_turno, dia_semana),
+  CONSTRAINT fk_turno_dia_turno
+    FOREIGN KEY (id_turno) REFERENCES turno (id_turno)
+    ON DELETE CASCADE ON UPDATE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- =========================
 -- USUARIO
 -- =========================
 CREATE TABLE IF NOT EXISTS usuario (
   id_usuario INT(11) NOT NULL AUTO_INCREMENT,
   id_sucursal INT(11),
+  id_turno INT(11) DEFAULT NULL,
   nombre VARCHAR(80) NOT NULL,
   apellido VARCHAR(80) NOT NULL,
   correo VARCHAR(150) NOT NULL,
@@ -93,7 +124,7 @@ CREATE TABLE IF NOT EXISTS usuario (
   telefono VARCHAR(15) NOT NULL,
   password VARCHAR(255) NOT NULL,
   foto_perfil_url VARCHAR(500) DEFAULT NULL,
-  rol ENUM('ADMINISTRADOR','VENTAS','ALMACEN','VENTAS_ALMACEN') NOT NULL,
+  rol ENUM('ADMINISTRADOR','VENTAS','ALMACEN','VENTAS_ALMACEN','SISTEMA') NOT NULL,
   activo TINYINT(1) NOT NULL DEFAULT 1,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
@@ -103,8 +134,12 @@ CREATE TABLE IF NOT EXISTS usuario (
   UNIQUE KEY uk_usuario_dni (dni),
   UNIQUE KEY uk_usuario_telefono (telefono),
   KEY idx_usuario_sucursal (id_sucursal),
+  KEY idx_usuario_turno (id_turno),
   CONSTRAINT fk_usuario_sucursal
     FOREIGN KEY (id_sucursal) REFERENCES sucursal (id_sucursal)
+    ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_usuario_turno
+    FOREIGN KEY (id_turno) REFERENCES turno (id_turno)
     ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -200,6 +235,7 @@ CREATE TABLE producto_variante(
   precio_oferta DECIMAL(10,2),
   oferta_inicio DATETIME(6),
   oferta_fin DATETIME(6),
+  id_usuario_creacion INT,
   stock INT NOT NULL DEFAULT 0,
   estado ENUM('ACTIVO','AGOTADO') NOT NULL DEFAULT 'ACTIVO',
   activo TINYINT(1) NOT NULL DEFAULT 1,
@@ -209,10 +245,13 @@ CREATE TABLE producto_variante(
   UNIQUE KEY uk_variante_sucursal_sku(sucursal_id,sku),
   UNIQUE KEY uk_variante_sucursal_codigo_barras(sucursal_id,codigo_barras),
   UNIQUE KEY uk_variante_unica(producto_id,sucursal_id,talla_id,color_id),
+  KEY idx_producto_variante_usuario_creacion(id_usuario_creacion),
   FOREIGN KEY(producto_id) REFERENCES producto(producto_id),
   FOREIGN KEY(sucursal_id) REFERENCES sucursal(id_sucursal),
   FOREIGN KEY(talla_id) REFERENCES tallas(talla_id),
-  FOREIGN KEY(color_id) REFERENCES colores(color_id)
+  FOREIGN KEY(color_id) REFERENCES colores(color_id),
+  CONSTRAINT fk_producto_variante_usuario_creacion
+    FOREIGN KEY(id_usuario_creacion) REFERENCES usuario(id_usuario)
 ) ENGINE=InnoDB;
 
 SET @col_producto_variante_precio_mayor := (
@@ -262,6 +301,77 @@ SET @sql := IF(
 PREPARE stmt FROM @sql;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
+
+SET @col_producto_variante_usuario_creacion := (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'producto_variante'
+    AND COLUMN_NAME = 'id_usuario_creacion'
+);
+SET @sql := IF(
+  @col_producto_variante_usuario_creacion = 0,
+  'ALTER TABLE producto_variante ADD COLUMN id_usuario_creacion INT DEFAULT NULL AFTER oferta_fin',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @idx_producto_variante_usuario_creacion := (
+  SELECT COUNT(*)
+  FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'producto_variante'
+    AND INDEX_NAME = 'idx_producto_variante_usuario_creacion'
+);
+SET @sql := IF(
+  @idx_producto_variante_usuario_creacion = 0,
+  'ALTER TABLE producto_variante ADD INDEX idx_producto_variante_usuario_creacion (id_usuario_creacion)',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @fk_producto_variante_usuario_creacion := (
+  SELECT COUNT(*)
+  FROM information_schema.TABLE_CONSTRAINTS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'producto_variante'
+    AND CONSTRAINT_NAME = 'fk_producto_variante_usuario_creacion'
+    AND CONSTRAINT_TYPE = 'FOREIGN KEY'
+);
+SET @sql := IF(
+  @fk_producto_variante_usuario_creacion = 0,
+  'ALTER TABLE producto_variante ADD CONSTRAINT fk_producto_variante_usuario_creacion FOREIGN KEY (id_usuario_creacion) REFERENCES usuario(id_usuario)',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+CREATE TABLE IF NOT EXISTS producto_variante_oferta_sucursal (
+  id_producto_variante_oferta_sucursal INT NOT NULL AUTO_INCREMENT,
+  id_producto_variante INT NOT NULL,
+  id_sucursal INT NOT NULL,
+  precio_oferta DECIMAL(10,2) DEFAULT NULL,
+  oferta_inicio DATETIME(6) DEFAULT NULL,
+  oferta_fin DATETIME(6) DEFAULT NULL,
+  id_usuario_creacion INT DEFAULT NULL,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  deleted_at DATETIME(6) DEFAULT NULL,
+  PRIMARY KEY (id_producto_variante_oferta_sucursal),
+  UNIQUE KEY uk_pvos_variante_sucursal (id_producto_variante, id_sucursal),
+  KEY idx_pvos_usuario_creacion (id_usuario_creacion),
+  CONSTRAINT fk_pvos_variante
+    FOREIGN KEY (id_producto_variante) REFERENCES producto_variante(id_producto_variante),
+  CONSTRAINT fk_pvos_sucursal
+    FOREIGN KEY (id_sucursal) REFERENCES sucursal(id_sucursal),
+  CONSTRAINT fk_pvos_usuario_creacion
+    FOREIGN KEY (id_usuario_creacion) REFERENCES usuario(id_usuario)
+) ENGINE=InnoDB;
 
 -- =========================
 -- CLIENTE
@@ -570,6 +680,18 @@ CREATE TABLE IF NOT EXISTS nota_credito (
   sunat_cdr_key VARCHAR(600) DEFAULT NULL,
   sunat_enviado_at DATETIME(6) DEFAULT NULL,
   sunat_respondido_at DATETIME(6) DEFAULT NULL,
+  tipo_anulacion VARCHAR(20) DEFAULT NULL,
+  motivo_anulacion VARCHAR(255) DEFAULT NULL,
+  anulado_at DATETIME(6) DEFAULT NULL,
+  id_usuario_anulacion INT(11) DEFAULT NULL,
+  sunat_baja_estado VARCHAR(20) DEFAULT NULL,
+  sunat_baja_codigo VARCHAR(20) DEFAULT NULL,
+  sunat_baja_mensaje VARCHAR(500) DEFAULT NULL,
+  sunat_baja_ticket VARCHAR(120) DEFAULT NULL,
+  sunat_baja_tipo VARCHAR(10) DEFAULT NULL,
+  sunat_baja_lote_id INT(11) DEFAULT NULL,
+  sunat_baja_solicitada_at DATETIME(6) DEFAULT NULL,
+  sunat_baja_respondida_at DATETIME(6) DEFAULT NULL,
   stock_devuelto TINYINT(1) NOT NULL DEFAULT 0,
   activo TINYINT(1) NOT NULL DEFAULT 1,
   fecha DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -581,6 +703,7 @@ CREATE TABLE IF NOT EXISTS nota_credito (
   KEY idx_nota_credito_sucursal (id_sucursal),
   KEY idx_nota_credito_usuario (id_usuario),
   KEY idx_nota_credito_cliente (id_cliente),
+  KEY idx_nota_credito_usuario_anulacion (id_usuario_anulacion),
   UNIQUE KEY uk_nota_credito_numero_comprobante (id_sucursal, tipo_comprobante, serie, correlativo),
   CONSTRAINT fk_nc_venta_ref
     FOREIGN KEY (id_venta_referencia) REFERENCES venta (id_venta)
@@ -593,6 +716,9 @@ CREATE TABLE IF NOT EXISTS nota_credito (
     ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT fk_nc_cliente
     FOREIGN KEY (id_cliente) REFERENCES cliente (id_cliente)
+    ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_nc_usuario_anulacion
+    FOREIGN KEY (id_usuario_anulacion) REFERENCES usuario (id_usuario)
     ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -750,12 +876,27 @@ CREATE TABLE IF NOT EXISTS cotizacion_detalle (
 CREATE TABLE IF NOT EXISTS metodo_pago_config (
   id_metodo_pago INT(11) NOT NULL AUTO_INCREMENT,
   nombre VARCHAR(50) NOT NULL,
+  descripcion VARCHAR(255) DEFAULT NULL,
   activo TINYINT(1) NOT NULL DEFAULT 1,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   deleted_at DATETIME(6) DEFAULT NULL,
   PRIMARY KEY (id_metodo_pago),
   UNIQUE KEY uk_metodo_pago_nombre (nombre)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS metodo_pago_cuenta (
+  id_metodo_pago_cuenta INT(11) NOT NULL AUTO_INCREMENT,
+  id_metodo_pago INT(11) NOT NULL,
+  numero_cuenta VARCHAR(50) NOT NULL,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (id_metodo_pago_cuenta),
+  KEY idx_metodo_pago_cuenta_metodo (id_metodo_pago),
+  UNIQUE KEY uk_metodo_pago_cuenta_metodo_numero (id_metodo_pago, numero_cuenta),
+  CONSTRAINT fk_metodo_pago_cuenta_metodo
+    FOREIGN KEY (id_metodo_pago) REFERENCES metodo_pago_config (id_metodo_pago)
+    ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
 -- =========================
@@ -1139,8 +1280,57 @@ PREPARE stmt FROM @sql;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
+SET @col_usuario_id_turno := (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'usuario'
+    AND COLUMN_NAME = 'id_turno'
+);
+SET @sql := IF(
+  @col_usuario_id_turno = 0,
+  'ALTER TABLE usuario ADD COLUMN id_turno INT(11) DEFAULT NULL AFTER id_sucursal',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @idx_usuario_turno := (
+  SELECT COUNT(*)
+  FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'usuario'
+    AND INDEX_NAME = 'idx_usuario_turno'
+);
+SET @sql := IF(
+  @idx_usuario_turno = 0,
+  'ALTER TABLE usuario ADD INDEX idx_usuario_turno (id_turno)',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @fk_usuario_turno := (
+  SELECT COUNT(*)
+  FROM information_schema.TABLE_CONSTRAINTS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'usuario'
+    AND CONSTRAINT_NAME = 'fk_usuario_turno'
+    AND CONSTRAINT_TYPE = 'FOREIGN KEY'
+);
+SET @sql := IF(
+  @fk_usuario_turno = 0,
+  'ALTER TABLE usuario ADD CONSTRAINT fk_usuario_turno FOREIGN KEY (id_turno) REFERENCES turno (id_turno) ON DELETE RESTRICT ON UPDATE RESTRICT',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
 ALTER TABLE usuario
-MODIFY COLUMN rol ENUM('ADMINISTRADOR','VENTAS','ALMACEN','VENTAS_ALMACEN') NOT NULL;
+MODIFY COLUMN rol ENUM('ADMINISTRADOR','VENTAS','ALMACEN','VENTAS_ALMACEN','SISTEMA') NOT NULL;
 
 SET @col_venta_forma_pago := (
   SELECT COUNT(*)

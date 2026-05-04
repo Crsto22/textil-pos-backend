@@ -7,7 +7,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.net.URI;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
 import java.time.DayOfWeek;
@@ -98,7 +97,10 @@ public class CotizacionService {
     private final ClienteRepository clienteRepository;
     private final ComprobanteConfigRepository comprobanteConfigRepository;
     private final StockMovimientoService stockMovimientoService;
+    private final PrecioOfertaService precioOfertaService;
     private final VentaService ventaService;
+    private final S3StorageService s3StorageService;
+    private final UsuarioSucursalAccessService usuarioSucursalAccessService;
 
     @Value("${application.pagination.default-size:10}")
     private int defaultPageSize;
@@ -420,7 +422,7 @@ public class CotizacionService {
 
             int cantidad = item.cantidad();
             BigDecimal precioUnitario = item.precioUnitario() == null
-                    ? decimalPositivo(precioVigenteVariante(variante), "precioUnitario")
+                    ? decimalPositivo(precioVigenteVariante(variante, idSucursalCotizacion), "precioUnitario")
                     : decimalPositivo(item.precioUnitario(), "precioUnitario");
             BigDecimal descuento = item.descuento() == null
                     ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
@@ -518,19 +520,23 @@ public class CotizacionService {
     }
 
     private Cotizacion obtenerCotizacionConAlcance(Integer idCotizacion, Usuario usuarioAutenticado) {
-        if (esAdministrador(usuarioAutenticado)) {
-            return cotizacionRepository.findByIdCotizacionAndDeletedAtIsNull(idCotizacion)
-                    .orElseThrow(() -> new RuntimeException("Cotizacion con ID " + idCotizacion + " no encontrada"));
-        }
-        Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
-        return cotizacionRepository.findByIdCotizacionAndDeletedAtIsNullAndSucursal_IdSucursal(idCotizacion, idSucursalUsuario)
+        Cotizacion cotizacion = cotizacionRepository.findByIdCotizacionAndDeletedAtIsNull(idCotizacion)
                 .orElseThrow(() -> new RuntimeException("Cotizacion con ID " + idCotizacion + " no encontrada"));
+        Integer idSucursal = cotizacion.getSucursal() != null ? cotizacion.getSucursal().getIdSucursal() : null;
+        usuarioSucursalAccessService.validarSucursalPermitida(
+                usuarioAutenticado,
+                idSucursal,
+                "Cotizacion con ID " + idCotizacion + " no encontrada");
+        return cotizacion;
     }
 
     private Sucursal resolverSucursalParaEscritura(Integer idSucursalRequest, Usuario usuarioAutenticado) {
         Integer idSucursalDestino = esAdministrador(usuarioAutenticado)
                 ? idSucursalRequeridaParaAdmin(idSucursalRequest)
-                : obtenerIdSucursalUsuario(usuarioAutenticado);
+                : usuarioSucursalAccessService.resolverIdSucursalPermitida(
+                        usuarioAutenticado,
+                        idSucursalRequest,
+                        "No tiene permisos para registrar cotizaciones en otra sucursal");
         return sucursalRepository.findByIdSucursalAndDeletedAtIsNull(idSucursalDestino)
                 .filter(s -> "ACTIVO".equalsIgnoreCase(s.getEstado()))
                 .orElseThrow(() -> new RuntimeException("Sucursal no encontrada o inactiva"));
@@ -546,11 +552,13 @@ public class CotizacionService {
                     ? cotizacion.getSucursal().getIdSucursal()
                     : idSucursalRequest;
         } else {
-            Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
-            if (idSucursalRequest != null && !idSucursalUsuario.equals(idSucursalRequest)) {
-                throw new RuntimeException("No tiene permisos para mover la cotizacion a otra sucursal");
-            }
-            idSucursalDestino = idSucursalUsuario;
+            Integer idSucursalSolicitada = idSucursalRequest != null
+                    ? idSucursalRequest
+                    : cotizacion.getSucursal().getIdSucursal();
+            idSucursalDestino = usuarioSucursalAccessService.resolverIdSucursalPermitida(
+                    usuarioAutenticado,
+                    idSucursalSolicitada,
+                    "No tiene permisos para mover la cotizacion a otra sucursal");
         }
 
         return sucursalRepository.findByIdSucursalAndDeletedAtIsNull(idSucursalDestino)
@@ -820,7 +828,9 @@ public class CotizacionService {
 
     private CotizacionResponse toResponse(Cotizacion cotizacion, List<CotizacionDetalle> detalles) {
         List<CotizacionDetalleResponse> detalleResponses = detalles.stream()
-                .map(this::toDetalleResponse)
+                .map(detalle -> toDetalleResponse(
+                        detalle,
+                        cotizacion.getSucursal() != null ? cotizacion.getSucursal().getIdSucursal() : null))
                 .toList();
 
         return new CotizacionResponse(
@@ -912,6 +922,13 @@ public class CotizacionService {
         documentoCell.setBorderColor(colorPrimario);
         documentoCell.setHorizontalAlignment(Element.ALIGN_CENTER);
         documentoCell.setVerticalAlignment(Element.ALIGN_MIDDLE);
+
+        if (!ruc.isBlank()) {
+            Paragraph rucCabecera = new Paragraph("RUC: " + ruc, fuenteCotizacion(true, 10.5f, colorPrimario));
+            rucCabecera.setAlignment(Element.ALIGN_CENTER);
+            rucCabecera.setSpacingAfter(6f);
+            documentoCell.addElement(rucCabecera);
+        }
 
         Paragraph titulo = new Paragraph("COTIZACION", fuenteCotizacion(true, 15f, colorPrimario));
         titulo.setAlignment(Element.ALIGN_CENTER);
@@ -1158,7 +1175,7 @@ public class CotizacionService {
 
         ImageIO.scanForPlugins();
 
-        try (InputStream stream = URI.create(logoUrl).toURL().openStream()) {
+        try (InputStream stream = s3StorageService.openStream(logoUrl)) {
             BufferedImage buffered = ImageIO.read(stream);
             if (buffered != null) {
                 ByteArrayOutputStream png = new ByteArrayOutputStream();
@@ -1247,9 +1264,12 @@ public class CotizacionService {
         return value == null ? "" : value.trim();
     }
 
-    private CotizacionDetalleResponse toDetalleResponse(CotizacionDetalle detalle) {
+    private CotizacionDetalleResponse toDetalleResponse(CotizacionDetalle detalle, Integer idSucursal) {
         ProductoVariante variante = detalle.getProductoVariante();
         Producto producto = variante != null ? variante.getProducto() : null;
+        PrecioOfertaService.ResultadoPrecioOferta precioResuelto = variante == null
+                ? PrecioOfertaService.ResultadoPrecioOferta.sinOferta()
+                : precioOfertaService.resolver(variante, idSucursal);
 
         return new CotizacionDetalleResponse(
                 detalle.getIdCotizacionDetalle(),
@@ -1260,6 +1280,9 @@ public class CotizacionService {
                 variante != null ? variante.getPrecioOferta() : null,
                 variante != null ? variante.getOfertaInicio() : null,
                 variante != null ? variante.getOfertaFin() : null,
+                detalle.getPrecioUnitario(),
+                precioResuelto.tipoOfertaAplicada(),
+                precioResuelto.sucursalOfertaId(),
                 variante != null && variante.getColor() != null ? variante.getColor().getIdColor() : null,
                 variante != null && variante.getColor() != null ? variante.getColor().getNombre() : null,
                 variante != null && variante.getTalla() != null ? variante.getTalla().getIdTalla() : null,
@@ -1468,23 +1491,10 @@ public class CotizacionService {
     }
 
     private Integer resolverIdSucursalListado(Usuario usuarioAutenticado, Integer idSucursalRequest) {
-        if (esAdministrador(usuarioAutenticado)) {
-            if (idSucursalRequest == null) {
-                return null;
-            }
-            if (idSucursalRequest <= 0) {
-                throw new RuntimeException("idSucursal debe ser mayor a 0");
-            }
-            return sucursalRepository.findByIdSucursalAndDeletedAtIsNull(idSucursalRequest)
-                    .map(Sucursal::getIdSucursal)
-                    .orElseThrow(() -> new RuntimeException("Sucursal no encontrada"));
-        }
-
-        Integer idSucursalUsuario = obtenerIdSucursalUsuario(usuarioAutenticado);
-        if (idSucursalRequest != null && !idSucursalUsuario.equals(idSucursalRequest)) {
-            throw new RuntimeException("El usuario autenticado no tiene permisos para filtrar por otra sucursal");
-        }
-        return idSucursalUsuario;
+        return usuarioSucursalAccessService.resolverIdSucursalFiltro(
+                usuarioAutenticado,
+                idSucursalRequest,
+                "El usuario autenticado no tiene permisos para filtrar por otra sucursal");
     }
 
     private RangoFechas resolverRangoFechasListado(
@@ -1568,32 +1578,27 @@ public class CotizacionService {
     }
 
     private void validarRolLectura(Usuario usuario) {
-        if (usuario.getRol() != Rol.ADMINISTRADOR
-                && usuario.getRol() != Rol.VENTAS) {
+        if (!usuario.getRol().permiteVentas()) {
             throw new RuntimeException("El usuario autenticado no tiene permisos para consultar cotizaciones");
         }
     }
 
     private void validarRolEscritura(Usuario usuario) {
-        if (usuario.getRol() != Rol.ADMINISTRADOR
-                && usuario.getRol() != Rol.VENTAS) {
+        if (!usuario.getRol().permiteVentas()) {
             throw new RuntimeException("El usuario autenticado no tiene permisos para registrar cotizaciones");
         }
     }
 
     private boolean esAdministrador(Usuario usuario) {
-        return usuario.getRol() == Rol.ADMINISTRADOR;
+        return usuario.getRol().esAdministrador();
     }
 
     private boolean esVentas(Usuario usuario) {
-        return usuario.getRol() == Rol.VENTAS;
+        return usuario.getRol().operaVentas();
     }
 
     private Integer obtenerIdSucursalUsuario(Usuario usuario) {
-        if (usuario.getSucursal() == null || usuario.getSucursal().getIdSucursal() == null) {
-            throw new RuntimeException("El usuario autenticado no tiene sucursal asignada");
-        }
-        return usuario.getSucursal().getIdSucursal();
+        return usuarioSucursalAccessService.obtenerIdSucursalPrincipal(usuario);
     }
 
     private Integer idSucursalRequeridaParaAdmin(Integer idSucursalRequest) {
@@ -1629,28 +1634,11 @@ public class CotizacionService {
         return BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP);
     }
 
-    private Double precioVigenteVariante(ProductoVariante variante) {
+    private Double precioVigenteVariante(ProductoVariante variante, Integer idSucursal) {
         if (variante == null) {
             return 0d;
         }
-        Double precio = variante.getPrecio();
-        Double precioOferta = variante.getPrecioOferta();
-        if (precioOferta == null || precio == null || precioOferta <= 0 || precioOferta >= precio) {
-            return precio;
-        }
-        LocalDateTime ofertaInicio = variante.getOfertaInicio();
-        LocalDateTime ofertaFin = variante.getOfertaFin();
-        if (ofertaInicio == null && ofertaFin == null) {
-            return precioOferta;
-        }
-        if (ofertaInicio == null || ofertaFin == null) {
-            return precio;
-        }
-        LocalDateTime ahora = LocalDateTime.now();
-        if (ahora.isBefore(ofertaInicio) || ahora.isAfter(ofertaFin)) {
-            return precio;
-        }
-        return precioOferta;
+        return precioOfertaService.resolverPrecioVigente(variante, idSucursal);
     }
 
     private String normalizarTexto(String value, int maxLen) {

@@ -20,6 +20,8 @@ public interface ProductoRepository extends JpaRepository<Producto, Integer> {
                     SELECT DISTINCT p
                     FROM Producto p
                     LEFT JOIN ProductoVariante v ON v.producto = p AND v.deletedAt IS NULL
+                    LEFT JOIN v.color c
+                    LEFT JOIN v.talla t
                     WHERE p.deletedAt IS NULL
                       AND (:idCategoria IS NULL OR p.categoria.idCategoria = :idCategoria)
                       AND (:idColor IS NULL OR v.color.idColor = :idColor)
@@ -28,10 +30,39 @@ public interface ProductoRepository extends JpaRepository<Producto, Integer> {
                             OR LOWER(p.nombre) LIKE LOWER(CONCAT('%', :term, '%'))
                             OR v.sku LIKE CONCAT(:term, '%')
                             OR v.codigoBarras LIKE CONCAT(:term, '%')
+                            OR (
+                                (:token1 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigoBarras, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''))) LIKE LOWER(CONCAT('%', :token1, '%')))
+                                AND (:token2 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigoBarras, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''))) LIKE LOWER(CONCAT('%', :token2, '%')))
+                                AND (:token3 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigoBarras, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''))) LIKE LOWER(CONCAT('%', :token3, '%')))
+                                AND (:token4 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigoBarras, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''))) LIKE LOWER(CONCAT('%', :token4, '%')))
+                                AND (:token5 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigoBarras, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''))) LIKE LOWER(CONCAT('%', :token5, '%')))
+                                AND (:token6 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigoBarras, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''))) LIKE LOWER(CONCAT('%', :token6, '%')))
+                            )
                       )
                       AND (
                             :conOferta IS NULL
-                            OR (:conOferta = true AND v.precioOferta IS NOT NULL AND (v.ofertaInicio IS NULL OR v.ofertaInicio <= CURRENT_TIMESTAMP) AND (v.ofertaFin IS NULL OR v.ofertaFin >= CURRENT_TIMESTAMP))
+                            OR (
+                                :conOferta = true AND (
+                                    (
+                                        v.precioOferta IS NOT NULL
+                                        AND (v.ofertaInicio IS NULL OR v.ofertaInicio <= CURRENT_TIMESTAMP)
+                                        AND (v.ofertaFin IS NULL OR v.ofertaFin >= CURRENT_TIMESTAMP)
+                                    )
+                                    OR (
+                                        :idSucursal IS NOT NULL
+                                        AND EXISTS (
+                                            SELECT 1
+                                            FROM ProductoVarianteOfertaSucursal vos
+                                            WHERE vos.productoVariante = v
+                                              AND vos.sucursal.idSucursal = :idSucursal
+                                              AND vos.deletedAt IS NULL
+                                              AND vos.precioOferta IS NOT NULL
+                                              AND (vos.ofertaInicio IS NULL OR vos.ofertaInicio <= CURRENT_TIMESTAMP)
+                                              AND (vos.ofertaFin IS NULL OR vos.ofertaFin >= CURRENT_TIMESTAMP)
+                                        )
+                                    )
+                                )
+                            )
                       )
                       AND (
                             :soloDisponibles IS NULL
@@ -48,11 +79,32 @@ public interface ProductoRepository extends JpaRepository<Producto, Integer> {
                                   )
                             )
                       )
+                    ORDER BY
+                      CASE
+                        WHEN EXISTS (
+                            SELECT 1
+                            FROM ProductoVariante vStock
+                            JOIN SucursalStock ssStock ON ssStock.productoVariante = vStock
+                            JOIN ssStock.sucursal sStock
+                            WHERE vStock.producto = p
+                              AND vStock.deletedAt IS NULL
+                              AND ssStock.cantidad > 0
+                              AND (
+                                    (:idSucursal IS NOT NULL AND sStock.idSucursal = :idSucursal)
+                                    OR (:idSucursal IS NULL AND (:tipoSucursal IS NULL OR sStock.tipo = :tipoSucursal))
+                              )
+                        ) THEN 0
+                        ELSE 1
+                      END ASC,
+                      p.fechaCreacion DESC,
+                      p.idProducto DESC
                     """,
             countQuery = """
                     SELECT COUNT(DISTINCT p.idProducto)
                     FROM Producto p
                     LEFT JOIN ProductoVariante v ON v.producto = p AND v.deletedAt IS NULL
+                    LEFT JOIN v.color c
+                    LEFT JOIN v.talla t
                     WHERE p.deletedAt IS NULL
                       AND (:idCategoria IS NULL OR p.categoria.idCategoria = :idCategoria)
                       AND (:idColor IS NULL OR v.color.idColor = :idColor)
@@ -61,10 +113,39 @@ public interface ProductoRepository extends JpaRepository<Producto, Integer> {
                             OR LOWER(p.nombre) LIKE LOWER(CONCAT('%', :term, '%'))
                             OR v.sku LIKE CONCAT(:term, '%')
                             OR v.codigoBarras LIKE CONCAT(:term, '%')
+                            OR (
+                                (:token1 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigoBarras, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''))) LIKE LOWER(CONCAT('%', :token1, '%')))
+                                AND (:token2 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigoBarras, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''))) LIKE LOWER(CONCAT('%', :token2, '%')))
+                                AND (:token3 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigoBarras, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''))) LIKE LOWER(CONCAT('%', :token3, '%')))
+                                AND (:token4 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigoBarras, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''))) LIKE LOWER(CONCAT('%', :token4, '%')))
+                                AND (:token5 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigoBarras, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''))) LIKE LOWER(CONCAT('%', :token5, '%')))
+                                AND (:token6 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigoBarras, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''))) LIKE LOWER(CONCAT('%', :token6, '%')))
+                            )
                       )
                       AND (
                             :conOferta IS NULL
-                            OR (:conOferta = true AND v.precioOferta IS NOT NULL AND (v.ofertaInicio IS NULL OR v.ofertaInicio <= CURRENT_TIMESTAMP) AND (v.ofertaFin IS NULL OR v.ofertaFin >= CURRENT_TIMESTAMP))
+                            OR (
+                                :conOferta = true AND (
+                                    (
+                                        v.precioOferta IS NOT NULL
+                                        AND (v.ofertaInicio IS NULL OR v.ofertaInicio <= CURRENT_TIMESTAMP)
+                                        AND (v.ofertaFin IS NULL OR v.ofertaFin >= CURRENT_TIMESTAMP)
+                                    )
+                                    OR (
+                                        :idSucursal IS NOT NULL
+                                        AND EXISTS (
+                                            SELECT 1
+                                            FROM ProductoVarianteOfertaSucursal vos
+                                            WHERE vos.productoVariante = v
+                                              AND vos.sucursal.idSucursal = :idSucursal
+                                              AND vos.deletedAt IS NULL
+                                              AND vos.precioOferta IS NOT NULL
+                                              AND (vos.ofertaInicio IS NULL OR vos.ofertaInicio <= CURRENT_TIMESTAMP)
+                                              AND (vos.ofertaFin IS NULL OR vos.ofertaFin >= CURRENT_TIMESTAMP)
+                                        )
+                                    )
+                                )
+                            )
                       )
                       AND (
                             :soloDisponibles IS NULL
@@ -84,6 +165,12 @@ public interface ProductoRepository extends JpaRepository<Producto, Integer> {
                     """)
     Page<Producto> buscarConFiltros(
             @Param("term") String term,
+            @Param("token1") String token1,
+            @Param("token2") String token2,
+            @Param("token3") String token3,
+            @Param("token4") String token4,
+            @Param("token5") String token5,
+            @Param("token6") String token6,
             @Param("idSucursal") Integer idSucursal,
             @Param("idCategoria") Integer idCategoria,
             @Param("idColor") Integer idColor,

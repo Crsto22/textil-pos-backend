@@ -4,10 +4,13 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.persistence.autoconfigure.EntityScan;
 import org.springframework.context.annotation.Bean;
+import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import com.sistemapos.sistematextil.config.StorageProperties;
 import com.sistemapos.sistematextil.config.SunatProperties;
 import com.sistemapos.sistematextil.model.Sucursal;
 import com.sistemapos.sistematextil.model.Usuario;
@@ -16,8 +19,10 @@ import com.sistemapos.sistematextil.repositories.UsuarioRepository;
 import com.sistemapos.sistematextil.util.usuario.Rol;
 
 @SpringBootApplication
+@EnableJpaRepositories(basePackages = "com.sistemapos.sistematextil.repositories")
+@EntityScan(basePackages = "com.sistemapos.sistematextil.model")
 @EnableScheduling
-@EnableConfigurationProperties(SunatProperties.class)
+@EnableConfigurationProperties({ SunatProperties.class, StorageProperties.class })
 public class SistematextilApplication {
 
 	public static void main(String[] args) {
@@ -53,6 +58,25 @@ public class SistematextilApplication {
 				System.out.println("Usuario de prueba creado con éxito");
 			} else {
 				System.out.println("Usuario de prueba ya existe");
+			}
+
+			if (usuarioRepository.findByCorreo("sistema@gmail.com").isEmpty()) {
+				Usuario usuarioSistema = new Usuario();
+				usuarioSistema.setNombre("Sistema");
+				usuarioSistema.setApellido("Tecnico");
+				usuarioSistema.setDni("87654321");
+				usuarioSistema.setTelefono("900000001");
+				usuarioSistema.setCorreo("sistema@gmail.com");
+				usuarioSistema.setPassword(encoder.encode("12345678"));
+				usuarioSistema.setRol(Rol.SISTEMA);
+				usuarioSistema.setSucursal(null);
+				usuarioSistema.setTurno(null);
+				usuarioSistema.setEstado("ACTIVO");
+				usuarioRepository.save(usuarioSistema);
+
+				System.out.println("Usuario de sistema creado con exito");
+			} else {
+				System.out.println("Usuario de sistema ya existe");
 			}
 		};
 	}

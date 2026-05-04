@@ -1,6 +1,7 @@
 package com.sistemapos.sistematextil.services;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
@@ -10,12 +11,12 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.sistemapos.sistematextil.model.Sucursal;
-import com.sistemapos.sistematextil.model.SucursalTipo;
+import com.sistemapos.sistematextil.model.Turno;
 import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
 import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
+import com.sistemapos.sistematextil.util.turno.DiaSemana;
 import com.sistemapos.sistematextil.util.usuario.Rol;
 import com.sistemapos.sistematextil.util.usuario.UsuarioListItemResponse;
 import com.sistemapos.sistematextil.util.usuario.UsuarioResetPasswordRequest;
@@ -30,6 +31,8 @@ public class UsuarioService {
     private final UsuarioRepository usuarioRepository;
     private final SucursalRepository sucursalRepository;
     private final PasswordEncoder passwordEncoder;
+    private final TurnoService turnoService;
+    private final UsuarioSucursalAccessService usuarioSucursalAccessService;
 
     @Value("${application.pagination.default-size:10}")
     private int defaultPageSize;
@@ -47,8 +50,8 @@ public class UsuarioService {
         Integer idSucursalFiltro = resolverIdSucursalFiltroListado(idSucursal);
         PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idUsuario").ascending());
         Page<UsuarioListItemResponse> usuarios = idSucursalFiltro == null
-                ? usuarioRepository.findByDeletedAtIsNull(pageable).map(this::toListItemResponse)
-                : usuarioRepository.buscarConFiltros(null, null, idSucursalFiltro, pageable).map(this::toListItemResponse);
+                ? usuarioRepository.findByDeletedAtIsNullAndRolNot(Rol.SISTEMA, pageable).map(this::toListItemResponse)
+                : usuarioRepository.buscarConFiltros(null, null, Rol.SISTEMA, idSucursalFiltro, pageable).map(this::toListItemResponse);
         return PagedResponse.fromPage(usuarios);
     }
 
@@ -57,14 +60,14 @@ public class UsuarioService {
 
         if (termNormalizado == null && rol == null && idSucursal == null) {
             PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idUsuario").ascending());
-            Page<UsuarioListItemResponse> usuarios = usuarioRepository.findByDeletedAtIsNull(pageable)
+            Page<UsuarioListItemResponse> usuarios = usuarioRepository.findByDeletedAtIsNullAndRolNot(Rol.SISTEMA, pageable)
                     .map(this::toListItemResponse);
             return PagedResponse.fromPage(usuarios);
         }
 
         PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idUsuario").ascending());
         Page<UsuarioListItemResponse> usuarios = usuarioRepository
-                .buscarConFiltros(termNormalizado, rol, idSucursal, pageable)
+                .buscarConFiltros(termNormalizado, rol, Rol.SISTEMA, idSucursal, pageable)
                 .map(this::toListItemResponse);
 
         return PagedResponse.fromPage(usuarios);
@@ -93,7 +96,11 @@ public class UsuarioService {
             }
         });
 
-        Sucursal sucursal = resolverSucursalSegunRol(request.rol(), request.idSucursal());
+        UsuarioSucursalAccessService.AsignacionSucursal asignacion = usuarioSucursalAccessService.resolverAsignacion(
+                request.rol(),
+                request.idSucursal(),
+                request.idsSucursales());
+        Turno turno = turnoService.resolverTurnoAsignable(request.idTurno());
 
         usuario.setNombre(request.nombre());
         usuario.setApellido(request.apellido());
@@ -102,9 +109,11 @@ public class UsuarioService {
         usuario.setCorreo(request.correo());
         usuario.setRol(request.rol());
         usuario.setEstado(request.estado().toUpperCase());
-        usuario.setSucursal(sucursal);
+        usuario.setSucursal(asignacion.principal());
+        usuario.setTurno(turno);
 
         Usuario actualizado = usuarioRepository.save(usuario);
+        usuarioSucursalAccessService.sincronizarSucursales(actualizado, asignacion.permitidas());
         return toListItemResponse(actualizado);
     }
 
@@ -145,28 +154,6 @@ public class UsuarioService {
         usuario.setTelefono(String.format("%09d", 100_000_000 + (id % 900_000_000)));
     }
 
-    private Sucursal resolverSucursalSegunRol(Rol rol, Integer idSucursal) {
-        if (rol == Rol.ADMINISTRADOR) {
-            return null;
-        }
-        if (idSucursal == null) {
-            throw new RuntimeException("La sucursal es obligatoria para el rol " + rol.name());
-        }
-        Sucursal sucursal = sucursalRepository.findById(idSucursal)
-                .orElseThrow(() -> new RuntimeException("Sucursal no encontrada"));
-        validarRolSegunTipoSucursal(rol, sucursal);
-        return sucursal;
-    }
-
-    private void validarRolSegunTipoSucursal(Rol rol, Sucursal sucursal) {
-        if (sucursal.getTipo() == SucursalTipo.ALMACEN && rol != Rol.ALMACEN) {
-            throw new RuntimeException("La sucursal tipo ALMACEN solo permite el rol ALMACEN");
-        }
-        if (sucursal.getTipo() == SucursalTipo.VENTA && rol == Rol.ALMACEN) {
-            throw new RuntimeException("La sucursal tipo VENTA no permite el rol ALMACEN");
-        }
-    }
-
     private Usuario obtenerUsuarioAutenticado(String correoUsuarioAutenticado) {
         if (correoUsuarioAutenticado == null || correoUsuarioAutenticado.isBlank()) {
             throw new RuntimeException("No autenticado");
@@ -187,6 +174,9 @@ public class UsuarioService {
     private UsuarioListItemResponse toListItemResponse(Usuario usuario) {
         Integer idSucursal = usuario.getSucursal() != null ? usuario.getSucursal().getIdSucursal() : null;
         String nombreSucursal = usuario.getSucursal() != null ? usuario.getSucursal().getNombre() : null;
+        Integer idTurno = usuario.getTurno() != null ? usuario.getTurno().getIdTurno() : null;
+        String nombreTurno = usuario.getTurno() != null ? usuario.getTurno().getNombre() : null;
+        List<DiaSemana> diasTurno = turnoService.obtenerDias(usuario.getTurno());
         return new UsuarioListItemResponse(
                 usuario.getIdUsuario(),
                 usuario.getNombre(),
@@ -199,6 +189,12 @@ public class UsuarioService {
                 usuario.getEstado(),
                 usuario.getFechaCreacion(),
                 idSucursal,
-                nombreSucursal);
+                nombreSucursal,
+                usuarioSucursalAccessService.obtenerSucursalesPermitidasResponse(usuario),
+                idTurno,
+                nombreTurno,
+                usuario.getTurno() != null ? usuario.getTurno().getHoraInicio() : null,
+                usuario.getTurno() != null ? usuario.getTurno().getHoraFin() : null,
+                diasTurno);
     }
 }

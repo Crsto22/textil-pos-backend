@@ -3,6 +3,7 @@ package com.sistemapos.sistematextil.services;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.List;
 import java.util.UUID;
 
 import javax.imageio.ImageIO;
@@ -17,10 +18,8 @@ import org.springframework.web.multipart.MultipartFile;
 
 import com.sistemapos.sistematextil.config.JwtService;
 import com.sistemapos.sistematextil.model.CustomUser;
-import com.sistemapos.sistematextil.model.Sucursal;
-import com.sistemapos.sistematextil.model.SucursalTipo;
+import com.sistemapos.sistematextil.model.Turno;
 import com.sistemapos.sistematextil.model.Usuario;
-import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
 import com.sistemapos.sistematextil.util.auth.AuthenticationRequest;
 import com.sistemapos.sistematextil.util.auth.AuthenticationResponse;
@@ -42,16 +41,18 @@ public class AuthenticationService {
     private static final long MAX_SIZE = 3 * 1024 * 1024;
 
     private final UsuarioRepository usuarioRepository;
-    private final SucursalRepository sucursalRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final AuthenticationManager authenticationManager;
     private final S3StorageService s3StorageService;
+    private final TurnoService turnoService;
+    private final UsuarioSucursalAccessService usuarioSucursalAccessService;
 
     static {
         ImageIO.scanForPlugins();
     }
 
+    @Transactional
     public String register(RegisterRequest request) {
         usuarioRepository.findByCorreoAndDeletedAtIsNull(request.email()).ifPresent(u -> {
             throw new RuntimeException("El correo '" + request.email() + "' ya existe");
@@ -65,7 +66,10 @@ public class AuthenticationService {
             throw new RuntimeException("El telefono '" + request.telefono() + "' ya existe");
         });
 
-        Sucursal sucursal = resolverSucursalSegunRol(request.rol(), request.idSucursal());
+        UsuarioSucursalAccessService.AsignacionSucursal asignacion = usuarioSucursalAccessService.resolverAsignacion(
+                request.rol(),
+                request.idSucursal(),
+                request.idsSucursales());
 
         Usuario user = Usuario.builder()
                 .nombre(request.nombre())
@@ -75,33 +79,13 @@ public class AuthenticationService {
                 .telefono(request.telefono())
                 .password(passwordEncoder.encode(request.password()))
                 .rol(request.rol())
-                .sucursal(sucursal)
+                .sucursal(asignacion.principal())
+                .turno(turnoService.resolverTurnoAsignable(request.idTurno()))
                 .build();
 
-        usuarioRepository.save(user);
+        Usuario guardado = usuarioRepository.save(user);
+        usuarioSucursalAccessService.sincronizarSucursales(guardado, asignacion.permitidas());
         return "Usuario registrado exitosamente";
-    }
-
-    private Sucursal resolverSucursalSegunRol(Rol rol, Integer idSucursal) {
-        if (rol == Rol.ADMINISTRADOR) {
-            return null;
-        }
-        if (idSucursal == null) {
-            throw new RuntimeException("La sucursal es obligatoria para el rol " + rol.name());
-        }
-        Sucursal sucursal = sucursalRepository.findById(idSucursal)
-                .orElseThrow(() -> new RuntimeException("Sucursal no encontrada"));
-        validarRolSegunTipoSucursal(rol, sucursal);
-        return sucursal;
-    }
-
-    private void validarRolSegunTipoSucursal(Rol rol, Sucursal sucursal) {
-        if (sucursal.getTipo() == SucursalTipo.ALMACEN && rol != Rol.ALMACEN) {
-            throw new RuntimeException("La sucursal tipo ALMACEN solo permite el rol ALMACEN");
-        }
-        if (sucursal.getTipo() == SucursalTipo.VENTA && rol == Rol.ALMACEN) {
-            throw new RuntimeException("La sucursal tipo VENTA no permite el rol ALMACEN");
-        }
     }
 
     public LoginResult authenticate(AuthenticationRequest request) {
@@ -109,6 +93,7 @@ public class AuthenticationService {
                 new UsernamePasswordAuthenticationToken(request.email(), request.password()));
 
         Usuario user = buscarUsuarioActivoPorCorreo(request.email());
+        turnoService.validarAccesoPorTurno(user.getTurno());
         CustomUser customUser = new CustomUser(user);
 
         String accessToken = jwtService.generateAccessToken(customUser);
@@ -120,6 +105,7 @@ public class AuthenticationService {
     public RefreshResult refresh(String refreshToken) {
         String email = jwtService.extractUsername(refreshToken);
         Usuario user = buscarUsuarioActivoPorCorreo(email);
+        turnoService.validarAccesoPorTurno(user.getTurno());
         CustomUser customUser = new CustomUser(user);
 
         if (!jwtService.isTokenValid(refreshToken, customUser)) {
@@ -222,6 +208,8 @@ public class AuthenticationService {
     private AuthenticationResponse toAuthenticationResponse(String accessToken, Usuario user) {
         Integer idSucursal = user.getSucursal() != null ? user.getSucursal().getIdSucursal() : null;
         String nombreSucursal = user.getSucursal() != null ? user.getSucursal().getNombre() : null;
+        Turno turno = user.getTurno();
+        List<com.sistemapos.sistematextil.util.turno.DiaSemana> diasTurno = turnoService.obtenerDias(turno);
 
         return new AuthenticationResponse(
                 accessToken,
@@ -235,12 +223,20 @@ public class AuthenticationService {
                 user.getRol().name(),
                 user.getFechaCreacion(),
                 idSucursal,
-                nombreSucursal);
+                nombreSucursal,
+                usuarioSucursalAccessService.obtenerSucursalesPermitidasResponse(user),
+                turno != null ? turno.getIdTurno() : null,
+                turno != null ? turno.getNombre() : null,
+                turno != null ? turno.getHoraInicio() : null,
+                turno != null ? turno.getHoraFin() : null,
+                diasTurno);
     }
 
     private MeResponse toMeResponse(Usuario user) {
         Integer idSucursal = user.getSucursal() != null ? user.getSucursal().getIdSucursal() : null;
         String nombreSucursal = user.getSucursal() != null ? user.getSucursal().getNombre() : null;
+        Turno turno = user.getTurno();
+        List<com.sistemapos.sistematextil.util.turno.DiaSemana> diasTurno = turnoService.obtenerDias(turno);
 
         return new MeResponse(
                 user.getIdUsuario(),
@@ -253,7 +249,13 @@ public class AuthenticationService {
                 user.getRol().name(),
                 user.getFechaCreacion(),
                 idSucursal,
-                nombreSucursal);
+                nombreSucursal,
+                usuarioSucursalAccessService.obtenerSucursalesPermitidasResponse(user),
+                turno != null ? turno.getIdTurno() : null,
+                turno != null ? turno.getNombre() : null,
+                turno != null ? turno.getHoraInicio() : null,
+                turno != null ? turno.getHoraFin() : null,
+                diasTurno);
     }
 
     private String construirFotoPerfilKey(Integer idUsuario) {

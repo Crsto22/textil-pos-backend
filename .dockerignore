@@ -1,0 +1,42 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# IDE
+.vscode
+.idea
+*.iml
+*.iws
+*.ipr
+
+# Build
+target
+build
+dist
+
+# Logs
+logs
+*.log
+
+# Environment (local)
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation
+README.md
+GUIA_USUARIO_MULTI_SUCURSAL.md
+
+# Maven
+.mvn
+
+# Storage local (excluir para mantener imagen pequeña)
+storage
+
+# Node (si aplica)
+node_modules
+npm-debug.log

@@ -1,0 +1,43 @@
+# Docker Compose para PRODUCCIÓN
+# Úsalo con: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+version: '3.9'
+
+services:
+  mysql:
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - mysql_data_prod:/var/lib/mysql
+    # Sin puerto expuesto públicamente
+    expose:
+      - "3306"
+
+  app:
+    restart: always
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SERVER_SERVLET_CONTEXT_PATH: /api
+    # Puerto interno, usa reverse proxy en frente
+    expose:
+      - "8080"
+    volumes:
+      - app_storage_prod:/app/storage
+      - app_logs_prod:/app/logs
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
+        reservations:
+          cpus: '2'
+          memory: 2G
+
+volumes:
+  mysql_data_prod:
+    driver: local
+  app_storage_prod:
+    driver: local
+  app_logs_prod:
+    driver: local

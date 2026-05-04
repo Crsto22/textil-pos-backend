@@ -1,0 +1,111 @@
+version: '3.9'
+
+services:
+  # Base de datos MySQL
+  mysql:
+    image: mysql:8.0.36
+    container_name: sistema-textil-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-}
+      MYSQL_DATABASE: sistema_textil
+      TZ: America/Lima
+    ports:
+      - "3306:3306"
+    volumes:
+      # Volumen para datos persistentes
+      - mysql_data:/var/lib/mysql
+      # Script de inicialización
+      - ./src/main/resources/db/sistema_textil_v2.sql:/docker-entrypoint-initdb.d/01-init.sql
+      - ./src/main/resources/db/migration:/docker-entrypoint-initdb.d/migrations
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sistema-textil-net
+
+  # Aplicación Spring Boot
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sistema-textil-app
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      # Base de datos (ajustado para Docker)
+      DB_URL: jdbc:mysql://mysql:3306/sistema_textil?useSSL=false&serverTimezone=America/Lima&allowPublicKeyRetrieval=true
+      DB_USERNAME: ${DB_USERNAME:-root}
+      DB_PASSWORD: ${DB_PASSWORD:-}
+      
+      # JWT
+      JWT_SECRET: ${JWT_SECRET}
+      
+      # AWS S3
+      AWS_ACCESS_KEY: ${AWS_ACCESS_KEY}
+      AWS_SECRET_KEY: ${AWS_SECRET_KEY}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET}
+      AWS_S3_SUNAT_BUCKET: ${AWS_S3_SUNAT_BUCKET}
+      AWS_S3_SUNAT_PREFIX: ${AWS_S3_SUNAT_PREFIX:-sunat}
+      
+      # SUNAT
+      SUNAT_MODE: ${SUNAT_MODE:-disabled}
+      SUNAT_CERT_BASE_PATH: /app/storage/sunat/certificados
+      SUNAT_CERT_MAX_FILE_SIZE_MB: ${SUNAT_CERT_MAX_FILE_SIZE_MB:-5}
+      SUNAT_CRYPTO_KEY: ${SUNAT_CRYPTO_KEY}
+      
+      # Storage local
+      STORAGE_BASE_PATH: /app/storage
+      
+      # API Peru (opcional)
+      APIPERU_TOKEN: ${APIPERU_TOKEN}
+      
+      # Configuración de Spring
+      SPRING_PROFILES_ACTIVE: prod
+      SERVER_PORT: 8080
+    
+    ports:
+      - "8080:8080"
+    
+    volumes:
+      # Volumen para almacenamiento local (productos, facturas, etc.)
+      - app_storage:/app/storage
+      # Logs
+      - app_logs:/app/logs
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    networks:
+      - sistema-textil-net
+    
+    # Limitar recursos (opcional, ajusta según tu servidor)
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+
+volumes:
+  mysql_data:
+    driver: local
+  app_storage:
+    driver: local
+  app_logs:
+    driver: local
+
+networks:
+  sistema-textil-net:
+    driver: bridge

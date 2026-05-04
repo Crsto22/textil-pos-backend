@@ -37,6 +37,7 @@ import com.sistemapos.sistematextil.model.Pago;
 import com.sistemapos.sistematextil.model.Sucursal;
 import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.repositories.PagoRepository;
+import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
 import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
 import com.sistemapos.sistematextil.util.pago.PagoActualizarCodigoRequest;
@@ -55,6 +56,7 @@ public class PagoService {
     private static final Set<String> ESTADOS_VENTA_PERMITIDOS = Set.of("EMITIDA", "ANULADA", "NC_EMITIDA");
 
     private final PagoRepository pagoRepository;
+    private final SucursalRepository sucursalRepository;
     private final UsuarioRepository usuarioRepository;
     private final S3StorageService s3StorageService;
     private final UsuarioSucursalAccessService usuarioSucursalAccessService;

@@ -115,8 +115,8 @@ public interface VentaRepository extends JpaRepository<Venta, Integer> {
                       AND (:idUsuario IS NULL OR v.id_usuario = :idUsuario)
                       AND (:fechaInicio IS NULL OR v.fecha >= :fechaInicio)
                       AND (:fechaFinExclusive IS NULL OR v.fecha < :fechaFinExclusive)
-                    GROUP BY YEAR(v.fecha), MONTH(v.fecha)
-                    ORDER BY YEAR(v.fecha), MONTH(v.fecha)
+                    GROUP BY DATE_FORMAT(v.fecha, '%Y-%m-01')
+                    ORDER BY periodo
                     """,
             nativeQuery = true)
     List<Object[]> obtenerVentasPorMes(

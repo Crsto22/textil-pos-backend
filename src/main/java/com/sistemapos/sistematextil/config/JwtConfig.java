@@ -22,6 +22,7 @@ public class JwtConfig {
     private Integer refreshTokenExpirationDays;      // refresh token en días (ej: 7)
     private Boolean cookieSecure;                    // true en prod (HTTPS), false en dev
     private String cookieDomain;                     // dominio para la cookie
+    private String cookieSameSite;                   // Lax, Strict o None
 
     // Access token: minutos -> milisegundos
     public long getAccessTokenExpirationInMillis() {

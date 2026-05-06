@@ -1,5 +1,7 @@
 package com.sistemapos.sistematextil.services;
 
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 
@@ -7,6 +9,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
+import com.sistemapos.sistematextil.model.Cotizacion;
 import com.sistemapos.sistematextil.model.GuiaRemision;
 import com.sistemapos.sistematextil.model.NotaCredito;
 import com.sistemapos.sistematextil.model.SunatBajaLote;
@@ -59,6 +62,22 @@ public class SunatDocumentStorageService {
 
     public StoredDocument storeGuiaRemisionCdr(GuiaRemision guia, String fileName, byte[] bytes) {
         return upload(buildKey(guia, fileName), fileName, bytes, "application/zip");
+    }
+
+    public StoredDocument storePdf(Venta venta, String fileName, byte[] bytes) {
+        return upload(buildKey(venta, fileName), fileName, bytes, "application/pdf");
+    }
+
+    public StoredDocument storePdf(NotaCredito notaCredito, String fileName, byte[] bytes) {
+        return upload(buildKey(notaCredito, fileName), fileName, bytes, "application/pdf");
+    }
+
+    public StoredDocument storePdf(Cotizacion cotizacion, String fileName, byte[] bytes) {
+        return upload(buildKey(cotizacion, fileName), fileName, bytes, "application/pdf");
+    }
+
+    public StoredDocument storePdf(GuiaRemision guia, String fileName, byte[] bytes) {
+        return upload(buildKey(guia, fileName), fileName, bytes, "application/pdf");
     }
 
     public StoredDocument storeSunatBajaXml(SunatBajaLote lote, String fileName, byte[] bytes) {
@@ -123,6 +142,21 @@ public class SunatDocumentStorageService {
         }
     }
 
+    public boolean isStoredDocumentUpToDate(String storedReference, LocalDateTime referenceTime) {
+        if (storedReference == null || storedReference.isBlank()) {
+            return false;
+        }
+        if (referenceTime == null) {
+            return true;
+        }
+
+        java.time.Instant lastModified = storageService.getLastModified(storedReference);
+        if (lastModified == null) {
+            return false;
+        }
+        return !lastModified.isBefore(referenceTime.atZone(ZoneId.systemDefault()).toInstant());
+    }
+
     private StoredDocument upload(String key, String fileName, byte[] bytes, String contentType) {
         if (bytes == null || bytes.length == 0) {
             throw new RuntimeException("No hay contenido para guardar en disco local");
@@ -165,6 +199,17 @@ public class SunatDocumentStorageService {
                 : "sin-mes";
 
         return buildKey("guias-remision", year, month, fileName);
+    }
+
+    private String buildKey(Cotizacion cotizacion, String fileName) {
+        String year = cotizacion != null && cotizacion.getFecha() != null
+                ? cotizacion.getFecha().format(YEAR_FORMAT)
+                : "sin-fecha";
+        String month = cotizacion != null && cotizacion.getFecha() != null
+                ? cotizacion.getFecha().format(MONTH_FORMAT)
+                : "sin-mes";
+
+        return buildKey("notas-venta", year, month, fileName);
     }
 
     private String buildKey(SunatBajaLote lote, String fileName) {

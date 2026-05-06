@@ -83,6 +83,16 @@ public class GuiaRemisionPdfService {
                 .findByIdGuiaRemisionAndDeletedAtIsNull(idGuiaRemision)
                 .orElseThrow(() -> new RuntimeException("Guia de remision no encontrada: " + idGuiaRemision));
 
+        return generarPdfA4(guia);
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] generarPdfA4(GuiaRemision guia) {
+        if (guia == null || guia.getIdGuiaRemision() == null) {
+            throw new RuntimeException("Guia de remision no encontrada");
+        }
+        Integer idGuiaRemision = guia.getIdGuiaRemision();
+
         List<GuiaRemisionDetalle> detalles = detalleRepository
                 .findByGuiaRemision_IdGuiaRemisionAndDeletedAtIsNullOrderByIdGuiaRemisionDetalleAsc(idGuiaRemision);
         List<GuiaRemisionDocumentoRelacionado> documentosRelacionados = documentoRelacionadoRepository
@@ -210,7 +220,7 @@ public class GuiaRemisionPdfService {
     }
 
     private void agregarDatosTraslado(Document document, GuiaRemision guia) throws DocumentException {
-        PdfPTable tabla = new PdfPTable(new float[] { 2.6f, 2.8f, 2.1f, 2.5f });
+        PdfPTable tabla = new PdfPTable(new float[] { 2.2f, 2.8f, 2.2f, 2.8f });
         tabla.setWidthPercentage(100);
         tabla.setSpacingBefore(0f);
         tabla.setSpacingAfter(0f);
@@ -246,10 +256,6 @@ public class GuiaRemisionPdfService {
         pOTitle.setSpacingAfter(4f);
         origenCell.addElement(pOTitle);
         origenCell.addElement(new Paragraph(v(guia.getDireccionPartida()), fuente(false, 9f)));
-        if (guia.getSucursalPartida() != null) {
-            origenCell.addElement(new Paragraph(
-                    "Sucursal: " + v(guia.getSucursalPartida().getNombre()), fuente(false, 8f)));
-        }
         if (!v(guia.getUbigeoPartida()).isBlank()) {
             origenCell.addElement(new Paragraph("Ubigeo: " + v(guia.getUbigeoPartida()), fuente(false, 8f)));
         }
@@ -263,10 +269,6 @@ public class GuiaRemisionPdfService {
         pDTitle.setSpacingAfter(4f);
         destinoCell.addElement(pDTitle);
         destinoCell.addElement(new Paragraph(v(guia.getDireccionLlegada()), fuente(false, 9f)));
-        if (guia.getSucursalLlegada() != null) {
-            destinoCell.addElement(new Paragraph(
-                    "Sucursal: " + v(guia.getSucursalLlegada().getNombre()), fuente(false, 8f)));
-        }
         if (!v(guia.getUbigeoLlegada()).isBlank()) {
             destinoCell.addElement(new Paragraph("Ubigeo: " + v(guia.getUbigeoLlegada()), fuente(false, 8f)));
         }
@@ -276,7 +278,7 @@ public class GuiaRemisionPdfService {
     }
 
     private void agregarDestinatario(Document document, GuiaRemision guia) throws DocumentException {
-        PdfPTable tabla = new PdfPTable(new float[] { 2.6f, 7.4f });
+        PdfPTable tabla = new PdfPTable(new float[] { 2.2f, 2.8f, 2.2f, 2.8f });
         tabla.setWidthPercentage(100);
         tabla.setSpacingBefore(0f);
         tabla.setSpacingAfter(0f);
@@ -301,10 +303,8 @@ public class GuiaRemisionPdfService {
                 ? describirTipoDoc(v(guia.getDestinatarioTipoDoc()))
                 : (!ruc.equals("-") ? "RUC" : "-");
 
-        agregarFilaDatoLinea(tabla, "FECHA DE EMISION:", fechaEmision);
-        agregarFilaDatoLinea(tabla, "DESTINATARIO:", razonSocial);
-        agregarFilaDatoLinea(tabla, "TIPO DOC.:", tipoDocDestinatario);
-        agregarFilaDatoLinea(tabla, "NRO. DOC.:", ruc);
+        agregarFilaDatoDoble(tabla, "FECHA DE EMISION:", fechaEmision, "TIPO DOC.:", tipoDocDestinatario);
+        agregarFilaDatoDoble(tabla, "DESTINATARIO:", razonSocial, "NRO. DOC.:", ruc);
 
         agregarSeccion(document, null, tabla);
     }
@@ -314,7 +314,7 @@ public class GuiaRemisionPdfService {
             List<GuiaRemisionTransportista> transportistas,
             List<GuiaRemisionConductor> conductores,
             List<GuiaRemisionVehiculo> vehiculos) throws DocumentException {
-        PdfPTable tabla = new PdfPTable(new float[] { 2f, 4f, 2f, 4f });
+        PdfPTable tabla = new PdfPTable(new float[] { 2.2f, 2.8f, 2.2f, 2.8f });
         tabla.setWidthPercentage(100);
         tabla.setSpacingBefore(0f);
         tabla.setSpacingAfter(0f);
@@ -380,10 +380,10 @@ public class GuiaRemisionPdfService {
     }
 
     private void agregarTablaBienes(Document document, List<GuiaRemisionDetalle> detalles) throws DocumentException {
-        PdfPTable tabla = new PdfPTable(new float[] { 1.4f, 1.6f, 2.2f, 4.8f });
+        PdfPTable tabla = new PdfPTable(new float[] { 1.1f, 1.3f, 1.9f, 5.7f });
         tabla.setWidthPercentage(100);
         tabla.setHeaderRows(1);
-        tabla.setSpacingBefore(2f);
+        tabla.setSpacingBefore(1f);
 
         headerBienes(tabla, "CANT");
         headerBienes(tabla, "UNIDAD");
@@ -429,7 +429,7 @@ public class GuiaRemisionPdfService {
         pie.setSpacingBefore(2f);
 
         PdfPCell qrCell = celda(Rectangle.NO_BORDER, 0f);
-        qr.scaleToFit(82f, 82f);
+        qr.scaleToFit(96f, 96f);
         qr.setAlignment(Element.ALIGN_CENTER);
         qrCell.addElement(qr);
         pie.addCell(qrCell);
@@ -466,7 +466,7 @@ public class GuiaRemisionPdfService {
             Map<EncodeHintType, Object> hints = new HashMap<>();
             hints.put(EncodeHintType.MARGIN, 1);
             BitMatrix matrix = new MultiFormatWriter()
-                    .encode(contenido.trim(), BarcodeFormat.QR_CODE, 180, 180, hints);
+                    .encode(contenido.trim(), BarcodeFormat.QR_CODE, 220, 220, hints);
             BufferedImage buffered = MatrixToImageWriter.toBufferedImage(matrix);
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             ImageIO.write(buffered, "png", out);
@@ -562,7 +562,7 @@ public class GuiaRemisionPdfService {
         tabla.addCell(lc);
 
         PdfPCell vc = celda(Rectangle.NO_BORDER, 2f);
-        vc.setColspan(3);
+        vc.setColspan(Math.max(1, tabla.getNumberOfColumns() - 1));
         vc.addElement(new Paragraph(valorGuia(valor), fuente(false, 8.5f)));
         tabla.addCell(vc);
     }

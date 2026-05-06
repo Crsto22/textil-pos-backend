@@ -177,9 +177,13 @@ public class ProductoVarianteController {
     }
 
     @PostMapping("insertar")
-    public ResponseEntity<?> crear(@Valid @RequestBody ProductoVariante variante) {
+    public ResponseEntity<?> crear(
+            Authentication authentication,
+            @Valid @RequestBody ProductoVariante variante) {
         try {
-            return new ResponseEntity<>(service.insertar(variante), HttpStatus.CREATED);
+            return new ResponseEntity<>(
+                    service.insertar(variante, obtenerCorreoAutenticado(authentication)),
+                    HttpStatus.CREATED);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al crear variante" : e.getMessage();
             return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
@@ -238,9 +242,15 @@ public class ProductoVarianteController {
     }
 
     @PatchMapping("stock/{id}")
-    public ResponseEntity<?> actualizarStock(@PathVariable Integer id, @RequestBody Integer stock) {
+    public ResponseEntity<?> actualizarStock(
+            Authentication authentication,
+            @PathVariable Integer id,
+            @RequestBody Integer stock) {
         try {
-            return ResponseEntity.ok(service.actualizarStock(id, stock));
+            return ResponseEntity.ok(service.actualizarStock(
+                    id,
+                    stock,
+                    obtenerCorreoAutenticado(authentication)));
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al actualizar stock de variante" : e.getMessage();
             return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))
@@ -249,9 +259,11 @@ public class ProductoVarianteController {
     }
 
     @DeleteMapping("eliminar/{id}")
-    public ResponseEntity<?> eliminar(@PathVariable Integer id) {
+    public ResponseEntity<?> eliminar(
+            Authentication authentication,
+            @PathVariable Integer id) {
         try {
-            service.eliminar(id);
+            service.eliminar(id, obtenerCorreoAutenticado(authentication));
             return ResponseEntity.ok(Map.of("message", "Variante eliminada logicamente"));
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al eliminar variante" : e.getMessage();
@@ -263,9 +275,15 @@ public class ProductoVarianteController {
     }
 
     @PatchMapping("precio/{id}")
-    public ResponseEntity<?> actualizarPrecio(@PathVariable Integer id, @RequestBody Double precio) {
+    public ResponseEntity<?> actualizarPrecio(
+            Authentication authentication,
+            @PathVariable Integer id,
+            @RequestBody Double precio) {
         try {
-            return ResponseEntity.ok(service.actualizarPrecio(id, precio));
+            return ResponseEntity.ok(service.actualizarPrecio(
+                    id,
+                    precio,
+                    obtenerCorreoAutenticado(authentication)));
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al actualizar precio de variante" : e.getMessage();
             return ResponseEntity.status(resolverStatus(message, HttpStatus.BAD_REQUEST))

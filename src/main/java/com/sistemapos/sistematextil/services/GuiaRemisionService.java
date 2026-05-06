@@ -14,6 +14,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -113,6 +114,7 @@ public class GuiaRemisionService {
     private final SunatGuiaRemisionEmissionService emissionService;
     private final SunatJobService sunatJobService;
     private final SunatDocumentStorageService documentStorageService;
+    private final GuiaRemisionPdfService guiaRemisionPdfService;
     private final GuiaRemisionCatalogoService guiaRemisionCatalogoService;
 
     // ────────────── Listar ──────────────
@@ -156,6 +158,25 @@ public class GuiaRemisionService {
         obtenerUsuarioAutenticado(correoAutenticado);
         GuiaRemision guia = obtenerGuia(id);
         return toResponseCompleto(guia);
+    }
+
+    @Transactional
+    public ArchivoDescargable descargarPdf(Integer id, String correoAutenticado) {
+        obtenerUsuarioAutenticado(correoAutenticado);
+        GuiaRemision guia = obtenerGuia(id);
+        String nombreArchivo = numeroGuiaRemision(guia) + ".pdf";
+
+        if (!documentStorageService.isStoredDocumentUpToDate(guia.getSunatPdfKey(), guia.getUpdatedAt())) {
+            byte[] pdfGenerado = guiaRemisionPdfService.generarPdfA4(guia);
+            SunatDocumentStorageService.StoredDocument stored = documentStorageService
+                    .storePdf(guia, nombreArchivo, pdfGenerado);
+            guia.setSunatPdfNombre(stored.fileName());
+            guia.setSunatPdfKey(stored.key());
+            guiaRemisionRepository.save(guia);
+        }
+
+        byte[] contenido = documentStorageService.download(guia.getSunatPdfKey());
+        return new ArchivoDescargable(nombreArchivo, MediaType.APPLICATION_PDF_VALUE, contenido);
     }
 
     @Transactional(readOnly = true)
@@ -1322,6 +1343,10 @@ public class GuiaRemisionService {
                 guia.getSunatEnviadoAt(),
                 guia.getSunatRespondidoAt(),
                 null);
+    }
+
+    private String numeroGuiaRemision(GuiaRemision guia) {
+        return SunatGuiaRemisionXmlBuilderService.numeroGuia(guia);
     }
 
     private GuiaRemisionDocumentoRelacionadoResponse toDocumentoRelacionadoResponse(

@@ -1,8 +1,6 @@
 package com.sistemapos.sistematextil.controllers;
 
 import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.Map;
 
 import org.springframework.format.annotation.DateTimeFormat;
@@ -90,14 +88,13 @@ public class NotaCreditoController {
             Authentication authentication,
             @PathVariable Integer id) {
         try {
-            byte[] archivo = notaCreditoService.generarComprobantePdfA4(id, obtenerCorreoAutenticado(authentication));
-            String ts = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
-            String nombreArchivo = "nota_credito_" + id + "_" + ts + ".pdf";
+            VentaService.ArchivoDescargable archivo = notaCreditoService
+                    .descargarComprobantePdf(id, obtenerCorreoAutenticado(authentication));
 
             return ResponseEntity.ok()
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + nombreArchivo + "\"")
-                    .contentType(MediaType.APPLICATION_PDF)
-                    .body(archivo);
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + archivo.nombreArchivo() + "\"")
+                    .contentType(MediaType.parseMediaType(archivo.contentType()))
+                    .body(archivo.bytes());
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al generar comprobante PDF" : e.getMessage();
             HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);

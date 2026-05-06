@@ -85,10 +85,12 @@ public class SunatBajaService {
     private final SunatErrorClassifierService sunatErrorClassifierService;
     private final SunatJobService sunatJobService;
     private final StockMovimientoService stockMovimientoService;
+    private final SunatConfigValidationService sunatConfigValidationService;
 
     @Transactional
     public VentaAnulacionResponse solicitarBaja(Venta venta, String motivo, Usuario usuarioAutenticado) {
         validarVentaDisponibleParaBaja(venta);
+        validarCertificadoSunatParaOperacion(venta);
 
         SunatBajaTipo tipoEnvio = resolverTipoEnvio(venta);
         validarDatosParaEnvioSunat(venta, tipoEnvio);
@@ -131,6 +133,7 @@ public class SunatBajaService {
     @Transactional
     public NotaCreditoBajaResponse solicitarBaja(NotaCredito notaCredito, String motivo, Usuario usuarioAutenticado) {
         validarNotaCreditoDisponibleParaBaja(notaCredito);
+        validarCertificadoSunatParaOperacion(notaCredito);
 
         SunatBajaTipo tipoEnvio = resolverTipoEnvio(notaCredito);
         validarDatosParaEnvioSunat(notaCredito, tipoEnvio);
@@ -858,6 +861,24 @@ public class SunatBajaService {
                 siguienteIdLote == null ? 1 : siguienteIdLote));
         lote.setEstado(SunatBajaEstado.PENDIENTE_ENVIO);
         return sunatBajaLoteRepository.save(lote);
+    }
+
+    private void validarCertificadoSunatParaOperacion(Venta venta) {
+        Integer idEmpresa = venta != null
+                && venta.getSucursal() != null
+                && venta.getSucursal().getEmpresa() != null
+                        ? venta.getSucursal().getEmpresa().getIdEmpresa()
+                        : null;
+        sunatConfigValidationService.validarCertificadoParaOperacionSunat(idEmpresa);
+    }
+
+    private void validarCertificadoSunatParaOperacion(NotaCredito notaCredito) {
+        Integer idEmpresa = notaCredito != null
+                && notaCredito.getSucursal() != null
+                && notaCredito.getSucursal().getEmpresa() != null
+                        ? notaCredito.getSucursal().getEmpresa().getIdEmpresa()
+                        : null;
+        sunatConfigValidationService.validarCertificadoParaOperacionSunat(idEmpresa);
     }
 
     private SunatBajaTipo resolverTipoEnvio(Venta venta) {

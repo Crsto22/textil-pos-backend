@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Instant;
 
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
@@ -97,6 +98,17 @@ public class S3StorageService {
             return input.readAllBytes();
         } catch (IOException e) {
             throw new RuntimeException("No se pudo leer el archivo almacenado");
+        }
+    }
+
+    public Instant getLastModified(String storedReference) {
+        if (!isManagedLocalReference(storedReference)) {
+            return null;
+        }
+        try {
+            return Files.getLastModifiedTime(resolveLocalPath(storedReference.trim())).toInstant();
+        } catch (IOException e) {
+            return null;
         }
     }
 

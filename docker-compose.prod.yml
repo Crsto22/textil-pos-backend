@@ -7,7 +7,7 @@ services:
   mysql:
     restart: always
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD requerido}
     volumes:
       - mysql_data_prod:/var/lib/mysql
     # Sin puerto expuesto públicamente
@@ -19,6 +19,11 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: prod
       SERVER_SERVLET_CONTEXT_PATH: /api
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
+      COOKIE_SAME_SITE: ${COOKIE_SAME_SITE:-Lax}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?CORS_ALLOWED_ORIGINS requerido}
+      JPA_SHOW_SQL: ${JPA_SHOW_SQL:-false}
     # Puerto interno, usa reverse proxy en frente
     expose:
       - "8080"

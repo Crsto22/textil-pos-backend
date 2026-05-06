@@ -25,11 +25,13 @@ import com.sistemapos.sistematextil.config.CookieUtil;
 import com.sistemapos.sistematextil.services.AuthenticationService;
 import com.sistemapos.sistematextil.services.AuthenticationService.LoginResult;
 import com.sistemapos.sistematextil.services.AuthenticationService.RefreshResult;
+import com.sistemapos.sistematextil.services.LoginAttemptService;
 import com.sistemapos.sistematextil.util.auth.AuthenticationRequest;
 import com.sistemapos.sistematextil.util.auth.ChangePasswordRequest;
 import com.sistemapos.sistematextil.util.auth.RegisterRequest;
 
 import jakarta.validation.Valid;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 
 @RestController
@@ -40,6 +42,7 @@ public class AuthenticationController {
 
     private final AuthenticationService authenticationService;
     private final CookieUtil cookieUtil;
+    private final LoginAttemptService loginAttemptService;
 
     @PostMapping("/registro")
     public ResponseEntity<?> registrar(@Valid @RequestBody RegisterRequest request) {
@@ -53,21 +56,33 @@ public class AuthenticationController {
     }
 
     @PostMapping("/autenticarse")
-    public ResponseEntity<?> autenticarse(@Valid @RequestBody AuthenticationRequest request) {
+    public ResponseEntity<?> autenticarse(
+            @Valid @RequestBody AuthenticationRequest request,
+            HttpServletRequest servletRequest) {
+        String clientIp = resolverClientIp(servletRequest);
         try {
+            loginAttemptService.validarDisponible(request.email(), clientIp);
             LoginResult result = authenticationService.authenticate(request);
+            loginAttemptService.registrarExito(request.email(), clientIp);
 
             return ResponseEntity.ok()
                     .header(HttpHeaders.SET_COOKIE, cookieUtil.createRefreshTokenCookie(result.refreshToken()).toString())
                     .body(result.response());
 
         } catch (DisabledException e) {
+            loginAttemptService.registrarFallo(request.email(), clientIp);
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body(Map.of("message", "Usuario inactivo"));
         } catch (BadCredentialsException e) {
+            loginAttemptService.registrarFallo(request.email(), clientIp);
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body(Map.of("message", "Correo o contrasena incorrectos"));
         } catch (RuntimeException e) {
+            if (esBloqueoPorIntentos(e)) {
+                return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                        .body(Map.of("message", e.getMessage()));
+            }
+            loginAttemptService.registrarFallo(request.email(), clientIp);
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(Map.of("message", e.getMessage() == null ? "Acceso denegado" : e.getMessage()));
         } catch (Exception e) {
@@ -99,7 +114,8 @@ public class AuthenticationController {
     }
 
     @PostMapping("/logout")
-    public ResponseEntity<?> logout() {
+    public ResponseEntity<?> logout(Authentication authentication) {
+        authenticationService.logout(obtenerCorreoAutenticado(authentication));
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, cookieUtil.deleteRefreshTokenCookie().toString())
                 .body(Map.of("ok", true));
@@ -165,6 +181,19 @@ public class AuthenticationController {
             throw new RuntimeException("No autenticado");
         }
         return authentication.getName();
+    }
+
+    private String resolverClientIp(HttpServletRequest request) {
+        String forwardedFor = request.getHeader("X-Forwarded-For");
+        if (forwardedFor != null && !forwardedFor.isBlank()) {
+            return forwardedFor.split(",")[0].trim();
+        }
+        return request.getRemoteAddr();
+    }
+
+    private boolean esBloqueoPorIntentos(RuntimeException e) {
+        String message = e.getMessage();
+        return message != null && message.toLowerCase().contains("demasiados intentos");
     }
 
     private HttpStatus resolverStatus(String message, HttpStatus defaultStatus) {

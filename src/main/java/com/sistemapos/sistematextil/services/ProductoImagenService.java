@@ -68,24 +68,18 @@ public class ProductoImagenService {
         }
 
         List<ProductoImagenUploadItem> response = new ArrayList<>();
+        List<UploadPair> uploadsRealizados = new ArrayList<>();
         int orden = 1;
-        for (MultipartFile file : files) {
-            validarImagen(file);
-            String baseKey = construirBaseKey(productoId, colorId) + UUID.randomUUID();
-
-            try {
-                byte[] original = file.getBytes();
-                byte[] fullWebp = convertirAWebp(original, MAX_WIDTH, MAX_HEIGHT, CALIDAD_WEBP);
-                byte[] thumbWebp = convertirAWebp(original, THUMB_WIDTH, THUMB_HEIGHT, CALIDAD_THUMB);
-
-                String url = s3StorageService.upload(fullWebp, baseKey + ".webp", "image/webp");
-                String urlThumb = s3StorageService.upload(thumbWebp, baseKey + "-thumb.webp", "image/webp");
-
-                response.add(new ProductoImagenUploadItem(url, urlThumb, orden));
+        try {
+            for (MultipartFile file : files) {
+                UploadPair upload = subirImagen(file, productoId, colorId);
+                uploadsRealizados.add(upload);
+                response.add(new ProductoImagenUploadItem(upload.url(), upload.urlThumb(), orden));
                 orden++;
-            } catch (IOException e) {
-                throw new RuntimeException("No se pudo procesar la imagen enviada");
             }
+        } catch (RuntimeException e) {
+            eliminarUploads(uploadsRealizados);
+            throw e;
         }
 
         return new ProductoImagenUploadResponse(colorId, response);
@@ -123,30 +117,38 @@ public class ProductoImagenService {
         boolean asignarPrincipal = existentes.stream().noneMatch(imagen -> Boolean.TRUE.equals(imagen.getEsPrincipal()));
 
         List<ProductoColorImagen> nuevas = new ArrayList<>();
+        List<UploadPair> uploadsRealizados = new ArrayList<>();
         int ordenActual = siguienteOrden;
-        for (MultipartFile file : files) {
-            UploadPair upload = subirImagen(file, productoId, colorId);
-            ProductoColorImagen imagen = new ProductoColorImagen();
-            imagen.setProducto(variante.getProducto());
-            imagen.setColor(color);
-            imagen.setUrl(upload.url());
-            imagen.setUrlThumb(upload.urlThumb());
-            imagen.setOrden(ordenActual++);
-            imagen.setEsPrincipal(asignarPrincipal);
-            imagen.setEstado("ACTIVO");
-            nuevas.add(imagen);
-            if (asignarPrincipal) {
-                asignarPrincipal = false;
-            }
-        }
+        try {
+            for (MultipartFile file : files) {
+                UploadPair upload = subirImagen(file, productoId, colorId);
+                uploadsRealizados.add(upload);
 
-        List<ProductoColorImagen> guardadas = productoColorImagenRepository.saveAll(nuevas);
-        return new ProductoVarianteImagenUploadResponse(
-                idProductoVariante,
-                productoId,
-                colorId,
-                construirGrupoImagenKey(productoId, colorId),
-                guardadas.stream().map(this::toVarianteUploadItem).toList());
+                ProductoColorImagen imagen = new ProductoColorImagen();
+                imagen.setProducto(variante.getProducto());
+                imagen.setColor(color);
+                imagen.setUrl(upload.url());
+                imagen.setUrlThumb(upload.urlThumb());
+                imagen.setOrden(ordenActual++);
+                imagen.setEsPrincipal(asignarPrincipal);
+                imagen.setEstado("ACTIVO");
+                nuevas.add(imagen);
+                if (asignarPrincipal) {
+                    asignarPrincipal = false;
+                }
+            }
+
+            List<ProductoColorImagen> guardadas = productoColorImagenRepository.saveAll(nuevas);
+            return new ProductoVarianteImagenUploadResponse(
+                    idProductoVariante,
+                    productoId,
+                    colorId,
+                    construirGrupoImagenKey(productoId, colorId),
+                    guardadas.stream().map(this::toVarianteUploadItem).toList());
+        } catch (RuntimeException e) {
+            eliminarUploads(uploadsRealizados);
+            throw e;
+        }
     }
 
     @Transactional
@@ -246,50 +248,31 @@ public class ProductoImagenService {
 
         String oldUrl = imagen.getUrl();
         String oldUrlThumb = imagen.getUrlThumb();
-        String baseKey = construirBaseKey(productoId, colorId) + UUID.randomUUID();
+        UploadPair nuevaImagen = subirImagen(file, productoId, colorId);
 
-        String nuevaUrl;
-        String nuevaUrlThumb;
+        ProductoColorImagen actualizada;
         try {
-            byte[] original = file.getBytes();
-            byte[] fullWebp = convertirAWebp(original, MAX_WIDTH, MAX_HEIGHT, CALIDAD_WEBP);
-            byte[] thumbWebp = convertirAWebp(original, THUMB_WIDTH, THUMB_HEIGHT, CALIDAD_THUMB);
-
-            nuevaUrl = s3StorageService.upload(fullWebp, baseKey + ".webp", "image/webp");
-            nuevaUrlThumb = s3StorageService.upload(thumbWebp, baseKey + "-thumb.webp", "image/webp");
-        } catch (IOException e) {
-            throw new RuntimeException("No se pudo procesar la imagen enviada");
-        }
-
-        imagen.setUrl(nuevaUrl);
-        imagen.setUrlThumb(nuevaUrlThumb);
-        if (orden != null) {
-            imagen.setOrden(orden);
-        }
-        if (esPrincipal != null) {
-            imagen.setEsPrincipal(esPrincipal);
-        }
-
-        if (Boolean.TRUE.equals(imagen.getEsPrincipal()) && productoId != null) {
-            desmarcarImagenesPrincipalesDelMismoColor(productoId, colorId, idColorImagen);
-        }
-
-        ProductoColorImagen actualizada = productoColorImagenRepository.save(imagen);
-
-        if (oldUrl != null && !oldUrl.equals(nuevaUrl)) {
-            try {
-                s3StorageService.deleteByUrl(oldUrl);
-            } catch (RuntimeException e) {
-                log.warn("No se pudo eliminar imagen anterior del almacenamiento administrado: {}", oldUrl, e);
+            imagen.setUrl(nuevaImagen.url());
+            imagen.setUrlThumb(nuevaImagen.urlThumb());
+            if (orden != null) {
+                imagen.setOrden(orden);
             }
-        }
-        if (oldUrlThumb != null && !oldUrlThumb.equals(nuevaUrlThumb)) {
-            try {
-                s3StorageService.deleteByUrl(oldUrlThumb);
-            } catch (RuntimeException e) {
-                log.warn("No se pudo eliminar thumbnail anterior del almacenamiento administrado: {}", oldUrlThumb, e);
+            if (esPrincipal != null) {
+                imagen.setEsPrincipal(esPrincipal);
             }
+
+            if (Boolean.TRUE.equals(imagen.getEsPrincipal()) && productoId != null) {
+                desmarcarImagenesPrincipalesDelMismoColor(productoId, colorId, idColorImagen);
+            }
+
+            actualizada = productoColorImagenRepository.save(imagen);
+        } catch (RuntimeException e) {
+            eliminarUpload(nuevaImagen);
+            throw e;
         }
+
+        eliminarSiCambio(oldUrl, nuevaImagen.url(), "imagen anterior");
+        eliminarSiCambio(oldUrlThumb, nuevaImagen.urlThumb(), "thumbnail anterior");
 
         return new ProductoImagenEditResponse(
                 actualizada.getIdColorImagen(),
@@ -315,16 +298,25 @@ public class ProductoImagenService {
     private UploadPair subirImagen(MultipartFile file, Integer productoId, Integer colorId) {
         validarImagen(file);
         String baseKey = construirBaseKey(productoId, colorId) + UUID.randomUUID();
+        String url = null;
         try {
             byte[] original = file.getBytes();
             byte[] fullWebp = convertirAWebp(original, MAX_WIDTH, MAX_HEIGHT, CALIDAD_WEBP);
             byte[] thumbWebp = convertirAWebp(original, THUMB_WIDTH, THUMB_HEIGHT, CALIDAD_THUMB);
 
-            String url = s3StorageService.upload(fullWebp, baseKey + ".webp", "image/webp");
+            url = s3StorageService.upload(fullWebp, baseKey + ".webp", "image/webp");
             String urlThumb = s3StorageService.upload(thumbWebp, baseKey + "-thumb.webp", "image/webp");
             return new UploadPair(url, urlThumb);
         } catch (IOException e) {
+            if (url != null) {
+                eliminarDesdeStorage(url);
+            }
             throw new RuntimeException("No se pudo procesar la imagen enviada");
+        } catch (RuntimeException e) {
+            if (url != null) {
+                eliminarDesdeStorage(url);
+            }
+            throw e;
         }
     }
 
@@ -422,6 +414,34 @@ public class ProductoImagenService {
             s3StorageService.deleteByUrl(url);
         } catch (RuntimeException e) {
             log.warn("No se pudo eliminar imagen del almacenamiento administrado: {}", url, e);
+        }
+    }
+
+    private void eliminarUpload(UploadPair upload) {
+        if (upload == null) {
+            return;
+        }
+        eliminarDesdeStorage(upload.url());
+        eliminarDesdeStorage(upload.urlThumb());
+    }
+
+    private void eliminarUploads(List<UploadPair> uploads) {
+        if (uploads == null || uploads.isEmpty()) {
+            return;
+        }
+        for (UploadPair upload : uploads) {
+            eliminarUpload(upload);
+        }
+    }
+
+    private void eliminarSiCambio(String anterior, String nuevo, String descripcion) {
+        if (anterior == null || anterior.isBlank() || anterior.equals(nuevo)) {
+            return;
+        }
+        try {
+            s3StorageService.deleteByUrl(anterior);
+        } catch (RuntimeException e) {
+            log.warn("No se pudo eliminar {} del almacenamiento administrado: {}", descripcion, anterior, e);
         }
     }
 

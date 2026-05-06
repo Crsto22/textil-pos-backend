@@ -17,10 +17,12 @@ import com.sistemapos.sistematextil.repositories.EmpresaRepository;
 import com.sistemapos.sistematextil.util.empresa.EmpresaPublicoResponse;
 
 import lombok.AllArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import net.coobird.thumbnailator.Thumbnails;
 
 @Service
 @AllArgsConstructor
+@Slf4j
 public class EmpresaService {
 
     private final EmpresaRepository empresaRepository;
@@ -60,11 +62,13 @@ public class EmpresaService {
     public Empresa actualizar(Integer idEmpresa, Empresa empresa) {
         Empresa original = empresaRepository.findById(idEmpresa)
                 .orElseThrow(() -> new RuntimeException("La empresa no existe"));
+        String logoAnteriorUrl = original.getLogoUrl();
 
         normalizarEmpresa(empresa);
         empresa.setIdEmpresa(idEmpresa);
         empresa.setFechaCreacion(original.getFechaCreacion() != null ? original.getFechaCreacion() : LocalDateTime.now());
         empresa.setDeletedAt(original.getDeletedAt());
+        empresa.setLogoUrl(normalizarTextoOpcional(empresa.getLogoUrl()));
 
         if (esTextoVacio(empresa.getLogoUrl())) {
             empresa.setLogoUrl(original.getLogoUrl());
@@ -76,14 +80,16 @@ public class EmpresaService {
             empresa.setActivo(original.getActivo() != null ? original.getActivo() : Boolean.TRUE);
         }
 
-        return empresaRepository.save(empresa);
+        Empresa actualizada = empresaRepository.save(empresa);
+        eliminarLogoAnteriorSiCambio(logoAnteriorUrl, actualizada.getLogoUrl());
+        return actualizada;
     }
 
     public void eliminar(Integer idEmpresa) {
-        if (!empresaRepository.existsById(idEmpresa)) {
-            throw new RuntimeException("La empresa " + idEmpresa + " no existe");
-        }
+        Empresa empresa = empresaRepository.findById(idEmpresa)
+                .orElseThrow(() -> new RuntimeException("La empresa " + idEmpresa + " no existe"));
         empresaRepository.deleteById(idEmpresa);
+        eliminarLogoSilencioso(empresa.getLogoUrl());
     }
 
     public Empresa subirLogo(Integer idEmpresa, MultipartFile file) throws IOException {
@@ -101,13 +107,7 @@ public class EmpresaService {
 
         try {
             Empresa guardada = empresaRepository.save(empresa);
-
-            if (logoAnteriorUrl != null
-                    && !logoAnteriorUrl.isBlank()
-                    && !logoAnteriorUrl.equals(url)) {
-                s3StorageService.deleteByUrl(logoAnteriorUrl);
-            }
-
+            eliminarLogoAnteriorSiCambio(logoAnteriorUrl, url);
             return guardada;
         } catch (RuntimeException e) {
             s3StorageService.deleteByUrl(url);
@@ -151,6 +151,24 @@ public class EmpresaService {
 
     private boolean esTextoVacio(String valor) {
         return valor == null || valor.trim().isEmpty();
+    }
+
+    private void eliminarLogoAnteriorSiCambio(String logoAnteriorUrl, String nuevoLogoUrl) {
+        if (logoAnteriorUrl == null || logoAnteriorUrl.isBlank() || logoAnteriorUrl.equals(nuevoLogoUrl)) {
+            return;
+        }
+        eliminarLogoSilencioso(logoAnteriorUrl);
+    }
+
+    private void eliminarLogoSilencioso(String logoUrl) {
+        if (logoUrl == null || logoUrl.isBlank()) {
+            return;
+        }
+        try {
+            s3StorageService.deleteByUrl(logoUrl);
+        } catch (RuntimeException e) {
+            log.warn("No se pudo eliminar logo del almacenamiento administrado: {}", logoUrl, e);
+        }
     }
 
     private byte[] convertirAWebp(byte[] input) throws IOException {

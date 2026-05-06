@@ -288,7 +288,10 @@ public class ProductoVarianteService {
     }
 
     @Transactional
-    public ProductoVariante insertar(ProductoVariante variante) {
+    public ProductoVariante insertar(ProductoVariante variante, String correoUsuarioAutenticado) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolPermitido(usuarioAutenticado);
+
         if (variante.getProducto() == null || variante.getProducto().getIdProducto() == null) {
             throw new RuntimeException("Ingrese producto.idProducto");
         }
@@ -301,6 +304,10 @@ public class ProductoVarianteService {
         if (variante.getColor() == null || variante.getColor().getIdColor() == null) {
             throw new RuntimeException("Ingrese color.idColor");
         }
+        usuarioSucursalAccessService.validarSucursalPermitida(
+                usuarioAutenticado,
+                variante.getSucursal().getIdSucursal(),
+                "No tiene permisos para crear variantes en otra sucursal");
 
         Producto producto = productoService.obtenerPorId(variante.getProducto().getIdProducto());
         Talla talla = tallaService.obtenerPorId(variante.getTalla().getIdTalla());
@@ -374,7 +381,7 @@ public class ProductoVarianteService {
         destino.setPrecioOferta(precioOferta);
         destino.setOfertaInicio(ofertaInicio);
         destino.setOfertaFin(ofertaFin);
-        destino.setUsuarioCreacion(null);
+        destino.setUsuarioCreacion(precioOferta != null ? usuarioAutenticado : null);
         destino.setStock(variante.getStock());
         destino.setEstado(resolverEstadoVarianteSegunStock(variante.getStock()));
         destino.setActivo(VALOR_ACTIVO);
@@ -387,18 +394,20 @@ public class ProductoVarianteService {
                 .orElseThrow(() -> new RuntimeException("Error al recuperar la variante guardada"));
     }
 
-    public ProductoVariante actualizarStock(Integer id, Integer nuevoStock) {
-        ProductoVariante variante = repository.findByIdProductoVarianteAndDeletedAtIsNull(id)
-                .orElseThrow(() -> new RuntimeException("Variante no encontrada"));
+    public ProductoVariante actualizarStock(Integer id, Integer nuevoStock, String correoUsuarioAutenticado) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolPermitido(usuarioAutenticado);
+        ProductoVariante variante = obtenerVarianteConAlcance(id, usuarioAutenticado);
 
         variante.setStock(nuevoStock);
         variante.setEstado(resolverEstadoVarianteSegunStock(nuevoStock));
         return repository.save(variante);
     }
 
-    public ProductoVariante actualizarPrecio(Integer id, Double nuevoPrecio) {
-        ProductoVariante variante = repository.findByIdProductoVarianteAndDeletedAtIsNull(id)
-                .orElseThrow(() -> new RuntimeException("Variante no encontrada"));
+    public ProductoVariante actualizarPrecio(Integer id, Double nuevoPrecio, String correoUsuarioAutenticado) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolPermitido(usuarioAutenticado);
+        ProductoVariante variante = obtenerVarianteConAlcance(id, usuarioAutenticado);
 
         if (nuevoPrecio == null || nuevoPrecio < 0) {
             throw new RuntimeException("El precio no puede ser negativo");
@@ -653,9 +662,10 @@ public class ProductoVarianteService {
                 oferta)));
     }
 
-    public void eliminar(Integer id) {
-        ProductoVariante variante = repository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Variante con ID " + id + " no encontrada"));
+    public void eliminar(Integer id, String correoUsuarioAutenticado) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolPermitido(usuarioAutenticado);
+        ProductoVariante variante = obtenerVarianteConAlcance(id, usuarioAutenticado);
 
         if (variante.getDeletedAt() != null) {
             throw new RuntimeException("Variante con ID " + id + " ya se encuentra eliminada");

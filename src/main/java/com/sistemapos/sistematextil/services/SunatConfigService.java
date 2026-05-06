@@ -1,5 +1,7 @@
 package com.sistemapos.sistematextil.services;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.file.Path;
 import java.security.KeyStore;
 import java.security.cert.Certificate;
@@ -42,6 +44,7 @@ public class SunatConfigService {
             "https://gre-test.nubefact.com/v1/contribuyente/gem/comprobantes";
     private static final String PRODUCTION_GRE_CPE_BASE_URL =
             "https://api-cpe.sunat.gob.pe/v1/contribuyente/gem/comprobantes";
+    private static final BigDecimal CIEN = BigDecimal.valueOf(100);
 
     private final SunatConfigRepository sunatConfigRepository;
     private final EmpresaRepository empresaRepository;
@@ -101,6 +104,7 @@ public class SunatConfigService {
         }
 
         config.setClientId(normalizarTextoOpcional(request.clientId()));
+        config.setIgvPorcentaje(normalizarIgvPorcentaje(request.igvPorcentaje()));
 
         String clientSecret = normalizarTextoOpcional(request.clientSecret());
         if (clientSecret != null) {
@@ -216,6 +220,7 @@ public class SunatConfigService {
                 tieneValor(config.getCertificadoPassword()),
                 tieneValor(config.getClientId()),
                 tieneValor(config.getClientSecret()),
+                config.getIgvPorcentaje(),
                 config.getActivo(),
                 sunatProperties.normalizedMode(),
                 config.getCreatedAt(),
@@ -409,6 +414,19 @@ public class SunatConfigService {
         }
         String normalized = value.trim();
         return normalized.isEmpty() ? null : normalized;
+    }
+
+    private BigDecimal normalizarIgvPorcentaje(Double value) {
+        BigDecimal igv = value == null
+                ? BigDecimal.valueOf(18)
+                : BigDecimal.valueOf(value);
+        if (igv.compareTo(BigDecimal.ZERO) < 0) {
+            throw new RuntimeException("igvPorcentaje no puede ser negativo");
+        }
+        if (igv.compareTo(CIEN) > 0) {
+            throw new RuntimeException("igvPorcentaje no puede ser mayor a 100");
+        }
+        return igv.setScale(2, RoundingMode.HALF_UP);
     }
 
     private boolean tieneValor(String value) {

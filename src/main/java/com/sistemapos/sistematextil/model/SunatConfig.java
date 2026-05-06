@@ -1,5 +1,6 @@
 package com.sistemapos.sistematextil.model;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 import com.sistemapos.sistematextil.model.converter.EstadoActivoConverter;
@@ -71,6 +72,9 @@ public class SunatConfig {
     @Column(name = "client_secret", length = 255)
     private String clientSecret;
 
+    @Column(name = "igv_porcentaje", nullable = false, precision = 5, scale = 2)
+    private BigDecimal igvPorcentaje;
+
     @Convert(converter = EstadoActivoConverter.class)
     @Column(name = "activo", nullable = false)
     private String activo;
@@ -93,6 +97,9 @@ public class SunatConfig {
         this.updatedAt = now;
         if (this.ambiente == null || this.ambiente.isBlank()) {
             this.ambiente = "BETA";
+        }
+        if (this.igvPorcentaje == null) {
+            this.igvPorcentaje = BigDecimal.valueOf(18).setScale(2);
         }
         if (this.activo == null || this.activo.isBlank()) {
             this.activo = "ACTIVO";

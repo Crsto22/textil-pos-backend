@@ -76,6 +76,12 @@ public class Cotizacion {
     @Column(length = 500)
     private String observacion;
 
+    @Column(name = "sunat_pdf_nombre", length = 180)
+    private String sunatPdfNombre;
+
+    @Column(name = "sunat_pdf_key", length = 600)
+    private String sunatPdfKey;
+
     @Convert(converter = EstadoActivoConverter.class)
     @Column(name = "activo", nullable = false)
     private String activo;

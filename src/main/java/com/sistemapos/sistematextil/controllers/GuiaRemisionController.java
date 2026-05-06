@@ -19,7 +19,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.sistemapos.sistematextil.services.GuiaRemisionPdfService;
 import com.sistemapos.sistematextil.services.GuiaRemisionService;
 import com.sistemapos.sistematextil.util.guiaremision.GuiaRemisionCreateRequest;
 import com.sistemapos.sistematextil.util.guiaremision.GuiaRemisionResponse;
@@ -40,7 +39,6 @@ import lombok.AllArgsConstructor;
 public class GuiaRemisionController {
 
     private final GuiaRemisionService guiaRemisionService;
-    private final GuiaRemisionPdfService guiaRemisionPdfService;
 
     @GetMapping
     public ResponseEntity<?> listar(
@@ -163,13 +161,12 @@ public class GuiaRemisionController {
             Authentication authentication,
             @PathVariable Integer id) {
         try {
-            obtenerCorreoAutenticado(authentication);
-            byte[] pdf = guiaRemisionPdfService.generarPdfA4(id);
-            String filename = "guia-remision-" + id + ".pdf";
+            GuiaRemisionService.ArchivoDescargable archivo = guiaRemisionService
+                    .descargarPdf(id, obtenerCorreoAutenticado(authentication));
             return ResponseEntity.ok()
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
-                    .contentType(MediaType.APPLICATION_PDF)
-                    .body(pdf);
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + archivo.nombreArchivo() + "\"")
+                    .contentType(MediaType.parseMediaType(archivo.contentType()))
+                    .body(archivo.bytes());
         } catch (RuntimeException e) {
             return error(e, "Error al generar PDF de guia de remision", HttpStatus.BAD_REQUEST);
         }

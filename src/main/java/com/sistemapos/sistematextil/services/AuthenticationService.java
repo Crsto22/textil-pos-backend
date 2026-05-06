@@ -94,6 +94,7 @@ public class AuthenticationService {
 
         Usuario user = buscarUsuarioActivoPorCorreo(request.email());
         turnoService.validarAccesoPorTurno(user.getTurno());
+        rotarRefreshTokenVersion(user);
         CustomUser customUser = new CustomUser(user);
 
         String accessToken = jwtService.generateAccessToken(customUser);
@@ -111,7 +112,13 @@ public class AuthenticationService {
         if (!jwtService.isTokenValid(refreshToken, customUser)) {
             throw new RuntimeException("Refresh token invalido o expirado");
         }
+        Integer tokenVersion = jwtService.extractRefreshTokenVersion(refreshToken);
+        Integer currentVersion = user.getRefreshTokenVersion() == null ? 0 : user.getRefreshTokenVersion();
+        if (tokenVersion == null || !tokenVersion.equals(currentVersion)) {
+            throw new RuntimeException("Refresh token invalido o expirado");
+        }
 
+        rotarRefreshTokenVersion(user);
         String newAccessToken = jwtService.generateAccessToken(customUser);
         String newRefreshToken = jwtService.generateRefreshToken(customUser);
 
@@ -134,8 +141,15 @@ public class AuthenticationService {
         }
 
         user.setPassword(passwordEncoder.encode(request.passwordNueva()));
+        incrementarRefreshTokenVersion(user);
         usuarioRepository.save(user);
         return "Contrasena actualizada exitosamente";
+    }
+
+    public void logout(String email) {
+        Usuario user = buscarUsuarioActivoPorCorreo(email);
+        incrementarRefreshTokenVersion(user);
+        usuarioRepository.save(user);
     }
 
     @Transactional
@@ -203,6 +217,16 @@ public class AuthenticationService {
     private Usuario buscarUsuarioActivoPorCorreo(String email) {
         return usuarioRepository.findByCorreoAndDeletedAtIsNull(email)
                 .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
+    }
+
+    private void rotarRefreshTokenVersion(Usuario user) {
+        incrementarRefreshTokenVersion(user);
+        usuarioRepository.save(user);
+    }
+
+    private void incrementarRefreshTokenVersion(Usuario user) {
+        int current = user.getRefreshTokenVersion() == null ? 0 : user.getRefreshTokenVersion();
+        user.setRefreshTokenVersion(current + 1);
     }
 
     private AuthenticationResponse toAuthenticationResponse(String accessToken, Usuario user) {

@@ -156,6 +156,7 @@ public class NotaCreditoService {
     private final SunatProperties sunatProperties;
     private final S3StorageService s3StorageService;
     private final UsuarioSucursalAccessService usuarioSucursalAccessService;
+    private final SunatConfigValidationService sunatConfigValidationService;
 
     @Value("${application.pagination.default-size:10}")
     private int defaultPageSize;
@@ -332,6 +333,34 @@ public class NotaCreditoService {
         NotaCredito notaCredito = obtenerNotaCreditoConAlcance(idNotaCredito, usuarioAutenticado);
         List<NotaCreditoDetalle> detalles = notaCreditoDetalleRepository
                 .findByNotaCredito_IdNotaCreditoAndDeletedAtIsNull(notaCredito.getIdNotaCredito());
+        return generarComprobantePdfA4(notaCredito, detalles);
+    }
+
+    public VentaService.ArchivoDescargable descargarComprobantePdf(
+            Integer idNotaCredito,
+            String correoUsuarioAutenticado) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolLecturaNotaCredito(usuarioAutenticado);
+
+        NotaCredito notaCredito = obtenerNotaCreditoConAlcance(idNotaCredito, usuarioAutenticado);
+        List<NotaCreditoDetalle> detalles = notaCreditoDetalleRepository
+                .findByNotaCredito_IdNotaCreditoAndDeletedAtIsNull(notaCredito.getIdNotaCredito());
+        String nombreArchivo = construirNombreArchivoPdfNotaCredito(notaCredito);
+
+        if (!sunatDocumentStorageService.isStoredDocumentUpToDate(notaCredito.getSunatPdfKey(), notaCredito.getUpdatedAt())) {
+            byte[] pdfGenerado = generarComprobantePdfA4(notaCredito, detalles);
+            SunatDocumentStorageService.StoredDocument stored = sunatDocumentStorageService
+                    .storePdf(notaCredito, nombreArchivo, pdfGenerado);
+            notaCredito.setSunatPdfNombre(stored.fileName());
+            notaCredito.setSunatPdfKey(stored.key());
+            notaCreditoRepository.save(notaCredito);
+        }
+
+        byte[] contenido = sunatDocumentStorageService.download(notaCredito.getSunatPdfKey());
+        return new VentaService.ArchivoDescargable(nombreArchivo, MediaType.APPLICATION_PDF_VALUE, contenido);
+    }
+
+    private byte[] generarComprobantePdfA4(NotaCredito notaCredito, List<NotaCreditoDetalle> detalles) {
         if (detalles.isEmpty()) {
             throw new RuntimeException("La nota de credito no tiene detalles para generar el PDF");
         }
@@ -1260,9 +1289,13 @@ public class NotaCreditoService {
         return valor.stripTrailingZeros().toPlainString();
     }
 
+    private String construirNombreArchivoPdfNotaCredito(NotaCredito notaCredito) {
+        return SunatComprobanteHelper.numeroComprobante(notaCredito) + ".pdf";
+    }
+
     private String descripcionDetalleParaPdf(NotaCreditoDetalle detalle) {
         if (detalle.getDescripcion() != null && !detalle.getDescripcion().isBlank()) {
-            return detalle.getDescripcion().trim();
+            return textoMayusculasPdf(detalle.getDescripcion());
         }
         ProductoVariante variante = detalle.getProductoVariante();
         if (variante == null) {
@@ -1285,12 +1318,12 @@ public class NotaCreditoService {
             }
             sb.append(variante.getTalla().getNombre().trim());
         }
-        return sb.isEmpty() ? "ITEM" : sb.toString();
+        return sb.isEmpty() ? "ITEM" : textoMayusculasPdf(sb.toString());
     }
 
     private String descripcionProductoDetalleParaPdf(NotaCreditoDetalle detalle) {
         if (detalle.getDescripcion() != null && !detalle.getDescripcion().isBlank()) {
-            return detalle.getDescripcion().trim();
+            return textoMayusculasPdf(detalle.getDescripcion());
         }
         return descripcionDetalleParaPdf(detalle);
     }
@@ -1298,9 +1331,13 @@ public class NotaCreditoService {
     private String codigoDetalleParaPdf(NotaCreditoDetalle detalle) {
         ProductoVariante variante = detalle.getProductoVariante();
         if (variante != null && variante.getSku() != null && !variante.getSku().isBlank()) {
-            return variante.getSku().trim();
+            return textoMayusculasPdf(variante.getSku());
         }
         return "-";
+    }
+
+    private String textoMayusculasPdf(String texto) {
+        return valorTexto(texto).toUpperCase(Locale.ROOT);
     }
 
     private String unidadDetalleParaPdf(NotaCreditoDetalle detalle) {
@@ -1520,6 +1557,7 @@ public class NotaCreditoService {
         if (lineas.isEmpty()) {
             throw new RuntimeException("La nota de credito no tiene detalles para emitir");
         }
+        validarCertificadoSunatParaNotaCredito(venta);
 
         NumeroComprobanteNotaCredito numero = asignarNumeroNotaCredito(venta, serieSolicitada);
         NotaCredito notaCredito = new NotaCredito();
@@ -1569,6 +1607,15 @@ public class NotaCreditoService {
         notaCreditoDetalleRepository.saveAll(detallesNotaCredito);
 
         return new NotaCreditoPreparada(notaCreditoGuardada.getIdNotaCredito(), notaCreditoGuardada.getSunatEstado());
+    }
+
+    private void validarCertificadoSunatParaNotaCredito(Venta venta) {
+        Integer idEmpresa = venta != null
+                && venta.getSucursal() != null
+                && venta.getSucursal().getEmpresa() != null
+                        ? venta.getSucursal().getEmpresa().getIdEmpresa()
+                        : null;
+        sunatConfigValidationService.validarCertificadoParaNotaCredito(idEmpresa);
     }
 
     private VentaAnulacionResponse finalizarAnulacionConNotaCredito(

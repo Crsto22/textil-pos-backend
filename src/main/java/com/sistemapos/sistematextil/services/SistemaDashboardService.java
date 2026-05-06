@@ -4,12 +4,17 @@ import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.file.FileStore;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.sql.Timestamp;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -32,6 +37,7 @@ import com.sistemapos.sistematextil.util.dashboard.DashboardSistemaResponse.Stor
 import com.sistemapos.sistematextil.util.dashboard.DashboardSistemaResponse.StorageResumen;
 import com.sistemapos.sistematextil.util.dashboard.DashboardSistemaResponse.SunatEstadoItem;
 import com.sistemapos.sistematextil.util.dashboard.DashboardSistemaResponse.SunatResumen;
+import com.sistemapos.sistematextil.util.dashboard.DashboardSistemaResponse.SunatServicioEstado;
 import com.sistemapos.sistematextil.util.dashboard.DashboardSistemaResponse.SunatUltimoJob;
 import com.sistemapos.sistematextil.util.dashboard.DashboardSistemaResponse.UsuarioRolItem;
 import com.sistemapos.sistematextil.util.dashboard.DashboardSistemaResponse.UsuariosResumen;
@@ -44,12 +50,28 @@ public class SistemaDashboardService {
 
     private static final List<String> STORAGE_CARPETAS_BASE = List.of("empresa", "productos", "sunat", "usuarios");
     private static final BigDecimal CIEN = BigDecimal.valueOf(100);
+    private static final String BETA_CPE_BILL_SERVICE_WSDL =
+            "https://e-beta.sunat.gob.pe/ol-ti-itcpfegem-beta/billService?wsdl";
+    private static final String PRODUCCION_CPE_BILL_SERVICE_WSDL =
+            "https://e-factura.sunat.gob.pe/ol-ti-itcpfegem/billService?wsdl";
+    private static final HttpClient SUNAT_HEALTH_CLIENT = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(3))
+            .build();
 
     private final StorageProperties storageProperties;
     private final JdbcTemplate jdbcTemplate;
 
     @Value("${spring.application.name:sistematextil}")
     private String applicationName;
+
+    @Value("${dashboard.sunat.health-timeout-ms:5000}")
+    private long sunatHealthTimeoutMs;
+
+    @Value("${dashboard.sunat.health-cache-ttl-seconds:60}")
+    private long sunatHealthCacheTtlSeconds;
+
+    private volatile SunatServicioEstado cachedSunatServicio;
+    private volatile Instant cachedSunatServicioAt;
 
     public DashboardSistemaResponse obtenerDashboard() {
         StorageResumen storage = construirStorageResumen();
@@ -212,6 +234,7 @@ public class SistemaDashboardService {
     }
 
     private SunatResumen construirSunatResumen() {
+        SunatServicioEstado servicio = verificarServicioSunat();
         try {
             List<SunatEstadoItem> estados = jdbcTemplate.query("""
                     SELECT estado, COUNT(*) AS total
@@ -245,10 +268,185 @@ public class SistemaDashboardService {
                     toLong(resumen.get("total_jobs")),
                     toLong(resumen.get("jobs_no_finalizados")),
                     estados,
-                    ultimos.isEmpty() ? null : ultimos.get(0));
+                    ultimos.isEmpty() ? null : ultimos.get(0),
+                    servicio);
         } catch (DataAccessException e) {
-            return new SunatResumen(0, 0, List.of(), null);
+            return new SunatResumen(0, 0, List.of(), null, servicio);
         }
+    }
+
+    private SunatServicioEstado verificarServicioSunat() {
+        SunatServicioEstado cached = cachedSunatServicio;
+        Instant cachedAt = cachedSunatServicioAt;
+        if (cached != null && cachedAt != null && cacheSunatVigente(cachedAt)) {
+            return cached;
+        }
+
+        synchronized (this) {
+            cached = cachedSunatServicio;
+            cachedAt = cachedSunatServicioAt;
+            if (cached != null && cachedAt != null && cacheSunatVigente(cachedAt)) {
+                return cached;
+            }
+
+            SunatServicioEstado actual = consultarServicioSunat();
+            cachedSunatServicio = actual;
+            cachedSunatServicioAt = Instant.now();
+            return actual;
+        }
+    }
+
+    private boolean cacheSunatVigente(Instant cachedAt) {
+        long ttlSeconds = Math.max(5, sunatHealthCacheTtlSeconds);
+        return Duration.between(cachedAt, Instant.now()).getSeconds() < ttlSeconds;
+    }
+
+    private SunatServicioEstado consultarServicioSunat() {
+        LocalDateTime verificadoEn = LocalDateTime.now();
+        SunatEndpointConfig config = resolverEndpointSunat();
+
+        if (config.endpoint() == null || config.endpoint().isBlank()) {
+            return new SunatServicioEstado(
+                    config.estado(),
+                    false,
+                    config.ambiente(),
+                    null,
+                    null,
+                    null,
+                    config.mensaje(),
+                    verificadoEn);
+        }
+
+        Duration timeout = Duration.ofMillis(Math.max(1000, sunatHealthTimeoutMs));
+        long inicio = System.nanoTime();
+        try {
+            HttpRequest request = HttpRequest.newBuilder(URI.create(config.endpoint()))
+                    .timeout(timeout)
+                    .GET()
+                    .build();
+
+            HttpResponse<Void> response = SUNAT_HEALTH_CLIENT.send(
+                    request,
+                    HttpResponse.BodyHandlers.discarding());
+            long latenciaMs = Duration.ofNanos(System.nanoTime() - inicio).toMillis();
+            boolean disponible = esRespuestaSunatAlcanzable(response.statusCode());
+            String estado = disponible ? "DISPONIBLE" : "CAIDO";
+            String mensaje = disponible
+                    ? "SUNAT respondio HTTP " + response.statusCode() + "; servicio alcanzable"
+                    : "SUNAT respondio HTTP " + response.statusCode() + "; revisar disponibilidad del servicio";
+
+            return new SunatServicioEstado(
+                    estado,
+                    disponible,
+                    config.ambiente(),
+                    config.endpoint(),
+                    response.statusCode(),
+                    latenciaMs,
+                    mensaje,
+                    verificadoEn);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            long latenciaMs = Duration.ofNanos(System.nanoTime() - inicio).toMillis();
+            return servicioSunatCaido(config, null, latenciaMs, "Verificacion SUNAT interrumpida");
+        } catch (IOException | IllegalArgumentException e) {
+            long latenciaMs = Duration.ofNanos(System.nanoTime() - inicio).toMillis();
+            return servicioSunatCaido(
+                    config,
+                    null,
+                    latenciaMs,
+                    "No se pudo conectar al servicio SUNAT: " + e.getMessage());
+        }
+    }
+
+    private SunatServicioEstado servicioSunatCaido(
+            SunatEndpointConfig config,
+            Integer httpStatus,
+            Long latenciaMs,
+            String mensaje) {
+        return new SunatServicioEstado(
+                "CAIDO",
+                false,
+                config.ambiente(),
+                config.endpoint(),
+                httpStatus,
+                latenciaMs,
+                mensaje,
+                LocalDateTime.now());
+    }
+
+    private SunatEndpointConfig resolverEndpointSunat() {
+        try {
+            List<Map<String, Object>> configs = jdbcTemplate.queryForList("""
+                    SELECT ambiente, url_bill_service
+                    FROM sunat_config
+                    WHERE activo = 1
+                      AND deleted_at IS NULL
+                    ORDER BY id_sunat_config ASC
+                    LIMIT 2
+                    """);
+
+            if (configs.isEmpty()) {
+                return new SunatEndpointConfig(
+                        "NO_CONFIGURADO",
+                        null,
+                        null,
+                        "No hay configuracion SUNAT activa");
+            }
+            if (configs.size() > 1) {
+                return new SunatEndpointConfig(
+                        "CONFIG_ERROR",
+                        null,
+                        null,
+                        "Existe mas de una configuracion SUNAT activa");
+            }
+
+            Map<String, Object> row = configs.get(0);
+            String ambiente = normalizarAmbiente(row.get("ambiente"));
+            String endpoint = resolverUrlSunat(ambiente, row.get("url_bill_service"));
+            return new SunatEndpointConfig(
+                    "CONFIGURADO",
+                    ambiente,
+                    endpoint,
+                    "Endpoint SUNAT listo para verificacion");
+        } catch (DataAccessException e) {
+            return new SunatEndpointConfig(
+                    "NO_VERIFICADO",
+                    null,
+                    null,
+                    "No se pudo leer la configuracion SUNAT");
+        }
+    }
+
+    private String resolverUrlSunat(String ambiente, Object configuredUrl) {
+        if (configuredUrl != null && !configuredUrl.toString().isBlank()) {
+            return toWsdlUrl(configuredUrl.toString());
+        }
+        if ("PRODUCCION".equalsIgnoreCase(ambiente)) {
+            return PRODUCCION_CPE_BILL_SERVICE_WSDL;
+        }
+        return BETA_CPE_BILL_SERVICE_WSDL;
+    }
+
+    private String toWsdlUrl(String value) {
+        String url = value.trim();
+        if (url.toLowerCase().endsWith("?wsdl") || url.contains("?")) {
+            return url;
+        }
+        return url + "?wsdl";
+    }
+
+    private String normalizarAmbiente(Object value) {
+        if (value == null || value.toString().isBlank()) {
+            return "BETA";
+        }
+        return value.toString().trim().toUpperCase();
+    }
+
+    private boolean esRespuestaSunatAlcanzable(int statusCode) {
+        return (statusCode >= 200 && statusCode < 400)
+                || statusCode == 401
+                || statusCode == 403
+                || statusCode == 405;
     }
 
     private UsuariosResumen construirUsuariosResumen() {
@@ -331,6 +529,12 @@ public class SistemaDashboardService {
     }
 
     private AlertaItem alertaSunat(SunatResumen sunat) {
+        if (sunat.servicio() == null || !sunat.servicio().disponible()) {
+            String mensaje = sunat.servicio() == null
+                    ? "No se pudo verificar disponibilidad externa de SUNAT"
+                    : sunat.servicio().mensaje();
+            return new AlertaItem("SUNAT", "CRITICAL", mensaje);
+        }
         long errores = sunat.jobsPorEstado().stream()
                 .filter(item -> "ERROR".equalsIgnoreCase(item.estado()))
                 .mapToLong(SunatEstadoItem::total)
@@ -433,5 +637,8 @@ public class SistemaDashboardService {
     }
 
     private record ConteoArchivos(long bytes, long archivos) {
+    }
+
+    private record SunatEndpointConfig(String estado, String ambiente, String endpoint, String mensaje) {
     }
 }

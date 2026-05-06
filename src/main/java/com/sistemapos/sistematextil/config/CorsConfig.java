@@ -2,6 +2,7 @@ package com.sistemapos.sistematextil.config;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -24,33 +25,34 @@ public class CorsConfig {
     @Bean
     public UrlBasedCorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
+        List<String> origins = Arrays.stream(allowedOrigins.split(","))
+                .map(String::trim)
+                .filter(origin -> !origin.isBlank())
+                .toList();
 
-        // Orígenes permitidos (NO usar "*" cuando allowCredentials=true)
-        // En dev: http://localhost:3000 (Next.js), http://localhost:5173 (Vite)
-        configuration.setAllowedOriginPatterns(Arrays.asList(allowedOrigins.split(",")));
+        if (origins.isEmpty()) {
+            throw new IllegalStateException("Configure CORS_ALLOWED_ORIGINS con el dominio HTTPS del frontend");
+        }
+        if (origins.stream().anyMatch("*"::equals)) {
+            throw new IllegalStateException("CORS_ALLOWED_ORIGINS no puede usar '*' en produccion");
+        }
 
-        // Métodos HTTP permitidos
-        configuration.setAllowedMethods(Arrays.asList(allowedMethods.split(",")));
-
-        // Headers permitidos
+        configuration.setAllowedOrigins(origins);
+        configuration.setAllowedMethods(Arrays.stream(allowedMethods.split(","))
+                .map(String::trim)
+                .filter(method -> !method.isBlank())
+                .collect(Collectors.toList()));
         configuration.setAllowedHeaders(List.of(
                 "Authorization",
                 "Content-Type",
                 "Accept",
                 "X-Requested-With",
-                "Cache-Control"
-        ));
-
-        // Headers expuestos al cliente
+                "Cache-Control"));
         configuration.setExposedHeaders(List.of(
                 "Authorization",
                 "Content-Type",
-                "Set-Cookie"
-        ));
-
-        // CRÍTICO: true para que el navegador envíe/reciba cookies cross-origin
+                "Set-Cookie"));
         configuration.setAllowCredentials(true);
-
         configuration.setMaxAge(maxAge);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

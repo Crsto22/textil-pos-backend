@@ -89,6 +89,9 @@ public class Usuario {
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
 
+    @Column(name = "refresh_token_version", nullable = false)
+    private Integer refreshTokenVersion;
+
 
     @ManyToOne(optional = true)
     @JoinColumn(name = "id_sucursal", nullable = true)
@@ -104,6 +107,9 @@ public class Usuario {
         this.fechaCreacion = LocalDateTime.now();
         this.estado = "ACTIVO";
         this.deletedAt = null;
+        if (this.refreshTokenVersion == null) {
+            this.refreshTokenVersion = 0;
+        }
     }
 
 }

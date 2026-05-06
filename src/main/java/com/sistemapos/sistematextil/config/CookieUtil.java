@@ -16,23 +16,37 @@ public class CookieUtil {
 
     // Crear cookie con refresh token
     public ResponseCookie createRefreshTokenCookie(String refreshToken) {
-        return ResponseCookie.from(COOKIE_NAME, refreshToken)
+        ResponseCookie.ResponseCookieBuilder builder = ResponseCookie.from(COOKIE_NAME, refreshToken)
                 .httpOnly(true)
                 .secure(Boolean.TRUE.equals(jwtConfig.getCookieSecure()))
                 .path(COOKIE_PATH)
                 .maxAge(jwtConfig.getRefreshTokenExpirationInSeconds())
-                .sameSite("Lax")
-                .build();
+                .sameSite(resolverSameSite());
+        aplicarDominioSiCorresponde(builder);
+        return builder.build();
     }
 
     // Borrar cookie (logout)
     public ResponseCookie deleteRefreshTokenCookie() {
-        return ResponseCookie.from(COOKIE_NAME, "")
+        ResponseCookie.ResponseCookieBuilder builder = ResponseCookie.from(COOKIE_NAME, "")
                 .httpOnly(true)
                 .secure(Boolean.TRUE.equals(jwtConfig.getCookieSecure()))
                 .path(COOKIE_PATH)
                 .maxAge(0)
-                .sameSite("Lax")
-                .build();
+                .sameSite(resolverSameSite());
+        aplicarDominioSiCorresponde(builder);
+        return builder.build();
+    }
+
+    private void aplicarDominioSiCorresponde(ResponseCookie.ResponseCookieBuilder builder) {
+        String domain = jwtConfig.getCookieDomain();
+        if (domain != null && !domain.isBlank()) {
+            builder.domain(domain.trim());
+        }
+    }
+
+    private String resolverSameSite() {
+        String sameSite = jwtConfig.getCookieSameSite();
+        return sameSite == null || sameSite.isBlank() ? "Lax" : sameSite.trim();
     }
 }

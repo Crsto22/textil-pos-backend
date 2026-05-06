@@ -1,6 +1,8 @@
 package com.sistemapos.sistematextil.util.sunatconfig;
 
+import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
@@ -35,6 +37,10 @@ public record SunatConfigUpsertRequest(
 
         @Size(max = 255, message = "clientSecret no debe superar 255 caracteres")
         String clientSecret,
+
+        @DecimalMin(value = "0.00", message = "igvPorcentaje no puede ser negativo")
+        @DecimalMax(value = "100.00", message = "igvPorcentaje no puede ser mayor a 100")
+        Double igvPorcentaje,
 
         @Pattern(regexp = "^$|ACTIVO|INACTIVO", message = "activo permitido: ACTIVO o INACTIVO")
         String activo

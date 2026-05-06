@@ -40,7 +40,10 @@ public class JwtService {
 
     // ── REFRESH TOKEN (largo, 7 días) solo con subject (email) ──
     public String generateRefreshToken(CustomUser customUser) {
-        return buildToken(new HashMap<>(), customUser, jwtConfig.getRefreshTokenExpirationInMillis());
+        Usuario user = customUser.getUsuario();
+        Map<String, Object> claims = new HashMap<>();
+        claims.put("refreshVersion", user.getRefreshTokenVersion() == null ? 0 : user.getRefreshTokenVersion());
+        return buildToken(claims, customUser, jwtConfig.getRefreshTokenExpirationInMillis());
     }
 
     private String buildToken(
@@ -74,6 +77,19 @@ public class JwtService {
 
     public String extractUsername(String token) {
         return extractClaim(token, Claims::getSubject);
+    }
+
+    public Integer extractRefreshTokenVersion(String token) {
+        return extractClaim(token, claims -> {
+            Object value = claims.get("refreshVersion");
+            if (value instanceof Integer integerValue) {
+                return integerValue;
+            }
+            if (value instanceof Number numberValue) {
+                return numberValue.intValue();
+            }
+            return null;
+        });
     }
 
     private <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {

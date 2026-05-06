@@ -71,6 +71,7 @@ import com.sistemapos.sistematextil.model.MetodoPagoConfig;
 import com.sistemapos.sistematextil.model.Pago;
 import com.sistemapos.sistematextil.model.ProductoVariante;
 import com.sistemapos.sistematextil.model.SunatBajaLote;
+import com.sistemapos.sistematextil.model.SunatConfig;
 import com.sistemapos.sistematextil.model.Sucursal;
 import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.model.Venta;
@@ -133,6 +134,7 @@ public class VentaService {
     private final SunatCdrParserService sunatCdrParserService;
     private final S3StorageService s3StorageService;
     private final UsuarioSucursalAccessService usuarioSucursalAccessService;
+    private final SunatConfigValidationService sunatConfigValidationService;
 
     @Value("${application.pagination.default-size:10}")
     private int defaultPageSize;
@@ -163,7 +165,7 @@ public class VentaService {
                 desde,
                 hasta,
                 idSucursal);
-        Integer idUsuarioFiltro = resolverIdUsuarioListado(usuarioAutenticado, idUsuario, listarSinFiltros);
+        Integer idUsuarioFiltro = resolverIdUsuarioListado(usuarioAutenticado, idUsuario);
         List<String> tiposComprobanteFiltro = normalizarTiposComprobanteFiltro(tiposComprobante);
         RangoFechas rangoFechasFiltro = resolverRangoFechasListado(periodo, fecha, desde, hasta);
         LocalDateTime fechaInicioFiltro = rangoFechasFiltro == null ? null : rangoFechasFiltro.desde().atStartOfDay();
@@ -300,6 +302,33 @@ public class VentaService {
                 .findByVenta_IdVentaAndDeletedAtIsNullOrderByIdVentaDetalleAsc(venta.getIdVenta());
         List<Pago> pagos = pagoRepository.findByVenta_IdVentaAndDeletedAtIsNullOrderByIdPagoAsc(venta.getIdVenta());
 
+        return generarComprobantePdfA4(venta, detalles, pagos);
+    }
+
+    public ArchivoDescargable descargarComprobantePdf(Integer idVenta, String correoUsuarioAutenticado) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolLectura(usuarioAutenticado);
+
+        Venta venta = obtenerVentaConAlcance(idVenta, usuarioAutenticado);
+        List<VentaDetalle> detalles = ventaDetalleRepository
+                .findByVenta_IdVentaAndDeletedAtIsNullOrderByIdVentaDetalleAsc(venta.getIdVenta());
+        List<Pago> pagos = pagoRepository.findByVenta_IdVentaAndDeletedAtIsNullOrderByIdPagoAsc(venta.getIdVenta());
+        String nombreArchivo = construirNombreArchivoPdfVenta(venta);
+
+        if (!sunatDocumentStorageService.isStoredDocumentUpToDate(venta.getSunatPdfKey(), venta.getUpdatedAt())) {
+            byte[] pdfGenerado = generarComprobantePdfA4(venta, detalles, pagos);
+            SunatDocumentStorageService.StoredDocument stored = sunatDocumentStorageService
+                    .storePdf(venta, nombreArchivo, pdfGenerado);
+            venta.setSunatPdfNombre(stored.fileName());
+            venta.setSunatPdfKey(stored.key());
+            ventaRepository.save(venta);
+        }
+
+        byte[] contenido = sunatDocumentStorageService.download(venta.getSunatPdfKey());
+        return new ArchivoDescargable(nombreArchivo, MediaType.APPLICATION_PDF_VALUE, contenido);
+    }
+
+    private byte[] generarComprobantePdfA4(Venta venta, List<VentaDetalle> detalles, List<Pago> pagos) {
         try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             Document document = new Document(PageSize.A4, 40f, 40f, 28f, 28f);
             PdfWriter.getInstance(document, output);
@@ -1348,9 +1377,13 @@ public class VentaService {
         return SunatComprobanteHelper.numeroComprobante(venta);
     }
 
+    private String construirNombreArchivoPdfVenta(Venta venta) {
+        return numeroComprobanteParaPdf(venta) + ".pdf";
+    }
+
     private String descripcionDetalleParaPdf(VentaDetalle detalle) {
         if (detalle.getDescripcion() != null && !detalle.getDescripcion().isBlank()) {
-            return detalle.getDescripcion().trim();
+            return textoMayusculasPdf(detalle.getDescripcion());
         }
         ProductoVariante variante = detalle.getProductoVariante();
         if (variante == null) {
@@ -1373,12 +1406,12 @@ public class VentaService {
             }
             sb.append("Talla ").append(variante.getTalla().getNombre().trim());
         }
-        return sb.isEmpty() ? "-" : sb.toString();
+        return sb.isEmpty() ? "-" : textoMayusculasPdf(sb.toString());
     }
 
     private String descripcionProductoDetalleParaPdf(VentaDetalle detalle) {
         if (detalle.getDescripcion() != null && !detalle.getDescripcion().isBlank()) {
-            return detalle.getDescripcion().trim();
+            return textoMayusculasPdf(detalle.getDescripcion());
         }
         return descripcionDetalleParaPdf(detalle);
     }
@@ -1386,9 +1419,13 @@ public class VentaService {
     private String codigoDetalleParaPdf(VentaDetalle detalle) {
         ProductoVariante variante = detalle.getProductoVariante();
         if (variante != null && variante.getSku() != null && !variante.getSku().isBlank()) {
-            return variante.getSku().trim();
+            return textoMayusculasPdf(variante.getSku());
         }
         return "-";
+    }
+
+    private String textoMayusculasPdf(String texto) {
+        return valorTexto(texto).toUpperCase(Locale.ROOT);
     }
 
     private String unidadDetalleParaPdf(VentaDetalle detalle) {
@@ -1605,6 +1642,11 @@ public class VentaService {
         boolean aplicaIgv = aplicaIgvSegunTipoComprobante(tipoComprobante);
         Cliente cliente = resolverCliente(request.idCliente(), sucursalVenta);
         validarEmpresaParaComprobanteElectronico(tipoComprobante, sucursalVenta);
+        validarCertificadoSunatParaVentaElectronica(tipoComprobante, sucursalVenta);
+        BigDecimal igvPorcentajeVenta = resolverIgvPorcentajeVenta(
+                tipoComprobante,
+                sucursalVenta,
+                request.igvPorcentaje());
 
         List<DetalleCalculado> detallesCalculados = calcularDetalles(
                 request.detalles(),
@@ -1614,7 +1656,7 @@ public class VentaService {
                 detallesCalculados,
                 request.descuentoTotal(),
                 request.tipoDescuento(),
-                request.igvPorcentaje(),
+                igvPorcentajeVenta,
                 aplicaIgv);
         validarClienteParaComprobanteElectronico(tipoComprobante, cliente, totales.total());
         List<DetalleCalculado> detallesFinales = aplicarTributosDetalle(detallesCalculados, totales);
@@ -1744,6 +1786,9 @@ public class VentaService {
         if (!requiereComprobanteElectronico(venta.getTipoComprobante())) {
             throw new RuntimeException("La venta no requiere emision electronica SUNAT");
         }
+        validarCertificadoSunatParaVentaElectronica(
+                normalizarAliasTipoComprobante(venta.getTipoComprobante()),
+                venta.getSucursal());
 
         venta.setSunatEstado(SunatEstado.PENDIENTE_ENVIO);
         venta.setSunatCodigo(null);
@@ -1914,7 +1959,7 @@ public class VentaService {
             List<DetalleCalculado> detalles,
             Double descuentoTotalInput,
             String tipoDescuentoInput,
-            Double igvPorcentajeInput,
+            BigDecimal igvPorcentajeInput,
             boolean aplicaIgv) {
         BigDecimal totalBase = detalles.stream()
                 .map(DetalleCalculado::subtotal)
@@ -2003,7 +2048,19 @@ public class VentaService {
                 usuarioAutenticado,
                 idSucursal,
                 "Venta con ID " + idVenta + " no encontrada");
+        validarPropietarioVenta(venta, usuarioAutenticado, idVenta);
         return venta;
+    }
+
+    private void validarPropietarioVenta(Venta venta, Usuario usuarioAutenticado, Integer idVenta) {
+        if (!esVentas(usuarioAutenticado)) {
+            return;
+        }
+        Integer idUsuarioAutenticado = obtenerIdUsuarioValido(usuarioAutenticado);
+        Integer idUsuarioVenta = venta.getUsuario() != null ? venta.getUsuario().getIdUsuario() : null;
+        if (!idUsuarioAutenticado.equals(idUsuarioVenta)) {
+            throw new RuntimeException("Venta con ID " + idVenta + " no encontrada");
+        }
     }
 
     private Sucursal resolverSucursalParaVenta(Integer idSucursalRequest, Usuario usuarioAutenticado) {
@@ -2111,6 +2168,16 @@ public class VentaService {
             throw new RuntimeException(
                     "La empresa debe tener departamento, provincia y distrito para emitir comprobantes SUNAT");
         }
+    }
+
+    private void validarCertificadoSunatParaVentaElectronica(String tipoComprobante, Sucursal sucursal) {
+        if (!requiereComprobanteElectronico(tipoComprobante)) {
+            return;
+        }
+        Integer idEmpresa = sucursal != null && sucursal.getEmpresa() != null
+                ? sucursal.getEmpresa().getIdEmpresa()
+                : null;
+        sunatConfigValidationService.validarCertificadoParaVentaElectronica(idEmpresa);
     }
 
     private boolean requiereComprobanteElectronico(String tipoComprobante) {
@@ -3164,14 +3231,31 @@ public class VentaService {
         return "CONTADO";
     }
 
-    private BigDecimal normalizarIgv(Double igvPorcentaje) {
+    private BigDecimal normalizarIgv(BigDecimal igvPorcentaje) {
         BigDecimal igv = igvPorcentaje == null
                 ? BigDecimal.valueOf(18)
-                : decimalNoNegativo(igvPorcentaje, "igvPorcentaje");
+                : igvPorcentaje.setScale(2, RoundingMode.HALF_UP);
+        if (igv.compareTo(BigDecimal.ZERO) < 0) {
+            throw new RuntimeException("igvPorcentaje no puede ser negativo");
+        }
         if (igv.compareTo(CIEN) > 0) {
             throw new RuntimeException("igvPorcentaje no puede ser mayor a 100");
         }
         return igv.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal resolverIgvPorcentajeVenta(
+            String tipoComprobante,
+            Sucursal sucursalVenta,
+            Double igvPorcentajeRequest) {
+        if (requiereComprobanteElectronico(tipoComprobante)) {
+            Integer idEmpresa = sucursalVenta != null && sucursalVenta.getEmpresa() != null
+                    ? sucursalVenta.getEmpresa().getIdEmpresa()
+                    : null;
+            SunatConfig config = sunatConfigValidationService.obtenerConfiguracionActiva(idEmpresa);
+            return config.getIgvPorcentaje();
+        }
+        return igvPorcentajeRequest == null ? null : BigDecimal.valueOf(igvPorcentajeRequest);
     }
 
     private Integer idSucursalRequeridaParaAdmin(Integer idSucursalRequest) {
@@ -3300,20 +3384,13 @@ public class VentaService {
 
     private Integer resolverIdUsuarioListado(
             Usuario usuarioAutenticado,
-            Integer idUsuarioRequest,
-            boolean listarSinFiltros) {
+            Integer idUsuarioRequest) {
         Integer idUsuarioFiltro = normalizarIdUsuarioFiltro(idUsuarioRequest);
         if (!esVentas(usuarioAutenticado)) {
             return idUsuarioFiltro;
         }
-        if (listarSinFiltros) {
-            return null;
-        }
 
-        Integer idUsuarioAutenticado = usuarioAutenticado.getIdUsuario();
-        if (idUsuarioAutenticado == null || idUsuarioAutenticado <= 0) {
-            throw new RuntimeException("El usuario autenticado no tiene identificador valido");
-        }
+        Integer idUsuarioAutenticado = obtenerIdUsuarioValido(usuarioAutenticado);
         if (idUsuarioFiltro != null && !idUsuarioAutenticado.equals(idUsuarioFiltro)) {
             throw new RuntimeException("El usuario autenticado no tiene permisos para filtrar por otro usuario");
         }
@@ -3330,10 +3407,7 @@ public class VentaService {
                     .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
         }
 
-        Integer idUsuarioAutenticado = usuarioAutenticado.getIdUsuario();
-        if (idUsuarioAutenticado == null || idUsuarioAutenticado <= 0) {
-            throw new RuntimeException("El usuario autenticado no tiene identificador valido");
-        }
+        Integer idUsuarioAutenticado = obtenerIdUsuarioValido(usuarioAutenticado);
         if (idUsuarioFiltro != null && !idUsuarioAutenticado.equals(idUsuarioFiltro)) {
             throw new RuntimeException("El usuario autenticado no tiene permisos para filtrar por otro usuario");
         }
@@ -3519,6 +3593,14 @@ public class VentaService {
 
     private boolean esVentas(Usuario usuario) {
         return usuario.getRol().operaVentas();
+    }
+
+    private Integer obtenerIdUsuarioValido(Usuario usuario) {
+        Integer idUsuario = usuario.getIdUsuario();
+        if (idUsuario == null || idUsuario <= 0) {
+            throw new RuntimeException("El usuario autenticado no tiene identificador valido");
+        }
+        return idUsuario;
     }
 
     private Integer obtenerIdSucursalUsuario(Usuario usuario) {

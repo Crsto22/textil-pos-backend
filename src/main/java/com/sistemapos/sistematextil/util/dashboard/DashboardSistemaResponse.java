@@ -74,7 +74,8 @@ public record DashboardSistemaResponse(
             long totalJobs,
             long jobsNoFinalizados,
             List<SunatEstadoItem> jobsPorEstado,
-            SunatUltimoJob ultimoJob) {
+            SunatUltimoJob ultimoJob,
+            SunatServicioEstado servicio) {
     }
 
     public record SunatEstadoItem(
@@ -88,6 +89,17 @@ public record DashboardSistemaResponse(
             String tipoDocumento,
             LocalDateTime fechaCreacion,
             LocalDateTime fechaActualizacion) {
+    }
+
+    public record SunatServicioEstado(
+            String estado,
+            boolean disponible,
+            String ambiente,
+            String endpoint,
+            Integer httpStatus,
+            Long latenciaMs,
+            String mensaje,
+            LocalDateTime verificadoEn) {
     }
 
     public record UsuariosResumen(

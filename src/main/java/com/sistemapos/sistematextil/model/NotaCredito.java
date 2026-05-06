@@ -132,6 +132,12 @@ public class NotaCredito {
     @Column(name = "sunat_cdr_key", length = 600)
     private String sunatCdrKey;
 
+    @Column(name = "sunat_pdf_nombre", length = 180)
+    private String sunatPdfNombre;
+
+    @Column(name = "sunat_pdf_key", length = 600)
+    private String sunatPdfKey;
+
     @Column(name = "sunat_enviado_at")
     private LocalDateTime sunatEnviadoAt;
 

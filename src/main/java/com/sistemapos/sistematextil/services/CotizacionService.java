@@ -32,6 +32,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -100,6 +101,7 @@ public class CotizacionService {
     private final PrecioOfertaService precioOfertaService;
     private final VentaService ventaService;
     private final S3StorageService s3StorageService;
+    private final SunatDocumentStorageService sunatDocumentStorageService;
     private final UsuarioSucursalAccessService usuarioSucursalAccessService;
 
     @Value("${application.pagination.default-size:10}")
@@ -187,6 +189,32 @@ public class CotizacionService {
         List<CotizacionDetalle> detalles = cotizacionDetalleRepository
                 .findByCotizacion_IdCotizacionAndDeletedAtIsNullOrderByIdCotizacionDetalleAsc(cotizacion.getIdCotizacion());
 
+        return generarCotizacionPdfA4(cotizacion, detalles);
+    }
+
+    public ArchivoDescargable descargarPdf(Integer idCotizacion, String correoUsuarioAutenticado) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolLectura(usuarioAutenticado);
+
+        Cotizacion cotizacion = obtenerCotizacionConAlcance(idCotizacion, usuarioAutenticado);
+        List<CotizacionDetalle> detalles = cotizacionDetalleRepository
+                .findByCotizacion_IdCotizacionAndDeletedAtIsNullOrderByIdCotizacionDetalleAsc(cotizacion.getIdCotizacion());
+        String nombreArchivo = construirNombreArchivoPdfCotizacion(cotizacion);
+
+        if (!sunatDocumentStorageService.isStoredDocumentUpToDate(cotizacion.getSunatPdfKey(), cotizacion.getUpdatedAt())) {
+            byte[] pdfGenerado = generarCotizacionPdfA4(cotizacion, detalles);
+            SunatDocumentStorageService.StoredDocument stored = sunatDocumentStorageService
+                    .storePdf(cotizacion, nombreArchivo, pdfGenerado);
+            cotizacion.setSunatPdfNombre(stored.fileName());
+            cotizacion.setSunatPdfKey(stored.key());
+            cotizacionRepository.save(cotizacion);
+        }
+
+        byte[] contenido = sunatDocumentStorageService.download(cotizacion.getSunatPdfKey());
+        return new ArchivoDescargable(nombreArchivo, MediaType.APPLICATION_PDF_VALUE, contenido);
+    }
+
+    private byte[] generarCotizacionPdfA4(Cotizacion cotizacion, List<CotizacionDetalle> detalles) {
         try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             Document document = new Document(PageSize.A4, 40f, 40f, 36f, 36f);
             PdfWriter.getInstance(document, output);
@@ -527,7 +555,22 @@ public class CotizacionService {
                 usuarioAutenticado,
                 idSucursal,
                 "Cotizacion con ID " + idCotizacion + " no encontrada");
+        validarPropietarioCotizacion(cotizacion, usuarioAutenticado, idCotizacion);
         return cotizacion;
+    }
+
+    private void validarPropietarioCotizacion(
+            Cotizacion cotizacion,
+            Usuario usuarioAutenticado,
+            Integer idCotizacion) {
+        if (!esVentas(usuarioAutenticado)) {
+            return;
+        }
+        Integer idUsuarioAutenticado = obtenerIdUsuarioValido(usuarioAutenticado);
+        Integer idUsuarioCotizacion = cotizacion.getUsuario() != null ? cotizacion.getUsuario().getIdUsuario() : null;
+        if (!idUsuarioAutenticado.equals(idUsuarioCotizacion)) {
+            throw new RuntimeException("Cotizacion con ID " + idCotizacion + " no encontrada");
+        }
     }
 
     private Sucursal resolverSucursalParaEscritura(Integer idSucursalRequest, Usuario usuarioAutenticado) {
@@ -677,17 +720,25 @@ public class CotizacionService {
                 rango.hasta(),
                 idSucursalFiltro,
                 nombreSucursalFiltro,
+                esVentas(usuarioAutenticado) ? obtenerIdUsuarioValido(usuarioAutenticado) : null,
                 normalizarEstadoCotizacionFiltro(estadoRequest));
     }
 
     private List<Cotizacion> buscarCotizacionesParaReporte(FiltroReporteCotizacion filtro) {
         LocalDateTime fechaInicio = filtro.desde().atStartOfDay();
         LocalDateTime fechaFinExclusive = filtro.hasta().plusDays(1).atStartOfDay();
-        return cotizacionRepository.buscarParaReporte(
+        List<Cotizacion> cotizaciones = cotizacionRepository.buscarParaReporte(
                 filtro.idSucursal(),
                 filtro.estadoFiltro(),
                 fechaInicio,
                 fechaFinExclusive);
+        if (filtro.idUsuario() == null) {
+            return cotizaciones;
+        }
+        return cotizaciones.stream()
+                .filter(cotizacion -> cotizacion.getUsuario() != null)
+                .filter(cotizacion -> filtro.idUsuario().equals(cotizacion.getUsuario().getIdUsuario()))
+                .toList();
     }
 
     private CotizacionReporteResponse construirReporteCotizaciones(
@@ -1215,6 +1266,10 @@ public class CotizacionService {
         return serie + "-" + String.format("%06d", correlativo == null ? 0 : correlativo);
     }
 
+    private String construirNombreArchivoPdfCotizacion(Cotizacion cotizacion) {
+        return numeroCotizacionPdf(cotizacion) + ".pdf";
+    }
+
     private String descripcionDetalleCotizacionPdf(CotizacionDetalle detalle) {
         if (detalle == null || detalle.getProductoVariante() == null) {
             return "-";
@@ -1480,10 +1535,7 @@ public class CotizacionService {
             return idUsuarioFiltro;
         }
 
-        Integer idUsuarioAutenticado = usuarioAutenticado.getIdUsuario();
-        if (idUsuarioAutenticado == null || idUsuarioAutenticado <= 0) {
-            throw new RuntimeException("El usuario autenticado no tiene identificador valido");
-        }
+        Integer idUsuarioAutenticado = obtenerIdUsuarioValido(usuarioAutenticado);
         if (idUsuarioFiltro != null && !idUsuarioAutenticado.equals(idUsuarioFiltro)) {
             throw new RuntimeException("El usuario autenticado no tiene permisos para filtrar por otro usuario");
         }
@@ -1595,6 +1647,14 @@ public class CotizacionService {
 
     private boolean esVentas(Usuario usuario) {
         return usuario.getRol().operaVentas();
+    }
+
+    private Integer obtenerIdUsuarioValido(Usuario usuario) {
+        Integer idUsuario = usuario.getIdUsuario();
+        if (idUsuario == null || idUsuario <= 0) {
+            throw new RuntimeException("El usuario autenticado no tiene identificador valido");
+        }
+        return idUsuario;
     }
 
     private Integer obtenerIdSucursalUsuario(Usuario usuario) {
@@ -1718,6 +1778,7 @@ public class CotizacionService {
             LocalDate hasta,
             Integer idSucursal,
             String nombreSucursal,
+            Integer idUsuario,
             String estadoFiltro) {
     }
 
@@ -1773,5 +1834,11 @@ public class CotizacionService {
     private record NumeroCotizacion(
             String serie,
             Integer correlativo) {
+    }
+
+    public record ArchivoDescargable(
+            String nombreArchivo,
+            String contentType,
+            byte[] bytes) {
     }
 }

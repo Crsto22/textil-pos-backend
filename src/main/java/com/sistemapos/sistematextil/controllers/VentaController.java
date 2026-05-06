@@ -237,14 +237,13 @@ public class VentaController {
             Authentication authentication,
             @PathVariable Integer id) {
         try {
-            byte[] archivo = ventaService.generarComprobantePdfA4(id, obtenerCorreoAutenticado(authentication));
-            String ts = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
-            String nombreArchivo = "comprobante_venta_" + id + "_" + ts + ".pdf";
+            VentaService.ArchivoDescargable archivo = ventaService
+                    .descargarComprobantePdf(id, obtenerCorreoAutenticado(authentication));
 
             return ResponseEntity.ok()
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + nombreArchivo + "\"")
-                    .contentType(MediaType.APPLICATION_PDF)
-                    .body(archivo);
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + archivo.nombreArchivo() + "\"")
+                    .contentType(MediaType.parseMediaType(archivo.contentType()))
+                    .body(archivo.bytes());
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al generar comprobante PDF" : e.getMessage();
             HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
@@ -257,9 +256,10 @@ public class VentaController {
             Authentication authentication,
             @PathVariable Integer id) {
         try {
-            byte[] archivo = ventaService.generarTicket80mm(id, obtenerCorreoAutenticado(authentication));
-            String ts = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
-            String nombreArchivo = "ticket_venta_" + id + "_" + ts + ".pdf";
+            String correo = obtenerCorreoAutenticado(authentication);
+            VentaResponse venta = ventaService.obtenerDetalle(id, correo);
+            byte[] archivo = ventaService.generarTicket80mm(id, correo);
+            String nombreArchivo = construirNombreArchivoVenta(venta);
 
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + nombreArchivo + "\"")
@@ -444,6 +444,21 @@ public class VentaController {
             return HttpStatus.FORBIDDEN;
         }
         return defaultStatus;
+    }
+
+    private String construirNombreArchivoVenta(VentaResponse venta) {
+        return formatearSerieCorrelativo(venta.serie(), venta.correlativo(), 8) + ".pdf";
+    }
+
+    private String formatearSerieCorrelativo(String serie, Integer correlativo, int longitudCorrelativo) {
+        String serieNormalizada = serie == null ? "" : serie.trim();
+        String correlativoNormalizado = correlativo == null
+                ? "0".repeat(longitudCorrelativo)
+                : String.format("%0" + longitudCorrelativo + "d", correlativo);
+        if (serieNormalizada.isBlank()) {
+            return correlativoNormalizado;
+        }
+        return serieNormalizada + "-" + correlativoNormalizado;
     }
 
     private String obtenerCorreoAutenticado(Authentication authentication) {

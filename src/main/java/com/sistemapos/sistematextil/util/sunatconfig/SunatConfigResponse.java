@@ -1,5 +1,6 @@
 package com.sistemapos.sistematextil.util.sunatconfig;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 public record SunatConfigResponse(
@@ -19,6 +20,7 @@ public record SunatConfigResponse(
         Boolean tieneCertificadoPassword,
         Boolean tieneClientId,
         Boolean tieneClientSecret,
+        BigDecimal igvPorcentaje,
         String activo,
         String modoIntegracion,
         LocalDateTime createdAt,

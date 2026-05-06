@@ -33,6 +33,7 @@ public class SucursalService {
     private final SucursalRepository sucursalRepository;
     private final EmpresaRepository empresaRepository;
     private final UsuarioRepository usuarioRepository;
+    private final S3StorageService s3StorageService;
 
     @Value("${application.pagination.default-size:10}")
     private int defaultPageSize;
@@ -181,7 +182,7 @@ public class SucursalService {
         return new SucursalUsuarioResumenResponse(
                 projection.getIdUsuario(),
                 projection.getNombreCompleto(),
-                projection.getFotoPerfilUrl());
+                s3StorageService.resolvePublicUrl(projection.getFotoPerfilUrl()));
     }
 
     private String normalizarTexto(String valor) {

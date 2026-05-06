@@ -12,6 +12,7 @@ import java.time.Instant;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import com.sistemapos.sistematextil.config.StorageProperties;
 
@@ -112,6 +113,29 @@ public class S3StorageService {
         }
     }
 
+    public String resolvePublicUrl(String storedReference) {
+        if (storedReference == null || storedReference.isBlank()) {
+            return storedReference;
+        }
+
+        String reference = storedReference.trim();
+        if (isHttpUrl(reference)) {
+            return reference;
+        }
+
+        if (reference.startsWith(PUBLIC_PREFIX)) {
+            return buildAbsoluteUrl(reference);
+        }
+
+        if (isManagedLocalReference(reference)) {
+            Path localPath = resolveLocalPath(reference);
+            String relativePath = resolveBasePath().relativize(localPath).toString().replace("\\", "/");
+            return buildAbsoluteUrl(buildManagedPath(relativePath));
+        }
+
+        return reference;
+    }
+
     public boolean isManagedLocalReference(String storedReference) {
         if (storedReference == null || storedReference.isBlank()) {
             return false;
@@ -188,6 +212,17 @@ public class S3StorageService {
 
     private String buildManagedPath(String key) {
         return PUBLIC_PREFIX + key;
+    }
+
+    private String buildAbsoluteUrl(String path) {
+        try {
+            return ServletUriComponentsBuilder.fromCurrentContextPath()
+                    .path(path)
+                    .build()
+                    .toUriString();
+        } catch (IllegalStateException e) {
+            return path;
+        }
     }
 
     private String normalizeKey(String key) {

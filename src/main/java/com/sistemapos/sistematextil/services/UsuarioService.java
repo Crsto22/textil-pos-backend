@@ -33,6 +33,7 @@ public class UsuarioService {
     private final PasswordEncoder passwordEncoder;
     private final TurnoService turnoService;
     private final UsuarioSucursalAccessService usuarioSucursalAccessService;
+    private final S3StorageService s3StorageService;
 
     @Value("${application.pagination.default-size:10}")
     private int defaultPageSize;
@@ -184,7 +185,7 @@ public class UsuarioService {
                 usuario.getDni(),
                 usuario.getTelefono(),
                 usuario.getCorreo(),
-                usuario.getFotoPerfilUrl(),
+                s3StorageService.resolvePublicUrl(usuario.getFotoPerfilUrl()),
                 usuario.getRol().name(),
                 usuario.getEstado(),
                 usuario.getFechaCreacion(),

@@ -611,7 +611,6 @@ public class ProductoImportService {
         }
 
         Categoria categoria = new Categoria();
-        categoria.setSucursal(agrupado.sucursal());
         categoria.setNombreCategoria(categoriaNombre);
         categoria.setEstado("ACTIVO");
 
@@ -623,7 +622,7 @@ public class ProductoImportService {
             String detalle = obtenerDetalleError(e);
             throw new RuntimeException("Fila " + agrupado.filaBase()
                     + ": no se pudo crear la categoria '" + categoriaNombre
-                    + "'. Verifique nombre/sucursal y longitud maxima. Detalle: " + detalle);
+                    + "'. Verifique nombre y longitud maxima. Detalle: " + detalle);
         }
     }
 

@@ -13,7 +13,6 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
-import jakarta.persistence.Transient;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
@@ -53,9 +52,6 @@ public class Categoria {
 
     @Column(name = "deleted_at")
     private LocalDateTime deletedAt;
-
-    @Transient
-    private Sucursal sucursal;
 
     @PrePersist
     protected void onCreate() {

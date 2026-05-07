@@ -150,15 +150,13 @@ CREATE TABLE IF NOT EXISTS usuario (
 -- =========================
 CREATE TABLE categoria(
   id_categoria INT AUTO_INCREMENT PRIMARY KEY,
-  id_sucursal INT NOT NULL,
   nombre_categoria VARCHAR(100) NOT NULL,
   descripcion VARCHAR(255),
   activo TINYINT(1) NOT NULL DEFAULT 1,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   deleted_at DATETIME(6),
-  UNIQUE KEY uk_categoria_sucursal_nombre(id_sucursal,nombre_categoria),
-  FOREIGN KEY(id_sucursal) REFERENCES sucursal(id_sucursal)
+  UNIQUE KEY uk_categoria_nombre(nombre_categoria)
 ) ENGINE=InnoDB;
 -- =========================
 -- TALLAS

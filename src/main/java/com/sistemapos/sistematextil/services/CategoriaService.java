@@ -11,16 +11,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.sistemapos.sistematextil.model.Categoria;
-import com.sistemapos.sistematextil.model.Sucursal;
 import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.repositories.CategoriaRepository;
-import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
 import com.sistemapos.sistematextil.util.categoria.CategoriaCreateRequest;
 import com.sistemapos.sistematextil.util.categoria.CategoriaListItemResponse;
 import com.sistemapos.sistematextil.util.categoria.CategoriaUpdateRequest;
 import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
-import com.sistemapos.sistematextil.util.usuario.Rol;
 
 import lombok.RequiredArgsConstructor;
 
@@ -32,9 +29,7 @@ public class CategoriaService {
     private static final String ESTADO_INACTIVO = "INACTIVO";
 
     private final CategoriaRepository categoriaRepository;
-    private final SucursalRepository sucursalRepository;
     private final UsuarioRepository usuarioRepository;
-    private final UsuarioSucursalAccessService usuarioSucursalAccessService;
 
     @Value("${application.pagination.default-size:10}")
     private int defaultPageSize;
@@ -48,16 +43,10 @@ public class CategoriaService {
         validarRolLecturaPermitido(usuarioAutenticado);
 
         PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idCategoria").descending());
-        Integer idSucursalFiltro = resolverIdSucursalFiltroListado(usuarioAutenticado, idSucursal);
-        Sucursal sucursalContexto = resolverSucursalContexto(idSucursalFiltro, usuarioAutenticado);
-        Page<Categoria> categorias = idSucursalFiltro == null
-                ? categoriaRepository.findByDeletedAtIsNullAndEstadoOrderByIdCategoriaDesc(ESTADO_ACTIVO, pageable)
-                : categoriaRepository.findBySucursal_IdSucursalAndDeletedAtIsNullAndEstadoOrderByIdCategoriaDesc(
-                        idSucursalFiltro,
-                        ESTADO_ACTIVO,
-                        pageable);
+        Page<Categoria> categorias = categoriaRepository
+                .findByDeletedAtIsNullAndEstadoOrderByIdCategoriaDesc(ESTADO_ACTIVO, pageable);
 
-        return PagedResponse.fromPage(categorias.map(categoria -> toListItemResponse(categoria, sucursalContexto)));
+        return PagedResponse.fromPage(categorias.map(this::toListItemResponse));
     }
 
     public PagedResponse<CategoriaListItemResponse> buscarPaginado(
@@ -75,22 +64,13 @@ public class CategoriaService {
         }
 
         PageRequest pageable = PageRequest.of(page, defaultPageSize, Sort.by("idCategoria").descending());
-        Integer idSucursalFiltro = resolverIdSucursalFiltroListado(usuarioAutenticado, idSucursal);
-        Sucursal sucursalContexto = resolverSucursalContexto(idSucursalFiltro, usuarioAutenticado);
-        Page<Categoria> categorias = idSucursalFiltro == null
-                ? categoriaRepository
-                        .findByDeletedAtIsNullAndEstadoAndNombreCategoriaContainingIgnoreCaseOrderByIdCategoriaDesc(
-                                ESTADO_ACTIVO,
-                                term,
-                                pageable)
-                : categoriaRepository
-                        .findBySucursal_IdSucursalAndDeletedAtIsNullAndEstadoAndNombreCategoriaContainingIgnoreCaseOrderByIdCategoriaDesc(
-                                idSucursalFiltro,
-                                ESTADO_ACTIVO,
-                                term,
-                                pageable);
+        Page<Categoria> categorias = categoriaRepository
+                .findByDeletedAtIsNullAndEstadoAndNombreCategoriaContainingIgnoreCaseOrderByIdCategoriaDesc(
+                        ESTADO_ACTIVO,
+                        term,
+                        pageable);
 
-        return PagedResponse.fromPage(categorias.map(categoria -> toListItemResponse(categoria, sucursalContexto)));
+        return PagedResponse.fromPage(categorias.map(this::toListItemResponse));
     }
 
     @Transactional
@@ -98,20 +78,18 @@ public class CategoriaService {
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
         validarRolEdicionPermitido(usuarioAutenticado);
 
-        Sucursal sucursal = resolverSucursalContexto(request.idSucursal(), usuarioAutenticado);
         String nombreCategoria = normalizarNombreCategoria(request.nombreCategoria());
         String descripcion = normalizar(request.descripcion());
 
         Categoria categoriaExistente = categoriaRepository
-                .findBySucursal_IdSucursalAndNombreCategoriaIgnoreCase(sucursal.getIdSucursal(), nombreCategoria)
+                .findByNombreCategoriaIgnoreCase(nombreCategoria)
                 .orElse(null);
 
         if (categoriaExistente != null) {
             if (estaDisponible(categoriaExistente)) {
-                throw new RuntimeException("La categoria '" + nombreCategoria + "' ya existe en esta sucursal");
+                throw new RuntimeException("La categoria '" + nombreCategoria + "' ya existe");
             }
 
-            categoriaExistente.setSucursal(sucursal);
             categoriaExistente.setNombreCategoria(nombreCategoria);
             categoriaExistente.setDescripcion(descripcion);
             categoriaExistente.setEstado(ESTADO_ACTIVO);
@@ -119,14 +97,13 @@ public class CategoriaService {
 
             try {
                 Categoria reactivada = categoriaRepository.save(categoriaExistente);
-                return toListItemResponse(reactivada, sucursal);
+                return toListItemResponse(reactivada);
             } catch (DataIntegrityViolationException e) {
-                throw new RuntimeException("La categoria '" + nombreCategoria + "' ya existe en esta sucursal");
+                throw new RuntimeException("La categoria '" + nombreCategoria + "' ya existe");
             }
         }
 
         Categoria categoria = new Categoria();
-        categoria.setSucursal(sucursal);
         categoria.setNombreCategoria(nombreCategoria);
         categoria.setDescripcion(descripcion);
         categoria.setEstado(ESTADO_ACTIVO);
@@ -135,9 +112,9 @@ public class CategoriaService {
 
         try {
             Categoria creada = categoriaRepository.save(categoria);
-            return toListItemResponse(creada, sucursal);
+            return toListItemResponse(creada);
         } catch (DataIntegrityViolationException e) {
-            throw new RuntimeException("La categoria '" + nombreCategoria + "' ya existe en esta sucursal");
+            throw new RuntimeException("La categoria '" + nombreCategoria + "' ya existe");
         }
     }
 
@@ -149,32 +126,30 @@ public class CategoriaService {
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
         validarRolEdicionPermitido(usuarioAutenticado);
 
-        Categoria categoria = obtenerCategoriaConAlcance(idCategoria, usuarioAutenticado);
-        Sucursal sucursalDestino = resolverSucursalContexto(request.idSucursal(), usuarioAutenticado);
+        Categoria categoria = obtenerCategoriaActiva(idCategoria);
 
         String nombreCategoria = normalizarNombreCategoria(request.nombreCategoria());
         String descripcion = normalizar(request.descripcion());
 
         Categoria categoriaConMismoNombre = categoriaRepository
-                .findBySucursal_IdSucursalAndNombreCategoriaIgnoreCase(sucursalDestino.getIdSucursal(), nombreCategoria)
+                .findByNombreCategoriaIgnoreCase(nombreCategoria)
                 .orElse(null);
         if (categoriaConMismoNombre != null && !categoriaConMismoNombre.getIdCategoria().equals(idCategoria)) {
             if (estaDisponible(categoriaConMismoNombre)) {
-                throw new RuntimeException("La categoria '" + nombreCategoria + "' ya existe en esta sucursal");
+                throw new RuntimeException("La categoria '" + nombreCategoria + "' ya existe");
             }
             throw new RuntimeException(
-                    "Ya existe una categoria eliminada con el nombre '" + nombreCategoria + "' en esta sucursal");
+                    "Ya existe una categoria eliminada con el nombre '" + nombreCategoria + "'");
         }
 
-        categoria.setSucursal(sucursalDestino);
         categoria.setNombreCategoria(nombreCategoria);
         categoria.setDescripcion(descripcion);
 
         try {
             Categoria actualizada = categoriaRepository.save(categoria);
-            return toListItemResponse(actualizada, sucursalDestino);
+            return toListItemResponse(actualizada);
         } catch (DataIntegrityViolationException e) {
-            throw new RuntimeException("La categoria '" + nombreCategoria + "' ya existe en esta sucursal");
+            throw new RuntimeException("La categoria '" + nombreCategoria + "' ya existe");
         }
     }
 
@@ -183,7 +158,7 @@ public class CategoriaService {
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
         validarRolEdicionPermitido(usuarioAutenticado);
 
-        Categoria categoria = obtenerCategoriaConAlcance(idCategoria, usuarioAutenticado);
+        Categoria categoria = obtenerCategoriaActiva(idCategoria);
         categoria.setEstado(ESTADO_INACTIVO);
         categoria.setDeletedAt(LocalDateTime.now());
         categoriaRepository.save(categoria);
@@ -194,30 +169,9 @@ public class CategoriaService {
                 .orElseThrow(() -> new RuntimeException("Categoria con ID " + id + " no encontrada"));
     }
 
-    private Categoria obtenerCategoriaConAlcance(Integer idCategoria, Usuario usuarioAutenticado) {
+    private Categoria obtenerCategoriaActiva(Integer idCategoria) {
         return categoriaRepository.findByIdCategoriaAndDeletedAtIsNullAndEstado(idCategoria, ESTADO_ACTIVO)
                 .orElseThrow(() -> new RuntimeException("Categoria con ID " + idCategoria + " no encontrada"));
-    }
-
-    private Sucursal obtenerSucursalActiva(Integer idSucursal) {
-        Sucursal sucursal = sucursalRepository.findByIdSucursalAndDeletedAtIsNull(idSucursal)
-                .orElseThrow(() -> new RuntimeException("Sucursal no encontrada"));
-        if (!ESTADO_ACTIVO.equalsIgnoreCase(sucursal.getEstado())) {
-            throw new RuntimeException("No se pueden gestionar categorias en una sucursal INACTIVA");
-        }
-        return sucursal;
-    }
-
-    private Sucursal resolverSucursalContexto(Integer idSucursalRequest, Usuario usuarioAutenticado) {
-        Integer idSucursalDestino = resolverIdSucursalFiltroListado(usuarioAutenticado, idSucursalRequest);
-        return idSucursalDestino == null ? null : obtenerSucursalActiva(idSucursalDestino);
-    }
-
-    private Integer resolverIdSucursalFiltroListado(Usuario usuarioAutenticado, Integer idSucursalRequest) {
-        return usuarioSucursalAccessService.resolverIdSucursalFiltro(
-                usuarioAutenticado,
-                idSucursalRequest,
-                "No tiene permisos para consultar otra sucursal");
     }
 
     private Usuario obtenerUsuarioAutenticado(String correoUsuarioAutenticado) {
@@ -238,10 +192,6 @@ public class CategoriaService {
         if (!usuario.getRol().permiteAlmacen()) {
             throw new RuntimeException("El usuario autenticado no tiene permisos para editar categorias");
         }
-    }
-
-    private boolean esAdministrador(Usuario usuario) {
-        return usuario.getRol().esAdministrador();
     }
 
     private void validarPagina(int page) {
@@ -266,18 +216,15 @@ public class CategoriaService {
         return trimmed.isEmpty() ? null : trimmed;
     }
 
-    private CategoriaListItemResponse toListItemResponse(Categoria categoria, Sucursal sucursalContexto) {
-        Integer idSucursal = sucursalContexto != null ? sucursalContexto.getIdSucursal() : null;
-        String nombreSucursal = sucursalContexto != null ? sucursalContexto.getNombre() : null;
-
+    private CategoriaListItemResponse toListItemResponse(Categoria categoria) {
         return new CategoriaListItemResponse(
                 categoria.getIdCategoria(),
                 categoria.getNombreCategoria(),
                 categoria.getDescripcion(),
                 categoria.getEstado(),
                 categoria.getFechaRegistro(),
-                idSucursal,
-                nombreSucursal);
+                null,
+                null);
     }
 
     private boolean estaDisponible(Categoria categoria) {

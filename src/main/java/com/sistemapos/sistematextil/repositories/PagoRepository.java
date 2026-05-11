@@ -25,8 +25,8 @@ public interface PagoRepository extends JpaRepository<Pago, Integer> {
                                                                                                                                                                         AND v.estado = 'EMITIDA'
                                                                                                                                                                         AND (:idSucursal IS NULL OR v.id_sucursal = :idSucursal)
                                                                                                                                                                         AND (:idUsuario IS NULL OR v.id_usuario = :idUsuario)
-                                                                                                                                                                        AND (:fechaInicio IS NULL OR v.fecha >= :fechaInicio)
-                                                                                                                                                                        AND (:fechaFinExclusive IS NULL OR v.fecha < :fechaFinExclusive)
+                                                                                                                                                                        AND (:fechaInicio IS NULL OR p.fecha >= :fechaInicio)
+                                                                                                                                                                        AND (:fechaFinExclusive IS NULL OR p.fecha < :fechaFinExclusive)
                                                                                                                                                                 GROUP BY mp.nombre
                                                                                                                                                                 ORDER BY monto DESC
                                                                                                                                                                 """,

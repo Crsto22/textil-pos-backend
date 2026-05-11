@@ -108,13 +108,31 @@ public class PagoController {
             @PathVariable Integer idPago,
             @Valid @RequestBody PagoActualizarCodigoRequest request) {
         try {
-            PagoListItemResponse response = pagoService.actualizarCodigoOperacion(
+            PagoListItemResponse response = pagoService.actualizarPago(
                     idPago,
                     request,
                     obtenerCorreoAutenticado(authentication));
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al actualizar codigo de operacion" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
+    @PutMapping("/{idPago}")
+    public ResponseEntity<?> actualizarPago(
+            Authentication authentication,
+            @PathVariable Integer idPago,
+            @Valid @RequestBody PagoActualizarCodigoRequest request) {
+        try {
+            PagoListItemResponse response = pagoService.actualizarPago(
+                    idPago,
+                    request,
+                    obtenerCorreoAutenticado(authentication));
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al actualizar pago" : e.getMessage();
             HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
             return ResponseEntity.status(status).body(Map.of("message", message));
         }

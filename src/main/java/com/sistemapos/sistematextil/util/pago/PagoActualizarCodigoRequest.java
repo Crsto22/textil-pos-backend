@@ -1,8 +1,12 @@
 package com.sistemapos.sistematextil.util.pago;
 
-import jakarta.validation.constraints.NotBlank;
+import java.time.LocalDateTime;
+
+import jakarta.validation.constraints.Size;
 
 public record PagoActualizarCodigoRequest(
-        @NotBlank(message = "El código de operación es obligatorio")
-        String codigoOperacion) {
+        @Size(max = 100, message = "El codigo de operacion no debe superar 100 caracteres")
+        String codigoOperacion,
+
+        LocalDateTime fecha) {
 }

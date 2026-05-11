@@ -53,7 +53,7 @@ public class Pago {
     @Column(name = "activo", nullable = false)
     private String activo;
 
-    @Column(nullable = false, updatable = false)
+    @Column(nullable = false)
     private LocalDateTime fecha;
 
     @Column(name = "updated_at", nullable = false)

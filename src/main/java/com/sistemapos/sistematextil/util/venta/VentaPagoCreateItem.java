@@ -1,5 +1,7 @@
 package com.sistemapos.sistematextil.util.venta;
 
+import java.time.LocalDateTime;
+
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -13,6 +15,8 @@ public record VentaPagoCreateItem(
         Double monto,
 
         @Size(max = 100, message = "El codigo de operacion no debe superar 100 caracteres")
-        String codigoOperacion
+        String codigoOperacion,
+
+        LocalDateTime fecha
 ) {
 }

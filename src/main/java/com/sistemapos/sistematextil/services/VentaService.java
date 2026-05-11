@@ -1489,6 +1489,20 @@ public class VentaService {
                 .orElse("");
     }
 
+    private String construirFechasOperacionPagoPdf(List<Pago> pagos) {
+        if (pagos == null || pagos.isEmpty()) {
+            return "";
+        }
+        DateTimeFormatter formato = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
+        return pagos.stream()
+                .map(Pago::getFecha)
+                .filter(fecha -> fecha != null)
+                .map(fecha -> fecha.format(formato))
+                .distinct()
+                .reduce((a, b) -> a + " | " + b)
+                .orElse("");
+    }
+
     private String formatearMonedaPdf(BigDecimal monto) {
         BigDecimal normalizado = moneda(monto);
         DecimalFormatSymbols symbols = DecimalFormatSymbols.getInstance(Locale.US);
@@ -1712,6 +1726,9 @@ public class VentaService {
             pago.setMetodoPago(pagoCalculado.metodoPago());
             pago.setMonto(pagoCalculado.monto());
             pago.setCodigoOperacion(pagoCalculado.codigoOperacion());
+            if (pagoCalculado.fecha() != null) {
+                pago.setFecha(pagoCalculado.fecha());
+            }
             pago.setActivo("ACTIVO");
             pagosGuardar.add(pago);
         }
@@ -2027,9 +2044,10 @@ public class VentaService {
 
             BigDecimal monto = decimalPositivo(item.monto(), "monto");
             String codigoOperacion = normalizarTexto(item.codigoOperacion(), 100);
+            LocalDateTime fecha = item.fecha();
             sumaPagos = sumaPagos.add(monto).setScale(2, RoundingMode.HALF_UP);
 
-            calculados.add(new PagoCalculado(metodoPago, monto, codigoOperacion));
+            calculados.add(new PagoCalculado(metodoPago, monto, codigoOperacion, fecha));
         }
 
         if (sumaPagos.compareTo(totalVenta) != 0) {
@@ -2920,17 +2938,18 @@ public class VentaService {
             Map<Integer, List<Pago>> pagosPorVenta) throws DocumentException {
         Color colorHeaderBg = new Color(245, 222, 117);
 
-        // columnas: Hora | Cod. de pago | Monto | Metodo de pago | Nro celular | Modelo | Color | T | Cant | Sep | Env | Observacion
-        PdfPTable tabla = new PdfPTable(new float[] { 1.2f, 2.6f, 1.6f, 2.1f, 2.3f, 2.8f, 1.8f, 0.8f, 0.9f, 0.8f, 0.8f, 4.8f });
+        // columnas: Hora venta | Cod. de pago | Fecha operacion | Monto | Metodo de pago | Nro celular | Modelo | Color | T | Cant | Sep | Env | Observacion
+        PdfPTable tabla = new PdfPTable(new float[] { 1.1f, 2.3f, 2.1f, 1.4f, 1.9f, 2.0f, 2.5f, 1.5f, 0.7f, 0.8f, 0.7f, 0.7f, 4.0f });
         tabla.setWidthPercentage(100);
         tabla.setHeaderRows(1);
         tabla.setSpacingBefore(4f);
 
-        String[] headers = { "HORA", "COD. DE PAGO", "MONTO", "M. DE PAGO", "NRO CELULAR", "MODELO",
+        String[] headers = { "HORA", "COD. DE PAGO", "F. HORA OPERACION", "MONTO", "M. DE PAGO", "NRO CELULAR", "MODELO",
                 "COLOR", "T", "CANT", "SEP", "ENV", "OBSERVACION" };
-        int[] aligns = { Element.ALIGN_CENTER, Element.ALIGN_CENTER, Element.ALIGN_RIGHT, Element.ALIGN_CENTER,
-                Element.ALIGN_CENTER, Element.ALIGN_LEFT, Element.ALIGN_CENTER, Element.ALIGN_CENTER,
-                Element.ALIGN_CENTER, Element.ALIGN_CENTER, Element.ALIGN_CENTER, Element.ALIGN_LEFT };
+        int[] aligns = { Element.ALIGN_CENTER, Element.ALIGN_CENTER, Element.ALIGN_CENTER, Element.ALIGN_RIGHT,
+                Element.ALIGN_CENTER, Element.ALIGN_CENTER, Element.ALIGN_LEFT, Element.ALIGN_CENTER,
+                Element.ALIGN_CENTER, Element.ALIGN_CENTER, Element.ALIGN_CENTER, Element.ALIGN_CENTER,
+                Element.ALIGN_LEFT };
         for (int i = 0; i < headers.length; i++) {
             agregarHeaderReporteTablaPdf(tabla, headers[i], aligns[i], colorHeaderBg);
         }
@@ -2948,6 +2967,7 @@ public class VentaService {
             List<Pago> pagosVenta = pagosPorVenta.getOrDefault(idVenta, List.of());
             String hora = ventaItem.fecha() != null ? ventaItem.fecha().format(fmtHora) : "";
             String codigoPago = construirCodigosOperacionPagoPdf(pagosVenta);
+            String fechaOperacionPago = construirFechasOperacionPagoPdf(pagosVenta);
             String montoPago = formatearMonedaPdf(pagosVenta.isEmpty() ? ventaItem.total() : sumarMontoPagosReportePdf(pagosVenta));
             String metodoPago = construirTextoPagosPdf(pagosVenta);
             String celular = valorTexto(ventaItem.telefonoCliente());
@@ -2967,12 +2987,14 @@ public class VentaService {
 
                 String horaMostrar = primeraFilaVenta ? hora : "";
                 String codigoPagoMostrar = primeraFilaVenta ? codigoPago : "";
+                String fechaOperacionPagoMostrar = primeraFilaVenta ? fechaOperacionPago : "";
                 String montoPagoMostrar = primeraFilaVenta ? montoPago : "";
                 String metodoPagoMostrar = primeraFilaVenta ? metodoPago : "";
                 String celularMostrar = primeraFilaVenta ? celular : "";
 
                 tabla.addCell(crearCeldaReportePdf(horaMostrar, Element.ALIGN_CENTER, 18f));
                 tabla.addCell(crearCeldaReportePdf(codigoPagoMostrar, Element.ALIGN_CENTER, 18f));
+                tabla.addCell(crearCeldaReportePdf(fechaOperacionPagoMostrar, Element.ALIGN_CENTER, 18f));
                 tabla.addCell(crearCeldaReportePdf(montoPagoMostrar, Element.ALIGN_RIGHT, 18f));
                 tabla.addCell(crearCeldaReportePdf(metodoPagoMostrar, Element.ALIGN_CENTER, 18f));
                 tabla.addCell(crearCeldaReportePdf(celularMostrar, Element.ALIGN_CENTER, 18f));
@@ -3668,7 +3690,8 @@ public class VentaService {
     private record PagoCalculado(
             MetodoPagoConfig metodoPago,
             BigDecimal monto,
-            String codigoOperacion) {
+            String codigoOperacion,
+            LocalDateTime fecha) {
     }
 
     private record TotalesVenta(

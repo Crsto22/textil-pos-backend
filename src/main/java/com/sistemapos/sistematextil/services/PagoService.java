@@ -194,6 +194,58 @@ public class PagoService {
         return toListItemResponse(pago);
     }
 
+    @Transactional
+    public PagoListItemResponse actualizarPago(
+            Integer idPago,
+            PagoActualizarCodigoRequest request,
+            String correoUsuarioAutenticado) {
+        if (idPago == null || idPago <= 0) {
+            throw new RuntimeException("El ID del pago es invalido");
+        }
+        if (request == null) {
+            throw new RuntimeException("Debe enviar codigoOperacion o fecha");
+        }
+
+        boolean actualizaCodigoOperacion = request.codigoOperacion() != null;
+        boolean actualizaFecha = request.fecha() != null;
+        if (!actualizaCodigoOperacion && !actualizaFecha) {
+            throw new RuntimeException("Debe enviar codigoOperacion o fecha");
+        }
+
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolActualizacion(usuarioAutenticado);
+
+        Pago pago = pagoRepository.findByIdPagoAndDeletedAtIsNull(idPago)
+                .orElseThrow(() -> new RuntimeException("Pago no encontrado"));
+
+        if (!esAdministrador(usuarioAutenticado)) {
+            Integer sucursalPago = pago.getVenta() != null && pago.getVenta().getSucursal() != null
+                    ? pago.getVenta().getSucursal().getIdSucursal()
+                    : null;
+            usuarioSucursalAccessService.validarSucursalPermitida(
+                    usuarioAutenticado,
+                    sucursalPago,
+                    "El usuario autenticado no tiene permisos para actualizar pagos de otra sucursal");
+        }
+
+        if (actualizaCodigoOperacion) {
+            String codigoOperacion = request.codigoOperacion().trim();
+            if (codigoOperacion.isBlank()) {
+                throw new RuntimeException("El codigo de operacion no puede estar vacio");
+            }
+            if (codigoOperacion.length() > 100) {
+                throw new RuntimeException("El codigo de operacion no debe superar 100 caracteres");
+            }
+            pago.setCodigoOperacion(codigoOperacion);
+        }
+        if (actualizaFecha) {
+            pago.setFecha(request.fecha());
+        }
+        pagoRepository.save(pago);
+
+        return toListItemResponse(pago);
+    }
+
     private PagoListItemResponse toListItemResponse(Pago pago) {
         Integer idMetodoPago = pago.getMetodoPago() != null ? pago.getMetodoPago().getIdMetodoPago() : null;
         String metodoPago = pago.getMetodoPago() != null ? pago.getMetodoPago().getNombre() : null;
@@ -519,7 +571,7 @@ public class PagoService {
         agregarHeaderTabla(tabla, "Metodo Pago", bgHeader);
         agregarHeaderTabla(tabla, "Estado Venta", bgHeader);
         agregarHeaderTabla(tabla, "Monto", bgHeader);
-        agregarHeaderTabla(tabla, "Fecha y Hora", bgHeader);
+        agregarHeaderTabla(tabla, "Fecha y Hora de Operacion", bgHeader);
 
         for (Pago pago : pagos) {
             Cliente cliente = pago.getVenta() != null ? pago.getVenta().getCliente() : null;
@@ -539,7 +591,7 @@ public class PagoService {
             agregarCeldaTexto(tabla, montoStr, Element.ALIGN_RIGHT);
             
             agregarCeldaTexto(tabla,
-                    pago.getFecha() != null ? pago.getFecha().format(FECHA_HORA_PDF) : "-",
+                    pago.getFecha() != null ? pago.getFecha().format(FECHA_HORA_PDF) : "",
                     Element.ALIGN_CENTER);
         }
 

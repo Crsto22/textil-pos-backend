@@ -18,6 +18,8 @@ import com.sistemapos.sistematextil.util.cliente.TipoDocumento;
 
 public final class SunatComprobanteHelper {
 
+    public static final String NOMBRE_CLIENTE_SIN_DOC = "CONSUMIDOR FINAL";
+
     private static final DateTimeFormatter LOTE_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd");
 
     private SunatComprobanteHelper() {
@@ -29,7 +31,7 @@ public final class SunatComprobanteHelper {
                 ? valorTexto(venta.getSucursal().getEmpresa().getRuc())
                 : "";
         TipoDocumento tipoDocumento = cliente != null ? cliente.getTipoDocumento() : null;
-        String nroCliente = cliente != null ? valorTexto(cliente.getNroDocumento()) : "-";
+        String nroCliente = esSinDocumento(tipoDocumento) ? "-" : valorTexto(cliente.getNroDocumento());
         if (nroCliente.isBlank()) {
             nroCliente = "-";
         }
@@ -53,7 +55,7 @@ public final class SunatComprobanteHelper {
                 ? valorTexto(notaCredito.getSucursal().getEmpresa().getRuc())
                 : "";
         TipoDocumento tipoDocumento = cliente != null ? cliente.getTipoDocumento() : null;
-        String nroCliente = cliente != null ? valorTexto(cliente.getNroDocumento()) : "-";
+        String nroCliente = esSinDocumento(tipoDocumento) ? "-" : valorTexto(cliente.getNroDocumento());
         if (nroCliente.isBlank()) {
             nroCliente = "-";
         }
@@ -279,6 +281,10 @@ public final class SunatComprobanteHelper {
 
     private static String valorTexto(Object valor) {
         return valor == null ? "" : String.valueOf(valor);
+    }
+
+    private static boolean esSinDocumento(TipoDocumento tipoDocumento) {
+        return tipoDocumento == null || tipoDocumento == TipoDocumento.SIN_DOC;
     }
 
     private static Integer ordenDetalle(VentaDetalle detalle) {

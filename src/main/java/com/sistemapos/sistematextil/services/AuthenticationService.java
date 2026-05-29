@@ -234,6 +234,7 @@ public class AuthenticationService {
         String nombreSucursal = user.getSucursal() != null ? user.getSucursal().getNombre() : null;
         Turno turno = user.getTurno();
         List<com.sistemapos.sistematextil.util.turno.DiaSemana> diasTurno = turnoService.obtenerDias(turno);
+        List<com.sistemapos.sistematextil.util.turno.TurnoDiaHorarioResponse> horariosTurno = turnoService.obtenerHorarios(turno);
 
         return new AuthenticationResponse(
                 accessToken,
@@ -253,7 +254,8 @@ public class AuthenticationService {
                 turno != null ? turno.getNombre() : null,
                 turno != null ? turno.getHoraInicio() : null,
                 turno != null ? turno.getHoraFin() : null,
-                diasTurno);
+                diasTurno,
+                horariosTurno);
     }
 
     private MeResponse toMeResponse(Usuario user) {
@@ -261,6 +263,7 @@ public class AuthenticationService {
         String nombreSucursal = user.getSucursal() != null ? user.getSucursal().getNombre() : null;
         Turno turno = user.getTurno();
         List<com.sistemapos.sistematextil.util.turno.DiaSemana> diasTurno = turnoService.obtenerDias(turno);
+        List<com.sistemapos.sistematextil.util.turno.TurnoDiaHorarioResponse> horariosTurno = turnoService.obtenerHorarios(turno);
 
         return new MeResponse(
                 user.getIdUsuario(),
@@ -279,7 +282,8 @@ public class AuthenticationService {
                 turno != null ? turno.getNombre() : null,
                 turno != null ? turno.getHoraInicio() : null,
                 turno != null ? turno.getHoraFin() : null,
-                diasTurno);
+                diasTurno,
+                horariosTurno);
     }
 
     private String construirFotoPerfilKey(Integer idUsuario) {

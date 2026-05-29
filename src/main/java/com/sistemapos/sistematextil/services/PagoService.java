@@ -5,6 +5,7 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -15,6 +16,13 @@ import java.util.Set;
 
 import javax.imageio.ImageIO;
 
+import org.apache.poi.ss.usermodel.CellStyle;
+import org.apache.poi.ss.usermodel.DataFormat;
+import org.apache.poi.ss.usermodel.Font;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -53,6 +61,7 @@ public class PagoService {
 
     private static final DateTimeFormatter FECHA_HORA_PDF = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
     private static final DateTimeFormatter FECHA_PDF = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+    private static final DateTimeFormatter FECHA_HORA_EXCEL = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
     private static final Set<String> ESTADOS_VENTA_PERMITIDOS = Set.of("EMITIDA", "ANULADA", "NC_EMITIDA");
 
     private final PagoRepository pagoRepository;
@@ -158,6 +167,45 @@ public class PagoService {
         } catch (IOException | DocumentException e) {
             throw new RuntimeException("No se pudo generar el reporte PDF de pagos");
         }
+    }
+
+    public byte[] generarReportePagosExcel(
+            String term,
+            Integer idVenta,
+            Integer idUsuario,
+            Integer idMetodoPago,
+            Integer idSucursal,
+            String estadoVenta,
+            LocalDate desde,
+            LocalDate hasta,
+            String correoUsuarioAutenticado) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        PagoFiltros filtros = prepararFiltros(
+                usuarioAutenticado,
+                term,
+                idVenta,
+                idUsuario,
+                idMetodoPago,
+                idSucursal,
+                estadoVenta,
+                desde,
+                hasta);
+
+        List<Pago> pagos = pagoRepository.buscarReporteConFiltros(
+                filtros.term(),
+                filtros.idVenta(),
+                filtros.idUsuario(),
+                filtros.idMetodoPago(),
+                filtros.idSucursal(),
+                filtros.estadoVenta(),
+                filtros.fechaInicio(),
+                filtros.fechaFinExclusive());
+
+        Sucursal sucursalCabecera = resolverSucursalCabeceraReporte(usuarioAutenticado, filtros.idSucursal(), pagos);
+        Usuario usuarioFiltro = resolverUsuarioFiltroReporte(filtros.idUsuario(), pagos);
+        Usuario usuarioReporte = esVentas(usuarioAutenticado) ? usuarioAutenticado : usuarioFiltro;
+
+        return construirExcelReportePagos(sucursalCabecera, pagos, filtros, usuarioReporte);
     }
 
     @Transactional
@@ -596,6 +644,133 @@ public class PagoService {
         }
 
         document.add(tabla);
+    }
+
+    private byte[] construirExcelReportePagos(
+            Sucursal sucursal,
+            List<Pago> pagos,
+            PagoFiltros filtros,
+            Usuario usuarioReporte) {
+        try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            Sheet sheet = workbook.createSheet("Reporte Pagos");
+            CellStyle headerStyle = crearEstiloHeaderExcel(workbook);
+            CellStyle moneyStyle = crearEstiloMonedaExcel(workbook);
+
+            int rowIdx = 0;
+            rowIdx = agregarCabeceraReporteExcel(sheet, rowIdx, sucursal, pagos.size(), filtros, usuarioReporte);
+            rowIdx++;
+
+            Row header = sheet.createRow(rowIdx++);
+            String[] headers = {
+                    "Celular Cliente",
+                    "Cliente",
+                    "Codigo Operacion",
+                    "Metodo Pago",
+                    "Estado Venta",
+                    "Monto",
+                    "Fecha y Hora de Operacion"
+            };
+            for (int i = 0; i < headers.length; i++) {
+                header.createCell(i).setCellValue(headers[i]);
+                header.getCell(i).setCellStyle(headerStyle);
+            }
+
+            BigDecimal total = BigDecimal.ZERO;
+            for (Pago pago : pagos) {
+                Cliente cliente = pago.getVenta() != null ? pago.getVenta().getCliente() : null;
+                BigDecimal monto = pago.getMonto() == null ? BigDecimal.ZERO : pago.getMonto();
+                total = total.add(monto);
+
+                Row row = sheet.createRow(rowIdx++);
+                row.createCell(0).setCellValue(cliente != null ? valorTexto(cliente.getTelefono()) : "-");
+                row.createCell(1).setCellValue(cliente != null ? valorTexto(cliente.getNombres()) : "-");
+                row.createCell(2).setCellValue(valorTexto(pago.getCodigoOperacion()).isBlank()
+                        ? "-"
+                        : valorTexto(pago.getCodigoOperacion()));
+                row.createCell(3).setCellValue(pago.getMetodoPago() != null
+                        ? valorTexto(pago.getMetodoPago().getNombre())
+                        : "-");
+                row.createCell(4).setCellValue(pago.getVenta() != null && !valorTexto(pago.getVenta().getEstado()).isBlank()
+                        ? valorTexto(pago.getVenta().getEstado())
+                        : "-");
+                row.createCell(5).setCellValue(monto.doubleValue());
+                row.getCell(5).setCellStyle(moneyStyle);
+                row.createCell(6).setCellValue(pago.getFecha() != null ? pago.getFecha().format(FECHA_HORA_EXCEL) : "");
+            }
+
+            Row totalRow = sheet.createRow(rowIdx);
+            totalRow.createCell(4).setCellValue("TOTAL");
+            totalRow.createCell(5).setCellValue(total.doubleValue());
+            totalRow.getCell(5).setCellStyle(moneyStyle);
+
+            for (int i = 0; i < headers.length; i++) {
+                sheet.autoSizeColumn(i);
+            }
+
+            workbook.write(output);
+            return output.toByteArray();
+        } catch (IOException e) {
+            throw new RuntimeException("No se pudo generar el reporte Excel de pagos");
+        }
+    }
+
+    private int agregarCabeceraReporteExcel(
+            Sheet sheet,
+            int rowIdx,
+            Sucursal sucursal,
+            int totalRegistros,
+            PagoFiltros filtros,
+            Usuario usuarioReporte) {
+        String nombreEmpresa = sucursal != null && sucursal.getEmpresa() != null
+                ? valorTexto(sucursal.getEmpresa().getNombreComercial() != null
+                        && !sucursal.getEmpresa().getNombreComercial().isBlank()
+                                ? sucursal.getEmpresa().getNombreComercial()
+                                : sucursal.getEmpresa().getNombre())
+                : "Sistema Textil";
+        String rucEmpresa = sucursal != null && sucursal.getEmpresa() != null
+                ? valorTexto(sucursal.getEmpresa().getRuc())
+                : "";
+        String nombreSucursal = sucursal != null ? valorTexto(sucursal.getNombre()) : "Todas las sucursales";
+
+        rowIdx = agregarFilaInfoExcel(sheet, rowIdx, "REPORTE DE PAGOS", "");
+        rowIdx = agregarFilaInfoExcel(sheet, rowIdx, "Empresa", nombreEmpresa);
+        rowIdx = agregarFilaInfoExcel(sheet, rowIdx, "RUC", rucEmpresa);
+        rowIdx = agregarFilaInfoExcel(sheet, rowIdx, "Sucursal", nombreSucursal);
+        rowIdx = agregarFilaInfoExcel(sheet, rowIdx, "Generado", LocalDateTime.now().format(FECHA_HORA_EXCEL));
+        rowIdx = agregarFilaInfoExcel(sheet, rowIdx, "Registros", String.valueOf(totalRegistros));
+        rowIdx = agregarFilaInfoExcel(sheet, rowIdx, "Periodo", textoPeriodoReporte(filtros.rango()));
+        rowIdx = agregarFilaInfoExcel(sheet, rowIdx, "Estado venta",
+                filtros.estadoVenta() == null ? "TODOS" : filtros.estadoVenta());
+        if (filtros.idUsuario() != null) {
+            rowIdx = agregarFilaInfoExcel(sheet, rowIdx, "Usuario filtrado",
+                    textoUsuarioFiltrado(filtros.idUsuario(), usuarioReporte));
+        }
+        if (usuarioReporte != null) {
+            rowIdx = agregarFilaInfoExcel(sheet, rowIdx, "Usuario reporte", nombreUsuario(usuarioReporte));
+        }
+        return rowIdx;
+    }
+
+    private int agregarFilaInfoExcel(Sheet sheet, int rowIdx, String label, String value) {
+        Row row = sheet.createRow(rowIdx++);
+        row.createCell(0).setCellValue(label);
+        row.createCell(1).setCellValue(value == null ? "" : value);
+        return rowIdx;
+    }
+
+    private CellStyle crearEstiloHeaderExcel(Workbook workbook) {
+        CellStyle style = workbook.createCellStyle();
+        Font font = workbook.createFont();
+        font.setBold(true);
+        style.setFont(font);
+        return style;
+    }
+
+    private CellStyle crearEstiloMonedaExcel(Workbook workbook) {
+        CellStyle style = workbook.createCellStyle();
+        DataFormat format = workbook.createDataFormat();
+        style.setDataFormat(format.getFormat("\"S/\" #,##0.00"));
+        return style;
     }
 
     private void agregarHeaderTabla(PdfPTable tabla, String texto, Color fondo) {

@@ -104,6 +104,8 @@ CREATE TABLE IF NOT EXISTS turno_dia (
   id_turno_dia INT(11) NOT NULL AUTO_INCREMENT,
   id_turno INT(11) NOT NULL,
   dia_semana ENUM('LUNES','MARTES','MIERCOLES','JUEVES','VIERNES','SABADO','DOMINGO') NOT NULL,
+  hora_inicio TIME NOT NULL,
+  hora_fin TIME NOT NULL,
   PRIMARY KEY (id_turno_dia),
   UNIQUE KEY uk_turno_dia_turno_dia (id_turno, dia_semana),
   CONSTRAINT fk_turno_dia_turno

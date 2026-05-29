@@ -5,6 +5,7 @@ import java.time.LocalTime;
 import java.util.List;
 
 import com.sistemapos.sistematextil.util.turno.DiaSemana;
+import com.sistemapos.sistematextil.util.turno.TurnoDiaHorarioResponse;
 import com.sistemapos.sistematextil.util.usuario.SucursalPermitidaResponse;
 
 public record MeResponse(
@@ -24,7 +25,8 @@ public record MeResponse(
         String nombreTurno,
         LocalTime horaInicioTurno,
         LocalTime horaFinTurno,
-        List<DiaSemana> diasTurno
+        List<DiaSemana> diasTurno,
+        List<TurnoDiaHorarioResponse> horariosTurno
 ) {
 }
 

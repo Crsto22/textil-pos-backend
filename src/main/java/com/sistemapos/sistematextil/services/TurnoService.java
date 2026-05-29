@@ -3,8 +3,10 @@ package com.sistemapos.sistematextil.services;
 import java.time.LocalDateTime;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -21,6 +23,8 @@ import com.sistemapos.sistematextil.repositories.TurnoRepository;
 import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
 import com.sistemapos.sistematextil.util.turno.DiaSemana;
 import com.sistemapos.sistematextil.util.turno.TurnoCreateRequest;
+import com.sistemapos.sistematextil.util.turno.TurnoDiaHorarioRequest;
+import com.sistemapos.sistematextil.util.turno.TurnoDiaHorarioResponse;
 import com.sistemapos.sistematextil.util.turno.TurnoListItemResponse;
 import com.sistemapos.sistematextil.util.turno.TurnoUpdateRequest;
 
@@ -65,6 +69,11 @@ public class TurnoService {
         String nombre = normalizarNombre(request.nombre());
         validarHorario(request.horaInicio(), request.horaFin());
         Set<DiaSemana> diasSemana = normalizarDiasSemana(request.dias());
+        Map<DiaSemana, Turno.HorarioDia> horariosSemana = normalizarHorariosSemana(
+                diasSemana,
+                request.horaInicio(),
+                request.horaFin(),
+                request.horariosDias());
 
         Turno existente = turnoRepository.findByNombreIgnoreCase(nombre).orElse(null);
         if (existente != null) {
@@ -77,7 +86,7 @@ public class TurnoService {
             existente.setHoraFin(request.horaFin());
             existente.setEstado(ESTADO_ACTIVO);
             existente.setDeletedAt(null);
-            existente.sincronizarDiasSemana(diasSemana);
+            existente.sincronizarHorariosSemana(horariosSemana);
             return toListItemResponse(turnoRepository.save(existente));
         }
 
@@ -87,7 +96,7 @@ public class TurnoService {
         turno.setHoraFin(request.horaFin());
         turno.setEstado(ESTADO_ACTIVO);
         turno.setDeletedAt(null);
-        turno.sincronizarDiasSemana(diasSemana);
+        turno.sincronizarHorariosSemana(horariosSemana);
         return toListItemResponse(turnoRepository.save(turno));
     }
 
@@ -97,6 +106,11 @@ public class TurnoService {
         String nombre = normalizarNombre(request.nombre());
         validarHorario(request.horaInicio(), request.horaFin());
         Set<DiaSemana> diasSemana = normalizarDiasSemana(request.dias());
+        Map<DiaSemana, Turno.HorarioDia> horariosSemana = normalizarHorariosSemana(
+                diasSemana,
+                request.horaInicio(),
+                request.horaFin(),
+                request.horariosDias());
 
         turnoRepository.findByNombreIgnoreCaseAndDeletedAtIsNull(nombre).ifPresent(existente -> {
             if (!existente.getIdTurno().equals(idTurno)) {
@@ -108,7 +122,7 @@ public class TurnoService {
         turno.setHoraInicio(request.horaInicio());
         turno.setHoraFin(request.horaFin());
         turno.setEstado(request.estado().trim().toUpperCase());
-        turno.sincronizarDiasSemana(diasSemana);
+        turno.sincronizarHorariosSemana(horariosSemana);
 
         return toListItemResponse(turnoRepository.save(turno));
     }
@@ -142,16 +156,16 @@ public class TurnoService {
             throw new RuntimeException("El turno asignado al usuario esta inactivo");
         }
 
-        List<DiaSemana> diasSemana = obtenerDias(turno);
-        if (!diasSemana.isEmpty()) {
-            DiaSemana hoy = DiaSemana.fromJavaDayOfWeek(LocalDate.now().getDayOfWeek());
-            if (!diasSemana.contains(hoy)) {
-                throw new RuntimeException("El usuario no puede ingresar en un dia no habilitado para su turno");
-            }
+        DiaSemana hoy = DiaSemana.fromJavaDayOfWeek(LocalDate.now().getDayOfWeek());
+        TurnoDia horarioHoy = obtenerHorarioPorDia(turno, hoy);
+        if (horarioHoy == null) {
+            throw new RuntimeException("El usuario no puede ingresar en un dia no habilitado para su turno");
         }
 
+        LocalTime horaInicio = horarioHoy.getHoraInicio() != null ? horarioHoy.getHoraInicio() : turno.getHoraInicio();
+        LocalTime horaFin = horarioHoy.getHoraFin() != null ? horarioHoy.getHoraFin() : turno.getHoraFin();
         LocalTime ahora = LocalTime.now();
-        if (ahora.isBefore(turno.getHoraInicio()) || ahora.isAfter(turno.getHoraFin())) {
+        if (ahora.isBefore(horaInicio) || ahora.isAfter(horaFin)) {
             throw new RuntimeException("El usuario no puede ingresar fuera del horario de su turno");
         }
     }
@@ -162,6 +176,9 @@ public class TurnoService {
     }
 
     private void validarHorario(LocalTime horaInicio, LocalTime horaFin) {
+        if (horaInicio == null || horaFin == null) {
+            throw new RuntimeException("Ingrese horaInicio y horaFin");
+        }
         if (horaFin.equals(horaInicio) || horaFin.isBefore(horaInicio)) {
             throw new RuntimeException("horaFin debe ser mayor que horaInicio");
         }
@@ -201,6 +218,42 @@ public class TurnoService {
         return diasNormalizados;
     }
 
+    private Map<DiaSemana, Turno.HorarioDia> normalizarHorariosSemana(
+            Set<DiaSemana> diasSemana,
+            LocalTime horaInicioBase,
+            LocalTime horaFinBase,
+            List<TurnoDiaHorarioRequest> horariosDias) {
+        EnumMap<DiaSemana, Turno.HorarioDia> horarios = new EnumMap<>(DiaSemana.class);
+        for (DiaSemana dia : diasSemana) {
+            horarios.put(dia, new Turno.HorarioDia(horaInicioBase, horaFinBase));
+        }
+
+        if (horariosDias == null || horariosDias.isEmpty()) {
+            return horarios;
+        }
+
+        EnumSet<DiaSemana> diasPersonalizados = EnumSet.noneOf(DiaSemana.class);
+        for (TurnoDiaHorarioRequest horarioDia : horariosDias) {
+            if (horarioDia == null) {
+                throw new RuntimeException("Todos los horarios por dia deben ser validos");
+            }
+            DiaSemana dia = horarioDia.dia();
+            if (dia == null) {
+                throw new RuntimeException("Ingrese dia en cada horario por dia");
+            }
+            if (!diasSemana.contains(dia)) {
+                throw new RuntimeException("El horario personalizado solo puede enviarse para dias habilitados");
+            }
+            if (!diasPersonalizados.add(dia)) {
+                throw new RuntimeException("No se permiten horarios duplicados para el mismo dia");
+            }
+            validarHorario(horarioDia.horaInicio(), horarioDia.horaFin());
+            horarios.put(dia, new Turno.HorarioDia(horarioDia.horaInicio(), horarioDia.horaFin()));
+        }
+
+        return horarios;
+    }
+
     public List<DiaSemana> obtenerDias(Turno turno) {
         if (turno == null || turno.getDiasSemana() == null) {
             return List.of();
@@ -210,6 +263,30 @@ public class TurnoService {
                 .filter(Objects::nonNull)
                 .sorted()
                 .toList();
+    }
+
+    public List<TurnoDiaHorarioResponse> obtenerHorarios(Turno turno) {
+        if (turno == null || turno.getDiasSemana() == null) {
+            return List.of();
+        }
+        return turno.getDiasSemana().stream()
+                .filter(turnoDia -> turnoDia.getDiaSemana() != null)
+                .sorted((left, right) -> left.getDiaSemana().compareTo(right.getDiaSemana()))
+                .map(turnoDia -> new TurnoDiaHorarioResponse(
+                        turnoDia.getDiaSemana(),
+                        turnoDia.getHoraInicio() != null ? turnoDia.getHoraInicio() : turno.getHoraInicio(),
+                        turnoDia.getHoraFin() != null ? turnoDia.getHoraFin() : turno.getHoraFin()))
+                .toList();
+    }
+
+    private TurnoDia obtenerHorarioPorDia(Turno turno, DiaSemana dia) {
+        if (turno.getDiasSemana() == null) {
+            return null;
+        }
+        return turno.getDiasSemana().stream()
+                .filter(turnoDia -> dia.equals(turnoDia.getDiaSemana()))
+                .findFirst()
+                .orElse(null);
     }
 
     private String normalizar(String value) {
@@ -227,6 +304,7 @@ public class TurnoService {
                 turno.getHoraInicio(),
                 turno.getHoraFin(),
                 obtenerDias(turno),
+                obtenerHorarios(turno),
                 turno.getEstado(),
                 turno.getFechaCreacion());
     }

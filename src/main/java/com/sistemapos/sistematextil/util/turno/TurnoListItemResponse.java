@@ -10,6 +10,7 @@ public record TurnoListItemResponse(
         LocalTime horaInicio,
         LocalTime horaFin,
         List<DiaSemana> dias,
+        List<TurnoDiaHorarioResponse> horariosDias,
         String estado,
         LocalDateTime fechaCreacion
 ) {

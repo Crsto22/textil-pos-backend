@@ -58,6 +58,8 @@ public class SunatBajaService {
     private static final String TIPO_BOLETA = "BOLETA";
     private static final String TIPO_NC_FACTURA = "NOTA_CREDITO_FACTURA";
     private static final String TIPO_NC_BOLETA = "NOTA_CREDITO_BOLETA";
+    private static final String CODIGO_SUNAT_YA_ANULADO = "SUNAT_YA_ANULADO";
+    private static final String MENSAJE_SUNAT_YA_ANULADO = "SUNAT indica que la boleta ya fue informada y se encuentra anulada o rechazada. Se marca como anulada localmente.";
     private static final Pattern TICKET_PATTERN = Pattern.compile("ticket\\s*:\\s*(\\d+)", Pattern.CASE_INSENSITIVE);
     private static final Set<SunatEstado> ESTADOS_SUNAT_VALIDOS = EnumSet.of(SunatEstado.ACEPTADO, SunatEstado.OBSERVADO);
     private static final Set<SunatBajaEstado> ESTADOS_BAJA_BLOQUEANTES = EnumSet.of(
@@ -190,7 +192,7 @@ public class SunatBajaService {
     public void consultarTicketPendiente(Integer idSunatBajaLote) {
         SunatBajaLote lote = obtenerLote(idSunatBajaLote);
         List<SunatBajaItem> items = obtenerItems(lote.getIdSunatBajaLote());
-        SunatBajaResult result = consultarEstado(lote);
+        SunatBajaResult result = consultarEstado(lote, items);
         aplicarResultadoLote(lote, items, result);
     }
 
@@ -213,7 +215,7 @@ public class SunatBajaService {
         lote.setTicketSunat(ticket);
 
         List<SunatBajaItem> items = obtenerItems(lote.getIdSunatBajaLote());
-        SunatBajaResult result = consultarEstado(lote);
+        SunatBajaResult result = consultarEstado(lote, items);
         aplicarResultadoLote(lote, items, result);
 
         Venta actualizada = ventaRepository.findByIdVentaAndDeletedAtIsNull(venta.getIdVenta()).orElse(venta);
@@ -241,7 +243,7 @@ public class SunatBajaService {
         lote.setTicketSunat(ticket);
 
         List<SunatBajaItem> items = obtenerItems(lote.getIdSunatBajaLote());
-        SunatBajaResult result = consultarEstado(lote);
+        SunatBajaResult result = consultarEstado(lote, items);
         aplicarResultadoLote(lote, items, result);
 
         NotaCredito actualizada = notaCreditoRepository.findByIdNotaCreditoAndDeletedAtIsNull(notaCredito.getIdNotaCredito())
@@ -381,6 +383,20 @@ public class SunatBajaService {
                             sentAt,
                             respondedAt);
                 }
+                if (esBoletaYaAnuladaORechazadaEnSunat(lote, items, e.getMessage())) {
+                    return resultadoBoletaYaAnuladaORechazada(
+                            e.getCode(),
+                            e.getMessage(),
+                            signedXml.digestValue(),
+                            duplicateTicket,
+                            xmlName,
+                            storedXml.key(),
+                            zipName,
+                            null,
+                            null,
+                            sentAt,
+                            respondedAt);
+                }
                 return new SunatBajaResult(
                         SunatBajaEstado.RECHAZADO,
                         normalizarTexto(e.getCode(), 20),
@@ -396,6 +412,20 @@ public class SunatBajaService {
                         respondedAt);
             } catch (RuntimeException e) {
                 LocalDateTime respondedAt = LocalDateTime.now();
+                if (esBoletaYaAnuladaORechazadaEnSunat(lote, items, e.getMessage())) {
+                    return resultadoBoletaYaAnuladaORechazada(
+                            "ENVIO",
+                            e.getMessage(),
+                            signedXml.digestValue(),
+                            primerTextoNoVacio(extraerTicket(e.getMessage()), lote.getTicketSunat()),
+                            xmlName,
+                            storedXml.key(),
+                            zipName,
+                            null,
+                            null,
+                            sentAt,
+                            respondedAt);
+                }
                 SunatBajaEstado estadoError = SunatBajaEstado.fromSunatEstado(sunatErrorClassifierService.classify(e.getMessage()));
                 return new SunatBajaResult(
                         estadoError,
@@ -429,7 +459,7 @@ public class SunatBajaService {
         }
     }
 
-    private SunatBajaResult consultarEstado(SunatBajaLote lote) {
+    private SunatBajaResult consultarEstado(SunatBajaLote lote, List<SunatBajaItem> items) {
         String mode = sunatProperties.normalizedMode();
         if ("SIMULATED".equals(mode)) {
             LocalDateTime now = LocalDateTime.now();
@@ -477,6 +507,20 @@ public class SunatBajaService {
                         : response.cdrZipFileName();
                 SunatDocumentStorageService.StoredDocument storedCdr = sunatDocumentStorageService
                         .storeSunatBajaCdr(lote, cdrFileName, response.cdrZipBytes());
+                if (esBoletaYaAnuladaORechazadaEnSunat(lote, items, cdrResult.mensaje())) {
+                    return resultadoBoletaYaAnuladaORechazada(
+                            cdrResult.codigo(),
+                            cdrResult.mensaje(),
+                            lote.getSunatHash(),
+                            lote.getTicketSunat(),
+                            lote.getSunatXmlNombre(),
+                            lote.getSunatXmlKey(),
+                            lote.getSunatZipNombre(),
+                            storedCdr.fileName(),
+                            storedCdr.key(),
+                            lote.getSunatEnviadoAt(),
+                            respondedAt);
+                }
                 return new SunatBajaResult(
                         SunatBajaEstado.fromSunatEstado(cdrResult.estado()),
                         normalizarTexto(cdrResult.codigo(), 20),
@@ -488,6 +532,20 @@ public class SunatBajaService {
                         lote.getSunatZipNombre(),
                         storedCdr.fileName(),
                         storedCdr.key(),
+                        lote.getSunatEnviadoAt(),
+                        respondedAt);
+            }
+            if (esBoletaYaAnuladaORechazadaEnSunat(lote, items, response.statusMessage())) {
+                return resultadoBoletaYaAnuladaORechazada(
+                        response.statusCode(),
+                        response.statusMessage(),
+                        lote.getSunatHash(),
+                        lote.getTicketSunat(),
+                        lote.getSunatXmlNombre(),
+                        lote.getSunatXmlKey(),
+                        lote.getSunatZipNombre(),
+                        lote.getSunatCdrNombre(),
+                        lote.getSunatCdrKey(),
                         lote.getSunatEnviadoAt(),
                         respondedAt);
             }
@@ -506,6 +564,20 @@ public class SunatBajaService {
                     respondedAt);
         } catch (RuntimeException e) {
             LocalDateTime respondedAt = LocalDateTime.now();
+            if (esBoletaYaAnuladaORechazadaEnSunat(lote, items, e.getMessage())) {
+                return resultadoBoletaYaAnuladaORechazada(
+                        "STATUS",
+                        e.getMessage(),
+                        lote.getSunatHash(),
+                        primerTextoNoVacio(extraerTicket(e.getMessage()), lote.getTicketSunat()),
+                        lote.getSunatXmlNombre(),
+                        lote.getSunatXmlKey(),
+                        lote.getSunatZipNombre(),
+                        lote.getSunatCdrNombre(),
+                        lote.getSunatCdrKey(),
+                        lote.getSunatEnviadoAt(),
+                        respondedAt);
+            }
             SunatBajaEstado estadoError = SunatBajaEstado.fromSunatEstado(sunatErrorClassifierService.classify(e.getMessage()));
             return new SunatBajaResult(
                     estadoError,
@@ -521,6 +593,81 @@ public class SunatBajaService {
                     lote.getSunatEnviadoAt(),
                     respondedAt);
         }
+    }
+
+    private SunatBajaResult resultadoBoletaYaAnuladaORechazada(
+            String codigo,
+            String mensajeOriginal,
+            String hash,
+            String ticket,
+            String xmlNombre,
+            String xmlKey,
+            String zipNombre,
+            String cdrNombre,
+            String cdrKey,
+            LocalDateTime fechaEnvio,
+            LocalDateTime fechaRespuesta) {
+        String codigoNormalizado = normalizarTexto(codigo, 20);
+        String ticketNormalizado = primerTextoNoVacio(ticket, extraerTicket(mensajeOriginal));
+        return new SunatBajaResult(
+                SunatBajaEstado.OBSERVADO,
+                codigoNormalizado == null ? CODIGO_SUNAT_YA_ANULADO : codigoNormalizado,
+                normalizarTexto(MENSAJE_SUNAT_YA_ANULADO, 500),
+                hash,
+                ticketNormalizado,
+                xmlNombre,
+                xmlKey,
+                zipNombre,
+                cdrNombre,
+                cdrKey,
+                fechaEnvio,
+                fechaRespuesta);
+    }
+
+    private boolean esBoletaYaAnuladaORechazadaEnSunat(SunatBajaLote lote, List<SunatBajaItem> items, String mensaje) {
+        if (lote == null || lote.getTipoEnvio() != SunatBajaTipo.RC || items == null || items.isEmpty()) {
+            return false;
+        }
+        if (!esMensajeComprobanteYaAnuladoORechazado(mensaje)) {
+            return false;
+        }
+        boolean todosSonBoletasVenta = items.stream().allMatch(item -> {
+            Venta venta = item.getVenta();
+            if (venta == null || item.getNotaCredito() != null) {
+                return false;
+            }
+            String tipoVenta = normalizarTexto(venta.getTipoComprobante(), 20);
+            String tipoItem = normalizarTexto(item.getTipoComprobante(), 20);
+            return TIPO_BOLETA.equalsIgnoreCase(tipoVenta) && TIPO_BOLETA.equalsIgnoreCase(tipoItem);
+        });
+        if (!todosSonBoletasVenta) {
+            return false;
+        }
+        if (items.size() == 1) {
+            return true;
+        }
+        String normalized = mensaje.toLowerCase(Locale.ROOT);
+        return items.stream().allMatch(item -> mensajeContieneReferenciaBoleta(normalized, item));
+    }
+
+    private boolean esMensajeComprobanteYaAnuladoORechazado(String mensaje) {
+        if (mensaje == null || mensaje.isBlank()) {
+            return false;
+        }
+        String normalized = mensaje.toLowerCase(Locale.ROOT);
+        return normalized.contains("comprobante ya fue informado")
+                && (normalized.contains("anulado") || normalized.contains("rechazado"));
+    }
+
+    private boolean mensajeContieneReferenciaBoleta(String mensajeNormalizado, SunatBajaItem item) {
+        if (mensajeNormalizado == null || item == null || item.getSerie() == null || item.getCorrelativo() == null) {
+            return false;
+        }
+        String serie = item.getSerie().trim().toLowerCase(Locale.ROOT);
+        String correlativo = String.valueOf(item.getCorrelativo());
+        String correlativoPadded = String.format(Locale.ROOT, "%08d", item.getCorrelativo());
+        return mensajeNormalizado.contains("03-" + serie + "-" + correlativo)
+                || mensajeNormalizado.contains("03-" + serie + "-" + correlativoPadded);
     }
 
     @Transactional
@@ -622,7 +769,7 @@ public class SunatBajaService {
             return;
         }
         lote.setTicketSunat(ticket);
-        SunatBajaResult consultaResult = consultarEstado(lote);
+        SunatBajaResult consultaResult = consultarEstado(lote, items);
         aplicarResultadoLote(lote, items, consultaResult);
     }
 

@@ -18,6 +18,7 @@ import com.sistemapos.sistematextil.model.ProductoVariante;
 import com.sistemapos.sistematextil.model.Sucursal;
 import com.sistemapos.sistematextil.model.Venta;
 import com.sistemapos.sistematextil.model.VentaDetalle;
+import com.sistemapos.sistematextil.util.cliente.TipoDocumento;
 import com.sistemapos.sistematextil.util.sunat.SunatComprobanteHelper;
 
 import lombok.RequiredArgsConstructor;
@@ -212,9 +213,9 @@ public class SunatXmlBuilderService {
         Cliente cliente = venta.getCliente();
         String docCode = "0";
         String nroDocumento = "-";
-        String nombreCliente = "CLIENTE";
+        String nombreCliente = SunatComprobanteHelper.NOMBRE_CLIENTE_SIN_DOC;
 
-        if (cliente != null) {
+        if (!esClienteSinDocumento(cliente)) {
             docCode = SunatComprobanteHelper.codigoTipoDocumento(cliente.getTipoDocumento());
             nroDocumento = isBlank(cliente.getNroDocumento()) ? "-" : cliente.getNroDocumento().trim();
             nombreCliente = isBlank(cliente.getNombres()) ? nombreCliente : cliente.getNombres().trim();
@@ -230,6 +231,12 @@ public class SunatXmlBuilderService {
                 "schemeURI", "urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo06");
         Element partyLegalEntity = appendElement(document, party, NS_CAC, "cac:PartyLegalEntity");
         appendText(document, partyLegalEntity, NS_CBC, "cbc:RegistrationName", nombreCliente);
+    }
+
+    private boolean esClienteSinDocumento(Cliente cliente) {
+        return cliente == null
+                || cliente.getTipoDocumento() == null
+                || cliente.getTipoDocumento() == TipoDocumento.SIN_DOC;
     }
 
     private boolean esBoleta(Venta venta) {

@@ -196,6 +196,7 @@ public class UsuarioService {
                 nombreTurno,
                 usuario.getTurno() != null ? usuario.getTurno().getHoraInicio() : null,
                 usuario.getTurno() != null ? usuario.getTurno().getHoraFin() : null,
-                diasTurno);
+                diasTurno,
+                turnoService.obtenerHorarios(usuario.getTurno()));
     }
 }

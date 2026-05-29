@@ -11,9 +11,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 @Component
+@Order(0)
 public class TurnoSchemaMigration implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(TurnoSchemaMigration.class);
@@ -64,6 +66,8 @@ public class TurnoSchemaMigration implements ApplicationRunner {
                       id_turno_dia INT(11) NOT NULL AUTO_INCREMENT,
                       id_turno INT(11) NOT NULL,
                       dia_semana ENUM('LUNES','MARTES','MIERCOLES','JUEVES','VIERNES','SABADO','DOMINGO') NOT NULL,
+                      hora_inicio TIME NOT NULL,
+                      hora_fin TIME NOT NULL,
                       PRIMARY KEY (id_turno_dia),
                       UNIQUE KEY uk_turno_dia_turno_dia (id_turno, dia_semana),
                       CONSTRAINT fk_turno_dia_turno
@@ -82,6 +86,29 @@ public class TurnoSchemaMigration implements ApplicationRunner {
                     """);
             log.info("Columna turno_dia.dia_semana creada");
         }
+
+        if (!columnExists(connection, "turno_dia", "hora_inicio")) {
+            statement.execute("""
+                    ALTER TABLE turno_dia
+                    ADD COLUMN hora_inicio TIME NULL AFTER dia_semana
+                    """);
+            log.info("Columna turno_dia.hora_inicio creada");
+        }
+
+        if (!columnExists(connection, "turno_dia", "hora_fin")) {
+            statement.execute("""
+                    ALTER TABLE turno_dia
+                    ADD COLUMN hora_fin TIME NULL AFTER hora_inicio
+                    """);
+            log.info("Columna turno_dia.hora_fin creada");
+        }
+
+        poblarHorariosTurnoDiaDesdeTurno(statement);
+        statement.execute("""
+                ALTER TABLE turno_dia
+                MODIFY COLUMN hora_inicio TIME NOT NULL,
+                MODIFY COLUMN hora_fin TIME NOT NULL
+                """);
 
         if (!indexExists(connection, "turno_dia", "uk_turno_dia_turno_dia")) {
             statement.execute("""
@@ -136,10 +163,10 @@ public class TurnoSchemaMigration implements ApplicationRunner {
 
     private void poblarDiasSemanaParaTurnosExistentes(Statement statement) throws Exception {
         int insertedRows = statement.executeUpdate("""
-                INSERT INTO turno_dia (id_turno, dia_semana)
-                SELECT turno_sin_dias.id_turno, dias.dia_semana
+                INSERT INTO turno_dia (id_turno, dia_semana, hora_inicio, hora_fin)
+                SELECT turno_sin_dias.id_turno, dias.dia_semana, turno_sin_dias.hora_inicio, turno_sin_dias.hora_fin
                 FROM (
-                    SELECT t.id_turno
+                    SELECT t.id_turno, t.hora_inicio, t.hora_fin
                     FROM turno t
                     WHERE NOT EXISTS (
                         SELECT 1
@@ -160,6 +187,21 @@ public class TurnoSchemaMigration implements ApplicationRunner {
 
         if (insertedRows > 0) {
             log.info("Se poblaron {} filas en turno_dia para turnos existentes", insertedRows);
+        }
+    }
+
+    private void poblarHorariosTurnoDiaDesdeTurno(Statement statement) throws Exception {
+        int updatedRows = statement.executeUpdate("""
+                UPDATE turno_dia td
+                INNER JOIN turno t ON t.id_turno = td.id_turno
+                SET td.hora_inicio = COALESCE(td.hora_inicio, t.hora_inicio),
+                    td.hora_fin = COALESCE(td.hora_fin, t.hora_fin)
+                WHERE td.hora_inicio IS NULL
+                   OR td.hora_fin IS NULL
+                """);
+
+        if (updatedRows > 0) {
+            log.info("Se poblaron horarios en {} filas de turno_dia", updatedRows);
         }
     }
 

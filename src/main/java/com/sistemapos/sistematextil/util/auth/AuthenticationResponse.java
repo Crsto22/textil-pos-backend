@@ -6,6 +6,7 @@ import java.util.List;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.sistemapos.sistematextil.util.turno.DiaSemana;
+import com.sistemapos.sistematextil.util.turno.TurnoDiaHorarioResponse;
 import com.sistemapos.sistematextil.util.usuario.SucursalPermitidaResponse;
 
 public record AuthenticationResponse(
@@ -26,6 +27,7 @@ public record AuthenticationResponse(
     String nombreTurno,
     LocalTime horaInicioTurno,
     LocalTime horaFinTurno,
-    List<DiaSemana> diasTurno
+    List<DiaSemana> diasTurno,
+    List<TurnoDiaHorarioResponse> horariosTurno
 ) {
 }

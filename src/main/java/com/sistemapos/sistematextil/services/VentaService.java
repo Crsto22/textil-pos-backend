@@ -108,7 +108,6 @@ import lombok.RequiredArgsConstructor;
 public class VentaService {
 
     private static final BigDecimal MONTO_MAXIMO_BOLETA_ANONIMA = BigDecimal.valueOf(700);
-
     private static final BigDecimal CIEN = BigDecimal.valueOf(100);
     private static final BigDecimal CERO_MONETARIO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
     private static final String CODIGO_IGV_GRAVADO = "10";
@@ -486,10 +485,8 @@ public class VentaService {
 
     private void agregarDatosClienteTicket(Document document, Venta venta, List<Pago> pagos) throws DocumentException {
         Cliente cliente = venta.getCliente();
-        String nombreCliente = cliente != null && !valorTexto(cliente.getNombres()).isBlank()
-            ? valorTexto(cliente.getNombres()) : "GENERAL";
-        String nroDocumento = cliente != null && !valorTexto(cliente.getNroDocumento()).isBlank()
-            ? valorTexto(cliente.getNroDocumento()) : "-";
+        String nombreCliente = nombreClienteComprobante(cliente);
+        String nroDocumento = numeroDocumentoClienteComprobante(cliente);
         String fechaEmision = venta.getFecha() == null ? ""
                 : venta.getFecha().toLocalDate().format(DateTimeFormatter.ofPattern("dd/MM/yyyy"));
         String horaEmision = venta.getFecha() == null ? ""
@@ -995,12 +992,8 @@ public class VentaService {
 
     private void agregarDatosClienteComprobantePdf(Document document, Venta venta, List<Pago> pagos) throws DocumentException {
         Cliente cliente = venta.getCliente();
-        String nombreCliente = cliente != null && !valorTexto(cliente.getNombres()).isBlank()
-                ? valorTexto(cliente.getNombres())
-                : "GENERAL";
-        String nroDocumento = cliente != null && !valorTexto(cliente.getNroDocumento()).isBlank()
-                ? valorTexto(cliente.getNroDocumento())
-                : "-";
+        String nombreCliente = nombreClienteComprobante(cliente);
+        String nroDocumento = numeroDocumentoClienteComprobante(cliente);
         String direccionCliente = cliente != null && !valorTexto(cliente.getDireccion()).isBlank()
                 ? valorTexto(cliente.getDireccion())
                 : "-";
@@ -1227,6 +1220,28 @@ public class VentaService {
             case CE -> "C.E.";
             case SIN_DOC -> "Doc.";
         };
+    }
+
+    private String nombreClienteComprobante(Cliente cliente) {
+        if (esClienteSinDocumento(cliente)) {
+            return SunatComprobanteHelper.NOMBRE_CLIENTE_SIN_DOC;
+        }
+        String nombre = valorTexto(cliente.getNombres()).trim();
+        return nombre.isBlank() ? SunatComprobanteHelper.NOMBRE_CLIENTE_SIN_DOC : nombre;
+    }
+
+    private String numeroDocumentoClienteComprobante(Cliente cliente) {
+        if (esClienteSinDocumento(cliente)) {
+            return "-";
+        }
+        String nroDocumento = valorTexto(cliente.getNroDocumento()).trim();
+        return nroDocumento.isBlank() ? "-" : nroDocumento;
+    }
+
+    private boolean esClienteSinDocumento(Cliente cliente) {
+        return cliente == null
+                || cliente.getTipoDocumento() == null
+                || cliente.getTipoDocumento() == TipoDocumento.SIN_DOC;
     }
 
     private boolean esFacturaPdf(Venta venta) {
@@ -2715,6 +2730,7 @@ public class VentaService {
                 "Correlativo",
                 "Estado",
                 "Cliente",
+                "Celular",
                 "Vendedor",
                 "Sucursal",
                 "Items",
@@ -2744,26 +2760,27 @@ public class VentaService {
             r.createCell(3).setCellValue(item.correlativo() == null ? 0 : item.correlativo());
             r.createCell(4).setCellValue(valorTexto(item.estado()));
             r.createCell(5).setCellValue(valorTexto(item.nombreCliente()));
-            r.createCell(6).setCellValue(valorTexto(item.nombreUsuario()));
-            r.createCell(7).setCellValue(valorTexto(item.nombreSucursal()));
-            r.createCell(8).setCellValue(cantidadItems);
-            r.createCell(9).setCellValue(cantidadPagos);
-            r.createCell(10).setCellValue(moneda(item.subtotal()).doubleValue());
-            r.createCell(11).setCellValue(moneda(item.descuentoTotal()).doubleValue());
-            r.createCell(12).setCellValue(moneda(item.igv()).doubleValue());
-            r.createCell(13).setCellValue(moneda(item.total()).doubleValue());
-            r.getCell(10).setCellStyle(moneyStyle);
+            r.createCell(6).setCellValue(valorTexto(item.telefonoCliente()));
+            r.createCell(7).setCellValue(valorTexto(item.nombreUsuario()));
+            r.createCell(8).setCellValue(valorTexto(item.nombreSucursal()));
+            r.createCell(9).setCellValue(cantidadItems);
+            r.createCell(10).setCellValue(cantidadPagos);
+            r.createCell(11).setCellValue(moneda(item.subtotal()).doubleValue());
+            r.createCell(12).setCellValue(moneda(item.descuentoTotal()).doubleValue());
+            r.createCell(13).setCellValue(moneda(item.igv()).doubleValue());
+            r.createCell(14).setCellValue(moneda(item.total()).doubleValue());
             r.getCell(11).setCellStyle(moneyStyle);
             r.getCell(12).setCellStyle(moneyStyle);
             r.getCell(13).setCellStyle(moneyStyle);
+            r.getCell(14).setCellStyle(moneyStyle);
         }
 
         Row total = sheet.createRow(rowIdx);
         total.createCell(0).setCellValue("TOTAL");
-        total.createCell(13).setCellValue(moneda(reporte.montoTotal()).doubleValue());
-        total.getCell(13).setCellStyle(moneyStyle);
+        total.createCell(14).setCellValue(moneda(reporte.montoTotal()).doubleValue());
+        total.getCell(14).setCellStyle(moneyStyle);
 
-        for (int i = 0; i <= 13; i++) {
+        for (int i = 0; i <= 14; i++) {
             sheet.autoSizeColumn(i);
         }
     }

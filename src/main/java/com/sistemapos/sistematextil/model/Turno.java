@@ -3,9 +3,8 @@ package com.sistemapos.sistematextil.model;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
-import java.util.EnumSet;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 
 import com.sistemapos.sistematextil.util.turno.DiaSemana;
 
@@ -92,28 +91,36 @@ public class Turno {
         this.diasSemana.add(diaSemana);
     }
 
-    public void sincronizarDiasSemana(Set<DiaSemana> diasObjetivo) {
-        Set<DiaSemana> diasNormalizados = diasObjetivo == null
-                ? EnumSet.noneOf(DiaSemana.class)
-                : EnumSet.copyOf(diasObjetivo);
+    public void sincronizarHorariosSemana(Map<DiaSemana, HorarioDia> horariosObjetivo) {
+        Map<DiaSemana, HorarioDia> horariosNormalizados = horariosObjetivo == null
+                ? Map.of()
+                : horariosObjetivo;
 
         diasSemana.removeIf(turnoDia -> turnoDia.getDiaSemana() == null
-                || !diasNormalizados.contains(turnoDia.getDiaSemana()));
+                || !horariosNormalizados.containsKey(turnoDia.getDiaSemana()));
 
-        EnumSet<DiaSemana> diasExistentes = EnumSet.noneOf(DiaSemana.class);
         for (TurnoDia turnoDia : diasSemana) {
-            if (turnoDia.getDiaSemana() != null) {
-                diasExistentes.add(turnoDia.getDiaSemana());
+            HorarioDia horario = horariosNormalizados.get(turnoDia.getDiaSemana());
+            if (horario != null) {
+                turnoDia.setHoraInicio(horario.horaInicio());
+                turnoDia.setHoraFin(horario.horaFin());
             }
         }
 
-        for (DiaSemana dia : diasNormalizados) {
-            if (diasExistentes.contains(dia)) {
+        for (Map.Entry<DiaSemana, HorarioDia> entry : horariosNormalizados.entrySet()) {
+            DiaSemana dia = entry.getKey();
+            boolean existe = diasSemana.stream().anyMatch(turnoDia -> dia.equals(turnoDia.getDiaSemana()));
+            if (existe) {
                 continue;
             }
             TurnoDia turnoDia = new TurnoDia();
             turnoDia.setDiaSemana(dia);
+            turnoDia.setHoraInicio(entry.getValue().horaInicio());
+            turnoDia.setHoraFin(entry.getValue().horaFin());
             addDiaSemana(turnoDia);
         }
+    }
+
+    public record HorarioDia(LocalTime horaInicio, LocalTime horaFin) {
     }
 }

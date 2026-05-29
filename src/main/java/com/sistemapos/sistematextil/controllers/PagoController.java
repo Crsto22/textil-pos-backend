@@ -102,6 +102,45 @@ public class PagoController {
         }
     }
 
+    @GetMapping(
+            value = "/reporte/excel",
+            produces = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    public ResponseEntity<?> reporteExcel(
+            Authentication authentication,
+            @RequestParam(name = "q", required = false) String q,
+            @RequestParam(name = "idVenta", required = false) Integer idVenta,
+            @RequestParam(name = "idUsuario", required = false) Integer idUsuario,
+            @RequestParam(name = "idMetodoPago", required = false) Integer idMetodoPago,
+            @RequestParam(name = "idSucursal", required = false) Integer idSucursal,
+            @RequestParam(name = "estadoVenta", required = false) String estadoVenta,
+            @RequestParam(name = "desde", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate desde,
+            @RequestParam(name = "hasta", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hasta) {
+        try {
+            byte[] archivo = pagoService.generarReportePagosExcel(
+                    q,
+                    idVenta,
+                    idUsuario,
+                    idMetodoPago,
+                    idSucursal,
+                    estadoVenta,
+                    desde,
+                    hasta,
+                    obtenerCorreoAutenticado(authentication));
+            String ts = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+            String nombreArchivo = "reporte_pagos_" + ts + ".xlsx";
+
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + nombreArchivo + "\"")
+                    .contentType(MediaType.parseMediaType(
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                    .body(archivo);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al generar reporte Excel de pagos" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
     @PutMapping("/{idPago}/codigo-operacion")
     public ResponseEntity<?> actualizarCodigoOperacion(
             Authentication authentication,

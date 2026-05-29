@@ -3,6 +3,7 @@ package com.sistemapos.sistematextil.util.turno;
 import java.time.LocalTime;
 import java.util.List;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
@@ -25,6 +26,9 @@ public record TurnoUpdateRequest(
         String estado,
 
         @NotEmpty(message = "Ingrese al menos un dia")
-        List<DiaSemana> dias
+        List<DiaSemana> dias,
+
+        @Valid
+        List<TurnoDiaHorarioRequest> horariosDias
 ) {
 }

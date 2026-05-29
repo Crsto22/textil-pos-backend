@@ -1,5 +1,7 @@
 package com.sistemapos.sistematextil.model;
 
+import java.time.LocalTime;
+
 import com.sistemapos.sistematextil.util.turno.DiaSemana;
 
 import jakarta.persistence.Column;
@@ -38,4 +40,10 @@ public class TurnoDia {
     @Enumerated(EnumType.STRING)
     @Column(name = "dia_semana", nullable = false, length = 10)
     private DiaSemana diaSemana;
+
+    @Column(name = "hora_inicio", nullable = false)
+    private LocalTime horaInicio;
+
+    @Column(name = "hora_fin", nullable = false)
+    private LocalTime horaFin;
 }

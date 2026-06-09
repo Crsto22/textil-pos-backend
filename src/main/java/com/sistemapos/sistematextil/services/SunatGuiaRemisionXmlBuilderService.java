@@ -106,6 +106,10 @@ public class SunatGuiaRemisionXmlBuilderService {
         if (isBlank(guia.getMotivoTraslado())) {
             throw new RuntimeException("La guia de remision no tiene motivo de traslado");
         }
+        if ("01".equals(guia.getModalidadTransporte() == null ? "" : guia.getModalidadTransporte().trim())
+                && guia.getFechaEntregaTransportista() == null) {
+            throw new RuntimeException("La guia de remision publica no tiene fecha de entrega al transportista");
+        }
         if (!List.of("01", "02", "03", "04", "05", "06", "07", "13", "14", "17")
                 .contains(guia.getMotivoTraslado().trim())) {
             throw new RuntimeException("Motivo de traslado no permitido para este modulo");
@@ -269,18 +273,25 @@ public class SunatGuiaRemisionXmlBuilderService {
                 guia.getFechaInicioTraslado().format(ISSUE_DATE));
 
         // Carrier (transportista) for modalidad 01 (public)
-        if ("01".equals(guia.getModalidadTransporte().trim()) && transportistas != null) {
-            for (GuiaRemisionTransportista t : transportistas) {
-                Element carrierParty = appendElement(document, shipmentStage, NS_CAC, "cac:CarrierParty");
-                Element partyIdent = appendElement(document, carrierParty, NS_CAC, "cac:PartyIdentification");
-                appendText(document, partyIdent, NS_CBC, "cbc:ID", t.getTransportistaNroDoc().trim(),
-                        "schemeID", t.getTransportistaTipoDoc().trim());
-                Element partyLegal = appendElement(document, carrierParty, NS_CAC, "cac:PartyLegalEntity");
-                appendText(document, partyLegal, NS_CBC, "cbc:RegistrationName",
-                        t.getTransportistaRazonSocial().trim());
-                if (!isBlank(t.getTransportistaRegistroMtc())) {
-                    appendText(document, partyLegal, NS_CBC, "cbc:CompanyID",
-                            t.getTransportistaRegistroMtc().trim());
+        if ("01".equals(guia.getModalidadTransporte().trim())) {
+            Element loadingTransportEvent = appendElement(document, shipmentStage, NS_CAC,
+                    "cac:LoadingTransportEvent");
+            appendText(document, loadingTransportEvent, NS_CBC, "cbc:OccurrenceDate",
+                    guia.getFechaEntregaTransportista().format(ISSUE_DATE));
+
+            if (transportistas != null) {
+                for (GuiaRemisionTransportista t : transportistas) {
+                    Element carrierParty = appendElement(document, shipmentStage, NS_CAC, "cac:CarrierParty");
+                    Element partyIdent = appendElement(document, carrierParty, NS_CAC, "cac:PartyIdentification");
+                    appendText(document, partyIdent, NS_CBC, "cbc:ID", t.getTransportistaNroDoc().trim(),
+                            "schemeID", t.getTransportistaTipoDoc().trim());
+                    Element partyLegal = appendElement(document, carrierParty, NS_CAC, "cac:PartyLegalEntity");
+                    appendText(document, partyLegal, NS_CBC, "cbc:RegistrationName",
+                            t.getTransportistaRazonSocial().trim());
+                    if (!isBlank(t.getTransportistaRegistroMtc())) {
+                        appendText(document, partyLegal, NS_CBC, "cbc:CompanyID",
+                                t.getTransportistaRegistroMtc().trim());
+                    }
                 }
             }
         }

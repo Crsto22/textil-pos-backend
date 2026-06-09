@@ -227,6 +227,9 @@ public class GuiaRemisionPdfService {
 
         String fechaTraslado = guia.getFechaInicioTraslado() != null ? guia.getFechaInicioTraslado().format(FMT_FECHA)
                 : "-";
+        String fechaEntregaTransportista = guia.getFechaEntregaTransportista() != null
+                ? guia.getFechaEntregaTransportista().format(FMT_FECHA)
+                : "-";
         String motivo = describirMotivo(v(guia.getMotivoTraslado()));
         String modalidad = describirModalidad(v(guia.getModalidadTransporte()));
         String peso = guia.getPesoBrutoTotal() != null
@@ -235,8 +238,13 @@ public class GuiaRemisionPdfService {
         String bultos = guia.getNumeroBultos() != null ? String.valueOf(guia.getNumeroBultos()) : "-";
 
         agregarFilaDatoDoble(tabla, "MOTIVO DE TRASLADO:", motivo, "FECHA DE INICIO:", fechaTraslado);
-        agregarFilaDatoDoble(tabla, "MODALIDAD:", modalidad, "NRO. BULTOS:", bultos);
-        agregarFilaDatoSimple(tabla, "PESO BRUTO TOTAL:", peso);
+        if ("01".equals(v(guia.getModalidadTransporte()))) {
+            agregarFilaDatoDoble(tabla, "MODALIDAD:", modalidad, "FECHA ENTREGA TRANSP.:", fechaEntregaTransportista);
+            agregarFilaDatoDoble(tabla, "NRO. BULTOS:", bultos, "PESO BRUTO TOTAL:", peso);
+        } else {
+            agregarFilaDatoDoble(tabla, "MODALIDAD:", modalidad, "NRO. BULTOS:", bultos);
+            agregarFilaDatoSimple(tabla, "PESO BRUTO TOTAL:", peso);
+        }
         if (!v(guia.getDescripcionMotivo()).isBlank()) {
             agregarFilaDatoSimple(tabla, "DESCRIPCION MOTIVO:", v(guia.getDescripcionMotivo()));
         }

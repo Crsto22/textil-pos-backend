@@ -35,6 +35,8 @@ public record GuiaRemisionUpdateRequest(
 
         LocalDate fechaInicioTraslado,
 
+        LocalDate fechaEntregaTransportista,
+
         @Pattern(regexp = "01|02", message = "modalidadTransporte debe ser 01 (publica) o 02 (privada)")
         String modalidadTransporte,
 

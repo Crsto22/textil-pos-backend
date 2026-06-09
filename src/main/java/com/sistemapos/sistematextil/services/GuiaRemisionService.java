@@ -470,6 +470,7 @@ public class GuiaRemisionService {
         guia.setCorrelativo(nuevoCorrelativo);
         guia.setFechaEmision(nowLima());
         guia.setFechaInicioTraslado(request.fechaInicioTraslado());
+        guia.setFechaEntregaTransportista(request.fechaEntregaTransportista());
         guia.setMotivoTraslado(motivoTraslado);
         guia.setDescripcionMotivo(resolverDescripcionMotivo(motivoTraslado, request.descripcionMotivo()));
         guia.setModalidadTransporte(request.modalidadTransporte().trim());
@@ -580,6 +581,9 @@ public class GuiaRemisionService {
 
         if (request.fechaInicioTraslado() != null) {
             guia.setFechaInicioTraslado(request.fechaInicioTraslado());
+        }
+        if (request.fechaEntregaTransportista() != null) {
+            guia.setFechaEntregaTransportista(request.fechaEntregaTransportista());
         }
         if (request.modalidadTransporte() != null) {
             guia.setModalidadTransporte(request.modalidadTransporte().trim());
@@ -867,6 +871,15 @@ public class GuiaRemisionService {
         } else if ("01".equals(modalidad)) {
             if (transportistas == null || transportistas.isEmpty()) {
                 throw new RuntimeException("La modalidad publica requiere al menos un transportista");
+            }
+            if (guia.getFechaEntregaTransportista() == null) {
+                throw new RuntimeException("La modalidad publica requiere fechaEntregaTransportista");
+            }
+            if (guia.getFechaEntregaTransportista().isBefore(guia.getFechaEmision().toLocalDate())) {
+                throw new RuntimeException("fechaEntregaTransportista no puede ser menor a fechaEmision");
+            }
+            if (guia.getFechaInicioTraslado().isBefore(guia.getFechaEntregaTransportista())) {
+                throw new RuntimeException("fechaInicioTraslado debe ser mayor o igual a fechaEntregaTransportista");
             }
             for (GuiaRemisionTransportista t : transportistas) {
                 if (t.getTransportistaNroDoc() == null
@@ -1308,6 +1321,7 @@ public class GuiaRemisionService {
                 SunatGuiaRemisionXmlBuilderService.numeroGuia(guia),
                 guia.getFechaEmision(),
                 guia.getFechaInicioTraslado(),
+                guia.getFechaEntregaTransportista(),
                 guia.getMotivoTraslado(),
                 guia.getDescripcionMotivo(),
                 guia.getModalidadTransporte(),

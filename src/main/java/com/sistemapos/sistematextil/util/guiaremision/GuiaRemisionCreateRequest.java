@@ -49,6 +49,8 @@ public record GuiaRemisionCreateRequest(
         @NotNull(message = "La fechaInicioTraslado es obligatoria")
         LocalDate fechaInicioTraslado,
 
+        LocalDate fechaEntregaTransportista,
+
         @NotNull(message = "La modalidadTransporte es obligatoria (01=publica, 02=privada)")
         @Pattern(regexp = "01|02", message = "modalidadTransporte debe ser 01 (publica) o 02 (privada)")
         String modalidadTransporte,

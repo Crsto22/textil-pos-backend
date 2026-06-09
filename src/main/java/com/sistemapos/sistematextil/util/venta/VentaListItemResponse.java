@@ -23,6 +23,7 @@ public record VentaListItemResponse(
         String nombreUsuario,
         Integer idSucursal,
         String nombreSucursal,
+        VentaConversionOrigenResponse conversionOrigen,
         long items,
         long pagos
 ) {

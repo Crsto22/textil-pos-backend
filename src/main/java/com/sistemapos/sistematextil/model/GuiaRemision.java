@@ -63,6 +63,9 @@ public class GuiaRemision {
     @Column(name = "fecha_inicio_traslado", nullable = false)
     private LocalDate fechaInicioTraslado;
 
+    @Column(name = "fecha_entrega_transportista")
+    private LocalDate fechaEntregaTransportista;
+
     @Column(name = "motivo_traslado", nullable = false, length = 2)
     private String motivoTraslado;
 

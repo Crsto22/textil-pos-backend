@@ -12,6 +12,7 @@ public record GuiaRemisionResponse(
         String numeroGuiaRemision,
         LocalDateTime fechaEmision,
         LocalDate fechaInicioTraslado,
+        LocalDate fechaEntregaTransportista,
         String motivoTraslado,
         String descripcionMotivo,
         String modalidadTransporte,

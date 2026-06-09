@@ -75,6 +75,7 @@ import com.sistemapos.sistematextil.model.SunatConfig;
 import com.sistemapos.sistematextil.model.Sucursal;
 import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.model.Venta;
+import com.sistemapos.sistematextil.model.VentaComprobanteConversionHistorial;
 import com.sistemapos.sistematextil.model.VentaDetalle;
 import com.sistemapos.sistematextil.repositories.ClienteRepository;
 import com.sistemapos.sistematextil.repositories.ComprobanteConfigRepository;
@@ -84,6 +85,7 @@ import com.sistemapos.sistematextil.repositories.PagoRepository;
 import com.sistemapos.sistematextil.repositories.ProductoVarianteRepository;
 import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
+import com.sistemapos.sistematextil.repositories.VentaComprobanteConversionHistorialRepository;
 import com.sistemapos.sistematextil.repositories.VentaDetalleRepository;
 import com.sistemapos.sistematextil.repositories.VentaRepository;
 import com.sistemapos.sistematextil.util.cliente.TipoDocumento;
@@ -92,6 +94,8 @@ import com.sistemapos.sistematextil.util.sunat.SunatComprobanteHelper;
 import com.sistemapos.sistematextil.util.sunat.SunatEmissionResult;
 import com.sistemapos.sistematextil.util.sunat.SunatEstado;
 import com.sistemapos.sistematextil.util.usuario.Rol;
+import com.sistemapos.sistematextil.util.venta.VentaConvertirComprobanteRequest;
+import com.sistemapos.sistematextil.util.venta.VentaConversionOrigenResponse;
 import com.sistemapos.sistematextil.util.venta.VentaCreateRequest;
 import com.sistemapos.sistematextil.util.venta.VentaDetalleCreateItem;
 import com.sistemapos.sistematextil.util.venta.VentaDetalleResponse;
@@ -123,6 +127,7 @@ public class VentaService {
     private final UsuarioRepository usuarioRepository;
     private final SucursalRepository sucursalRepository;
     private final ClienteRepository clienteRepository;
+    private final VentaComprobanteConversionHistorialRepository ventaConversionHistorialRepository;
     private final EmpresaRepository empresaRepository;
     private final StockMovimientoService stockMovimientoService;
     private final PrecioOfertaService precioOfertaService;
@@ -1767,6 +1772,73 @@ public class VentaService {
     }
 
     @Transactional
+    public VentaResponse convertirNotaVentaAComprobante(
+            Integer idVenta,
+            VentaConvertirComprobanteRequest request,
+            String correoUsuarioAutenticado) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolVenta(usuarioAutenticado);
+
+        Venta venta = obtenerVentaConAlcanceForUpdate(idVenta, usuarioAutenticado);
+        validarVentaConvertibleAComprobante(venta);
+
+        String tipoComprobante = normalizarTipoComprobanteElectronicoConversion(request.tipoComprobante());
+        String serieSolicitada = normalizarSerieObligatoria(request.serie());
+        Cliente cliente = request.idCliente() != null
+                ? resolverCliente(request.idCliente(), venta.getSucursal())
+                : venta.getCliente();
+        String tipoComprobanteOrigen = venta.getTipoComprobante();
+        String serieOrigen = venta.getSerie();
+        Integer correlativoOrigen = venta.getCorrelativo();
+        Cliente clienteOrigen = venta.getCliente();
+
+        validarEmpresaParaComprobanteElectronico(tipoComprobante, venta.getSucursal());
+        validarCertificadoSunatParaVentaElectronica(tipoComprobante, venta.getSucursal());
+
+        BigDecimal igvPorcentaje = resolverIgvPorcentajeVenta(
+                tipoComprobante,
+                venta.getSucursal(),
+                null);
+        validarClienteParaComprobanteElectronico(tipoComprobante, cliente, moneda(venta.getTotal()));
+
+        List<VentaDetalle> detalles = ventaDetalleRepository
+                .findByVenta_IdVentaAndDeletedAtIsNullOrderByIdVentaDetalleAsc(venta.getIdVenta());
+        if (detalles.isEmpty()) {
+            throw new RuntimeException("La nota de venta no tiene detalles para convertir");
+        }
+
+        TotalesVenta totales = recalcularTributosParaConversion(detalles, moneda(venta.getTotal()), igvPorcentaje);
+        NumeroComprobante numeroComprobante = asignarNumeroComprobante(tipoComprobante, serieSolicitada);
+
+        venta.setCliente(cliente);
+        venta.setTipoComprobante(tipoComprobante);
+        venta.setSerie(numeroComprobante.serie());
+        venta.setCorrelativo(numeroComprobante.correlativo());
+        venta.setIgvPorcentaje(totales.igvPorcentaje());
+        venta.setSubtotal(totales.subtotal());
+        venta.setIgv(totales.igv());
+        venta.setTotal(totales.total());
+        venta.setSunatEstado(SunatEstado.PENDIENTE_ENVIO);
+        venta.setSunatMensaje("Comprobante convertido desde nota de venta y pendiente de envio a SUNAT.");
+        limpiarDatosSunatDocumentoVenta(venta);
+
+        Venta ventaGuardada = ventaRepository.save(venta);
+        registrarHistorialConversionComprobante(
+                ventaGuardada,
+                tipoComprobanteOrigen,
+                serieOrigen,
+                correlativoOrigen,
+                clienteOrigen,
+                cliente,
+                usuarioAutenticado);
+        List<VentaDetalle> detallesGuardados = ventaDetalleRepository.saveAll(detalles);
+        sunatJobService.enqueueVenta(ventaGuardada.getIdVenta());
+
+        List<Pago> pagos = pagoRepository.findByVenta_IdVentaAndDeletedAtIsNullOrderByIdPagoAsc(ventaGuardada.getIdVenta());
+        return toResponse(ventaGuardada, detallesGuardados, pagos);
+    }
+
+    @Transactional
     public void procesarEmisionElectronica(Integer idVenta) {
         Venta venta = ventaRepository.findByIdVentaAndDeletedAtIsNull(idVenta)
                 .orElseThrow(() -> new RuntimeException("Venta con ID " + idVenta + " no encontrada"));
@@ -1835,6 +1907,103 @@ public class VentaService {
                 .findByVenta_IdVentaAndDeletedAtIsNullOrderByIdPagoAsc(ventaActualizada.getIdVenta());
 
         return toResponse(ventaActualizada, detalles, pagos);
+    }
+
+    private void validarVentaConvertibleAComprobante(Venta venta) {
+        if (venta == null) {
+            throw new RuntimeException("Venta no encontrada");
+        }
+        if (!"NOTA DE VENTA".equalsIgnoreCase(venta.getTipoComprobante())) {
+            throw new RuntimeException("Solo se puede convertir una NOTA DE VENTA a boleta o factura");
+        }
+        if (!"EMITIDA".equalsIgnoreCase(venta.getEstado())) {
+            throw new RuntimeException("Solo se puede convertir una nota de venta emitida");
+        }
+        if (venta.getDeletedAt() != null) {
+            throw new RuntimeException("La venta eliminada no se puede convertir");
+        }
+    }
+
+    private String normalizarTipoComprobanteElectronicoConversion(String tipoComprobante) {
+        String normalized = normalizarTipoComprobante(tipoComprobante);
+        if (!requiereComprobanteElectronico(normalized)) {
+            throw new RuntimeException("tipoComprobante permitido para conversion: BOLETA o FACTURA");
+        }
+        return normalized;
+    }
+
+    private TotalesVenta recalcularTributosParaConversion(
+            List<VentaDetalle> detalles,
+            BigDecimal totalVenta,
+            BigDecimal igvPorcentaje) {
+        BigDecimal totalNormalizado = moneda(totalVenta);
+        BigDecimal subtotalVenta = calcularBaseSinIgv(totalNormalizado, igvPorcentaje, CODIGO_IGV_GRAVADO);
+        BigDecimal igvVenta = totalNormalizado.subtract(subtotalVenta).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal totalPendiente = totalNormalizado;
+        BigDecimal subtotalPendiente = subtotalVenta;
+        BigDecimal igvPendiente = igvVenta;
+
+        for (int i = 0; i < detalles.size(); i++) {
+            VentaDetalle detalle = detalles.get(i);
+            BigDecimal totalLinea;
+            BigDecimal subtotalLinea;
+            BigDecimal igvLinea;
+
+            if (i == detalles.size() - 1) {
+                totalLinea = totalPendiente;
+                subtotalLinea = subtotalPendiente;
+                igvLinea = igvPendiente;
+            } else {
+                totalLinea = totalLineaConversion(detalle);
+                if (totalLinea.compareTo(totalPendiente) > 0) {
+                    totalLinea = totalPendiente;
+                }
+                subtotalLinea = calcularBaseSinIgv(totalLinea, igvPorcentaje, CODIGO_IGV_GRAVADO);
+                igvLinea = totalLinea.subtract(subtotalLinea).setScale(2, RoundingMode.HALF_UP);
+
+                totalPendiente = totalPendiente.subtract(totalLinea).setScale(2, RoundingMode.HALF_UP);
+                subtotalPendiente = subtotalPendiente.subtract(subtotalLinea).setScale(2, RoundingMode.HALF_UP);
+                igvPendiente = igvPendiente.subtract(igvLinea).setScale(2, RoundingMode.HALF_UP);
+            }
+
+            detalle.setCodigoTipoAfectacionIgv(CODIGO_IGV_GRAVADO);
+            detalle.setSubtotal(subtotalLinea);
+            detalle.setIgvDetalle(igvLinea);
+            detalle.setTotalDetalle(totalLinea);
+        }
+
+        return new TotalesVenta(
+                moneda(igvPorcentaje),
+                subtotalVenta,
+                CERO_MONETARIO,
+                null,
+                igvVenta,
+                totalNormalizado);
+    }
+
+    private BigDecimal totalLineaConversion(VentaDetalle detalle) {
+        if (detalle == null) {
+            return CERO_MONETARIO;
+        }
+        if (detalle.getTotalDetalle() != null) {
+            return moneda(detalle.getTotalDetalle());
+        }
+        return moneda(detalle.getSubtotal()).add(moneda(detalle.getIgvDetalle())).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private void limpiarDatosSunatDocumentoVenta(Venta venta) {
+        venta.setSunatCodigo(null);
+        venta.setSunatHash(null);
+        venta.setSunatTicket(null);
+        venta.setSunatXmlNombre(null);
+        venta.setSunatXmlKey(null);
+        venta.setSunatZipNombre(null);
+        venta.setSunatCdrNombre(null);
+        venta.setSunatCdrKey(null);
+        venta.setSunatPdfNombre(null);
+        venta.setSunatPdfKey(null);
+        venta.setSunatEnviadoAt(null);
+        venta.setSunatRespondidoAt(null);
     }
 
     private List<DetalleCalculado> calcularDetalles(
@@ -2085,6 +2254,18 @@ public class VentaService {
         return venta;
     }
 
+    private Venta obtenerVentaConAlcanceForUpdate(Integer idVenta, Usuario usuarioAutenticado) {
+        Venta venta = ventaRepository.findByIdVentaForUpdate(idVenta)
+                .orElseThrow(() -> new RuntimeException("Venta con ID " + idVenta + " no encontrada"));
+        Integer idSucursal = venta.getSucursal() != null ? venta.getSucursal().getIdSucursal() : null;
+        usuarioSucursalAccessService.validarSucursalPermitida(
+                usuarioAutenticado,
+                idSucursal,
+                "Venta con ID " + idVenta + " no encontrada");
+        validarPropietarioVenta(venta, usuarioAutenticado, idVenta);
+        return venta;
+    }
+
     private void validarPropietarioVenta(Venta venta, Usuario usuarioAutenticado, Integer idVenta) {
         if (!esVentas(usuarioAutenticado)) {
             return;
@@ -2287,6 +2468,51 @@ public class VentaService {
         return serieNormalizada.toUpperCase(Locale.ROOT);
     }
 
+    private void registrarHistorialConversionComprobante(
+            Venta venta,
+            String tipoComprobanteOrigen,
+            String serieOrigen,
+            Integer correlativoOrigen,
+            Cliente clienteOrigen,
+            Cliente clienteDestino,
+            Usuario usuarioConversion) {
+        if (ventaConversionHistorialRepository.existsByVenta_IdVenta(venta.getIdVenta())) {
+            return;
+        }
+
+        VentaComprobanteConversionHistorial historial = new VentaComprobanteConversionHistorial();
+        historial.setVenta(venta);
+        historial.setTipoComprobanteOrigen(tipoComprobanteOrigen);
+        historial.setSerieOrigen(serieOrigen);
+        historial.setCorrelativoOrigen(correlativoOrigen);
+        historial.setTipoComprobanteDestino(venta.getTipoComprobante());
+        historial.setSerieDestino(venta.getSerie());
+        historial.setCorrelativoDestino(venta.getCorrelativo());
+        historial.setClienteOrigen(clienteOrigen);
+        historial.setClienteDestino(clienteDestino);
+        historial.setUsuarioConversion(usuarioConversion);
+
+        ventaConversionHistorialRepository.save(historial);
+    }
+
+    private VentaConversionOrigenResponse toConversionOrigenResponse(Integer idVenta) {
+        if (idVenta == null) {
+            return null;
+        }
+
+        return ventaConversionHistorialRepository.findByVenta_IdVenta(idVenta)
+                .map(historial -> new VentaConversionOrigenResponse(
+                        historial.getTipoComprobanteOrigen(),
+                        historial.getSerieOrigen(),
+                        historial.getCorrelativoOrigen(),
+                        historial.getConvertidoAt(),
+                        historial.getUsuarioConversion() != null
+                                ? historial.getUsuarioConversion().getIdUsuario()
+                                : null,
+                        nombreUsuario(historial.getUsuarioConversion())))
+                .orElse(null);
+    }
+
     private VentaListItemResponse toListItemResponse(Venta venta) {
         String nombreCliente = venta.getCliente() != null ? venta.getCliente().getNombres() : null;
         String nombreUsuario = nombreUsuario(venta.getUsuario());
@@ -2294,6 +2520,7 @@ public class VentaService {
         String nombreSucursal = venta.getSucursal() != null ? venta.getSucursal().getNombre() : null;
         long items = ventaDetalleRepository.countByVenta_IdVentaAndDeletedAtIsNull(venta.getIdVenta());
         long pagos = pagoRepository.countByVenta_IdVentaAndDeletedAtIsNull(venta.getIdVenta());
+        VentaConversionOrigenResponse conversionOrigen = toConversionOrigenResponse(venta.getIdVenta());
 
         return new VentaListItemResponse(
                 venta.getIdVenta(),
@@ -2312,6 +2539,7 @@ public class VentaService {
                 nombreUsuario,
                 idSucursal,
                 nombreSucursal,
+                conversionOrigen,
                 items,
                 pagos);
     }
@@ -2325,6 +2553,7 @@ public class VentaService {
         List<VentaPagoResponse> pagoResponses = pagos.stream()
                 .map(this::toPagoResponse)
                 .toList();
+        VentaConversionOrigenResponse conversionOrigen = toConversionOrigenResponse(venta.getIdVenta());
 
         return new VentaResponse(
                 venta.getIdVenta(),
@@ -2365,6 +2594,7 @@ public class VentaService {
                 nombreUsuario(venta.getUsuario()),
                 venta.getSucursal() != null ? venta.getSucursal().getIdSucursal() : null,
                 venta.getSucursal() != null ? venta.getSucursal().getNombre() : null,
+                conversionOrigen,
                 detalleResponses,
                 pagoResponses);
     }

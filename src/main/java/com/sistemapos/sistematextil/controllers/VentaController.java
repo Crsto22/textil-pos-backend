@@ -31,6 +31,7 @@ import com.sistemapos.sistematextil.util.notacredito.NotaCreditoResponse;
 import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
 import com.sistemapos.sistematextil.util.venta.VentaAnulacionRequest;
 import com.sistemapos.sistematextil.util.venta.VentaAnulacionResponse;
+import com.sistemapos.sistematextil.util.venta.VentaConvertirComprobanteRequest;
 import com.sistemapos.sistematextil.util.venta.VentaCreateRequest;
 import com.sistemapos.sistematextil.util.venta.VentaListItemResponse;
 import com.sistemapos.sistematextil.util.venta.VentaReporteResponse;
@@ -369,6 +370,22 @@ public class VentaController {
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al reenviar comprobante a SUNAT" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
+    @PostMapping("/{id}/convertir-comprobante")
+    public ResponseEntity<?> convertirNotaVentaAComprobante(
+            Authentication authentication,
+            @PathVariable Integer id,
+            @Valid @RequestBody VentaConvertirComprobanteRequest request) {
+        try {
+            VentaResponse response = ventaService
+                    .convertirNotaVentaAComprobante(id, request, obtenerCorreoAutenticado(authentication));
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al convertir nota de venta" : e.getMessage();
             HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
             return ResponseEntity.status(status).body(Map.of("message", message));
         }

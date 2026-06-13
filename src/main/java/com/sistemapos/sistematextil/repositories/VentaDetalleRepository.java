@@ -218,4 +218,33 @@ public interface VentaDetalleRepository extends JpaRepository<VentaDetalle, Inte
     List<VentaDetalle> findActivosByVentaIds(@Param("ventaIds") List<Integer> ventaIds);
 
     long countByVenta_IdVentaAndDeletedAtIsNull(Integer idVenta);
+
+    @Query(
+            value = """
+                    SELECT
+                        p.producto_id AS productoId,
+                        c.color_id AS colorId,
+                        SUM(vd.cantidad) AS totalVendido
+                    FROM venta_detalle vd
+                    JOIN venta v ON v.id_venta = vd.id_venta
+                    JOIN producto_variante pv ON pv.id_producto_variante = vd.id_producto_variante
+                    JOIN producto p ON p.producto_id = pv.producto_id
+                    JOIN colores c ON c.color_id = pv.color_id
+                    WHERE vd.deleted_at IS NULL
+                      AND v.deleted_at IS NULL
+                      AND v.estado = 'EMITIDA'
+                      AND p.publicar_ecommerce = 1
+                      AND p.deleted_at IS NULL
+                      AND p.activo = 1
+                      AND p.estado = 'ACTIVO'
+                      AND pv.deleted_at IS NULL
+                      AND pv.activo = 1
+                      AND c.deleted_at IS NULL
+                      AND c.activo = 1
+                    GROUP BY p.producto_id, c.color_id
+                    ORDER BY totalVendido DESC
+                    LIMIT :limit
+                    """,
+            nativeQuery = true)
+    List<Object[]> obtenerTopProductosColorEcommerce(@Param("limit") int limit);
 }

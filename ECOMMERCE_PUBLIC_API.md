@@ -71,6 +71,111 @@ El estado se calcula por las tallas/variantes del color:
 - `PARCIAL`: algunas tallas tienen stock y otras no.
 - `AGOTADO`: ninguna talla tiene stock.
 
+## GET /api/public/ecommerce/inicio
+
+Pagina de inicio del ecommerce. Devuelve dos secciones de 4 productos cada una:
+
+- `aleatorios` — 4 productos aleatorios con stock disponible.
+- `masVendidos` — 4 productos mas vendidos (por cantidad) que tengan stock.
+
+Cada item tiene la misma estructura que el listado de productos (`producto`, `color`, `imagenPrincipal`, `precioMinimo`, `precioMaximo`, `estadoStock`, `stockTotalColor`, `variantes`).
+
+### Ejemplo Request
+
+```http
+GET /api/public/ecommerce/inicio
+```
+
+### Ejemplo Response
+
+```json
+{
+  "tiendaConfigurada": true,
+  "aleatorios": [
+    {
+      "producto": {
+        "idProducto": 12,
+        "nombre": "Conjunto Michell",
+        "slug": "conjunto-michell",
+        "descripcion": "Conjunto dos piezas",
+        "estado": "ACTIVO",
+        "fechaCreacion": "2026-05-10T10:00:00",
+        "categoria": { "idCategoria": 2, "nombre": "Conjuntos" },
+        "imagenGlobalUrl": "/storage/productos/global/conjunto-michell.jpg",
+        "imagenGlobalThumbUrl": "/storage/productos/global/thumb_conjunto-michell.jpg"
+      },
+      "color": { "idColor": 3, "nombre": "Negro", "hex": "#000000" },
+      "imagenPrincipal": {
+        "idColorImagen": 45,
+        "url": "/storage/productos/12/negro/conjunto-michell-negro.jpg",
+        "urlThumb": "/storage/productos/12/negro/thumb_conjunto-michell-negro.jpg",
+        "orden": 1, "esPrincipal": true, "estado": "ACTIVO", "origen": "COLOR"
+      },
+      "precioMinimo": 89.0,
+      "precioMaximo": 129.0,
+      "estadoStock": "DISPONIBLE",
+      "stockTotalColor": 12,
+      "variantes": [
+        {
+          "idProductoVariante": 201, "sku": "CON-NEG-S", "codigoBarras": "7750000000201",
+          "talla": { "idTalla": 1, "nombre": "S" },
+          "precioRegular": 129.0, "precioMayor": 110.0, "precioOfertaAplicada": 89.0,
+          "precioVigente": 89.0, "tipoOfertaAplicada": "SUCURSAL", "sucursalOfertaId": 15,
+          "ofertaInicio": "2026-06-01T00:00:00", "ofertaFin": "2026-06-30T23:59:59",
+          "stock": 5, "disponible": true, "estado": "ACTIVO"
+        }
+      ]
+    }
+  ],
+  "masVendidos": [
+    {
+      "producto": {
+        "idProducto": 8, "nombre": "Blazer Ejecutivo", "slug": "blazer-ejecutivo",
+        "descripcion": "Blazer para dama con corte moderno", "estado": "ACTIVO",
+        "fechaCreacion": "2026-04-15T10:00:00",
+        "categoria": { "idCategoria": 3, "nombre": "Blazers" },
+        "imagenGlobalUrl": "/storage/productos/global/blazer-ejecutivo.jpg",
+        "imagenGlobalThumbUrl": "/storage/productos/global/thumb_blazer-ejecutivo.jpg"
+      },
+      "color": { "idColor": 1, "nombre": "Azul", "hex": "#0000FF" },
+      "imagenPrincipal": {
+        "idColorImagen": 30,
+        "url": "/storage/productos/8/azul/blazer-ejecutivo-azul.jpg",
+        "urlThumb": "/storage/productos/8/azul/thumb_blazer-ejecutivo-azul.jpg",
+        "orden": 1, "esPrincipal": true, "estado": "ACTIVO", "origen": "COLOR"
+      },
+      "precioMinimo": 99.0, "precioMaximo": 99.0,
+      "estadoStock": "PARCIAL", "stockTotalColor": 3,
+      "variantes": [
+        {
+          "idProductoVariante": 101, "sku": "BLA-AZU-S", "codigoBarras": "7750000000101",
+          "talla": { "idTalla": 1, "nombre": "S" },
+          "precioRegular": 99.0, "precioMayor": 85.0, "precioOfertaAplicada": null,
+          "precioVigente": 99.0, "tipoOfertaAplicada": "NINGUNA", "sucursalOfertaId": null,
+          "ofertaInicio": null, "ofertaFin": null,
+          "stock": 3, "disponible": true, "estado": "ACTIVO"
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Sin Sucursal Ecommerce
+
+```http
+HTTP/1.1 200 OK
+```
+
+```json
+{
+  "tiendaConfigurada": false,
+  "aleatorios": [],
+  "masVendidos": []
+}
+```
+
+
 ## GET /api/public/ecommerce/productos
 
 Lista productos publicados agrupados por `producto-color`.
@@ -362,16 +467,19 @@ HTTP/1.1 404 Not Found
 
 ## Uso Recomendado En Frontend Ecommerce
 
-1. Cargar listado con `GET /api/public/ecommerce/productos?page=0&size=10`.
-2. Mostrar una tarjeta por cada item de `content`.
-3. Usar `imagenPrincipal.urlThumb || imagenPrincipal.url`.
-4. Mostrar precio:
+1. Cargar pagina de inicio con `GET /api/public/ecommerce/inicio`.
+2. Mostrar `aleatorios` y `masVendidos` como secciones en el home.
+3. Cada item se renderiza igual que en el listado de productos.
+4. Cargar listado completo con `GET /api/public/ecommerce/productos?page=0&size=10`.
+5. Mostrar una tarjeta por cada item de `content`.
+6. Usar `imagenPrincipal.urlThumb || imagenPrincipal.url`.
+7. Mostrar precio:
    - Si `precioMinimo == precioMaximo`, mostrar un solo precio.
    - Si son diferentes, mostrar rango: `S/ precioMinimo - S/ precioMaximo`.
-5. Si `estadoStock = AGOTADO`, mostrar el producto como catalogo sin boton de compra.
-6. Al entrar al detalle, usar `GET /api/public/ecommerce/productos/{slug}` con el slug del producto.
-7. Para seleccionar talla, usar el item de `variantes` dentro del color elegido.
-8. Para comprar o reservar, enviar `idProductoVariante` al flujo futuro de pedido.
+8. Si `estadoStock = AGOTADO`, mostrar el producto como catalogo sin boton de compra.
+9. Al entrar al detalle, usar `GET /api/public/ecommerce/productos/{slug}` con el slug del producto.
+10. Para seleccionar talla, usar el item de `variantes` dentro del color elegido.
+11. Para comprar o reservar, enviar `idProductoVariante` al flujo futuro de pedido.
 
 
 ## Consultas SQL De Validacion

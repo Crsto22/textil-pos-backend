@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.sistemapos.sistematextil.services.EcommerceProductoPublicService;
+import com.sistemapos.sistematextil.util.ecommerce.EcommerceInicioResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoDetalleSlugResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoListadoResponse;
 
@@ -41,6 +42,11 @@ public class EcommercePublicController {
                 idCategoria,
                 idColor,
                 soloDisponibles));
+    }
+
+    @GetMapping("inicio")
+    public ResponseEntity<EcommerceInicioResponse> inicio() {
+        return ResponseEntity.ok(ecommerceProductoPublicService.obtenerInicio());
     }
 
     @GetMapping("productos/{slug}")

@@ -25,7 +25,9 @@ import com.sistemapos.sistematextil.repositories.ProductoColorImagenRepository;
 import com.sistemapos.sistematextil.repositories.ProductoRepository;
 import com.sistemapos.sistematextil.repositories.ProductoVarianteRepository;
 import com.sistemapos.sistematextil.repositories.SucursalRepository;
+import com.sistemapos.sistematextil.repositories.VentaDetalleRepository;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoColorGroupProjection;
+import com.sistemapos.sistematextil.util.ecommerce.EcommerceInicioResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoColorListItemResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoDetalleSlugResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoListadoResponse;
@@ -47,6 +49,7 @@ public class EcommerceProductoPublicService {
     private final ProductoVarianteRepository productoVarianteRepository;
     private final ProductoColorImagenRepository productoColorImagenRepository;
     private final PrecioOfertaService precioOfertaService;
+    private final VentaDetalleRepository ventaDetalleRepository;
 
     public EcommerceProductoListadoResponse listarProductos(
             String q,
@@ -93,6 +96,72 @@ public class EcommerceProductoPublicService {
                 grupos.isFirst(),
                 grupos.isLast(),
                 grupos.isEmpty());
+    }
+
+    public EcommerceInicioResponse obtenerInicio() {
+        Sucursal sucursal = obtenerSucursalEcommerce();
+        if (sucursal == null) {
+            return new EcommerceInicioResponse(false, List.of(), List.of());
+        }
+        Integer idSucursal = sucursal.getIdSucursal();
+
+        List<EcommerceProductoColorGroupProjection> gruposAleatorios = productoVarianteRepository
+                .listarAleatoriosEcommerce(idSucursal, 4);
+        List<EcommerceProductoColorListItemResponse> aleatorios = construirItems(gruposAleatorios, sucursal);
+
+        List<Object[]> topVentas = ventaDetalleRepository.obtenerTopProductosColorEcommerce(12);
+        List<EcommerceProductoColorListItemResponse> masVendidos;
+
+        if (topVentas.isEmpty()) {
+            masVendidos = List.of();
+        } else {
+            List<Integer> productoIds = new ArrayList<>();
+            List<Integer> colorIds = new ArrayList<>();
+            Map<ProductColorKey, Long> ventasPorKey = new LinkedHashMap<>();
+
+            for (Object[] row : topVentas) {
+                Integer productoId = ((Number) row[0]).intValue();
+                Integer colorId = ((Number) row[1]).intValue();
+                Long totalVendido = ((Number) row[2]).longValue();
+                productoIds.add(productoId);
+                colorIds.add(colorId);
+                ventasPorKey.put(new ProductColorKey(productoId, colorId), totalVendido);
+            }
+
+            List<ProductoVariante> variantes = productoVarianteRepository
+                    .listarVariantesEcommercePorProductosYColores(productoIds, colorIds);
+
+            Set<Integer> varianteIds = variantes.stream()
+                    .map(ProductoVariante::getIdProductoVariante)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toSet());
+            Map<Integer, Integer> stocks = obtenerStocks(varianteIds, idSucursal);
+            Map<Integer, ProductoVarianteOfertaSucursal> ofertas = precioOfertaService
+                    .obtenerOfertasSucursalPorVariantes(varianteIds, idSucursal);
+            Map<ProductColorKey, List<ProductoColorImagen>> imagenes = obtenerImagenes(productoIds);
+
+            Map<ProductColorKey, List<ProductoVariante>> variantesPorKey = variantes.stream()
+                    .collect(Collectors.groupingBy(this::key, LinkedHashMap::new, Collectors.toList()));
+
+            masVendidos = new ArrayList<>();
+            for (Map.Entry<ProductColorKey, Long> entry : ventasPorKey.entrySet()) {
+                ProductColorKey key = entry.getKey();
+                List<ProductoVariante> variantesGrupo = variantesPorKey.getOrDefault(key, List.of());
+                if (variantesGrupo.isEmpty()) {
+                    continue;
+                }
+                EcommerceProductoColorListItemResponse item = construirItemDesdeVariantes(
+                        variantesGrupo, imagenes, stocks, ofertas);
+                if (item.stockTotalColor() != null && item.stockTotalColor() > 0) {
+                    masVendidos.add(item);
+                    if (masVendidos.size() >= 4) {
+                        break;
+                    }
+                }
+            }
+        }
+
+        return new EcommerceInicioResponse(true, aleatorios, masVendidos);
     }
 
     public EcommerceProductoDetalleSlugResponse obtenerDetallePorSlug(String slug) {

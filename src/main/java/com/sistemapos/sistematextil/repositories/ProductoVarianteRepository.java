@@ -342,6 +342,66 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
             """)
     List<ProductoVariante> listarVariantesEcommercePorProducto(@Param("idProducto") Integer idProducto);
 
+    @Query(
+            value = """
+                    SELECT
+                        p.producto_id AS productoId,
+                        p.nombre AS productoNombre,
+                        p.slug AS productoSlug,
+                        p.descripcion AS productoDescripcion,
+                        p.estado AS productoEstado,
+                        p.created_at AS fechaCreacion,
+                        p.imagen_global_url AS imagenGlobalUrl,
+                        p.imagen_global_thumb_url AS imagenGlobalThumbUrl,
+                        cat.id_categoria AS categoriaId,
+                        cat.nombre_categoria AS categoriaNombre,
+                        c.color_id AS colorId,
+                        c.nombre AS colorNombre,
+                        c.codigo AS colorHex,
+                        CAST(COALESCE(SUM(ss.cantidad), 0) AS SIGNED) AS stockTotalColor,
+                        CAST(COUNT(DISTINCT v.id_producto_variante) AS SIGNED) AS totalVariantes,
+                        CAST(COUNT(DISTINCT CASE WHEN ss.cantidad > 0 THEN v.id_producto_variante END) AS SIGNED) AS variantesConStock
+                    FROM producto_variante v
+                    JOIN producto p ON p.producto_id = v.producto_id
+                    JOIN categoria cat ON cat.id_categoria = p.categoria_id
+                    JOIN colores c ON c.color_id = v.color_id
+                    JOIN tallas t ON t.talla_id = v.talla_id
+                    JOIN sucursal_stock ss ON ss.id_producto_variante = v.id_producto_variante AND ss.id_sucursal = :idSucursal
+                    WHERE p.publicar_ecommerce = 1
+                      AND p.deleted_at IS NULL
+                      AND p.activo = 1
+                      AND p.estado = 'ACTIVO'
+                      AND cat.deleted_at IS NULL
+                      AND cat.activo = 1
+                      AND v.deleted_at IS NULL
+                      AND v.activo = 1
+                      AND c.deleted_at IS NULL
+                      AND c.activo = 1
+                      AND t.deleted_at IS NULL
+                      AND t.activo = 1
+                    GROUP BY
+                        p.producto_id,
+                        p.nombre,
+                        p.slug,
+                        p.descripcion,
+                        p.estado,
+                        p.created_at,
+                        p.imagen_global_url,
+                        p.imagen_global_thumb_url,
+                        cat.id_categoria,
+                        cat.nombre_categoria,
+                        c.color_id,
+                        c.nombre,
+                        c.codigo
+                    HAVING COALESCE(SUM(ss.cantidad), 0) > 0
+                    ORDER BY RAND()
+                    LIMIT :limit
+                    """,
+            nativeQuery = true)
+    List<EcommerceProductoColorGroupProjection> listarAleatoriosEcommerce(
+            @Param("idSucursal") Integer idSucursal,
+            @Param("limit") int limit);
+
     @Query("""
             SELECT v
             FROM ProductoVariante v

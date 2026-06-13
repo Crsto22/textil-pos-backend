@@ -39,8 +39,20 @@ public class Producto {
     @Column(nullable = false, length = 150)
     private String nombre;
 
+    @Column(length = 180, unique = true)
+    private String slug;
+
     @Column(length = 500)
     private String descripcion;
+
+    @Column(name = "imagen_global_url", length = 600)
+    private String imagenGlobalUrl;
+
+    @Column(name = "imagen_global_thumb_url", length = 600)
+    private String imagenGlobalThumbUrl;
+
+    @Column(name = "publicar_ecommerce", nullable = false)
+    private Boolean publicarEcommerce = Boolean.FALSE;
 
     @Column(nullable = false)
     private String estado;
@@ -78,6 +90,9 @@ public class Producto {
         }
         if (this.activo == null || this.activo.isBlank()) {
             this.activo = "ACTIVO";
+        }
+        if (this.publicarEcommerce == null) {
+            this.publicarEcommerce = Boolean.FALSE;
         }
     }
 

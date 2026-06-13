@@ -1,5 +1,6 @@
 package com.sistemapos.sistematextil.services;
 
+import java.text.Normalizer;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -207,7 +208,11 @@ public class ProductoService {
         Producto producto = new Producto();
         producto.setCategoria(obtenerCategoriaActiva(request.idCategoria()));
         producto.setNombre(normalizarRequerido(request.nombre(), "El nombre del producto es obligatorio"));
+        producto.setSlug(resolverSlugParaGuardar(request.slug(), producto.getNombre(), null, true));
         producto.setDescripcion(normalizar(request.descripcion()));
+        producto.setImagenGlobalUrl(normalizar(request.imagenGlobalUrl()));
+        producto.setImagenGlobalThumbUrl(normalizar(request.imagenGlobalThumbUrl()));
+        producto.setPublicarEcommerce(Boolean.TRUE.equals(request.publicarEcommerce()));
         producto.setEstado(ESTADO_ACTIVO);
         producto.setActivo(ESTADO_ACTIVO);
         producto.setDeletedAt(null);
@@ -230,7 +235,11 @@ public class ProductoService {
         Producto producto = new Producto();
         producto.setCategoria(obtenerCategoriaActiva(request.idCategoria()));
         producto.setNombre(normalizarRequerido(request.nombre(), "El nombre del producto es obligatorio"));
+        producto.setSlug(resolverSlugParaGuardar(request.slug(), producto.getNombre(), null, true));
         producto.setDescripcion(normalizar(request.descripcion()));
+        producto.setImagenGlobalUrl(normalizar(request.imagenGlobalUrl()));
+        producto.setImagenGlobalThumbUrl(normalizar(request.imagenGlobalThumbUrl()));
+        producto.setPublicarEcommerce(Boolean.TRUE.equals(request.publicarEcommerce()));
         producto.setEstado(ESTADO_ACTIVO);
         producto.setActivo(ESTADO_ACTIVO);
         producto.setDeletedAt(null);
@@ -260,9 +269,16 @@ public class ProductoService {
         validarRolEdicion(usuario);
 
         Producto producto = obtenerPorId(idProducto);
+        Set<String> urlsGlobalesActuales = extraerUrlsGlobales(producto);
         producto.setCategoria(obtenerCategoriaActiva(request.idCategoria()));
         producto.setNombre(normalizarRequerido(request.nombre(), "El nombre del producto es obligatorio"));
+        producto.setSlug(resolverSlugParaGuardar(request.slug(), producto.getNombre(), idProducto, false));
         producto.setDescripcion(normalizar(request.descripcion()));
+        producto.setImagenGlobalUrl(normalizar(request.imagenGlobalUrl()));
+        producto.setImagenGlobalThumbUrl(normalizar(request.imagenGlobalThumbUrl()));
+        if (request.publicarEcommerce() != null) {
+            producto.setPublicarEcommerce(request.publicarEcommerce());
+        }
         producto.setEstado(ESTADO_ACTIVO);
         producto.setActivo(ESTADO_ACTIVO);
         producto.setDeletedAt(null);
@@ -289,6 +305,7 @@ public class ProductoService {
             productoColorImagenRepository.saveAll(imagenesNuevas);
         }
         eliminarImagenesObsoletas(urlsActuales, extraerUrls(imagenesNuevas));
+        eliminarImagenesObsoletas(urlsGlobalesActuales, extraerUrlsGlobales(actualizado));
 
         VarianteCatalogo catalogo = obtenerCatalogoPorProductos(List.of(actualizado), null, false).get(actualizado.getIdProducto());
         return new ProductoCompletoResponse(
@@ -308,7 +325,17 @@ public class ProductoService {
         Producto producto = obtenerPorId(idProducto);
         producto.setCategoria(obtenerCategoriaActiva(request.idCategoria()));
         producto.setNombre(normalizarRequerido(request.nombre(), "El nombre del producto es obligatorio"));
+        producto.setSlug(resolverSlugParaGuardar(request.slug(), producto.getNombre(), idProducto, false));
         producto.setDescripcion(normalizar(request.descripcion()));
+        if (request.imagenGlobalUrl() != null) {
+            producto.setImagenGlobalUrl(normalizar(request.imagenGlobalUrl()));
+        }
+        if (request.imagenGlobalThumbUrl() != null) {
+            producto.setImagenGlobalThumbUrl(normalizar(request.imagenGlobalThumbUrl()));
+        }
+        if (request.publicarEcommerce() != null) {
+            producto.setPublicarEcommerce(request.publicarEcommerce());
+        }
         producto.setEstado(ESTADO_ACTIVO);
         producto.setActivo(ESTADO_ACTIVO);
         producto.setDeletedAt(null);
@@ -786,7 +813,11 @@ public class ProductoService {
                 producto.getIdProducto(),
                 catalogo != null ? catalogo.sku() : null,
                 producto.getNombre(),
+                producto.getSlug(),
                 producto.getDescripcion(),
+                producto.getImagenGlobalUrl(),
+                producto.getImagenGlobalThumbUrl(),
+                Boolean.TRUE.equals(producto.getPublicarEcommerce()),
                 producto.getEstado(),
                 producto.getFechaCreacion(),
                 producto.getCategoria() != null ? producto.getCategoria().getIdCategoria() : null,
@@ -807,7 +838,11 @@ public class ProductoService {
                 producto.getIdProducto(),
                 catalogo != null ? catalogo.sku() : null,
                 producto.getNombre(),
+                producto.getSlug(),
                 producto.getDescripcion(),
+                producto.getImagenGlobalUrl(),
+                producto.getImagenGlobalThumbUrl(),
+                Boolean.TRUE.equals(producto.getPublicarEcommerce()),
                 producto.getEstado(),
                 producto.getFechaCreacion(),
                 catalogo != null ? catalogo.precioMin() : null,
@@ -958,6 +993,74 @@ public class ProductoService {
         return trimmed.isEmpty() ? null : trimmed;
     }
 
+    public String resolverSlugParaGuardar(
+            String slugSolicitado,
+            String nombre,
+            Integer idProductoExcluir,
+            boolean generarSiempre) {
+        String slugNormalizado = normalizarSlug(slugSolicitado);
+        if (slugNormalizado != null) {
+            validarSlugDisponible(slugNormalizado, idProductoExcluir);
+            return slugNormalizado;
+        }
+        if (!generarSiempre && idProductoExcluir != null) {
+            Producto actual = productoRepository.findByIdProductoAndDeletedAtIsNull(idProductoExcluir).orElse(null);
+            if (actual != null && normalizar(actual.getSlug()) != null) {
+                return actual.getSlug();
+            }
+        }
+        return generarSlugUnico(nombre, idProductoExcluir);
+    }
+
+    public static String normalizarSlug(String value) {
+        if (value == null) {
+            return null;
+        }
+        String normalized = Normalizer.normalize(value.trim().toLowerCase(), Normalizer.Form.NFD)
+                .replaceAll("\\p{M}", "")
+                .replaceAll("[^a-z0-9]+", "-")
+                .replaceAll("-{2,}", "-")
+                .replaceAll("^-|-$", "");
+        return normalized.isBlank() ? null : normalized;
+    }
+
+    private String generarSlugUnico(String nombre, Integer idProductoExcluir) {
+        String base = normalizarSlug(nombre);
+        if (base == null) {
+            base = "producto";
+        }
+        if (base.length() > 180) {
+            base = base.substring(0, 180).replaceAll("-+$", "");
+        }
+        String candidato = base;
+        int sufijo = 2;
+        while (slugExiste(candidato, idProductoExcluir)) {
+            String suffix = "-" + sufijo++;
+            int maxBaseLength = Math.max(1, 180 - suffix.length());
+            String baseCortada = base.length() > maxBaseLength
+                    ? base.substring(0, maxBaseLength).replaceAll("-+$", "")
+                    : base;
+            candidato = baseCortada + suffix;
+        }
+        return candidato;
+    }
+
+    private void validarSlugDisponible(String slug, Integer idProductoExcluir) {
+        if (slug.length() > 180) {
+            throw new RuntimeException("El slug no debe superar 180 caracteres");
+        }
+        if (slugExiste(slug, idProductoExcluir)) {
+            throw new RuntimeException("El slug ya esta en uso");
+        }
+    }
+
+    private boolean slugExiste(String slug, Integer idProductoExcluir) {
+        if (idProductoExcluir == null) {
+            return productoRepository.existsBySlug(slug);
+        }
+        return productoRepository.existsBySlugAndIdProductoNot(slug, idProductoExcluir);
+    }
+
     private List<String> tokensBusqueda(String term) {
         if (term == null) {
             return List.of();
@@ -1098,6 +1201,16 @@ public class ProductoService {
             agregarUrl(urls, imagen.getUrl());
             agregarUrl(urls, imagen.getUrlThumb());
         }
+        return urls;
+    }
+
+    private Set<String> extraerUrlsGlobales(Producto producto) {
+        Set<String> urls = new HashSet<>();
+        if (producto == null) {
+            return urls;
+        }
+        agregarUrl(urls, producto.getImagenGlobalUrl());
+        agregarUrl(urls, producto.getImagenGlobalThumbUrl());
         return urls;
     }
 

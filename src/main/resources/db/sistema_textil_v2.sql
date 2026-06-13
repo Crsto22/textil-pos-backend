@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS sucursal (
   provincia VARCHAR(100) DEFAULT NULL,
   distrito VARCHAR(100) DEFAULT NULL,
   codigo_establecimiento_sunat VARCHAR(4) DEFAULT NULL,
+  publicar_ecommerce TINYINT(1) NOT NULL DEFAULT 0,
   activo TINYINT(1) NOT NULL DEFAULT 1,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
@@ -83,6 +84,22 @@ CREATE TABLE IF NOT EXISTS sucursal (
     FOREIGN KEY (id_empresa) REFERENCES empresa (id_empresa)
     ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+SET @col_sucursal_publicar_ecommerce := (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'sucursal'
+    AND COLUMN_NAME = 'publicar_ecommerce'
+);
+SET @sql := IF(
+  @col_sucursal_publicar_ecommerce = 0,
+  'ALTER TABLE sucursal ADD COLUMN publicar_ecommerce TINYINT(1) NOT NULL DEFAULT 0',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 -- =========================
 -- TURNO
@@ -191,16 +208,69 @@ CREATE TABLE producto(
   sucursal_id INT NOT NULL,
   categoria_id INT NOT NULL,
   nombre VARCHAR(150) NOT NULL,
+  slug VARCHAR(180) DEFAULT NULL,
   descripcion VARCHAR(500),
+  imagen_global_url VARCHAR(600) DEFAULT NULL,
+  imagen_global_thumb_url VARCHAR(600) DEFAULT NULL,
+  publicar_ecommerce TINYINT(1) NOT NULL DEFAULT 0,
   estado ENUM('ACTIVO','AGOTADO','ARCHIVADO') NOT NULL DEFAULT 'ACTIVO',
   activo TINYINT(1) NOT NULL DEFAULT 1,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   deleted_at DATETIME(6),
+  UNIQUE KEY uk_producto_slug(slug),
   KEY idx_producto_sucursal(sucursal_id),
   FOREIGN KEY(sucursal_id) REFERENCES sucursal(id_sucursal),
   FOREIGN KEY(categoria_id) REFERENCES categoria(id_categoria)
 ) ENGINE=InnoDB;
+
+SET @col_producto_publicar_ecommerce := (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'producto'
+    AND COLUMN_NAME = 'publicar_ecommerce'
+);
+SET @sql := IF(
+  @col_producto_publicar_ecommerce = 0,
+  'ALTER TABLE producto ADD COLUMN publicar_ecommerce TINYINT(1) NOT NULL DEFAULT 0',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @col_producto_slug := (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'producto'
+    AND COLUMN_NAME = 'slug'
+);
+SET @sql := IF(
+  @col_producto_slug = 0,
+  'ALTER TABLE producto ADD COLUMN slug VARCHAR(180) DEFAULT NULL AFTER nombre',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @idx_producto_slug := (
+  SELECT COUNT(*)
+  FROM information_schema.STATISTICS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'producto'
+    AND INDEX_NAME = 'uk_producto_slug'
+);
+SET @sql := IF(
+  @idx_producto_slug = 0,
+  'ALTER TABLE producto ADD UNIQUE KEY uk_producto_slug (slug)',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 -- =========================
 -- PRODUCTO COLOR IMAGEN
 -- =========================

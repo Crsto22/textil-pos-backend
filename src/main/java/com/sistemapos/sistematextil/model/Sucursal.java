@@ -98,6 +98,9 @@ public class Sucursal {
     @Column(name = "codigo_establecimiento_sunat", length = 4)
     private String codigoEstablecimientoSunat;
 
+    @Column(name = "publicar_ecommerce", nullable = false)
+    private Boolean publicarEcommerce = Boolean.FALSE;
+
     @PrePersist
     protected void onCreate() {
         LocalDateTime now = LocalDateTime.now();
@@ -110,6 +113,9 @@ public class Sucursal {
         }
         if (this.tipo == null) {
             this.tipo = SucursalTipo.VENTA;
+        }
+        if (this.publicarEcommerce == null) {
+            this.publicarEcommerce = Boolean.FALSE;
         }
         this.deletedAt = null;
     }

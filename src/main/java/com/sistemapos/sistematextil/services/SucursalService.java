@@ -76,6 +76,7 @@ public class SucursalService {
         sucursal.setCodigoEstablecimientoSunat(normalizarCodigoSunat(request.codigoEstablecimientoSunat()));
         sucursal.setTipo(resolverTipo(request.tipo()));
         sucursal.setEstado("ACTIVO");
+        aplicarPublicacionEcommerce(sucursal, Boolean.TRUE.equals(request.publicarEcommerce()));
         sucursal.setFechaCreacion(LocalDateTime.now());
         sucursal.setDeletedAt(null);
         sucursal.setEmpresa(empresa);
@@ -104,6 +105,11 @@ public class SucursalService {
         sucursal.setCodigoEstablecimientoSunat(normalizarCodigoSunat(request.codigoEstablecimientoSunat()));
         sucursal.setTipo(resolverTipo(request.tipo()));
         sucursal.setEstado(request.estado().toUpperCase());
+        aplicarPublicacionEcommerce(
+                sucursal,
+                request.publicarEcommerce() != null
+                        ? Boolean.TRUE.equals(request.publicarEcommerce())
+                        : Boolean.TRUE.equals(sucursal.getPublicarEcommerce()));
         sucursal.setEmpresa(empresa);
 
         Sucursal actualizada = sucursalRepository.save(sucursal);
@@ -117,6 +123,7 @@ public class SucursalService {
                         "Sucursal con ID " + idSucursal + " no encontrada o ya eliminada"));
 
         sucursal.setEstado("INACTIVO");
+        sucursal.setPublicarEcommerce(Boolean.FALSE);
         sucursal.setDeletedAt(LocalDateTime.now());
         liberarNombreUnico(sucursal);
         sucursalRepository.save(sucursal);
@@ -168,6 +175,7 @@ public class SucursalService {
                 sucursal.getCorreo(),
                 sucursal.getUbigeo(),
                 sucursal.getCodigoEstablecimientoSunat(),
+                Boolean.TRUE.equals(sucursal.getPublicarEcommerce()),
                 sucursal.getEstado(),
                 sucursal.getFechaCreacion(),
                 idEmpresa,
@@ -176,6 +184,24 @@ public class SucursalService {
                 usuariosDetalle,
                 usuariosTotal,
                 usuariosFaltantes);
+    }
+
+    private void aplicarPublicacionEcommerce(Sucursal sucursal, boolean publicarEcommerce) {
+        if (!publicarEcommerce) {
+            sucursal.setPublicarEcommerce(Boolean.FALSE);
+            return;
+        }
+        if (!"ACTIVO".equalsIgnoreCase(sucursal.getEstado())) {
+            throw new RuntimeException("Solo una sucursal ACTIVA puede usarse para ecommerce");
+        }
+        if (sucursal.getDeletedAt() != null) {
+            throw new RuntimeException("Una sucursal eliminada no puede usarse para ecommerce");
+        }
+        if (sucursal.getTipo() != SucursalTipo.VENTA) {
+            throw new RuntimeException("Solo una sucursal de tipo VENTA puede usarse para ecommerce");
+        }
+        sucursalRepository.desmarcarOtrasSucursalesEcommerce(sucursal.getIdSucursal());
+        sucursal.setPublicarEcommerce(Boolean.TRUE);
     }
 
     private SucursalUsuarioResumenResponse toUsuarioResumenResponse(SucursalUsuarioResumenProjection projection) {

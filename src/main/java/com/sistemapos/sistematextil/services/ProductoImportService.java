@@ -379,6 +379,13 @@ public class ProductoImportService {
             producto.setSucursal(agrupado.sucursal());
             producto.setCategoria(categoria);
             producto.setNombre(agrupado.nombreProducto());
+            if (existente.isEmpty() || producto.getSlug() == null || producto.getSlug().isBlank()) {
+                producto.setSlug(productoService.resolverSlugParaGuardar(
+                        null,
+                        producto.getNombre(),
+                        producto.getIdProducto(),
+                        true));
+            }
             producto.setEstado("ACTIVO");
             producto.setActivo("ACTIVO");
             producto.setDeletedAt(null);

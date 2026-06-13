@@ -201,6 +201,12 @@ public interface ProductoRepository extends JpaRepository<Producto, Integer> {
 
     Optional<Producto> findByIdProductoAndDeletedAtIsNull(Integer idProducto);
 
+    Optional<Producto> findBySlugAndDeletedAtIsNull(String slug);
+
+    boolean existsBySlug(String slug);
+
+    boolean existsBySlugAndIdProductoNot(String slug, Integer idProducto);
+
     @Query("""
             SELECT COUNT(v) > 0
             FROM ProductoVariante v

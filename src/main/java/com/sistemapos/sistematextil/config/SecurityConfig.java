@@ -38,6 +38,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/storage").permitAll()
                         .requestMatchers("/storage/empresa/**", "/storage/productos/**", "/storage/usuarios/**")
                         .permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/public/ecommerce/**").permitAll()
                         .requestMatchers("/api/auth/autenticarse", "/api/auth/refresh").permitAll()
                         .requestMatchers("/api/auth/registro").hasAnyAuthority("ADMINISTRADOR", "SISTEMA")
                         .requestMatchers("/api/auth/logout").authenticated()

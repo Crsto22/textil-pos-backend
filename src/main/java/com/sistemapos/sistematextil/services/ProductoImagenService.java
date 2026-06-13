@@ -19,6 +19,7 @@ import com.sistemapos.sistematextil.model.ProductoColorImagen;
 import com.sistemapos.sistematextil.model.ProductoVariante;
 import com.sistemapos.sistematextil.repositories.ProductoColorImagenRepository;
 import com.sistemapos.sistematextil.util.producto.ProductoImagenEditResponse;
+import com.sistemapos.sistematextil.util.producto.ProductoImagenGlobalUploadResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoImagenUploadItem;
 import com.sistemapos.sistematextil.util.producto.ProductoImagenUploadResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteImagenDeleteResponse;
@@ -83,6 +84,14 @@ public class ProductoImagenService {
         }
 
         return new ProductoImagenUploadResponse(colorId, response);
+    }
+
+    public ProductoImagenGlobalUploadResponse subirImagenGlobal(Integer productoId, MultipartFile file) {
+        if (productoId != null) {
+            productoService.obtenerPorId(productoId);
+        }
+        UploadPair upload = subirImagen(file, productoId, null);
+        return new ProductoImagenGlobalUploadResponse(upload.url(), upload.urlThumb());
     }
 
     @Transactional
@@ -285,6 +294,12 @@ public class ProductoImagenService {
     }
 
     private String construirBaseKey(Integer productoId, Integer colorId) {
+        if (colorId == null) {
+            if (productoId != null) {
+                return "productos/producto-" + productoId + "/global/";
+            }
+            return "productos/global/";
+        }
         if (productoId != null) {
             return "productos/producto-" + productoId + "/color-" + colorId + "/";
         }

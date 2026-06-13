@@ -13,6 +13,7 @@ public record SucursalListItemResponse(
         String correo,
         String ubigeo,
         String codigoEstablecimientoSunat,
+        Boolean publicarEcommerce,
         String estado,
         LocalDateTime fechaCreacion,
         Integer idEmpresa,

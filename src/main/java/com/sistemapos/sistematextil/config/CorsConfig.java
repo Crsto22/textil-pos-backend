@@ -34,10 +34,10 @@ public class CorsConfig {
             throw new IllegalStateException("Configure CORS_ALLOWED_ORIGINS con el dominio HTTPS del frontend");
         }
         if (origins.stream().anyMatch("*"::equals)) {
-            throw new IllegalStateException("CORS_ALLOWED_ORIGINS no puede usar '*' en produccion");
+            configuration.setAllowedOriginPatterns(List.of("*"));
+        } else {
+            configuration.setAllowedOrigins(origins);
         }
-
-        configuration.setAllowedOrigins(origins);
         configuration.setAllowedMethods(Arrays.stream(allowedMethods.split(","))
                 .map(String::trim)
                 .filter(method -> !method.isBlank())

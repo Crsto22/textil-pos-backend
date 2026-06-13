@@ -187,6 +187,20 @@ public class ProductoController {
         }
     }
 
+    @PostMapping(value = "/imagen-global", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<?> subirImagenGlobal(
+            @RequestParam(name = "productoId", required = false) Integer productoId,
+            @RequestParam("file") MultipartFile file) {
+        try {
+            return ResponseEntity.status(HttpStatus.CREATED)
+                    .body(productoImagenService.subirImagenGlobal(productoId, file));
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Error al subir imagen global" : e.getMessage();
+            HttpStatus status = resolverStatus(message, HttpStatus.BAD_REQUEST);
+            return ResponseEntity.status(status).body(Map.of("message", message));
+        }
+    }
+
     @PostMapping("/insertar-completo")
     public ResponseEntity<?> crearCompleto(
             Authentication authentication,

@@ -941,6 +941,29 @@ CREATE TABLE IF NOT EXISTS metodo_pago_cuenta (
     ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS sucursal_metodo_pago_config (
+  id_sucursal_metodo_pago_config INT(11) NOT NULL AUTO_INCREMENT,
+  id_sucursal INT(11) NOT NULL,
+  id_metodo_pago INT(11) NOT NULL,
+  activo TINYINT(1) NOT NULL DEFAULT 1,
+  requiere_codigo_operacion TINYINT(1) NOT NULL DEFAULT 0,
+  requiere_fecha_pago TINYINT(1) NOT NULL DEFAULT 0,
+  requiere_hora_pago TINYINT(1) NOT NULL DEFAULT 0,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  deleted_at DATETIME(6) DEFAULT NULL,
+  PRIMARY KEY (id_sucursal_metodo_pago_config),
+  UNIQUE KEY uk_sucursal_metodo_pago (id_sucursal, id_metodo_pago),
+  KEY idx_smpc_sucursal (id_sucursal),
+  KEY idx_smpc_metodo_pago (id_metodo_pago),
+  CONSTRAINT fk_smpc_sucursal
+    FOREIGN KEY (id_sucursal) REFERENCES sucursal (id_sucursal)
+    ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_smpc_metodo_pago
+    FOREIGN KEY (id_metodo_pago) REFERENCES metodo_pago_config (id_metodo_pago)
+    ON DELETE RESTRICT ON UPDATE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
 -- =========================
 -- PAGO
 -- =========================
@@ -1170,6 +1193,29 @@ INSERT INTO metodo_pago_config (nombre, activo) VALUES
   ('PLIN', 1),
   ('TARJETA', 0),
   ('TRANSFERENCIA', 0);
+
+INSERT INTO sucursal_metodo_pago_config (
+  id_sucursal,
+  id_metodo_pago,
+  activo,
+  requiere_codigo_operacion,
+  requiere_fecha_pago,
+  requiere_hora_pago
+)
+SELECT
+  s.id_sucursal,
+  mp.id_metodo_pago,
+  mp.activo,
+  0,
+  0,
+  0
+FROM sucursal s
+CROSS JOIN metodo_pago_config mp
+WHERE s.deleted_at IS NULL
+  AND mp.deleted_at IS NULL
+ON DUPLICATE KEY UPDATE
+  updated_at = CURRENT_TIMESTAMP(6),
+  deleted_at = NULL;
 
 -- =========================
 -- MIGRACION DATOS DE VENTA (SI EXISTEN)

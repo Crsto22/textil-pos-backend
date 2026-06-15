@@ -73,6 +73,7 @@ import com.sistemapos.sistematextil.model.ProductoVariante;
 import com.sistemapos.sistematextil.model.SunatBajaLote;
 import com.sistemapos.sistematextil.model.SunatConfig;
 import com.sistemapos.sistematextil.model.Sucursal;
+import com.sistemapos.sistematextil.model.SucursalMetodoPagoConfig;
 import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.model.Venta;
 import com.sistemapos.sistematextil.model.VentaComprobanteConversionHistorial;
@@ -83,6 +84,7 @@ import com.sistemapos.sistematextil.repositories.EmpresaRepository;
 import com.sistemapos.sistematextil.repositories.MetodoPagoConfigRepository;
 import com.sistemapos.sistematextil.repositories.PagoRepository;
 import com.sistemapos.sistematextil.repositories.ProductoVarianteRepository;
+import com.sistemapos.sistematextil.repositories.SucursalMetodoPagoConfigRepository;
 import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
 import com.sistemapos.sistematextil.repositories.VentaComprobanteConversionHistorialRepository;
@@ -123,6 +125,7 @@ public class VentaService {
     private final PagoRepository pagoRepository;
     private final ProductoVarianteRepository productoVarianteRepository;
     private final MetodoPagoConfigRepository metodoPagoConfigRepository;
+    private final SucursalMetodoPagoConfigRepository sucursalMetodoPagoConfigRepository;
     private final ComprobanteConfigRepository comprobanteConfigRepository;
     private final UsuarioRepository usuarioRepository;
     private final SucursalRepository sucursalRepository;
@@ -1694,7 +1697,7 @@ public class VentaService {
                 aplicaIgv);
         validarClienteParaComprobanteElectronico(tipoComprobante, cliente, totales.total());
         List<DetalleCalculado> detallesFinales = aplicarTributosDetalle(detallesCalculados, totales);
-        List<PagoCalculado> pagosCalculados = calcularPagos(request.pagos(), totales.total());
+        List<PagoCalculado> pagosCalculados = calcularPagos(request.pagos(), totales.total(), sucursalVenta);
         String serieSolicitada = normalizarSerieObligatoria(request.serie());
         NumeroComprobante numeroComprobante = asignarNumeroComprobante(
                 tipoComprobante,
@@ -2206,9 +2209,15 @@ public class VentaService {
                 total);
     }
 
-    private List<PagoCalculado> calcularPagos(List<VentaPagoCreateItem> pagos, BigDecimal totalVenta) {
+    private List<PagoCalculado> calcularPagos(
+            List<VentaPagoCreateItem> pagos,
+            BigDecimal totalVenta,
+            Sucursal sucursalVenta) {
         if (pagos == null || pagos.isEmpty()) {
             throw new RuntimeException("Ingrese al menos un pago");
+        }
+        if (sucursalVenta == null || sucursalVenta.getIdSucursal() == null) {
+            throw new RuntimeException("Ingrese sucursal para validar pagos");
         }
 
         List<PagoCalculado> calculados = new ArrayList<>();
@@ -2229,6 +2238,7 @@ public class VentaService {
             BigDecimal monto = decimalPositivo(item.monto(), "monto");
             String codigoOperacion = normalizarTexto(item.codigoOperacion(), 100);
             LocalDateTime fecha = item.fecha();
+            validarMetodoPagoSucursal(sucursalVenta, metodoPago, codigoOperacion, fecha);
             sumaPagos = sumaPagos.add(monto).setScale(2, RoundingMode.HALF_UP);
 
             calculados.add(new PagoCalculado(metodoPago, monto, codigoOperacion, fecha));
@@ -2240,6 +2250,34 @@ public class VentaService {
         }
 
         return calculados;
+    }
+
+    private void validarMetodoPagoSucursal(
+            Sucursal sucursalVenta,
+            MetodoPagoConfig metodoPago,
+            String codigoOperacion,
+            LocalDateTime fecha) {
+        SucursalMetodoPagoConfig config = sucursalMetodoPagoConfigRepository
+                .findBySucursal_IdSucursalAndMetodoPago_IdMetodoPagoAndDeletedAtIsNull(
+                        sucursalVenta.getIdSucursal(),
+                        metodoPago.getIdMetodoPago())
+                .orElseThrow(() -> new RuntimeException("El metodo de pago '" + metodoPago.getNombre()
+                        + "' no esta configurado para la sucursal '" + sucursalVenta.getNombre() + "'"));
+
+        if (!"ACTIVO".equalsIgnoreCase(config.getEstado())) {
+            throw new RuntimeException("El metodo de pago '" + metodoPago.getNombre()
+                    + "' no esta habilitado para la sucursal '" + sucursalVenta.getNombre() + "'");
+        }
+        if (Boolean.TRUE.equals(config.getRequiereCodigoOperacion())
+                && (codigoOperacion == null || codigoOperacion.isBlank())) {
+            throw new RuntimeException("Ingrese codigoOperacion para el metodo de pago '" + metodoPago.getNombre()
+                    + "' en la sucursal '" + sucursalVenta.getNombre() + "'");
+        }
+        if ((Boolean.TRUE.equals(config.getRequiereFechaPago()) || Boolean.TRUE.equals(config.getRequiereHoraPago()))
+                && fecha == null) {
+            throw new RuntimeException("Ingrese fecha para el metodo de pago '" + metodoPago.getNombre()
+                    + "' en la sucursal '" + sucursalVenta.getNombre() + "'");
+        }
     }
 
     private Venta obtenerVentaConAlcance(Integer idVenta, Usuario usuarioAutenticado) {

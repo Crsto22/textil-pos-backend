@@ -19,10 +19,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import com.sistemapos.sistematextil.services.EcommercePedidoService;
-import com.sistemapos.sistematextil.services.EcommercePedidoSseService;
 import com.sistemapos.sistematextil.util.ecommerce.EcommercePedidoAceptarRequest;
 
 import jakarta.validation.Valid;
@@ -34,7 +32,6 @@ import lombok.RequiredArgsConstructor;
 public class EcommercePedidoController {
 
     private final EcommercePedidoService ecommercePedidoService;
-    private final EcommercePedidoSseService ecommercePedidoSseService;
 
     @GetMapping
     public ResponseEntity<?> listar(
@@ -76,12 +73,6 @@ public class EcommercePedidoController {
         } catch (RuntimeException e) {
             return error(e);
         }
-    }
-
-    @GetMapping(value = "stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter stream(Authentication authentication) {
-        ecommercePedidoService.validarAccesoPedidos(correo(authentication));
-        return ecommercePedidoSseService.conectar();
     }
 
     @GetMapping("{id}")

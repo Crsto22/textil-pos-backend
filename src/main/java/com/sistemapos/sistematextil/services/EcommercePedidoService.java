@@ -102,7 +102,6 @@ public class EcommercePedidoService {
     private final VentaService ventaService;
     private final EcommercePedidoEmailService ecommercePedidoEmailService;
     private final TurnstileService turnstileService;
-    private final EcommercePedidoSseService ecommercePedidoSseService;
 
     @Transactional
     public EcommercePedidoResponse crear(EcommercePedidoCreateRequest request, String ipCliente) {
@@ -179,7 +178,6 @@ public class EcommercePedidoService {
         pedido.setTotal(total);
         EcommercePedido guardado = pedidoRepository.save(pedido);
         ecommercePedidoEmailService.enviarPedidoCreado(guardado, comprobanteToken);
-        ecommercePedidoSseService.pedidoCambiado(guardado);
         return toResponse(guardado, comprobanteToken);
     }
 
@@ -377,7 +375,6 @@ public class EcommercePedidoService {
         }
         EcommercePedido guardado = pedidoRepository.save(pedido);
         ecommercePedidoEmailService.enviarPedidoAceptado(guardado, venta, correoUsuario);
-        ecommercePedidoSseService.pedidoCambiado(guardado);
         return toAdminResponse(guardado);
     }
 
@@ -397,7 +394,6 @@ public class EcommercePedidoService {
         pedido.setEstado(CANCELADO);
         EcommercePedido guardado = pedidoRepository.save(pedido);
         ecommercePedidoEmailService.enviarPedidoRechazado(guardado);
-        ecommercePedidoSseService.pedidoCambiado(guardado);
         return toAdminResponse(guardado);
     }
 
@@ -429,7 +425,6 @@ public class EcommercePedidoService {
             pedido.setComprobanteUrl(url);
             pedido.setEstado(PAGO_EN_REVISION);
             EcommercePedido guardado = pedidoRepository.save(pedido);
-            ecommercePedidoSseService.pedidoCambiado(guardado);
             return toResponse(guardado);
         } catch (Exception e) {
             throw new RuntimeException("No se pudo guardar el comprobante");
@@ -451,8 +446,7 @@ public class EcommercePedidoService {
         Usuario usuarioSistema = obtenerUsuarioSistema();
         liberarReserva(pedido, usuarioSistema, "Liberacion reserva ecommerce " + pedido.getCodigo());
         pedido.setEstado(CANCELADO_POR_TIEMPO);
-        EcommercePedido guardado = pedidoRepository.save(pedido);
-        ecommercePedidoSseService.pedidoCambiado(guardado);
+        pedidoRepository.save(pedido);
     }
 
     private void liberarReserva(EcommercePedido pedido, Usuario usuario, String motivo) {

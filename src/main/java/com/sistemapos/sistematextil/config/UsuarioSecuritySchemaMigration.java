@@ -29,6 +29,8 @@ public class UsuarioSecuritySchemaMigration implements ApplicationRunner {
                 Statement statement = connection.createStatement()) {
             ensureColumn(statement, connection, "usuario", "refresh_token_version",
                     "ALTER TABLE usuario ADD COLUMN refresh_token_version INT NOT NULL DEFAULT 0 AFTER deleted_at");
+            ensureColumn(statement, connection, "usuario", "puede_aceptar_pedidos",
+                    "ALTER TABLE usuario ADD COLUMN puede_aceptar_pedidos TINYINT(1) NOT NULL DEFAULT 0 AFTER refresh_token_version");
         }
     }
 

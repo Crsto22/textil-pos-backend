@@ -3,7 +3,6 @@ package com.sistemapos.sistematextil.services;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
-import java.net.URLConnection;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
@@ -13,22 +12,18 @@ import java.time.Instant;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import com.sistemapos.sistematextil.config.StorageProperties;
 
 import lombok.RequiredArgsConstructor;
-import software.amazon.awssdk.core.ResponseBytes;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
-import software.amazon.awssdk.services.s3.model.GetObjectRequest;
-import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 
 @Service
 @RequiredArgsConstructor
 public class S3StorageService {
 
-    private static final String PUBLIC_PREFIX = "/storage/";
+    private static final String STORAGE_PREFIX = "/storage/";
 
     private final ObjectProvider<S3Client> s3ClientProvider;
     private final StorageProperties storageProperties;
@@ -106,41 +101,6 @@ public class S3StorageService {
         }
     }
 
-    public StoredAsset readManagedAsset(String storedReference) {
-        if (storedReference == null || storedReference.isBlank()) {
-            throw new RuntimeException("No hay archivo registrado");
-        }
-
-        String reference = storedReference.trim();
-        if (isManagedLocalReference(reference)) {
-            Path path = resolveLocalPath(reference);
-            try {
-                byte[] bytes = Files.readAllBytes(path);
-                return new StoredAsset(bytes, resolveContentType(path.getFileName().toString(), Files.probeContentType(path)));
-            } catch (IOException e) {
-                throw new RuntimeException("No se pudo leer el archivo almacenado");
-            }
-        }
-
-        String key = extractKeyFromUrl(reference);
-        if (key != null && !key.isBlank()) {
-            S3Client s3Client = s3ClientProvider.getIfAvailable();
-            if (s3Client == null || bucket == null || bucket.isBlank()) {
-                throw new RuntimeException("No se pudo acceder al archivo almacenado");
-            }
-
-            ResponseBytes<GetObjectResponse> objectBytes = s3Client.getObjectAsBytes(GetObjectRequest.builder()
-                    .bucket(bucket)
-                    .key(key)
-                    .build());
-            return new StoredAsset(
-                    objectBytes.asByteArray(),
-                    resolveContentType(Paths.get(key).getFileName().toString(), objectBytes.response().contentType()));
-        }
-
-        throw new RuntimeException("La referencia del archivo no pertenece al almacenamiento administrado");
-    }
-
     public Instant getLastModified(String storedReference) {
         if (!isManagedLocalReference(storedReference)) {
             return null;
@@ -158,22 +118,18 @@ public class S3StorageService {
         }
 
         String reference = storedReference.trim();
-        if (isLegacyS3Reference(reference)) {
-            return buildStorageProxyUrl(reference);
-        }
-
         if (isHttpUrl(reference)) {
             return reference;
         }
 
-        if (reference.startsWith(PUBLIC_PREFIX)) {
-            return buildAbsoluteUrl(reference);
+        if (reference.startsWith(STORAGE_PREFIX)) {
+            return reference;
         }
 
         if (isManagedLocalReference(reference)) {
             Path localPath = resolveLocalPath(reference);
             String relativePath = resolveBasePath().relativize(localPath).toString().replace("\\", "/");
-            return buildAbsoluteUrl(buildManagedPath(relativePath));
+            return buildManagedPath(relativePath);
         }
 
         return reference;
@@ -185,7 +141,7 @@ public class S3StorageService {
         }
 
         String reference = storedReference.trim();
-        if (reference.startsWith(PUBLIC_PREFIX)) {
+        if (reference.startsWith(STORAGE_PREFIX)) {
             return true;
         }
 
@@ -229,8 +185,8 @@ public class S3StorageService {
 
     private Path resolveLocalPath(String storedReference) {
         String reference = storedReference.trim();
-        if (reference.startsWith(PUBLIC_PREFIX)) {
-            String relativePath = reference.substring(PUBLIC_PREFIX.length());
+        if (reference.startsWith(STORAGE_PREFIX)) {
+            String relativePath = reference.substring(STORAGE_PREFIX.length());
             return resolveRelativeKey(relativePath);
         }
 
@@ -254,30 +210,7 @@ public class S3StorageService {
     }
 
     private String buildManagedPath(String key) {
-        return PUBLIC_PREFIX + key;
-    }
-
-    private String buildAbsoluteUrl(String path) {
-        try {
-            return ServletUriComponentsBuilder.fromCurrentContextPath()
-                    .path(path)
-                    .build()
-                    .toUriString();
-        } catch (IllegalStateException e) {
-            return path;
-        }
-    }
-
-    private String buildStorageProxyUrl(String storedReference) {
-        try {
-            return ServletUriComponentsBuilder.fromCurrentContextPath()
-                    .path("/api/storage")
-                    .queryParam("ref", storedReference)
-                    .build()
-                    .toUriString();
-        } catch (IllegalStateException e) {
-            return storedReference;
-        }
+        return STORAGE_PREFIX + key;
     }
 
     private String normalizeKey(String key) {
@@ -291,18 +224,6 @@ public class S3StorageService {
 
     private boolean isHttpUrl(String value) {
         return value.startsWith("http://") || value.startsWith("https://");
-    }
-
-    private boolean isLegacyS3Reference(String storedReference) {
-        return extractKeyFromUrl(storedReference) != null;
-    }
-
-    private String resolveContentType(String fileName, String detectedContentType) {
-        if (detectedContentType != null && !detectedContentType.isBlank()) {
-            return detectedContentType;
-        }
-        String fallback = URLConnection.guessContentTypeFromName(fileName);
-        return fallback != null && !fallback.isBlank() ? fallback : "application/octet-stream";
     }
 
     private String extractKeyFromUrl(String fileUrl) {
@@ -324,6 +245,4 @@ public class S3StorageService {
             return null;
         }
     }
-
-    public record StoredAsset(byte[] bytes, String contentType) {}
 }

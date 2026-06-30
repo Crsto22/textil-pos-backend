@@ -26,6 +26,7 @@ public record UsuarioListItemResponse(
         LocalTime horaInicioTurno,
         LocalTime horaFinTurno,
         List<DiaSemana> diasTurno,
-        List<TurnoDiaHorarioResponse> horariosTurno
+        List<TurnoDiaHorarioResponse> horariosTurno,
+        Boolean puedeAceptarPedidos
 ) {
 }

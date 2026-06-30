@@ -24,7 +24,9 @@ public record EcommerceProductoColorListItemResponse(
             LocalDateTime fechaCreacion,
             CategoriaItem categoria,
             String imagenGlobalUrl,
-            String imagenGlobalThumbUrl
+            String imagenGlobalThumbUrl,
+            String guiaTallasUrl,
+            String guiaTallasThumbUrl
     ) {
     }
 

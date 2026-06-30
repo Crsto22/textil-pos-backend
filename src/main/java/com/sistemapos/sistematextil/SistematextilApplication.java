@@ -10,8 +10,10 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import com.sistemapos.sistematextil.config.BrevoProperties;
 import com.sistemapos.sistematextil.config.StorageProperties;
 import com.sistemapos.sistematextil.config.SunatProperties;
+import com.sistemapos.sistematextil.config.TurnstileProperties;
 import com.sistemapos.sistematextil.model.Sucursal;
 import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.repositories.SucursalRepository;
@@ -22,7 +24,7 @@ import com.sistemapos.sistematextil.util.usuario.Rol;
 @EnableJpaRepositories(basePackages = "com.sistemapos.sistematextil.repositories")
 @EntityScan(basePackages = "com.sistemapos.sistematextil.model")
 @EnableScheduling
-@EnableConfigurationProperties({ SunatProperties.class, StorageProperties.class })
+@EnableConfigurationProperties({ SunatProperties.class, StorageProperties.class, BrevoProperties.class, TurnstileProperties.class })
 public class SistematextilApplication {
 
 	public static void main(String[] args) {

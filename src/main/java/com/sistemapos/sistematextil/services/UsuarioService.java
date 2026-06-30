@@ -110,6 +110,7 @@ public class UsuarioService {
         usuario.setCorreo(request.correo());
         usuario.setRol(request.rol());
         usuario.setEstado(request.estado().toUpperCase());
+        usuario.setPuedeAceptarPedidos(puedeAceptarPedidos(request.rol(), request.puedeAceptarPedidos()));
         usuario.setSucursal(asignacion.principal());
         usuario.setTurno(turno);
 
@@ -197,6 +198,11 @@ public class UsuarioService {
                 usuario.getTurno() != null ? usuario.getTurno().getHoraInicio() : null,
                 usuario.getTurno() != null ? usuario.getTurno().getHoraFin() : null,
                 diasTurno,
-                turnoService.obtenerHorarios(usuario.getTurno()));
+                turnoService.obtenerHorarios(usuario.getTurno()),
+                Boolean.TRUE.equals(usuario.getPuedeAceptarPedidos()));
+    }
+
+    private boolean puedeAceptarPedidos(Rol rol, Boolean value) {
+        return Boolean.TRUE.equals(value) && (rol == Rol.VENTAS || rol == Rol.VENTAS_ALMACEN);
     }
 }

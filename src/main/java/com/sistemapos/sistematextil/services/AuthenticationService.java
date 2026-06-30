@@ -79,6 +79,7 @@ public class AuthenticationService {
                 .telefono(request.telefono())
                 .password(passwordEncoder.encode(request.password()))
                 .rol(request.rol())
+                .puedeAceptarPedidos(puedeAceptarPedidos(request.rol(), request.puedeAceptarPedidos()))
                 .sucursal(asignacion.principal())
                 .turno(turnoService.resolverTurnoAsignable(request.idTurno()))
                 .build();
@@ -255,7 +256,8 @@ public class AuthenticationService {
                 turno != null ? turno.getHoraInicio() : null,
                 turno != null ? turno.getHoraFin() : null,
                 diasTurno,
-                horariosTurno);
+                horariosTurno,
+                Boolean.TRUE.equals(user.getPuedeAceptarPedidos()));
     }
 
     private MeResponse toMeResponse(Usuario user) {
@@ -283,7 +285,12 @@ public class AuthenticationService {
                 turno != null ? turno.getHoraInicio() : null,
                 turno != null ? turno.getHoraFin() : null,
                 diasTurno,
-                horariosTurno);
+                horariosTurno,
+                Boolean.TRUE.equals(user.getPuedeAceptarPedidos()));
+    }
+
+    private boolean puedeAceptarPedidos(Rol rol, Boolean value) {
+        return Boolean.TRUE.equals(value) && (rol == Rol.VENTAS || rol == Rol.VENTAS_ALMACEN);
     }
 
     private String construirFotoPerfilKey(Integer idUsuario) {

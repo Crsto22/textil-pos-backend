@@ -51,6 +51,12 @@ public class Producto {
     @Column(name = "imagen_global_thumb_url", length = 600)
     private String imagenGlobalThumbUrl;
 
+    @Column(name = "guia_tallas_url", length = 600)
+    private String guiaTallasUrl;
+
+    @Column(name = "guia_tallas_thumb_url", length = 600)
+    private String guiaTallasThumbUrl;
+
     @Column(name = "publicar_ecommerce", nullable = false)
     private Boolean publicarEcommerce = Boolean.FALSE;
 

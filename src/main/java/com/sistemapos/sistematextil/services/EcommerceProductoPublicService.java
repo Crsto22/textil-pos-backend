@@ -28,6 +28,7 @@ import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.repositories.VentaDetalleRepository;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoColorGroupProjection;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceInicioResponse;
+import com.sistemapos.sistematextil.util.ecommerce.EcommerceInicioImagenProductoResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoColorListItemResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoDetalleSlugResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoListadoResponse;
@@ -50,6 +51,7 @@ public class EcommerceProductoPublicService {
     private final ProductoColorImagenRepository productoColorImagenRepository;
     private final PrecioOfertaService precioOfertaService;
     private final VentaDetalleRepository ventaDetalleRepository;
+    private final EcommercePortadaService ecommercePortadaService;
 
     public EcommerceProductoListadoResponse listarProductos(
             String q,
@@ -57,6 +59,8 @@ public class EcommerceProductoPublicService {
             int size,
             Integer idCategoria,
             Integer idColor,
+            List<String> tallas,
+            Double precioMax,
             Boolean soloDisponibles) {
         PageRequest pageable = PageRequest.of(Math.max(page, 0), normalizarSize(size));
         Sucursal sucursal = obtenerSucursalEcommerce();
@@ -75,11 +79,21 @@ public class EcommerceProductoPublicService {
                     true);
         }
 
+        String term = normalizarTermino(q);
+        List<String> tokens = tokensBusqueda(term);
         Page<EcommerceProductoColorGroupProjection> grupos = productoVarianteRepository.listarGruposEcommerce(
-                normalizarTermino(q),
+                term,
+                token(tokens, 0),
+                token(tokens, 1),
+                token(tokens, 2),
+                token(tokens, 3),
+                token(tokens, 4),
+                token(tokens, 5),
                 sucursal.getIdSucursal(),
                 idCategoria,
                 idColor,
+                normalizarTallasCsv(tallas),
+                precioMax != null && precioMax >= 0 ? precioMax : null,
                 Boolean.TRUE.equals(soloDisponibles),
                 pageable);
 
@@ -101,7 +115,7 @@ public class EcommerceProductoPublicService {
     public EcommerceInicioResponse obtenerInicio() {
         Sucursal sucursal = obtenerSucursalEcommerce();
         if (sucursal == null) {
-            return new EcommerceInicioResponse(false, List.of(), List.of());
+            return new EcommerceInicioResponse(false, List.of(), List.of(), List.of(), List.of());
         }
         Integer idSucursal = sucursal.getIdSucursal();
 
@@ -161,7 +175,12 @@ public class EcommerceProductoPublicService {
             }
         }
 
-        return new EcommerceInicioResponse(true, aleatorios, masVendidos);
+        return new EcommerceInicioResponse(
+                true,
+                ecommercePortadaService.listarPublicas(),
+                obtenerImagenesProductosInicio(),
+                aleatorios,
+                masVendidos);
     }
 
     public EcommerceProductoDetalleSlugResponse obtenerDetallePorSlug(String slug) {
@@ -228,7 +247,13 @@ public class EcommerceProductoPublicService {
         return new EcommerceProductoDetalleSlugResponse(
                 true,
                 toProductoItem(producto),
-                colores);
+                colores,
+                construirItems(
+                        productoVarianteRepository.listarRecomendadosEcommerce(
+                                sucursal.getIdSucursal(),
+                                idProducto,
+                                5),
+                        sucursal));
     }
 
     private List<EcommerceProductoColorListItemResponse> construirItems(
@@ -369,7 +394,21 @@ public class EcommerceProductoPublicService {
                         producto.getCategoria().getIdCategoria(),
                         producto.getCategoria().getNombreCategoria()),
                 producto.getImagenGlobalUrl(),
-                producto.getImagenGlobalThumbUrl());
+                producto.getImagenGlobalThumbUrl(),
+                producto.getGuiaTallasUrl(),
+                producto.getGuiaTallasThumbUrl());
+    }
+
+    private List<EcommerceInicioImagenProductoResponse> obtenerImagenesProductosInicio() {
+        return productoRepository.listarImagenesInicioEcommerce(PageRequest.of(0, 12))
+                .stream()
+                .map(producto -> new EcommerceInicioImagenProductoResponse(
+                        producto.getIdProducto(),
+                        producto.getNombre(),
+                        producto.getSlug(),
+                        producto.getImagenGlobalUrl(),
+                        producto.getImagenGlobalThumbUrl()))
+                .toList();
     }
 
     private EcommerceProductoColorListItemResponse.ColorItem toColorItem(ProductoVariante variante) {
@@ -488,6 +527,34 @@ public class EcommerceProductoPublicService {
             return null;
         }
         return term.trim();
+    }
+
+    private List<String> tokensBusqueda(String term) {
+        if (term == null) {
+            return List.of();
+        }
+        return java.util.Arrays.stream(term.split("\\s+"))
+                .filter(token -> !token.isBlank())
+                .limit(6)
+                .toList();
+    }
+
+    private String token(List<String> tokens, int index) {
+        return index < tokens.size() ? tokens.get(index) : null;
+    }
+
+    private String normalizarTallasCsv(List<String> tallas) {
+        if (tallas == null || tallas.isEmpty()) {
+            return null;
+        }
+        String value = tallas.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(talla -> !talla.isBlank())
+                .map(String::toUpperCase)
+                .distinct()
+                .collect(Collectors.joining(","));
+        return value.isBlank() ? null : value;
     }
 
     private int normalizarSize(int size) {

@@ -87,6 +87,9 @@ public class Venta {
     @Column(nullable = false, length = 10)
     private String estado;
 
+    @Column(nullable = false, length = 20)
+    private String origen;
+
     @Column(name = "tipo_anulacion", length = 20)
     private String tipoAnulacion;
 
@@ -216,6 +219,9 @@ public class Venta {
         }
         if (this.estado == null || this.estado.isBlank()) {
             this.estado = "EMITIDA";
+        }
+        if (this.origen == null || this.origen.isBlank()) {
+            this.origen = "POS";
         }
         if (this.sunatEstado == null) {
             this.sunatEstado = requiereComprobanteElectronico() ? SunatEstado.PENDIENTE_ENVIO : SunatEstado.NO_APLICA;

@@ -73,8 +73,10 @@ El estado se calcula por las tallas/variantes del color:
 
 ## GET /api/public/ecommerce/inicio
 
-Pagina de inicio del ecommerce. Devuelve dos secciones de 4 productos cada una:
+Pagina de inicio del ecommerce. Devuelve portadas, imagenes destacadas de productos y dos secciones de 4 productos cada una:
 
+- `portadas` - portadas activas del ecommerce. Cada item trae imagen desktop y mobile.
+- `imagenesProductos` - productos publicados con `imagenGlobalUrl` o `imagenGlobalThumbUrl` y `slug`. Sirve para enlazar a `/productos/{slug}`.
 - `aleatorios` — 4 productos aleatorios con stock disponible.
 - `masVendidos` — 4 productos mas vendidos (por cantidad) que tengan stock.
 
@@ -91,6 +93,26 @@ GET /api/public/ecommerce/inicio
 ```json
 {
   "tiendaConfigurada": true,
+  "portadas": [
+    {
+      "idEcommercePortada": 1,
+      "desktopUrl": "/storage/ecommerce/portadas/desktop/portada.webp",
+      "desktopThumbUrl": "/storage/ecommerce/portadas/desktop/portada-thumb.webp",
+      "mobileUrl": "/storage/ecommerce/portadas/mobile/portada.webp",
+      "mobileThumbUrl": "/storage/ecommerce/portadas/mobile/portada-thumb.webp",
+      "orden": 1,
+      "estado": "ACTIVO"
+    }
+  ],
+  "imagenesProductos": [
+    {
+      "idProducto": 12,
+      "nombre": "Conjunto Michell",
+      "slug": "conjunto-michell",
+      "imagenUrl": "/storage/productos/producto-12/global/conjunto.webp",
+      "imagenThumbUrl": "/storage/productos/producto-12/global/conjunto-thumb.webp"
+    }
+  ],
   "aleatorios": [
     {
       "producto": {
@@ -170,6 +192,8 @@ HTTP/1.1 200 OK
 ```json
 {
   "tiendaConfigurada": false,
+  "portadas": [],
+  "imagenesProductos": [],
   "aleatorios": [],
   "masVendidos": []
 }
@@ -186,15 +210,17 @@ Lista productos publicados agrupados por `producto-color`.
 | --- | --- | --- | --- |
 | `page` | number | `0` | Pagina, base 0. |
 | `size` | number | `10` | Cantidad por pagina. Maximo 20. |
-| `q` | string | null | Busca por producto, color, SKU o codigo de barras. |
+| `q` | string | null | Busca por producto, color, talla, SKU o codigo de barras. Si se envian varias palabras, todas deben existir en la combinacion producto-color-variante. |
 | `idCategoria` | number | null | Filtra por categoria. |
 | `idColor` | number | null | Filtra por color. |
+| `tallas` | string | null | Filtra por tallas separadas por coma, por ejemplo `XS,S,M,L`. |
+| `precioMax` | number | null | Filtra variantes cuyo precio vigente sea menor o igual al monto enviado. |
 | `soloDisponibles` | boolean | `false` | Si es `true`, oculta grupos sin stock. |
 
 ### Ejemplo Request
 
 ```http
-GET /api/public/ecommerce/productos?page=0&size=10&q=blazer&soloDisponibles=false
+GET /api/public/ecommerce/productos?page=0&size=10&tallas=XS,S,M&precioMax=150&soloDisponibles=false
 ```
 
 ### Ejemplo Response
@@ -314,7 +340,7 @@ Si no existe sucursal ecommerce activa, el listado no falla. Devuelve catalogo v
 
 ## GET /api/public/ecommerce/productos/{slug}
 
-Muestra el detalle completo de un producto usando su slug publico. Devuelve todos los colores, todas las tallas, todas las imagenes, precios y ofertas del producto, sin filtrar por stock.
+Muestra el detalle completo de un producto usando su slug publico. Devuelve todos los colores, todas las tallas, todas las imagenes, precios y ofertas del producto, sin filtrar por stock. Tambien devuelve hasta 5 productos/color recomendados de otros productos con stock para mostrar debajo del detalle.
 
 ### Ejemplo Request
 
@@ -438,6 +464,38 @@ GET /api/public/ecommerce/productos/michell
         }
       ]
     }
+  ],
+  "recomendados": [
+    {
+      "producto": {
+        "idProducto": 52,
+        "nombre": "Ashley",
+        "slug": "ashley",
+        "descripcion": "Vestido Ashley",
+        "estado": "ACTIVO",
+        "fechaCreacion": "2026-06-12T10:15:00",
+        "categoria": { "idCategoria": 3, "nombre": "Vestidos" },
+        "imagenGlobalUrl": null,
+        "imagenGlobalThumbUrl": null,
+        "guiaTallasUrl": null,
+        "guiaTallasThumbUrl": null
+      },
+      "color": { "idColor": 11, "nombre": "Negro", "hex": "#000000" },
+      "imagenPrincipal": {
+        "idColorImagen": 150,
+        "url": "/storage/productos/52/negro/ashley-negro.jpg",
+        "urlThumb": "/storage/productos/52/negro/thumb_ashley-negro.jpg",
+        "orden": 1,
+        "esPrincipal": true,
+        "estado": "ACTIVO",
+        "origen": "COLOR"
+      },
+      "precioMinimo": 89.0,
+      "precioMaximo": 89.0,
+      "estadoStock": "DISPONIBLE",
+      "stockTotalColor": 6,
+      "variantes": []
+    }
   ]
 }
 ```
@@ -468,7 +526,7 @@ HTTP/1.1 404 Not Found
 ## Uso Recomendado En Frontend Ecommerce
 
 1. Cargar pagina de inicio con `GET /api/public/ecommerce/inicio`.
-2. Mostrar `aleatorios` y `masVendidos` como secciones en el home.
+2. Mostrar `portadas` en el hero e `imagenesProductos` debajo del hero enlazando a `/productos/{slug}`.
 3. Cada item se renderiza igual que en el listado de productos.
 4. Cargar listado completo con `GET /api/public/ecommerce/productos?page=0&size=10`.
 5. Mostrar una tarjeta por cada item de `content`.

@@ -1,6 +1,7 @@
 package com.sistemapos.sistematextil.repositories;
 
 import java.util.Optional;
+import java.util.List;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -202,6 +203,22 @@ public interface ProductoRepository extends JpaRepository<Producto, Integer> {
     Optional<Producto> findByIdProductoAndDeletedAtIsNull(Integer idProducto);
 
     Optional<Producto> findBySlugAndDeletedAtIsNull(String slug);
+
+    @Query("""
+            SELECT p
+            FROM Producto p
+            WHERE p.deletedAt IS NULL
+              AND p.publicarEcommerce = true
+              AND p.estado = 'ACTIVO'
+              AND p.slug IS NOT NULL
+              AND p.slug <> ''
+              AND (
+                    (p.imagenGlobalUrl IS NOT NULL AND p.imagenGlobalUrl <> '')
+                    OR (p.imagenGlobalThumbUrl IS NOT NULL AND p.imagenGlobalThumbUrl <> '')
+              )
+            ORDER BY p.fechaCreacion DESC, p.idProducto DESC
+            """)
+    List<Producto> listarImagenesInicioEcommerce(Pageable pageable);
 
     boolean existsBySlug(String slug);
 

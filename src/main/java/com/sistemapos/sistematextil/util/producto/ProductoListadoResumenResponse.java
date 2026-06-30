@@ -11,6 +11,8 @@ public record ProductoListadoResumenResponse(
         String descripcion,
         String imagenGlobalUrl,
         String imagenGlobalThumbUrl,
+        String guiaTallasUrl,
+        String guiaTallasThumbUrl,
         Boolean publicarEcommerce,
         String estado,
         LocalDateTime fechaCreacion,

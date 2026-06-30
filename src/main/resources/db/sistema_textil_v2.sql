@@ -150,6 +150,7 @@ CREATE TABLE IF NOT EXISTS usuario (
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   deleted_at DATETIME(6) DEFAULT NULL,
   refresh_token_version INT NOT NULL DEFAULT 0,
+  puede_aceptar_pedidos TINYINT(1) NOT NULL DEFAULT 0,
   PRIMARY KEY (id_usuario),
   UNIQUE KEY uk_usuario_correo (correo),
   UNIQUE KEY uk_usuario_dni (dni),
@@ -212,6 +213,8 @@ CREATE TABLE producto(
   descripcion VARCHAR(500),
   imagen_global_url VARCHAR(600) DEFAULT NULL,
   imagen_global_thumb_url VARCHAR(600) DEFAULT NULL,
+  guia_tallas_url VARCHAR(600) DEFAULT NULL,
+  guia_tallas_thumb_url VARCHAR(600) DEFAULT NULL,
   publicar_ecommerce TINYINT(1) NOT NULL DEFAULT 0,
   estado ENUM('ACTIVO','AGOTADO','ARCHIVADO') NOT NULL DEFAULT 'ACTIVO',
   activo TINYINT(1) NOT NULL DEFAULT 1,
@@ -1392,6 +1395,22 @@ PREPARE stmt FROM @sql;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
+SET @col_usuario_puede_aceptar_pedidos := (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'usuario'
+    AND COLUMN_NAME = 'puede_aceptar_pedidos'
+);
+SET @sql := IF(
+  @col_usuario_puede_aceptar_pedidos = 0,
+  'ALTER TABLE usuario ADD COLUMN puede_aceptar_pedidos TINYINT(1) NOT NULL DEFAULT 0 AFTER deleted_at',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
 SET @col_usuario_id_turno := (
   SELECT COUNT(*)
   FROM information_schema.COLUMNS
@@ -1572,6 +1591,21 @@ SET @sql := IF(
 PREPARE stmt FROM @sql;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
+
+CREATE TABLE IF NOT EXISTS ecommerce_portada (
+  id_ecommerce_portada INT AUTO_INCREMENT PRIMARY KEY,
+  desktop_url VARCHAR(600) NOT NULL,
+  desktop_thumb_url VARCHAR(600) DEFAULT NULL,
+  mobile_url VARCHAR(600) NOT NULL,
+  mobile_thumb_url VARCHAR(600) DEFAULT NULL,
+  orden INT NOT NULL DEFAULT 0,
+  estado VARCHAR(20) NOT NULL DEFAULT 'ACTIVO',
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP(6),
+  deleted_at DATETIME(6) DEFAULT NULL,
+  INDEX idx_ecommerce_portada_publica (estado, deleted_at, orden),
+  INDEX idx_ecommerce_portada_deleted_at (deleted_at)
+);
 
 UPDATE venta
 SET estado = 'ANULADA'

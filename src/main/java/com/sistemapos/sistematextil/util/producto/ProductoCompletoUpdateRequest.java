@@ -28,6 +28,12 @@ public record ProductoCompletoUpdateRequest(
         @Size(max = 600, message = "La url del thumbnail global no debe superar 600 caracteres")
         String imagenGlobalThumbUrl,
 
+        @Size(max = 600, message = "La url de la guia de tallas no debe superar 600 caracteres")
+        String guiaTallasUrl,
+
+        @Size(max = 600, message = "La url del thumbnail de la guia de tallas no debe superar 600 caracteres")
+        String guiaTallasThumbUrl,
+
         Boolean publicarEcommerce,
 
         @NotEmpty(message = "Ingrese variantes del producto")

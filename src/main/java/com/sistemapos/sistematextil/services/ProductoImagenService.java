@@ -19,6 +19,7 @@ import com.sistemapos.sistematextil.model.ProductoColorImagen;
 import com.sistemapos.sistematextil.model.ProductoVariante;
 import com.sistemapos.sistematextil.repositories.ProductoColorImagenRepository;
 import com.sistemapos.sistematextil.util.producto.ProductoImagenEditResponse;
+import com.sistemapos.sistematextil.util.producto.ProductoImagenGlobalUploadResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoImagenUploadItem;
 import com.sistemapos.sistematextil.util.producto.ProductoImagenUploadResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteImagenDeleteResponse;
@@ -83,6 +84,24 @@ public class ProductoImagenService {
         }
 
         return new ProductoImagenUploadResponse(colorId, response);
+    }
+
+    public ProductoImagenGlobalUploadResponse subirImagenGlobal(Integer productoId, MultipartFile file) {
+        return subirImagenGlobal(productoId, file, null);
+    }
+
+    public ProductoImagenGlobalUploadResponse subirImagenGlobal(Integer productoId, MultipartFile file, String tipo) {
+        if (productoId != null) {
+            productoService.obtenerPorId(productoId);
+        }
+        UploadPair upload = subirImagen(file, productoId, null, normalizarTipoImagenGlobal(tipo));
+        return new ProductoImagenGlobalUploadResponse(upload.url(), upload.urlThumb());
+    }
+
+    public ProductoImagenGlobalUploadResponse subirPortadaEcommerce(MultipartFile file, String tipo) {
+        String normalizado = normalizarTipoPortada(tipo).toLowerCase(java.util.Locale.ROOT);
+        UploadPair upload = subirImagenEnBase(file, "ecommerce/portadas/" + normalizado + "/");
+        return new ProductoImagenGlobalUploadResponse(upload.url(), upload.urlThumb());
     }
 
     @Transactional
@@ -285,10 +304,43 @@ public class ProductoImagenService {
     }
 
     private String construirBaseKey(Integer productoId, Integer colorId) {
+        return construirBaseKey(productoId, colorId, "GLOBAL");
+    }
+
+    private String construirBaseKey(Integer productoId, Integer colorId, String tipo) {
+        if (colorId == null) {
+            String carpeta = "GUIA_TALLAS".equals(tipo) ? "guia-tallas" : "global";
+            if (productoId != null) {
+                return "productos/producto-" + productoId + "/" + carpeta + "/";
+            }
+            return "productos/" + carpeta + "/";
+        }
         if (productoId != null) {
             return "productos/producto-" + productoId + "/color-" + colorId + "/";
         }
         return "productos/color-" + colorId + "/";
+    }
+
+    private String normalizarTipoImagenGlobal(String tipo) {
+        if (tipo == null || tipo.isBlank()) {
+            return "GLOBAL";
+        }
+        String normalizado = tipo.trim().toUpperCase(java.util.Locale.ROOT).replace('-', '_');
+        if ("GLOBAL".equals(normalizado) || "GUIA_TALLAS".equals(normalizado)) {
+            return normalizado;
+        }
+        throw new RuntimeException("Tipo de imagen global no permitido");
+    }
+
+    private String normalizarTipoPortada(String tipo) {
+        if (tipo == null || tipo.isBlank()) {
+            throw new RuntimeException("Tipo de portada obligatorio");
+        }
+        String normalizado = tipo.trim().toUpperCase(java.util.Locale.ROOT);
+        if ("DESKTOP".equals(normalizado) || "MOBILE".equals(normalizado)) {
+            return normalizado;
+        }
+        throw new RuntimeException("Tipo de portada no permitido");
     }
 
     private String construirGrupoImagenKey(Integer productoId, Integer colorId) {
@@ -296,8 +348,16 @@ public class ProductoImagenService {
     }
 
     private UploadPair subirImagen(MultipartFile file, Integer productoId, Integer colorId) {
+        return subirImagen(file, productoId, colorId, "GLOBAL");
+    }
+
+    private UploadPair subirImagen(MultipartFile file, Integer productoId, Integer colorId, String tipo) {
+        return subirImagenEnBase(file, construirBaseKey(productoId, colorId, tipo));
+    }
+
+    private UploadPair subirImagenEnBase(MultipartFile file, String baseKeyPrefix) {
         validarImagen(file);
-        String baseKey = construirBaseKey(productoId, colorId) + UUID.randomUUID();
+        String baseKey = baseKeyPrefix + UUID.randomUUID();
         String url = null;
         try {
             byte[] original = file.getBytes();

@@ -42,7 +42,9 @@ public record RegisterRequest(
 
     List<Integer> idsSucursales,
 
-    Integer idTurno
+    Integer idTurno,
+
+    Boolean puedeAceptarPedidos
 
 ) {
 

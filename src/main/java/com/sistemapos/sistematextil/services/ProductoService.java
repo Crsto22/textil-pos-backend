@@ -1,5 +1,6 @@
 package com.sistemapos.sistematextil.services;
 
+import java.text.Normalizer;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -207,7 +208,14 @@ public class ProductoService {
         Producto producto = new Producto();
         producto.setCategoria(obtenerCategoriaActiva(request.idCategoria()));
         producto.setNombre(normalizarRequerido(request.nombre(), "El nombre del producto es obligatorio"));
+        producto.setSlug(resolverSlugParaGuardar(request.slug(), producto.getNombre(), null, true));
         producto.setDescripcion(normalizar(request.descripcion()));
+        producto.setImagenGlobalUrl(normalizar(request.imagenGlobalUrl()));
+        producto.setImagenGlobalThumbUrl(normalizar(request.imagenGlobalThumbUrl()));
+        producto.setGuiaTallasUrl(normalizar(request.guiaTallasUrl()));
+        producto.setGuiaTallasThumbUrl(normalizar(request.guiaTallasThumbUrl()));
+        validarCambioPublicarEcommerce(usuario, false, request.publicarEcommerce());
+        producto.setPublicarEcommerce(Boolean.TRUE.equals(request.publicarEcommerce()));
         producto.setEstado(ESTADO_ACTIVO);
         producto.setActivo(ESTADO_ACTIVO);
         producto.setDeletedAt(null);
@@ -230,7 +238,14 @@ public class ProductoService {
         Producto producto = new Producto();
         producto.setCategoria(obtenerCategoriaActiva(request.idCategoria()));
         producto.setNombre(normalizarRequerido(request.nombre(), "El nombre del producto es obligatorio"));
+        producto.setSlug(resolverSlugParaGuardar(request.slug(), producto.getNombre(), null, true));
         producto.setDescripcion(normalizar(request.descripcion()));
+        producto.setImagenGlobalUrl(normalizar(request.imagenGlobalUrl()));
+        producto.setImagenGlobalThumbUrl(normalizar(request.imagenGlobalThumbUrl()));
+        producto.setGuiaTallasUrl(normalizar(request.guiaTallasUrl()));
+        producto.setGuiaTallasThumbUrl(normalizar(request.guiaTallasThumbUrl()));
+        validarCambioPublicarEcommerce(usuario, false, request.publicarEcommerce());
+        producto.setPublicarEcommerce(Boolean.TRUE.equals(request.publicarEcommerce()));
         producto.setEstado(ESTADO_ACTIVO);
         producto.setActivo(ESTADO_ACTIVO);
         producto.setDeletedAt(null);
@@ -262,7 +277,16 @@ public class ProductoService {
         Producto producto = obtenerPorId(idProducto);
         producto.setCategoria(obtenerCategoriaActiva(request.idCategoria()));
         producto.setNombre(normalizarRequerido(request.nombre(), "El nombre del producto es obligatorio"));
+        producto.setSlug(resolverSlugParaGuardar(request.slug(), producto.getNombre(), idProducto, false));
         producto.setDescripcion(normalizar(request.descripcion()));
+        producto.setImagenGlobalUrl(conservarImagenExistente(producto.getImagenGlobalUrl(), request.imagenGlobalUrl()));
+        producto.setImagenGlobalThumbUrl(conservarImagenExistente(producto.getImagenGlobalThumbUrl(), request.imagenGlobalThumbUrl()));
+producto.setGuiaTallasUrl(normalizar(request.guiaTallasUrl()));
+        producto.setGuiaTallasThumbUrl(normalizar(request.guiaTallasThumbUrl()));
+        validarCambioPublicarEcommerce(usuario, producto.getPublicarEcommerce(), request.publicarEcommerce());
+        if (request.publicarEcommerce() != null) {
+            producto.setPublicarEcommerce(request.publicarEcommerce());
+        }
         producto.setEstado(ESTADO_ACTIVO);
         producto.setActivo(ESTADO_ACTIVO);
         producto.setDeletedAt(null);
@@ -281,20 +305,37 @@ public class ProductoService {
         }
         sincronizarStocks(usuario, variantesActivas(variantes), request.variantes(), "SINCRONIZACION DE STOCK POR ACTUALIZACION DE PRODUCTO - ");
 
-        List<ProductoColorImagen> imagenesActuales = productoColorImagenRepository.findByProductoIdProductoAndDeletedAtIsNull(idProducto);
-        Set<String> urlsActuales = extraerUrls(imagenesActuales);
-        productoColorImagenRepository.deleteByProductoIdProducto(idProducto);
-        List<ProductoColorImagen> imagenesNuevas = construirImagenes(actualizado, request.imagenes());
+List<ProductoColorImagen> imagenesActuales = productoColorImagenRepository.findByProductoIdProductoAndDeletedAtIsNull(idProducto);
+
+        Set<String> urlsVigentes = new HashSet<>();
+        if (request.imagenes() != null) {
+            for (ProductoImagenCreateItem item : request.imagenes()) {
+                agregarUrl(urlsVigentes, item.url());
+            }
+        }
+
+        List<ProductoColorImagen> imagenesSobrevivientes = new ArrayList<>();
+        for (ProductoColorImagen img : imagenesActuales) {
+            String urlActual = normalizar(img.getUrl());
+            if (urlActual != null && !urlsVigentes.contains(urlActual)) {
+                img.setEstado(ESTADO_INACTIVO);
+                img.setDeletedAt(LocalDateTime.now());
+            } else {
+                imagenesSobrevivientes.add(img);
+            }
+        }
+        productoColorImagenRepository.saveAll(imagenesActuales);
+
+        List<ProductoColorImagen> imagenesNuevas = construirImagenesNuevas(actualizado, request.imagenes(), imagenesSobrevivientes);
         if (!imagenesNuevas.isEmpty()) {
             productoColorImagenRepository.saveAll(imagenesNuevas);
         }
-        eliminarImagenesObsoletas(urlsActuales, extraerUrls(imagenesNuevas));
 
         VarianteCatalogo catalogo = obtenerCatalogoPorProductos(List.of(actualizado), null, false).get(actualizado.getIdProducto());
         return new ProductoCompletoResponse(
                 toListItemResponse(actualizado, catalogo),
                 variantesActivas(variantes).size(),
-                imagenesNuevas.size());
+                imagenesSobrevivientes.size() + imagenesNuevas.size());
     }
 
     @Transactional
@@ -308,7 +349,24 @@ public class ProductoService {
         Producto producto = obtenerPorId(idProducto);
         producto.setCategoria(obtenerCategoriaActiva(request.idCategoria()));
         producto.setNombre(normalizarRequerido(request.nombre(), "El nombre del producto es obligatorio"));
+        producto.setSlug(resolverSlugParaGuardar(request.slug(), producto.getNombre(), idProducto, false));
         producto.setDescripcion(normalizar(request.descripcion()));
+        if (request.imagenGlobalUrl() != null) {
+            producto.setImagenGlobalUrl(normalizar(request.imagenGlobalUrl()));
+        }
+        if (request.imagenGlobalThumbUrl() != null) {
+            producto.setImagenGlobalThumbUrl(normalizar(request.imagenGlobalThumbUrl()));
+        }
+        if (request.guiaTallasUrl() != null) {
+            producto.setGuiaTallasUrl(normalizar(request.guiaTallasUrl()));
+        }
+        if (request.guiaTallasThumbUrl() != null) {
+            producto.setGuiaTallasThumbUrl(normalizar(request.guiaTallasThumbUrl()));
+        }
+        validarCambioPublicarEcommerce(usuario, producto.getPublicarEcommerce(), request.publicarEcommerce());
+        if (request.publicarEcommerce() != null) {
+            producto.setPublicarEcommerce(request.publicarEcommerce());
+        }
         producto.setEstado(ESTADO_ACTIVO);
         producto.setActivo(ESTADO_ACTIVO);
         producto.setDeletedAt(null);
@@ -786,7 +844,13 @@ public class ProductoService {
                 producto.getIdProducto(),
                 catalogo != null ? catalogo.sku() : null,
                 producto.getNombre(),
+                producto.getSlug(),
                 producto.getDescripcion(),
+                producto.getImagenGlobalUrl(),
+                producto.getImagenGlobalThumbUrl(),
+                producto.getGuiaTallasUrl(),
+                producto.getGuiaTallasThumbUrl(),
+                Boolean.TRUE.equals(producto.getPublicarEcommerce()),
                 producto.getEstado(),
                 producto.getFechaCreacion(),
                 producto.getCategoria() != null ? producto.getCategoria().getIdCategoria() : null,
@@ -807,7 +871,13 @@ public class ProductoService {
                 producto.getIdProducto(),
                 catalogo != null ? catalogo.sku() : null,
                 producto.getNombre(),
+                producto.getSlug(),
                 producto.getDescripcion(),
+                producto.getImagenGlobalUrl(),
+                producto.getImagenGlobalThumbUrl(),
+                producto.getGuiaTallasUrl(),
+                producto.getGuiaTallasThumbUrl(),
+                Boolean.TRUE.equals(producto.getPublicarEcommerce()),
                 producto.getEstado(),
                 producto.getFechaCreacion(),
                 catalogo != null ? catalogo.precioMin() : null,
@@ -915,6 +985,15 @@ public class ProductoService {
         }
     }
 
+    private void validarCambioPublicarEcommerce(Usuario usuario, Boolean actual, Boolean solicitado) {
+        if (solicitado == null || Objects.equals(Boolean.TRUE.equals(actual), solicitado)) {
+            return;
+        }
+        if (!usuario.getRol().esAdministrador()) {
+            throw new RuntimeException("El usuario autenticado no tiene permisos para modificar la publicacion ecommerce");
+        }
+    }
+
     private Usuario obtenerUsuarioAutenticado(String correoUsuarioAutenticado) {
         if (correoUsuarioAutenticado == null || correoUsuarioAutenticado.isBlank()) {
             throw new RuntimeException("No autenticado");
@@ -956,6 +1035,74 @@ public class ProductoService {
         }
         String trimmed = value.trim();
         return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    public String resolverSlugParaGuardar(
+            String slugSolicitado,
+            String nombre,
+            Integer idProductoExcluir,
+            boolean generarSiempre) {
+        String slugNormalizado = normalizarSlug(slugSolicitado);
+        if (slugNormalizado != null) {
+            validarSlugDisponible(slugNormalizado, idProductoExcluir);
+            return slugNormalizado;
+        }
+        if (!generarSiempre && idProductoExcluir != null) {
+            Producto actual = productoRepository.findByIdProductoAndDeletedAtIsNull(idProductoExcluir).orElse(null);
+            if (actual != null && normalizar(actual.getSlug()) != null) {
+                return actual.getSlug();
+            }
+        }
+        return generarSlugUnico(nombre, idProductoExcluir);
+    }
+
+    public static String normalizarSlug(String value) {
+        if (value == null) {
+            return null;
+        }
+        String normalized = Normalizer.normalize(value.trim().toLowerCase(), Normalizer.Form.NFD)
+                .replaceAll("\\p{M}", "")
+                .replaceAll("[^a-z0-9]+", "-")
+                .replaceAll("-{2,}", "-")
+                .replaceAll("^-|-$", "");
+        return normalized.isBlank() ? null : normalized;
+    }
+
+    private String generarSlugUnico(String nombre, Integer idProductoExcluir) {
+        String base = normalizarSlug(nombre);
+        if (base == null) {
+            base = "producto";
+        }
+        if (base.length() > 180) {
+            base = base.substring(0, 180).replaceAll("-+$", "");
+        }
+        String candidato = base;
+        int sufijo = 2;
+        while (slugExiste(candidato, idProductoExcluir)) {
+            String suffix = "-" + sufijo++;
+            int maxBaseLength = Math.max(1, 180 - suffix.length());
+            String baseCortada = base.length() > maxBaseLength
+                    ? base.substring(0, maxBaseLength).replaceAll("-+$", "")
+                    : base;
+            candidato = baseCortada + suffix;
+        }
+        return candidato;
+    }
+
+    private void validarSlugDisponible(String slug, Integer idProductoExcluir) {
+        if (slug.length() > 180) {
+            throw new RuntimeException("El slug no debe superar 180 caracteres");
+        }
+        if (slugExiste(slug, idProductoExcluir)) {
+            throw new RuntimeException("El slug ya esta en uso");
+        }
+    }
+
+    private boolean slugExiste(String slug, Integer idProductoExcluir) {
+        if (idProductoExcluir == null) {
+            return productoRepository.existsBySlug(slug);
+        }
+        return productoRepository.existsBySlugAndIdProductoNot(slug, idProductoExcluir);
     }
 
     private List<String> tokensBusqueda(String term) {
@@ -1089,6 +1236,31 @@ public class ProductoService {
         return result;
     }
 
+    private List<ProductoColorImagen> construirImagenesNuevas(
+            Producto producto,
+            List<ProductoImagenCreateItem> items,
+            List<ProductoColorImagen> actuales) {
+        if (items == null || items.isEmpty()) {
+            return List.of();
+        }
+        Set<String> urlsActuales = extraerUrls(actuales);
+        Set<String> posicionesActuales = new HashSet<>();
+        for (ProductoColorImagen imagen : actuales) {
+            Integer colorId = imagen.getColor() != null ? imagen.getColor().getIdColor() : null;
+            posicionesActuales.add(colorId + ":" + imagen.getOrden());
+        }
+        List<ProductoImagenCreateItem> nuevas = items.stream()
+                .filter(item -> !urlsActuales.contains(normalizar(item.url())))
+                .filter(item -> !posicionesActuales.contains(item.colorId() + ":" + item.orden()))
+                .toList();
+        return construirImagenes(producto, nuevas);
+    }
+
+    private String conservarImagenExistente(String actual, String nueva) {
+        String normalizada = normalizar(nueva);
+        return normalizar(actual) != null ? normalizar(actual) : normalizada;
+    }
+
     private Set<String> extraerUrls(List<ProductoColorImagen> imagenes) {
         Set<String> urls = new HashSet<>();
         if (imagenes == null) {
@@ -1098,6 +1270,18 @@ public class ProductoService {
             agregarUrl(urls, imagen.getUrl());
             agregarUrl(urls, imagen.getUrlThumb());
         }
+        return urls;
+    }
+
+    private Set<String> extraerUrlsGlobales(Producto producto) {
+        Set<String> urls = new HashSet<>();
+        if (producto == null) {
+            return urls;
+        }
+        agregarUrl(urls, producto.getImagenGlobalUrl());
+        agregarUrl(urls, producto.getImagenGlobalThumbUrl());
+        agregarUrl(urls, producto.getGuiaTallasUrl());
+        agregarUrl(urls, producto.getGuiaTallasThumbUrl());
         return urls;
     }
 

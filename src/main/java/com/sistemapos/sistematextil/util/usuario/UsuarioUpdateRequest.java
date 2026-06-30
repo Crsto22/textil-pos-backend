@@ -41,6 +41,8 @@ public record UsuarioUpdateRequest(
 
         List<Integer> idsSucursales,
 
-        Integer idTurno
+        Integer idTurno,
+
+        Boolean puedeAceptarPedidos
 ) {
 }

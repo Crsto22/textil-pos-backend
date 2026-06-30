@@ -12,6 +12,7 @@ import org.springframework.data.repository.query.Param;
 
 import com.sistemapos.sistematextil.model.ProductoVariante;
 import com.sistemapos.sistematextil.model.SucursalTipo;
+import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoColorGroupProjection;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteDisponibleExcelRow;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteResumenRow;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteStockSucursalRow;
@@ -172,6 +173,382 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
     List<ProductoVariante> findByPrecioOfertaIsNotNullAndOfertaFinLessThanEqualAndDeletedAtIsNull(LocalDateTime fechaHora);
 
     Page<ProductoVariante> findByPrecioOfertaIsNotNullAndDeletedAtIsNull(Pageable pageable);
+
+    @Query(
+            value = """
+                    SELECT
+                        p.producto_id AS productoId,
+                        p.nombre AS productoNombre,
+                        p.slug AS productoSlug,
+                        p.descripcion AS productoDescripcion,
+                        p.estado AS productoEstado,
+                        p.created_at AS fechaCreacion,
+                        p.imagen_global_url AS imagenGlobalUrl,
+                        p.imagen_global_thumb_url AS imagenGlobalThumbUrl,
+                        cat.id_categoria AS categoriaId,
+                        cat.nombre_categoria AS categoriaNombre,
+                        c.color_id AS colorId,
+                        c.nombre AS colorNombre,
+                        c.codigo AS colorHex,
+                        CAST(COALESCE(SUM(CASE WHEN ss.id_sucursal = :idSucursal THEN ss.cantidad ELSE 0 END), 0) AS SIGNED) AS stockTotalColor,
+                        CAST(COUNT(DISTINCT v.id_producto_variante) AS SIGNED) AS totalVariantes,
+                        CAST(COUNT(DISTINCT CASE WHEN ss.id_sucursal = :idSucursal AND ss.cantidad > 0 THEN v.id_producto_variante END) AS SIGNED) AS variantesConStock
+                    FROM producto_variante v
+                    JOIN producto p ON p.producto_id = v.producto_id
+                    JOIN categoria cat ON cat.id_categoria = p.categoria_id
+                    JOIN colores c ON c.color_id = v.color_id
+                    JOIN tallas t ON t.talla_id = v.talla_id
+                    LEFT JOIN sucursal_stock ss ON ss.id_producto_variante = v.id_producto_variante
+                    LEFT JOIN producto_variante_oferta_sucursal sov
+                      ON sov.id_producto_variante = v.id_producto_variante
+                     AND sov.id_sucursal = :idSucursal
+                     AND sov.deleted_at IS NULL
+                    WHERE p.publicar_ecommerce = 1
+                      AND p.deleted_at IS NULL
+                      AND p.activo = 1
+                      AND p.estado = 'ACTIVO'
+                      AND cat.deleted_at IS NULL
+                      AND cat.activo = 1
+                      AND v.deleted_at IS NULL
+                      AND v.activo = 1
+                      AND c.deleted_at IS NULL
+                      AND c.activo = 1
+                      AND t.deleted_at IS NULL
+                      AND t.activo = 1
+                      AND (:idCategoria IS NULL OR cat.id_categoria = :idCategoria)
+                      AND (:idColor IS NULL OR c.color_id = :idColor)
+                      AND (:tallasCsv IS NULL OR FIND_IN_SET(UPPER(t.nombre), :tallasCsv) > 0)
+                      AND (
+                            :precioMax IS NULL
+                            OR COALESCE(
+                                CASE
+                                  WHEN sov.precio_oferta IS NOT NULL
+                                   AND sov.precio_oferta > 0
+                                   AND sov.precio_oferta < v.precio
+                                   AND (
+                                        (sov.oferta_inicio IS NULL AND sov.oferta_fin IS NULL)
+                                        OR (sov.oferta_inicio IS NOT NULL AND sov.oferta_fin IS NOT NULL AND NOW() BETWEEN sov.oferta_inicio AND sov.oferta_fin)
+                                   )
+                                  THEN sov.precio_oferta
+                                END,
+                                CASE
+                                  WHEN v.precio_oferta IS NOT NULL
+                                   AND v.precio_oferta > 0
+                                   AND v.precio_oferta < v.precio
+                                   AND (
+                                        (v.oferta_inicio IS NULL AND v.oferta_fin IS NULL)
+                                        OR (v.oferta_inicio IS NOT NULL AND v.oferta_fin IS NOT NULL AND NOW() BETWEEN v.oferta_inicio AND v.oferta_fin)
+                                   )
+                                  THEN v.precio_oferta
+                                END,
+                                v.precio
+                            ) <= :precioMax
+                      )
+                      AND (
+                            :term IS NULL
+                            OR LOWER(p.nombre) LIKE LOWER(CONCAT('%', :term, '%'))
+                            OR LOWER(c.nombre) LIKE LOWER(CONCAT('%', :term, '%'))
+                            OR v.sku LIKE CONCAT(:term, '%')
+                            OR v.codigo_barras LIKE CONCAT(:term, '%')
+                            OR (
+                                (:token1 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigo_barras, ''))) LIKE LOWER(CONCAT('%', :token1, '%')))
+                                AND (:token2 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigo_barras, ''))) LIKE LOWER(CONCAT('%', :token2, '%')))
+                                AND (:token3 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigo_barras, ''))) LIKE LOWER(CONCAT('%', :token3, '%')))
+                                AND (:token4 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigo_barras, ''))) LIKE LOWER(CONCAT('%', :token4, '%')))
+                                AND (:token5 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigo_barras, ''))) LIKE LOWER(CONCAT('%', :token5, '%')))
+                                AND (:token6 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigo_barras, ''))) LIKE LOWER(CONCAT('%', :token6, '%')))
+                            )
+                      )
+                    GROUP BY
+                        p.producto_id,
+                        p.nombre,
+                        p.slug,
+                        p.descripcion,
+                        p.estado,
+                        p.created_at,
+                        p.imagen_global_url,
+                        p.imagen_global_thumb_url,
+                        cat.id_categoria,
+                        cat.nombre_categoria,
+                        c.color_id,
+                        c.nombre,
+                        c.codigo
+                    HAVING (
+                        :soloDisponibles = 0
+                        OR COALESCE(SUM(CASE WHEN ss.id_sucursal = :idSucursal THEN ss.cantidad ELSE 0 END), 0) > 0
+                    )
+                    ORDER BY
+                        CASE WHEN COALESCE(SUM(CASE WHEN ss.id_sucursal = :idSucursal THEN ss.cantidad ELSE 0 END), 0) > 0 THEN 0 ELSE 1 END ASC,
+                        p.created_at DESC,
+                        p.producto_id DESC,
+                        c.nombre ASC
+                    """,
+            countQuery = """
+                    SELECT COUNT(*)
+                    FROM (
+                        SELECT p.producto_id, c.color_id
+                        FROM producto_variante v
+                        JOIN producto p ON p.producto_id = v.producto_id
+                        JOIN categoria cat ON cat.id_categoria = p.categoria_id
+                        JOIN colores c ON c.color_id = v.color_id
+                        JOIN tallas t ON t.talla_id = v.talla_id
+                        LEFT JOIN sucursal_stock ss ON ss.id_producto_variante = v.id_producto_variante
+                        LEFT JOIN producto_variante_oferta_sucursal sov
+                          ON sov.id_producto_variante = v.id_producto_variante
+                         AND sov.id_sucursal = :idSucursal
+                         AND sov.deleted_at IS NULL
+                        WHERE p.publicar_ecommerce = 1
+                          AND p.deleted_at IS NULL
+                          AND p.activo = 1
+                          AND p.estado = 'ACTIVO'
+                          AND cat.deleted_at IS NULL
+                          AND cat.activo = 1
+                          AND v.deleted_at IS NULL
+                          AND v.activo = 1
+                          AND c.deleted_at IS NULL
+                          AND c.activo = 1
+                          AND t.deleted_at IS NULL
+                          AND t.activo = 1
+                          AND (:idCategoria IS NULL OR cat.id_categoria = :idCategoria)
+                          AND (:idColor IS NULL OR c.color_id = :idColor)
+                          AND (:tallasCsv IS NULL OR FIND_IN_SET(UPPER(t.nombre), :tallasCsv) > 0)
+                          AND (
+                                :precioMax IS NULL
+                                OR COALESCE(
+                                    CASE
+                                      WHEN sov.precio_oferta IS NOT NULL
+                                       AND sov.precio_oferta > 0
+                                       AND sov.precio_oferta < v.precio
+                                       AND (
+                                            (sov.oferta_inicio IS NULL AND sov.oferta_fin IS NULL)
+                                            OR (sov.oferta_inicio IS NOT NULL AND sov.oferta_fin IS NOT NULL AND NOW() BETWEEN sov.oferta_inicio AND sov.oferta_fin)
+                                       )
+                                      THEN sov.precio_oferta
+                                    END,
+                                    CASE
+                                      WHEN v.precio_oferta IS NOT NULL
+                                       AND v.precio_oferta > 0
+                                       AND v.precio_oferta < v.precio
+                                       AND (
+                                            (v.oferta_inicio IS NULL AND v.oferta_fin IS NULL)
+                                            OR (v.oferta_inicio IS NOT NULL AND v.oferta_fin IS NOT NULL AND NOW() BETWEEN v.oferta_inicio AND v.oferta_fin)
+                                       )
+                                      THEN v.precio_oferta
+                                    END,
+                                    v.precio
+                                ) <= :precioMax
+                          )
+                          AND (
+                                :term IS NULL
+                                OR LOWER(p.nombre) LIKE LOWER(CONCAT('%', :term, '%'))
+                                OR LOWER(c.nombre) LIKE LOWER(CONCAT('%', :term, '%'))
+                                OR v.sku LIKE CONCAT(:term, '%')
+                                OR v.codigo_barras LIKE CONCAT(:term, '%')
+                                OR (
+                                    (:token1 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigo_barras, ''))) LIKE LOWER(CONCAT('%', :token1, '%')))
+                                    AND (:token2 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigo_barras, ''))) LIKE LOWER(CONCAT('%', :token2, '%')))
+                                    AND (:token3 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigo_barras, ''))) LIKE LOWER(CONCAT('%', :token3, '%')))
+                                    AND (:token4 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigo_barras, ''))) LIKE LOWER(CONCAT('%', :token4, '%')))
+                                    AND (:token5 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigo_barras, ''))) LIKE LOWER(CONCAT('%', :token5, '%')))
+                                    AND (:token6 IS NULL OR LOWER(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(c.nombre, ''), ' ', COALESCE(t.nombre, ''), ' ', COALESCE(v.sku, ''), ' ', COALESCE(v.codigo_barras, ''))) LIKE LOWER(CONCAT('%', :token6, '%')))
+                                )
+                          )
+                        GROUP BY p.producto_id, c.color_id
+                        HAVING (
+                            :soloDisponibles = 0
+                            OR COALESCE(SUM(CASE WHEN ss.id_sucursal = :idSucursal THEN ss.cantidad ELSE 0 END), 0) > 0
+                        )
+                    ) grupos
+                    """,
+            nativeQuery = true)
+    Page<EcommerceProductoColorGroupProjection> listarGruposEcommerce(
+            @Param("term") String term,
+            @Param("token1") String token1,
+            @Param("token2") String token2,
+            @Param("token3") String token3,
+            @Param("token4") String token4,
+            @Param("token5") String token5,
+            @Param("token6") String token6,
+            @Param("idSucursal") Integer idSucursal,
+            @Param("idCategoria") Integer idCategoria,
+            @Param("idColor") Integer idColor,
+            @Param("tallasCsv") String tallasCsv,
+            @Param("precioMax") Double precioMax,
+            @Param("soloDisponibles") boolean soloDisponibles,
+            Pageable pageable);
+
+    @Query("""
+            SELECT v
+            FROM ProductoVariante v
+            JOIN FETCH v.producto p
+            JOIN FETCH p.categoria cat
+            JOIN FETCH v.color c
+            JOIN FETCH v.talla t
+            WHERE p.publicarEcommerce = true
+              AND p.deletedAt IS NULL
+              AND p.activo = 'ACTIVO'
+              AND p.estado = 'ACTIVO'
+              AND cat.deletedAt IS NULL
+              AND cat.estado = 'ACTIVO'
+              AND v.deletedAt IS NULL
+              AND v.activo = 'ACTIVO'
+              AND c.deletedAt IS NULL
+              AND c.estado = 'ACTIVO'
+              AND t.deletedAt IS NULL
+              AND t.estado = 'ACTIVO'
+              AND p.idProducto IN :productoIds
+              AND c.idColor IN :colorIds
+            ORDER BY p.idProducto ASC, c.nombre ASC, t.nombre ASC, v.idProductoVariante ASC
+            """)
+    List<ProductoVariante> listarVariantesEcommercePorProductosYColores(
+            @Param("productoIds") List<Integer> productoIds,
+            @Param("colorIds") List<Integer> colorIds);
+
+    @Query("""
+            SELECT v
+            FROM ProductoVariante v
+            JOIN FETCH v.producto p
+            JOIN FETCH p.categoria cat
+            JOIN FETCH v.color c
+            JOIN FETCH v.talla t
+            WHERE p.publicarEcommerce = true
+              AND p.deletedAt IS NULL
+              AND p.activo = 'ACTIVO'
+              AND p.estado = 'ACTIVO'
+              AND cat.deletedAt IS NULL
+              AND cat.estado = 'ACTIVO'
+              AND v.deletedAt IS NULL
+              AND v.activo = 'ACTIVO'
+              AND c.deletedAt IS NULL
+              AND c.estado = 'ACTIVO'
+              AND t.deletedAt IS NULL
+              AND t.estado = 'ACTIVO'
+              AND p.idProducto = :idProducto
+            ORDER BY c.nombre ASC, t.nombre ASC, v.idProductoVariante ASC
+            """)
+    List<ProductoVariante> listarVariantesEcommercePorProducto(@Param("idProducto") Integer idProducto);
+
+    @Query(
+            value = """
+                    SELECT
+                        p.producto_id AS productoId,
+                        p.nombre AS productoNombre,
+                        p.slug AS productoSlug,
+                        p.descripcion AS productoDescripcion,
+                        p.estado AS productoEstado,
+                        p.created_at AS fechaCreacion,
+                        p.imagen_global_url AS imagenGlobalUrl,
+                        p.imagen_global_thumb_url AS imagenGlobalThumbUrl,
+                        cat.id_categoria AS categoriaId,
+                        cat.nombre_categoria AS categoriaNombre,
+                        c.color_id AS colorId,
+                        c.nombre AS colorNombre,
+                        c.codigo AS colorHex,
+                        CAST(COALESCE(SUM(ss.cantidad), 0) AS SIGNED) AS stockTotalColor,
+                        CAST(COUNT(DISTINCT v.id_producto_variante) AS SIGNED) AS totalVariantes,
+                        CAST(COUNT(DISTINCT CASE WHEN ss.cantidad > 0 THEN v.id_producto_variante END) AS SIGNED) AS variantesConStock
+                    FROM producto_variante v
+                    JOIN producto p ON p.producto_id = v.producto_id
+                    JOIN categoria cat ON cat.id_categoria = p.categoria_id
+                    JOIN colores c ON c.color_id = v.color_id
+                    JOIN tallas t ON t.talla_id = v.talla_id
+                    JOIN sucursal_stock ss ON ss.id_producto_variante = v.id_producto_variante AND ss.id_sucursal = :idSucursal
+                    WHERE p.publicar_ecommerce = 1
+                      AND p.deleted_at IS NULL
+                      AND p.activo = 1
+                      AND p.estado = 'ACTIVO'
+                      AND cat.deleted_at IS NULL
+                      AND cat.activo = 1
+                      AND v.deleted_at IS NULL
+                      AND v.activo = 1
+                      AND c.deleted_at IS NULL
+                      AND c.activo = 1
+                      AND t.deleted_at IS NULL
+                      AND t.activo = 1
+                    GROUP BY
+                        p.producto_id,
+                        p.nombre,
+                        p.slug,
+                        p.descripcion,
+                        p.estado,
+                        p.created_at,
+                        p.imagen_global_url,
+                        p.imagen_global_thumb_url,
+                        cat.id_categoria,
+                        cat.nombre_categoria,
+                        c.color_id,
+                        c.nombre,
+                        c.codigo
+                    HAVING COALESCE(SUM(ss.cantidad), 0) > 0
+                    ORDER BY RAND()
+                    LIMIT :limit
+                    """,
+            nativeQuery = true)
+    List<EcommerceProductoColorGroupProjection> listarAleatoriosEcommerce(
+            @Param("idSucursal") Integer idSucursal,
+            @Param("limit") int limit);
+
+    @Query(
+            value = """
+                    SELECT
+                        p.producto_id AS productoId,
+                        p.nombre AS productoNombre,
+                        p.slug AS productoSlug,
+                        p.descripcion AS productoDescripcion,
+                        p.estado AS productoEstado,
+                        p.created_at AS fechaCreacion,
+                        p.imagen_global_url AS imagenGlobalUrl,
+                        p.imagen_global_thumb_url AS imagenGlobalThumbUrl,
+                        cat.id_categoria AS categoriaId,
+                        cat.nombre_categoria AS categoriaNombre,
+                        c.color_id AS colorId,
+                        c.nombre AS colorNombre,
+                        c.codigo AS colorHex,
+                        CAST(COALESCE(SUM(ss.cantidad), 0) AS SIGNED) AS stockTotalColor,
+                        CAST(COUNT(DISTINCT v.id_producto_variante) AS SIGNED) AS totalVariantes,
+                        CAST(COUNT(DISTINCT CASE WHEN ss.cantidad > 0 THEN v.id_producto_variante END) AS SIGNED) AS variantesConStock
+                    FROM producto_variante v
+                    JOIN producto p ON p.producto_id = v.producto_id
+                    JOIN categoria cat ON cat.id_categoria = p.categoria_id
+                    JOIN colores c ON c.color_id = v.color_id
+                    JOIN tallas t ON t.talla_id = v.talla_id
+                    JOIN sucursal_stock ss ON ss.id_producto_variante = v.id_producto_variante AND ss.id_sucursal = :idSucursal
+                    WHERE p.publicar_ecommerce = 1
+                      AND p.producto_id <> :idProducto
+                      AND p.deleted_at IS NULL
+                      AND p.activo = 1
+                      AND p.estado = 'ACTIVO'
+                      AND cat.deleted_at IS NULL
+                      AND cat.activo = 1
+                      AND v.deleted_at IS NULL
+                      AND v.activo = 1
+                      AND c.deleted_at IS NULL
+                      AND c.activo = 1
+                      AND t.deleted_at IS NULL
+                      AND t.activo = 1
+                    GROUP BY
+                        p.producto_id,
+                        p.nombre,
+                        p.slug,
+                        p.descripcion,
+                        p.estado,
+                        p.created_at,
+                        p.imagen_global_url,
+                        p.imagen_global_thumb_url,
+                        cat.id_categoria,
+                        cat.nombre_categoria,
+                        c.color_id,
+                        c.nombre,
+                        c.codigo
+                    HAVING COALESCE(SUM(ss.cantidad), 0) > 0
+                    ORDER BY RAND()
+                    LIMIT :limit
+                    """,
+            nativeQuery = true)
+    List<EcommerceProductoColorGroupProjection> listarRecomendadosEcommerce(
+            @Param("idSucursal") Integer idSucursal,
+            @Param("idProducto") Integer idProducto,
+            @Param("limit") int limit);
 
     @Query("""
             SELECT v

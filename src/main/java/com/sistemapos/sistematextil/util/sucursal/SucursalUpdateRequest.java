@@ -37,6 +37,8 @@ public record SucursalUpdateRequest(
         @Pattern(regexp = "^(|\\d{4})$", message = "El codigoEstablecimientoSunat debe tener 4 digitos")
         String codigoEstablecimientoSunat,
 
+        Boolean publicarEcommerce,
+
         @NotBlank(message = "Ingrese estado")
         @Pattern(regexp = "ACTIVO|INACTIVO", message = "Estado permitido: ACTIVO o INACTIVO")
         String estado,

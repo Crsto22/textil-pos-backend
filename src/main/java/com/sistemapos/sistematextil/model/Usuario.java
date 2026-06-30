@@ -92,6 +92,9 @@ public class Usuario {
     @Column(name = "refresh_token_version", nullable = false)
     private Integer refreshTokenVersion;
 
+    @Column(name = "puede_aceptar_pedidos", nullable = false)
+    private Boolean puedeAceptarPedidos = Boolean.FALSE;
+
 
     @ManyToOne(optional = true)
     @JoinColumn(name = "id_sucursal", nullable = true)
@@ -109,6 +112,9 @@ public class Usuario {
         this.deletedAt = null;
         if (this.refreshTokenVersion == null) {
             this.refreshTokenVersion = 0;
+        }
+        if (this.puedeAceptarPedidos == null) {
+            this.puedeAceptarPedidos = Boolean.FALSE;
         }
     }
 

@@ -1675,6 +1675,28 @@ public class VentaService {
         validarRolVenta(usuarioAutenticado);
 
         Sucursal sucursalVenta = resolverSucursalParaVenta(request.idSucursal(), usuarioAutenticado);
+        return registrarVentaInterna(request, usuarioAutenticado, sucursalVenta, true, "POS");
+    }
+
+    @Transactional
+    public VentaResponse registrarVentaDesdeEcommerce(
+            VentaCreateRequest request,
+            String correoUsuarioAutenticado,
+            Sucursal sucursalVenta) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolVenta(usuarioAutenticado);
+        if (sucursalVenta == null || sucursalVenta.getIdSucursal() == null) {
+            throw new RuntimeException("Sucursal ecommerce obligatoria");
+        }
+        return registrarVentaInterna(request, usuarioAutenticado, sucursalVenta, false, "WEB");
+    }
+
+    private VentaResponse registrarVentaInterna(
+            VentaCreateRequest request,
+            Usuario usuarioAutenticado,
+            Sucursal sucursalVenta,
+            boolean moverStock,
+            String origen) {
         String tipoComprobante = normalizarTipoComprobante(request.tipoComprobante());
         boolean aplicaIgv = aplicaIgvSegunTipoComprobante(tipoComprobante);
         Cliente cliente = resolverCliente(request.idCliente(), sucursalVenta);
@@ -1688,7 +1710,8 @@ public class VentaService {
         List<DetalleCalculado> detallesCalculados = calcularDetalles(
                 request.detalles(),
                 sucursalVenta.getIdSucursal(),
-                aplicaIgv);
+                aplicaIgv,
+                moverStock);
         TotalesVenta totales = calcularTotales(
                 detallesCalculados,
                 request.descuentoTotal(),
@@ -1719,6 +1742,7 @@ public class VentaService {
         venta.setIgv(totales.igv());
         venta.setTotal(totales.total());
         venta.setEstado("EMITIDA");
+        venta.setOrigen(origen);
         venta.setActivo("ACTIVO");
 
         Venta ventaGuardada = ventaRepository.save(venta);
@@ -1757,14 +1781,16 @@ public class VentaService {
         }
         List<Pago> pagosGuardados = pagoRepository.saveAll(pagosGuardar);
 
-        for (DetalleCalculado detalleCalculado : detallesFinales) {
-            stockMovimientoService.descontar(
-                    sucursalVenta.getIdSucursal(),
-                    detalleCalculado.variante().getIdProductoVariante(),
-                    detalleCalculado.cantidad(),
-                    HistorialStock.TipoMovimiento.VENTA,
-                    "VENTA #" + ventaGuardada.getIdVenta(),
-                    usuarioAutenticado);
+        if (moverStock) {
+            for (DetalleCalculado detalleCalculado : detallesFinales) {
+                stockMovimientoService.descontar(
+                        sucursalVenta.getIdSucursal(),
+                        detalleCalculado.variante().getIdProductoVariante(),
+                        detalleCalculado.cantidad(),
+                        HistorialStock.TipoMovimiento.VENTA,
+                        "VENTA #" + ventaGuardada.getIdVenta(),
+                        usuarioAutenticado);
+            }
         }
 
         if (requiereComprobanteElectronico(tipoComprobante)) {
@@ -2012,7 +2038,8 @@ public class VentaService {
     private List<DetalleCalculado> calcularDetalles(
             List<VentaDetalleCreateItem> detalles,
             Integer idSucursalVenta,
-            boolean aplicaIgv) {
+            boolean aplicaIgv,
+            boolean validarStockDisponible) {
         if (detalles == null || detalles.isEmpty()) {
             throw new RuntimeException("Ingrese al menos un detalle de venta");
         }
@@ -2041,7 +2068,7 @@ public class VentaService {
 
             int cantidad = item.cantidad();
             int stockActual = valorEntero(stockContexto.stockActual());
-            if (stockActual < cantidad) {
+            if (validarStockDisponible && stockActual < cantidad) {
                 throw new RuntimeException("Stock insuficiente para '" + nombreProducto
                         + "'. Disponible: " + stockActual + ", solicitado: " + cantidad);
             }
@@ -2577,6 +2604,7 @@ public class VentaService {
                 nombreUsuario,
                 idSucursal,
                 nombreSucursal,
+                venta.getOrigen(),
                 conversionOrigen,
                 items,
                 pagos);
@@ -2632,6 +2660,7 @@ public class VentaService {
                 nombreUsuario(venta.getUsuario()),
                 venta.getSucursal() != null ? venta.getSucursal().getIdSucursal() : null,
                 venta.getSucursal() != null ? venta.getSucursal().getNombre() : null,
+                venta.getOrigen(),
                 conversionOrigen,
                 detalleResponses,
                 pagoResponses);

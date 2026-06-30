@@ -37,6 +37,8 @@ public record SucursalCreateRequest(
         @Pattern(regexp = "^(|\\d{4})$", message = "El codigoEstablecimientoSunat debe tener 4 digitos")
         String codigoEstablecimientoSunat,
 
+        Boolean publicarEcommerce,
+
         @NotNull(message = "La empresa es obligatoria")
         Integer idEmpresa
 ) {

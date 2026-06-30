@@ -40,6 +40,10 @@ public interface ClienteRepository extends JpaRepository<Cliente, Integer> {
 
     Optional<Cliente> findByIdClienteAndDeletedAtIsNull(Integer idCliente);
     Optional<Cliente> findByIdClienteAndDeletedAtIsNullAndEmpresa_IdEmpresa(Integer idCliente, Integer idEmpresa);
+    Optional<Cliente> findFirstByEmpresa_IdEmpresaAndTipoDocumentoAndNroDocumentoAndDeletedAtIsNullOrderByIdClienteAsc(
+            Integer idEmpresa,
+            TipoDocumento tipoDocumento,
+            String nroDocumento);
     Optional<Cliente> findFirstByTelefonoAndDeletedAtIsNullAndEmpresa_IdEmpresaOrderByIdClienteAsc(
             String telefono,
             Integer idEmpresa);

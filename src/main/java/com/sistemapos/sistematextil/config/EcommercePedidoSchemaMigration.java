@@ -66,6 +66,8 @@ public class EcommercePedidoSchemaMigration implements ApplicationRunner {
                       UNIQUE KEY uk_ecommerce_pedido_codigo (codigo),
                       UNIQUE KEY uk_ecommerce_pedido_comprobante_token_hash (comprobante_token_hash),
                       KEY idx_ecommerce_pedido_estado_expira (estado, reserva_expira_at),
+                      KEY idx_ecommerce_pedido_fecha (fecha),
+                      KEY idx_ecommerce_pedido_estado_fecha (estado, fecha),
                       KEY fk_ecommerce_pedido_sucursal (id_sucursal),
                       KEY fk_ecommerce_pedido_metodo_pago (id_metodo_pago),
                       KEY fk_ecommerce_pedido_venta (id_venta),
@@ -95,6 +97,7 @@ public class EcommercePedidoSchemaMigration implements ApplicationRunner {
                     """);
             ensureTokenColumns(connection, statement);
             ensureAdminColumns(connection, statement);
+            ensureListIndexes(connection, statement);
             ensureVentaOrigenColumn(connection, statement);
             log.info("Tablas ecommerce_pedido listas");
         }
@@ -167,6 +170,15 @@ public class EcommercePedidoSchemaMigration implements ApplicationRunner {
     private void ensureVentaOrigenColumn(Connection connection, Statement statement) throws Exception {
         if (!columnExists(connection, "venta", "origen")) {
             statement.execute("ALTER TABLE venta ADD COLUMN origen VARCHAR(20) NOT NULL DEFAULT 'POS' AFTER estado");
+        }
+    }
+
+    private void ensureListIndexes(Connection connection, Statement statement) throws Exception {
+        if (!indexExists(connection, "ecommerce_pedido", "idx_ecommerce_pedido_fecha")) {
+            statement.execute("ALTER TABLE ecommerce_pedido ADD KEY idx_ecommerce_pedido_fecha (fecha)");
+        }
+        if (!indexExists(connection, "ecommerce_pedido", "idx_ecommerce_pedido_estado_fecha")) {
+            statement.execute("ALTER TABLE ecommerce_pedido ADD KEY idx_ecommerce_pedido_estado_fecha (estado, fecha)");
         }
     }
 

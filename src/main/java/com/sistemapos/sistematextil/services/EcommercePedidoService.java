@@ -20,6 +20,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -62,6 +64,7 @@ import com.sistemapos.sistematextil.util.ecommerce.EcommercePedidoResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommercePedidoEstadisticasResponse;
 import com.sistemapos.sistematextil.util.cliente.TipoDocumento;
 import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
+import com.sistemapos.sistematextil.util.producto.ProductoImagenColorRow;
 import com.sistemapos.sistematextil.util.usuario.Rol;
 import com.sistemapos.sistematextil.util.venta.VentaCreateRequest;
 import com.sistemapos.sistematextil.util.venta.VentaDetalleCreateItem;
@@ -220,13 +223,18 @@ public class EcommercePedidoService {
         if (fechaDesde != null && fechaHasta != null && fechaDesde.isAfter(fechaHasta)) {
             throw new RuntimeException("La fecha desde no puede ser mayor a la fecha hasta");
         }
-        PagedResponse<EcommercePedidoAdminResponse> pagina = PagedResponse.fromPage(pedidoRepository.buscarAdmin(
+        Page<EcommercePedido> pedidosPage = pedidoRepository.buscarAdmin(
                 estadoNormalizado,
                 term,
                 fechaInicio,
                 fechaFinExclusive,
-                PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, "fecha")))
-                .map(this::toAdminResponse));
+                PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, "fecha")));
+        List<EcommercePedido> pedidos = cargarPedidosConDetalles(pedidosPage);
+        Map<ImagenDetalleKey, String> imagenes = resolverImagenesDetalle(pedidos);
+        PagedResponse<EcommercePedidoAdminResponse> pagina = PagedResponse.fromPage(new PageImpl<>(
+                pedidos.stream().map(pedido -> toAdminResponse(pedido, imagenes)).toList(),
+                pedidosPage.getPageable(),
+                pedidosPage.getTotalElements()));
         return EcommercePedidoAdminPageResponse.from(
                 pagina,
                 toEstadisticasResponse(pedidoRepository.obtenerEstadisticasAdmin(
@@ -431,9 +439,10 @@ public class EcommercePedidoService {
     @Scheduled(initialDelay = 60000, fixedDelay = 60000)
     @Transactional
     public void cancelarReservasVencidas() {
-        for (EcommercePedido pedido : pedidoRepository.findByEstadoAndReservaExpiraAtLessThanEqual(
+        for (EcommercePedido pedido : pedidoRepository.findByEstadoAndReservaExpiraAtLessThanEqualOrderByReservaExpiraAtAsc(
                 ESPERANDO_COMPROBANTE,
-                LocalDateTime.now())) {
+                LocalDateTime.now(),
+                PageRequest.of(0, 50))) {
             cancelarPorTiempo(pedido);
         }
     }
@@ -558,6 +567,10 @@ public class EcommercePedidoService {
     }
 
     private EcommercePedidoAdminResponse toAdminResponse(EcommercePedido pedido) {
+        return toAdminResponse(pedido, null);
+    }
+
+    private EcommercePedidoAdminResponse toAdminResponse(EcommercePedido pedido, Map<ImagenDetalleKey, String> imagenes) {
         Venta venta = pedido.getVenta();
         Usuario aceptador = pedido.getUsuarioAceptacion();
         return new EcommercePedidoAdminResponse(
@@ -592,7 +605,7 @@ public class EcommercePedidoService {
                 aceptador != null ? aceptador.getIdUsuario() : null,
                 nombreUsuario(aceptador),
                 pedido.getAceptadoAt(),
-                toDetalles(pedido));
+                toDetalles(pedido, imagenes));
     }
 
     private EcommercePedidoResponse toResponse(EcommercePedido pedido, String comprobanteToken) {
@@ -604,7 +617,7 @@ public class EcommercePedidoService {
                 pedido.getMetodoPago() != null ? pedido.getMetodoPago().getNombre() : null,
                 pedido.getComprobanteUrl(),
                 comprobanteToken,
-                toDetalles(pedido));
+                toDetalles(pedido, null));
     }
 
     private EcommercePedidoEstadisticasResponse toEstadisticasResponse(Object[] row) {
@@ -794,7 +807,7 @@ public class EcommercePedidoService {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
-    private List<EcommercePedidoResponse.Detalle> toDetalles(EcommercePedido pedido) {
+    private List<EcommercePedidoResponse.Detalle> toDetalles(EcommercePedido pedido, Map<ImagenDetalleKey, String> imagenes) {
         return pedido.getDetalles().stream()
                 .map(detalle -> {
                     ProductoVariante variante = detalle.getProductoVariante();
@@ -807,7 +820,7 @@ public class EcommercePedidoService {
                     String talla = variante != null && variante.getTalla() != null
                             ? variante.getTalla().getNombre()
                             : "-";
-                    String imagen = resolverImagenDetalle(variante);
+                    String imagen = resolverImagenDetalle(variante, imagenes);
                     Integer idVariante = variante != null ? variante.getIdProductoVariante() : null;
                     return new EcommercePedidoResponse.Detalle(
                             idVariante,
@@ -822,9 +835,21 @@ public class EcommercePedidoService {
                 .toList();
     }
 
-    private String resolverImagenDetalle(ProductoVariante variante) {
+    private String resolverImagenDetalle(ProductoVariante variante, Map<ImagenDetalleKey, String> imagenes) {
         if (variante == null || variante.getProducto() == null) {
             return null;
+        }
+        if (imagenes != null) {
+            String imagen = variante.getColor() == null
+                    ? null
+                    : imagenes.get(new ImagenDetalleKey(
+                            variante.getProducto().getIdProducto(),
+                            variante.getColor().getIdColor()));
+            return tieneTexto(imagen)
+                    ? imagen
+                    : preferirNoVacio(
+                            variante.getProducto().getImagenGlobalUrl(),
+                            variante.getProducto().getImagenGlobalThumbUrl());
         }
         if (variante.getColor() != null) {
             String imagenColor = productoColorImagenRepository
@@ -846,6 +871,46 @@ public class EcommercePedidoService {
         return preferirNoVacio(
                 variante.getProducto().getImagenGlobalUrl(),
                 variante.getProducto().getImagenGlobalThumbUrl());
+    }
+
+    private List<EcommercePedido> cargarPedidosConDetalles(Page<EcommercePedido> pedidosPage) {
+        List<Integer> ids = pedidosPage.getContent().stream()
+                .map(EcommercePedido::getIdEcommercePedido)
+                .toList();
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        Map<Integer, EcommercePedido> pedidosBase = new HashMap<>();
+        pedidosPage.getContent().forEach(pedido -> pedidosBase.put(pedido.getIdEcommercePedido(), pedido));
+        Map<Integer, EcommercePedido> pedidosConDetalles = new HashMap<>();
+        pedidoRepository.findAllByIdWithDetalles(ids)
+                .forEach(pedido -> pedidosConDetalles.put(pedido.getIdEcommercePedido(), pedido));
+        return ids.stream()
+                .map(id -> pedidosConDetalles.getOrDefault(id, pedidosBase.get(id)))
+                .toList();
+    }
+
+    private Map<ImagenDetalleKey, String> resolverImagenesDetalle(List<EcommercePedido> pedidos) {
+        List<Integer> productoIds = pedidos.stream()
+                .flatMap(pedido -> pedido.getDetalles().stream())
+                .map(EcommercePedidoDetalle::getProductoVariante)
+                .filter(variante -> variante != null && variante.getProducto() != null)
+                .map(variante -> variante.getProducto().getIdProducto())
+                .distinct()
+                .toList();
+        Map<ImagenDetalleKey, String> imagenes = new HashMap<>();
+        if (productoIds.isEmpty()) {
+            return imagenes;
+        }
+        for (ProductoImagenColorRow row : productoColorImagenRepository.obtenerResumenPorProductos(productoIds)) {
+            String url = preferirNoVacio(row.url(), row.urlThumb());
+            if (!tieneTexto(url)) {
+                continue;
+            }
+            ImagenDetalleKey key = new ImagenDetalleKey(row.productoId(), row.colorId());
+            imagenes.putIfAbsent(key, url);
+        }
+        return imagenes;
     }
 
     private String preferirNoVacio(String principal, String fallback) {
@@ -875,6 +940,9 @@ public class EcommercePedidoService {
             EcommercePedidoCreateRequest.Item item,
             ProductoVariante variante,
             int stockActual) {
+    }
+
+    private record ImagenDetalleKey(Integer productoId, Integer colorId) {
     }
 
     private void validarImagen(MultipartFile file) {

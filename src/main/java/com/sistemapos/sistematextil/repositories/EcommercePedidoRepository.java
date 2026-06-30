@@ -16,7 +16,10 @@ public interface EcommercePedidoRepository extends JpaRepository<EcommercePedido
     Optional<EcommercePedido> findByCodigo(String codigo);
     Optional<EcommercePedido> findByComprobanteTokenHash(String comprobanteTokenHash);
     boolean existsByCodigo(String codigo);
-    List<EcommercePedido> findByEstadoAndReservaExpiraAtLessThanEqual(String estado, LocalDateTime fecha);
+    List<EcommercePedido> findByEstadoAndReservaExpiraAtLessThanEqualOrderByReservaExpiraAtAsc(
+            String estado,
+            LocalDateTime fecha,
+            Pageable pageable);
 
     @Query(value = """
             SELECT *
@@ -48,6 +51,22 @@ public interface EcommercePedidoRepository extends JpaRepository<EcommercePedido
             @Param("fechaInicio") LocalDateTime fechaInicio,
             @Param("fechaFinExclusive") LocalDateTime fechaFinExclusive,
             Pageable pageable);
+
+    @Query("""
+            SELECT DISTINCT p
+            FROM EcommercePedido p
+            LEFT JOIN FETCH p.sucursal
+            LEFT JOIN FETCH p.metodoPago
+            LEFT JOIN FETCH p.venta
+            LEFT JOIN FETCH p.usuarioAceptacion
+            LEFT JOIN FETCH p.detalles d
+            LEFT JOIN FETCH d.productoVariante pv
+            LEFT JOIN FETCH pv.producto
+            LEFT JOIN FETCH pv.color
+            LEFT JOIN FETCH pv.talla
+            WHERE p.idEcommercePedido IN :ids
+            """)
+    List<EcommercePedido> findAllByIdWithDetalles(@Param("ids") List<Integer> ids);
 
     @Query("""
             SELECT p

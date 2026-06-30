@@ -37,6 +37,9 @@ public interface ProductoColorImagenRepository extends JpaRepository<ProductoCol
             JOIN pci.color c
             WHERE pci.deletedAt IS NULL
               AND pci.producto.idProducto IN :productoIds
+            ORDER BY pci.producto.idProducto, c.idColor,
+              CASE WHEN pci.esPrincipal = true THEN 0 ELSE 1 END,
+              pci.orden ASC
             """)
     List<ProductoImagenColorRow> obtenerResumenPorProductos(@Param("productoIds") List<Integer> productoIds);
 }

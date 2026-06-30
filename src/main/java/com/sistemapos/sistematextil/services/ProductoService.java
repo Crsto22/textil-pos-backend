@@ -279,9 +279,9 @@ public class ProductoService {
         producto.setNombre(normalizarRequerido(request.nombre(), "El nombre del producto es obligatorio"));
         producto.setSlug(resolverSlugParaGuardar(request.slug(), producto.getNombre(), idProducto, false));
         producto.setDescripcion(normalizar(request.descripcion()));
-        producto.setImagenGlobalUrl(conservarImagenExistente(producto.getImagenGlobalUrl(), request.imagenGlobalUrl()));
-        producto.setImagenGlobalThumbUrl(conservarImagenExistente(producto.getImagenGlobalThumbUrl(), request.imagenGlobalThumbUrl()));
-producto.setGuiaTallasUrl(normalizar(request.guiaTallasUrl()));
+        producto.setImagenGlobalUrl(normalizar(request.imagenGlobalUrl()));
+        producto.setImagenGlobalThumbUrl(normalizar(request.imagenGlobalThumbUrl()));
+        producto.setGuiaTallasUrl(normalizar(request.guiaTallasUrl()));
         producto.setGuiaTallasThumbUrl(normalizar(request.guiaTallasThumbUrl()));
         validarCambioPublicarEcommerce(usuario, producto.getPublicarEcommerce(), request.publicarEcommerce());
         if (request.publicarEcommerce() != null) {
@@ -1254,11 +1254,6 @@ List<ProductoColorImagen> imagenesActuales = productoColorImagenRepository.findB
                 .filter(item -> !posicionesActuales.contains(item.colorId() + ":" + item.orden()))
                 .toList();
         return construirImagenes(producto, nuevas);
-    }
-
-    private String conservarImagenExistente(String actual, String nueva) {
-        String normalizada = normalizar(nueva);
-        return normalizar(actual) != null ? normalizar(actual) : normalizada;
     }
 
     private Set<String> extraerUrls(List<ProductoColorImagen> imagenes) {

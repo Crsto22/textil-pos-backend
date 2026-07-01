@@ -26,6 +26,7 @@ public class EcommercePortadaService {
     private final EcommercePortadaRepository portadaRepository;
     private final ProductoImagenService productoImagenService;
     private final S3StorageService storageService;
+    private final EcommerceCacheInvalidationService ecommerceCacheInvalidationService;
 
     public List<EcommercePortadaResponse> listarAdmin() {
         return portadaRepository.findByDeletedAtIsNullOrderByOrdenAscIdEcommercePortadaAsc()
@@ -53,7 +54,9 @@ public class EcommercePortadaService {
             portada.setMobileUrl(mobileUpload.url());
             portada.setMobileThumbUrl(mobileUpload.urlThumb());
             portada.setOrden(portadaRepository.findByDeletedAtIsNullOrderByOrdenAscIdEcommercePortadaAsc().size() + 1);
-            return toResponse(portadaRepository.save(portada));
+            EcommercePortada guardada = portadaRepository.save(portada);
+            ecommerceCacheInvalidationService.invalidate();
+            return toResponse(guardada);
         } catch (RuntimeException e) {
             eliminar(desktopUpload);
             eliminar(mobileUpload);
@@ -65,7 +68,9 @@ public class EcommercePortadaService {
     public EcommercePortadaResponse cambiarEstado(Integer id, String estado) {
         EcommercePortada portada = obtenerActivaOInactiva(id);
         portada.setEstado(normalizarEstado(estado));
-        return toResponse(portadaRepository.save(portada));
+        EcommercePortada guardada = portadaRepository.save(portada);
+        ecommerceCacheInvalidationService.invalidate();
+        return toResponse(guardada);
     }
 
     @Transactional
@@ -74,6 +79,7 @@ public class EcommercePortadaService {
         portada.setEstado(INACTIVO);
         portada.setDeletedAt(LocalDateTime.now());
         portadaRepository.save(portada);
+        ecommerceCacheInvalidationService.invalidate();
         eliminar(portada.getDesktopUrl());
         eliminar(portada.getDesktopThumbUrl());
         eliminar(portada.getMobileUrl());

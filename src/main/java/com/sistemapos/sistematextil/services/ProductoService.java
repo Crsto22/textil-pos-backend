@@ -85,6 +85,7 @@ public class ProductoService {
     private final TallaService tallaService;
     private final S3StorageService s3StorageService;
     private final StockMovimientoService stockMovimientoService;
+    private final EcommerceCacheInvalidationService ecommerceCacheInvalidationService;
 
     @Value("${application.pagination.default-size:10}")
     private int defaultPageSize;
@@ -222,6 +223,7 @@ public class ProductoService {
 
         try {
             Producto guardado = productoRepository.save(producto);
+            ecommerceCacheInvalidationService.invalidate();
             return toListItemResponse(guardado, null);
         } catch (DataIntegrityViolationException e) {
             throw new RuntimeException("No se pudo guardar el producto por restriccion de datos");
@@ -263,6 +265,7 @@ public class ProductoService {
         }
 
         VarianteCatalogo catalogo = obtenerCatalogoPorProductos(List.of(guardado), null, false).get(guardado.getIdProducto());
+        ecommerceCacheInvalidationService.invalidate();
         return new ProductoCompletoResponse(toListItemResponse(guardado, catalogo), variantes.size(), imagenes.size());
     }
 
@@ -332,6 +335,7 @@ List<ProductoColorImagen> imagenesActuales = productoColorImagenRepository.findB
         }
 
         VarianteCatalogo catalogo = obtenerCatalogoPorProductos(List.of(actualizado), null, false).get(actualizado.getIdProducto());
+        ecommerceCacheInvalidationService.invalidate();
         return new ProductoCompletoResponse(
                 toListItemResponse(actualizado, catalogo),
                 variantesActivas(variantes).size(),
@@ -373,6 +377,7 @@ List<ProductoColorImagen> imagenesActuales = productoColorImagenRepository.findB
 
         Producto actualizado = productoRepository.save(producto);
         VarianteCatalogo catalogo = obtenerCatalogoPorProductos(List.of(actualizado), null, false).get(actualizado.getIdProducto());
+        ecommerceCacheInvalidationService.invalidate();
         return toListItemResponse(actualizado, catalogo);
     }
 
@@ -397,6 +402,7 @@ List<ProductoColorImagen> imagenesActuales = productoColorImagenRepository.findB
         if (!variantes.isEmpty()) {
             productoVarianteRepository.saveAll(variantes);
         }
+        ecommerceCacheInvalidationService.invalidate();
     }
 
     public Producto obtenerPorId(Integer id) {
@@ -467,6 +473,7 @@ List<ProductoColorImagen> imagenesActuales = productoColorImagenRepository.findB
         Set<String> urls = extraerUrls(imagenes);
         productoColorImagenRepository.deleteAll(imagenes);
         eliminarImagenesObsoletas(urls, Set.of());
+        ecommerceCacheInvalidationService.invalidate();
     }
 
     private Page<Producto> buscarProductos(String term, Integer idCategoria, Integer idColor, Boolean conOferta, int page) {

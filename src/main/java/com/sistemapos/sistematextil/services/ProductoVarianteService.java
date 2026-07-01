@@ -87,6 +87,7 @@ public class ProductoVarianteService {
     private final StockMovimientoService stockMovimientoService;
     private final PrecioOfertaService precioOfertaService;
     private final UsuarioSucursalAccessService usuarioSucursalAccessService;
+    private final EcommerceCacheInvalidationService ecommerceCacheInvalidationService;
 
     @PersistenceContext
     private final EntityManager entityManager;
@@ -285,6 +286,9 @@ public class ProductoVarianteService {
         if (!ofertasSucursalVencidas.isEmpty()) {
             productoVarianteOfertaSucursalRepository.saveAll(ofertasSucursalVencidas);
         }
+        if (!variantesVencidas.isEmpty() || !ofertasSucursalVencidas.isEmpty()) {
+            ecommerceCacheInvalidationService.invalidate();
+        }
     }
 
     @Transactional
@@ -389,6 +393,7 @@ public class ProductoVarianteService {
 
         ProductoVariante guardado = repository.saveAndFlush(destino);
         entityManager.clear();
+        ecommerceCacheInvalidationService.invalidate();
 
         return repository.findById(guardado.getIdProductoVariante())
                 .orElseThrow(() -> new RuntimeException("Error al recuperar la variante guardada"));
@@ -401,7 +406,9 @@ public class ProductoVarianteService {
 
         variante.setStock(nuevoStock);
         variante.setEstado(resolverEstadoVarianteSegunStock(nuevoStock));
-        return repository.save(variante);
+        ProductoVariante guardada = repository.save(variante);
+        ecommerceCacheInvalidationService.invalidate();
+        return guardada;
     }
 
     public ProductoVariante actualizarPrecio(Integer id, Double nuevoPrecio, String correoUsuarioAutenticado) {
@@ -419,7 +426,9 @@ public class ProductoVarianteService {
                 variante.getOfertaInicio(),
                 variante.getOfertaFin());
         variante.setPrecio(nuevoPrecio);
-        return repository.save(variante);
+        ProductoVariante guardada = repository.save(variante);
+        ecommerceCacheInvalidationService.invalidate();
+        return guardada;
     }
 
     @Transactional
@@ -503,6 +512,7 @@ public class ProductoVarianteService {
         }
 
         ProductoVariante actualizada = repository.save(variante);
+        ecommerceCacheInvalidationService.invalidate();
 
         if (idColorAnterior != null && !idColorAnterior.equals(color.getIdColor())) {
             productoService.limpiarImagenesColorSiNoHayVariantesActivas(idProducto, idColorAnterior);
@@ -521,7 +531,9 @@ public class ProductoVarianteService {
         ProductoVariante variante = obtenerVarianteConAlcance(id, usuarioAutenticado);
 
         aplicarOferta(variante, request.precioOferta(), request.ofertaInicio(), request.ofertaFin(), usuarioAutenticado);
-        return repository.save(variante);
+        ProductoVariante guardada = repository.save(variante);
+        ecommerceCacheInvalidationService.invalidate();
+        return guardada;
     }
 
     @Transactional
@@ -573,6 +585,7 @@ public class ProductoVarianteService {
         }
 
         repository.saveAll(actualizadas);
+        ecommerceCacheInvalidationService.invalidate();
         Map<ProductoColorKey, String> imagenes = resolverImagenesPorProductoColor(actualizadas);
         return actualizadas.stream()
                 .map(variante -> toOfertaListItemResponse(variante, imagenes, null))
@@ -678,6 +691,7 @@ public class ProductoVarianteService {
         variante.setActivo(VALOR_INACTIVO);
         variante.setDeletedAt(LocalDateTime.now());
         repository.save(variante);
+        ecommerceCacheInvalidationService.invalidate();
 
         productoService.limpiarImagenesColorSiNoHayVariantesActivas(idProducto, idColor);
     }
@@ -1058,7 +1072,9 @@ public class ProductoVarianteService {
             oferta.setOfertaFin(null);
             oferta.setUsuarioCreacion(null);
             oferta.setDeletedAt(LocalDateTime.now());
-            return productoVarianteOfertaSucursalRepository.save(oferta);
+            ProductoVarianteOfertaSucursal guardada = productoVarianteOfertaSucursalRepository.save(oferta);
+            ecommerceCacheInvalidationService.invalidate();
+            return guardada;
         }
 
         oferta.setDeletedAt(null);
@@ -1068,7 +1084,9 @@ public class ProductoVarianteService {
         oferta.setPrecioOferta(precioOferta);
         oferta.setOfertaInicio(ofertaInicio);
         oferta.setOfertaFin(ofertaFin);
-        return productoVarianteOfertaSucursalRepository.save(oferta);
+        ProductoVarianteOfertaSucursal guardada = productoVarianteOfertaSucursalRepository.save(oferta);
+        ecommerceCacheInvalidationService.invalidate();
+        return guardada;
     }
 
     private Map<ProductoColorKey, String> resolverImagenesPorProductoColor(List<ProductoVariante> variantes) {

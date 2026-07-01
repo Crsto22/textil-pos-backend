@@ -47,6 +47,7 @@ public class ProductoImagenService {
     private final ProductoService productoService;
     private final ProductoVarianteService productoVarianteService;
     private final ProductoColorImagenRepository productoColorImagenRepository;
+    private final EcommerceCacheInvalidationService ecommerceCacheInvalidationService;
 
     static {
         ImageIO.scanForPlugins();
@@ -158,6 +159,7 @@ public class ProductoImagenService {
             }
 
             List<ProductoColorImagen> guardadas = productoColorImagenRepository.saveAll(nuevas);
+            ecommerceCacheInvalidationService.invalidate();
             return new ProductoVarianteImagenUploadResponse(
                     idProductoVariante,
                     productoId,
@@ -212,6 +214,7 @@ public class ProductoImagenService {
 
         eliminarDesdeStorage(oldUrl);
         eliminarDesdeStorage(oldUrlThumb);
+        ecommerceCacheInvalidationService.invalidate();
 
         List<ProductoVarianteImagenDeleteResponse.ImagenItem> imagenesRestantes = restantes.stream()
                 .sorted(Comparator
@@ -292,6 +295,7 @@ public class ProductoImagenService {
 
         eliminarSiCambio(oldUrl, nuevaImagen.url(), "imagen anterior");
         eliminarSiCambio(oldUrlThumb, nuevaImagen.urlThumb(), "thumbnail anterior");
+        ecommerceCacheInvalidationService.invalidate();
 
         return new ProductoImagenEditResponse(
                 actualizada.getIdColorImagen(),

@@ -23,6 +23,7 @@ public class StockMovimientoService {
     private final SucursalRepository sucursalRepository;
     private final ProductoVarianteRepository productoVarianteRepository;
     private final HistorialStockRepository historialStockRepository;
+    private final EcommerceCacheInvalidationService ecommerceCacheInvalidationService;
 
     @Transactional
     public MovimientoStock descontar(
@@ -47,6 +48,7 @@ public class StockMovimientoService {
         SucursalStock guardado = sucursalStockRepository.save(stock);
         HistorialStock historial = registrarHistorial(tipoMovimiento, motivo, guardado, usuario, cantidad, stockAnterior, stockNuevo);
         sincronizarContextoVariante(guardado);
+        invalidarCacheSiEsEcommerce(guardado);
         return new MovimientoStock(guardado, historial, stockAnterior, stockNuevo);
     }
 
@@ -69,6 +71,7 @@ public class StockMovimientoService {
         SucursalStock guardado = sucursalStockRepository.save(stock);
         HistorialStock historial = registrarHistorial(tipoMovimiento, motivo, guardado, usuario, cantidad, stockAnterior, stockNuevo);
         sincronizarContextoVariante(guardado);
+        invalidarCacheSiEsEcommerce(guardado);
         return new MovimientoStock(guardado, historial, stockAnterior, stockNuevo);
     }
 
@@ -97,6 +100,7 @@ public class StockMovimientoService {
                 stockAnterior,
                 nuevoStock);
         sincronizarContextoVariante(guardado);
+        invalidarCacheSiEsEcommerce(guardado);
         return new MovimientoStock(guardado, historial, stockAnterior, nuevoStock);
     }
 
@@ -180,6 +184,12 @@ public class StockMovimientoService {
         }
         stock.getProductoVariante().setSucursal(stock.getSucursal());
         stock.getProductoVariante().setStock(stock.getCantidad());
+    }
+
+    private void invalidarCacheSiEsEcommerce(SucursalStock stock) {
+        if (stock.getSucursal() != null && Boolean.TRUE.equals(stock.getSucursal().getPublicarEcommerce())) {
+            ecommerceCacheInvalidationService.invalidate();
+        }
     }
 
     private int valorEntero(Integer value) {

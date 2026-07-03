@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.sistemapos.sistematextil.services.EcommercePedidoService;
+import com.sistemapos.sistematextil.services.VentaService;
 import com.sistemapos.sistematextil.util.ecommerce.EcommercePedidoAceptarRequest;
 
 import jakarta.validation.Valid;
@@ -32,6 +33,7 @@ import lombok.RequiredArgsConstructor;
 public class EcommercePedidoController {
 
     private final EcommercePedidoService ecommercePedidoService;
+    private final VentaService ventaService;
 
     @GetMapping
     public ResponseEntity<?> listar(
@@ -69,6 +71,25 @@ public class EcommercePedidoController {
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"reporte_pedidos_ecommerce_" + ts + ".xlsx\"")
                     .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                    .body(archivo);
+        } catch (RuntimeException e) {
+            return error(e);
+        }
+    }
+
+    @GetMapping(
+            value = "reporte/envios/pdf",
+            produces = MediaType.APPLICATION_PDF_VALUE)
+    public ResponseEntity<?> reporteEnviosPdf(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaDesde,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaHasta,
+            Authentication authentication) {
+        try {
+            byte[] archivo = ventaService.exportarReportePdfEnviosWeb(fechaDesde, fechaHasta, correo(authentication));
+            String ts = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"reporte_envios_web_" + ts + ".pdf\"")
+                    .contentType(MediaType.APPLICATION_PDF)
                     .body(archivo);
         } catch (RuntimeException e) {
             return error(e);

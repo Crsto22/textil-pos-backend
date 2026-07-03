@@ -79,6 +79,14 @@ public interface EcommercePedidoRepository extends JpaRepository<EcommercePedido
             @Param("fechaInicio") LocalDateTime fechaInicio,
             @Param("fechaFinExclusive") LocalDateTime fechaFinExclusive);
 
+    @Query("""
+            SELECT p
+            FROM EcommercePedido p
+            LEFT JOIN FETCH p.venta
+            WHERE p.venta.idVenta IN :ventaIds
+            """)
+    List<EcommercePedido> findByVentaIds(@Param("ventaIds") List<Integer> ventaIds);
+
     @Query(value = """
             SELECT
                 CAST(COALESCE(SUM(CASE WHEN estado = 'ACEPTADO' THEN 1 ELSE 0 END), 0) AS SIGNED),

@@ -62,7 +62,9 @@ import com.sistemapos.sistematextil.util.ecommerce.EcommercePedidoAdminPageRespo
 import com.sistemapos.sistematextil.util.ecommerce.EcommercePedidoAdminResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommercePedidoResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommercePedidoEstadisticasResponse;
+import com.sistemapos.sistematextil.util.ecommerce.EcommerceDniValidationResponse;
 import com.sistemapos.sistematextil.util.cliente.TipoDocumento;
+import com.sistemapos.sistematextil.util.documento.ConsultaDniResponse;
 import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoImagenColorRow;
 import com.sistemapos.sistematextil.util.usuario.Rol;
@@ -83,7 +85,7 @@ public class EcommercePedidoService {
     public static final String CANCELADO = "CANCELADO";
     public static final String ACEPTADO = "ACEPTADO";
     private static final int MAX_CANTIDAD_POR_VARIANTE = 5;
-
+    private static final BigDecimal MONTO_MINIMO_DNI_BOLETA = BigDecimal.valueOf(700);
     private static final long MAX_COMPROBANTE_SIZE = 5 * 1024 * 1024;
     private static final DateTimeFormatter CODIGO_FECHA = DateTimeFormatter.ofPattern("ddMM");
     private static final SecureRandom TOKEN_RANDOM = new SecureRandom();
@@ -102,6 +104,7 @@ public class EcommercePedidoService {
     private final VentaService ventaService;
     private final EcommercePedidoEmailService ecommercePedidoEmailService;
     private final TurnstileService turnstileService;
+    private final DocumentoConsultaService documentoConsultaService;
 
     @Transactional
     public EcommercePedidoResponse crear(EcommercePedidoCreateRequest request, String ipCliente) {
@@ -151,7 +154,16 @@ public class EcommercePedidoService {
             throw new RuntimeException(String.join("\n", faltantes));
         }
 
+        Map<Integer, BigDecimal> preciosPorVariante = new HashMap<>();
         BigDecimal total = BigDecimal.ZERO;
+        for (ReservaItemContexto contexto : itemsReserva) {
+            EcommercePedidoCreateRequest.Item item = contexto.item();
+            ProductoVariante variante = contexto.variante();
+            BigDecimal precio = BigDecimal.valueOf(precioOfertaService.resolverPrecioVigente(variante, sucursal.getIdSucursal()));
+            preciosPorVariante.put(variante.getIdProductoVariante(), precio);
+            total = total.add(precio.multiply(BigDecimal.valueOf(item.cantidad())));
+        }
+
         for (ReservaItemContexto contexto : itemsReserva) {
             EcommercePedidoCreateRequest.Item item = contexto.item();
             ProductoVariante variante = contexto.variante();
@@ -162,7 +174,7 @@ public class EcommercePedidoService {
                     HistorialStock.TipoMovimiento.RESERVA,
                     "Reserva ecommerce " + pedido.getCodigo(),
                     usuarioSistema);
-            BigDecimal precio = BigDecimal.valueOf(precioOfertaService.resolverPrecioVigente(variante, sucursal.getIdSucursal()));
+            BigDecimal precio = preciosPorVariante.get(variante.getIdProductoVariante());
             BigDecimal subtotal = precio.multiply(BigDecimal.valueOf(item.cantidad()));
             EcommercePedidoDetalle detalle = new EcommercePedidoDetalle();
             detalle.setProductoVariante(variante);
@@ -171,7 +183,6 @@ public class EcommercePedidoService {
             detalle.setSubtotal(subtotal);
             detalle.setDescripcion(descripcion(variante));
             pedido.addDetalle(detalle);
-            total = total.add(subtotal);
         }
 
         pedido.setSubtotal(total);
@@ -179,6 +190,31 @@ public class EcommercePedidoService {
         EcommercePedido guardado = pedidoRepository.save(pedido);
         ecommercePedidoEmailService.enviarPedidoCreado(guardado, comprobanteToken);
         return toResponse(guardado, comprobanteToken);
+    }
+
+    public EcommerceDniValidationResponse validarDniEcommerce(String dni) {
+        String valor = normalizar(dni);
+        if (!valor.matches("\\d{8}")) {
+            return new EcommerceDniValidationResponse(false, valor, null, null, "DNI no valido");
+        }
+        try {
+            ConsultaDniResponse response = documentoConsultaService.consultarDni(valor);
+            if (!tieneTexto(response.nombres())) {
+                return new EcommerceDniValidationResponse(false, valor, null, null, "DNI no valido");
+            }
+            String apellidos = (normalizar(response.apellidoPaterno()) + " " + normalizar(response.apellidoMaterno())).trim();
+            return new EcommerceDniValidationResponse(true, response.dni(), response.nombres(), apellidos, null);
+        } catch (RuntimeException e) {
+            if (esDniNoValido(e)) {
+                return new EcommerceDniValidationResponse(false, valor, null, null, "DNI no valido");
+            }
+            return new EcommerceDniValidationResponse(
+                    null,
+                    valor,
+                    null,
+                    null,
+                    "No se pudo validar el DNI en este momento");
+        }
     }
 
     @Transactional
@@ -258,58 +294,13 @@ public class EcommercePedidoService {
         }
         List<EcommercePedido> pedidos = pedidoRepository.listarReporteExcel(fechaInicio, fechaFinExclusive);
         try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-            Sheet sheet = workbook.createSheet("Pedidos ecommerce");
             CellStyle headerStyle = crearEstiloHeaderExcel(workbook);
             CellStyle moneyStyle = crearEstiloMonedaExcel(workbook);
-
-            Row title = sheet.createRow(0);
-            title.createCell(0).setCellValue("REPORTE DE PEDIDOS ECOMMERCE");
-            title.createCell(1).setCellValue((fechaDesde == null ? "" : fechaDesde.toString())
-                    + " - "
-                    + (fechaHasta == null ? "" : fechaHasta.toString()));
-
-            Row header = sheet.createRow(2);
-            String[] headers = {
-                    "Codigo", "Fecha", "Estado", "Cliente", "DNI/RUC", "Telefono", "Correo",
-                    "Metodo pago", "Envio", "Sucursal", "Venta", "Productos", "Total"
-            };
-            for (int i = 0; i < headers.length; i++) {
-                header.createCell(i).setCellValue(headers[i]);
-                header.getCell(i).setCellStyle(headerStyle);
-            }
-
-            BigDecimal total = BigDecimal.ZERO;
-            int rowIdx = 3;
-            for (EcommercePedido pedido : pedidos) {
-                BigDecimal pedidoTotal = pedido.getTotal() == null ? BigDecimal.ZERO : pedido.getTotal();
-                total = total.add(pedidoTotal);
-                Row row = sheet.createRow(rowIdx++);
-                row.createCell(0).setCellValue(normalizar(pedido.getCodigo()));
-                row.createCell(1).setCellValue(pedido.getFecha() == null ? "" : pedido.getFecha().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")));
-                row.createCell(2).setCellValue(normalizar(pedido.getEstado()));
-                row.createCell(3).setCellValue(nombreCliente(pedido));
-                row.createCell(4).setCellValue(Boolean.TRUE.equals(pedido.getDeseaFactura()) ? normalizar(pedido.getFacturaRuc()) : normalizar(pedido.getClienteDni()));
-                row.createCell(5).setCellValue(normalizar(pedido.getClienteTelefono()));
-                row.createCell(6).setCellValue(normalizar(pedido.getClienteCorreo()));
-                row.createCell(7).setCellValue(pedido.getMetodoPago() != null ? pedido.getMetodoPago().getNombre() : "");
-                row.createCell(8).setCellValue(normalizar(pedido.getEnvioTipo()));
-                row.createCell(9).setCellValue(pedido.getSucursal() != null ? pedido.getSucursal().getNombre() : "");
-                row.createCell(10).setCellValue(pedido.getVenta() != null ? pedido.getVenta().getSerie() + "-" + pedido.getVenta().getCorrelativo() : "");
-                row.createCell(11).setCellValue(String.join(", ", pedido.getDetalles().stream()
-                        .map(detalle -> normalizar(detalle.getDescripcion()) + " x" + detalle.getCantidad())
-                        .toList()));
-                row.createCell(12).setCellValue(pedidoTotal.doubleValue());
-                row.getCell(12).setCellStyle(moneyStyle);
-            }
-
-            Row totalRow = sheet.createRow(rowIdx);
-            totalRow.createCell(11).setCellValue("TOTAL");
-            totalRow.createCell(12).setCellValue(total.doubleValue());
-            totalRow.getCell(12).setCellStyle(moneyStyle);
-
-            for (int i = 0; i < headers.length; i++) {
-                sheet.autoSizeColumn(i);
-            }
+            List<EcommercePedido> pedidosConVenta = pedidos.stream()
+                    .filter(pedido -> ACEPTADO.equals(pedido.getEstado()) && pedido.getVenta() != null)
+                    .toList();
+            agregarHojaDetalleVentasWebExcel(workbook, pedidosConVenta, headerStyle, moneyStyle);
+            agregarHojaItemsVentaWebExcel(workbook, pedidosConVenta, headerStyle, moneyStyle);
             workbook.write(output);
             return output.toByteArray();
         } catch (IOException e) {
@@ -331,8 +322,9 @@ public class EcommercePedidoService {
 
         String tipoComprobante = normalizar(request.tipoComprobante()).toUpperCase(Locale.ROOT);
         String facturaRuc = tipoComprobante.equals("FACTURA") ? normalizar(request.facturaRuc()) : null;
-        validarTipoComprobanteAceptacion(tipoComprobante, pedido, request, facturaRuc);
-        Cliente cliente = obtenerOCrearCliente(pedido, tipoComprobante, facturaRuc, request.razonSocial(), usuario);
+        String dniCliente = tipoComprobante.equals("FACTURA") ? null : dniAceptacion(pedido, request, tipoComprobante);
+        validarTipoComprobanteAceptacion(tipoComprobante, pedido, request, facturaRuc, dniCliente);
+        Cliente cliente = obtenerOCrearCliente(pedido, tipoComprobante, facturaRuc, dniCliente, request.razonSocial(), usuario);
         VentaCreateRequest ventaRequest = new VentaCreateRequest(
                 pedido.getSucursal().getIdSucursal(),
                 cliente.getIdCliente(),
@@ -495,10 +487,17 @@ public class EcommercePedidoService {
         }
     }
 
+    private boolean esDniNoValido(RuntimeException e) {
+        String message = e.getMessage() == null ? "" : e.getMessage().toLowerCase(Locale.ROOT);
+        return message.contains("dni invalido")
+                || message.contains("ingrese dni")
+                || message.contains("no se pudo obtener informacion para el dni");
+    }
+
     private void llenarCliente(EcommercePedido pedido, EcommercePedidoCreateRequest.Cliente cliente) {
         pedido.setClienteDni(normalizar(cliente.dni()));
-        pedido.setClienteNombres(normalizar(cliente.nombres()));
-        pedido.setClienteApellidos(normalizar(cliente.apellidos()));
+        pedido.setClienteNombres(normalizarNombre(cliente.nombres()));
+        pedido.setClienteApellidos(normalizarNombre(cliente.apellidos()));
         pedido.setClienteCorreo(normalizar(cliente.correo()));
         pedido.setClienteTelefono(normalizar(cliente.telefono()));
         pedido.setDeseaFactura(Boolean.TRUE.equals(cliente.deseaFactura()));
@@ -584,6 +583,7 @@ public class EcommercePedidoService {
                         pedido.getClienteTelefono(),
                         pedido.getDeseaFactura(),
                         pedido.getFacturaRuc()),
+                clientePosResponse(pedido),
                 new EcommercePedidoAdminResponse.Envio(
                         pedido.getEnvioTipo(),
                         pedido.getEnvioDireccion(),
@@ -600,6 +600,27 @@ public class EcommercePedidoService {
                 nombreUsuario(aceptador),
                 pedido.getAceptadoAt(),
                 toDetalles(pedido, imagenes));
+    }
+
+    private EcommercePedidoAdminResponse.ClientePos clientePosResponse(EcommercePedido pedido) {
+        Empresa empresa = pedido.getSucursal() != null ? pedido.getSucursal().getEmpresa() : null;
+        String telefono = blankToNull(pedido.getClienteTelefono());
+        if (empresa == null || empresa.getIdEmpresa() == null || telefono == null) {
+            return null;
+        }
+        return clienteRepository
+                .findFirstByTelefonoAndDeletedAtIsNullAndEmpresa_IdEmpresaOrderByIdClienteAsc(
+                        telefono,
+                        empresa.getIdEmpresa())
+                .map(cliente -> new EcommercePedidoAdminResponse.ClientePos(
+                        cliente.getIdCliente(),
+                        cliente.getTipoDocumento() != null ? cliente.getTipoDocumento().name() : null,
+                        cliente.getNroDocumento(),
+                        cliente.getNombres(),
+                        cliente.getTelefono(),
+                        nombreDiferente(cliente, pedido),
+                        documentoDiferente(cliente, pedido)))
+                .orElse(null);
     }
 
     private EcommercePedidoResponse toResponse(EcommercePedido pedido, String comprobanteToken) {
@@ -661,7 +682,121 @@ public class EcommercePedidoService {
         return style;
     }
 
-    private void validarTipoComprobanteAceptacion(String tipoComprobante, EcommercePedido pedido, EcommercePedidoAceptarRequest request, String facturaRuc) {
+    private void agregarHojaDetalleVentasWebExcel(
+            Workbook workbook,
+            List<EcommercePedido> pedidos,
+            CellStyle headerStyle,
+            CellStyle moneyStyle) {
+        Sheet sheet = workbook.createSheet("Detalle Ventas Web");
+        Row header = sheet.createRow(0);
+        String[] headers = {
+                "Fecha", "Codigo Pedido", "Comprobante", "Estado", "Cliente", "Celular",
+                "Sucursal", "Items", "Metodo pago", "Envio", "Subtotal", "Total"
+        };
+        for (int i = 0; i < headers.length; i++) {
+            header.createCell(i).setCellValue(headers[i]);
+            header.getCell(i).setCellStyle(headerStyle);
+        }
+
+        BigDecimal totalPedidos = BigDecimal.ZERO;
+        int rowIdx = 1;
+        for (EcommercePedido pedido : pedidos) {
+            BigDecimal total = pedido.getTotal() == null ? BigDecimal.ZERO : pedido.getTotal();
+            totalPedidos = totalPedidos.add(total);
+            Row row = sheet.createRow(rowIdx++);
+            row.createCell(0).setCellValue(pedido.getFecha() == null ? "" : pedido.getFecha().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")));
+            row.createCell(1).setCellValue(normalizar(pedido.getCodigo()));
+            row.createCell(2).setCellValue(pedido.getVenta() != null ? normalizar(pedido.getVenta().getSerie()) + "-" + pedido.getVenta().getCorrelativo() : "");
+            row.createCell(3).setCellValue(normalizar(pedido.getEstado()));
+            row.createCell(4).setCellValue(nombreCliente(pedido));
+            row.createCell(5).setCellValue(normalizar(pedido.getClienteTelefono()));
+            row.createCell(6).setCellValue(pedido.getSucursal() != null ? normalizar(pedido.getSucursal().getNombre()) : "");
+            row.createCell(7).setCellValue(pedido.getDetalles().size());
+            row.createCell(8).setCellValue(pedido.getMetodoPago() != null ? normalizar(pedido.getMetodoPago().getNombre()) : "");
+            row.createCell(9).setCellValue(metodoEntregaPedido(pedido));
+            row.createCell(10).setCellValue((pedido.getSubtotal() == null ? BigDecimal.ZERO : pedido.getSubtotal()).doubleValue());
+            row.createCell(11).setCellValue(total.doubleValue());
+            row.getCell(10).setCellStyle(moneyStyle);
+            row.getCell(11).setCellStyle(moneyStyle);
+        }
+
+        Row totalRow = sheet.createRow(rowIdx);
+        totalRow.createCell(0).setCellValue("TOTAL");
+        totalRow.createCell(11).setCellValue(totalPedidos.doubleValue());
+        totalRow.getCell(11).setCellStyle(moneyStyle);
+
+        for (int i = 0; i < headers.length; i++) {
+            sheet.autoSizeColumn(i);
+        }
+    }
+
+    private void agregarHojaItemsVentaWebExcel(
+            Workbook workbook,
+            List<EcommercePedido> pedidos,
+            CellStyle headerStyle,
+            CellStyle moneyStyle) {
+        Sheet sheet = workbook.createSheet("Items Venta Web");
+        Row header = sheet.createRow(0);
+        String[] headers = {
+                "Codigo Pedido", "FechaVenta", "Estado", "Cliente", "Producto", "Color", "Talla",
+                "Cantidad", "PrecioUnitario", "Descuento", "IGV", "Total"
+        };
+        for (int i = 0; i < headers.length; i++) {
+            header.createCell(i).setCellValue(headers[i]);
+            header.getCell(i).setCellStyle(headerStyle);
+        }
+
+        BigDecimal totalItems = BigDecimal.ZERO;
+        int rowIdx = 1;
+        for (EcommercePedido pedido : pedidos) {
+            for (EcommercePedidoDetalle detalle : pedido.getDetalles()) {
+                ProductoVariante variante = detalle.getProductoVariante();
+                BigDecimal totalLinea = detalle.getSubtotal() == null ? BigDecimal.ZERO : detalle.getSubtotal();
+                totalItems = totalItems.add(totalLinea);
+                Row row = sheet.createRow(rowIdx++);
+                row.createCell(0).setCellValue(normalizar(pedido.getCodigo()));
+                row.createCell(1).setCellValue(pedido.getFecha() == null ? "" : pedido.getFecha().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")));
+                row.createCell(2).setCellValue(normalizar(pedido.getEstado()));
+                row.createCell(3).setCellValue(nombreCliente(pedido));
+                row.createCell(4).setCellValue(variante != null && variante.getProducto() != null
+                        ? normalizar(variante.getProducto().getNombre())
+                        : normalizar(detalle.getDescripcion()));
+                row.createCell(5).setCellValue(variante != null && variante.getColor() != null ? normalizar(variante.getColor().getNombre()) : "");
+                row.createCell(6).setCellValue(variante != null && variante.getTalla() != null ? normalizar(variante.getTalla().getNombre()) : "");
+                row.createCell(7).setCellValue(detalle.getCantidad() == null ? 0 : detalle.getCantidad());
+                row.createCell(8).setCellValue((detalle.getPrecioUnitario() == null ? BigDecimal.ZERO : detalle.getPrecioUnitario()).doubleValue());
+                row.createCell(9).setCellValue(0);
+                row.createCell(10).setCellValue(0);
+                row.createCell(11).setCellValue(totalLinea.doubleValue());
+                row.getCell(8).setCellStyle(moneyStyle);
+                row.getCell(9).setCellStyle(moneyStyle);
+                row.getCell(10).setCellStyle(moneyStyle);
+                row.getCell(11).setCellStyle(moneyStyle);
+            }
+        }
+
+        Row totalRow = sheet.createRow(rowIdx);
+        totalRow.createCell(0).setCellValue("TOTAL");
+        totalRow.createCell(11).setCellValue(totalItems.doubleValue());
+        totalRow.getCell(11).setCellStyle(moneyStyle);
+
+        for (int i = 0; i < headers.length; i++) {
+            sheet.autoSizeColumn(i);
+        }
+    }
+
+    private String dniAceptacion(EcommercePedido pedido, EcommercePedidoAceptarRequest request, String tipoComprobante) {
+        if (tipoComprobante.equals("BOLETA")
+                && Boolean.TRUE.equals(request.consumidorFinal())
+                && pedido.getTotal() != null
+                && pedido.getTotal().compareTo(MONTO_MINIMO_DNI_BOLETA) < 0) {
+            return "";
+        }
+        String dniRequest = normalizar(request.dniCliente());
+        return dniRequest.isBlank() ? normalizar(pedido.getClienteDni()) : dniRequest;
+    }
+
+    private void validarTipoComprobanteAceptacion(String tipoComprobante, EcommercePedido pedido, EcommercePedidoAceptarRequest request, String facturaRuc, String dniCliente) {
         if (!tipoComprobante.equals("NOTA DE VENTA") && !tipoComprobante.equals("BOLETA") && !tipoComprobante.equals("FACTURA")) {
             throw new RuntimeException("tipoComprobante permitido: NOTA DE VENTA, BOLETA o FACTURA");
         }
@@ -674,19 +809,31 @@ public class EcommercePedidoService {
         if (tipoComprobante.equals("FACTURA") && normalizar(request.razonSocial()).isBlank()) {
             throw new RuntimeException("La razon social verificada es obligatoria para FACTURA");
         }
+        if (tipoComprobante.equals("BOLETA")
+                && pedido.getTotal() != null
+                && pedido.getTotal().compareTo(MONTO_MINIMO_DNI_BOLETA) >= 0
+                && !normalizar(dniCliente).matches("\\d{8}")) {
+            throw new RuntimeException("DNI obligatorio para boletas desde S/ 700");
+        }
+        if (tipoComprobante.equals("BOLETA") && !normalizar(dniCliente).isBlank()) {
+            EcommerceDniValidationResponse response = validarDniEcommerce(dniCliente);
+            if (Boolean.FALSE.equals(response.valid())) {
+                throw new RuntimeException("DNI no valido");
+            }
+        }
     }
 
-    private Cliente obtenerOCrearCliente(EcommercePedido pedido, String tipoComprobante, String facturaRuc, String razonSocial, Usuario usuario) {
+    private Cliente obtenerOCrearCliente(EcommercePedido pedido, String tipoComprobante, String facturaRuc, String dniCliente, String razonSocial, Usuario usuario) {
         Empresa empresa = pedido.getSucursal() != null ? pedido.getSucursal().getEmpresa() : null;
         if (empresa == null || empresa.getIdEmpresa() == null) {
             throw new RuntimeException("La sucursal ecommerce no tiene empresa");
         }
         TipoDocumento tipoDocumento = tipoComprobante.equals("FACTURA")
                 ? TipoDocumento.RUC
-                : normalizar(pedido.getClienteDni()).isBlank() ? TipoDocumento.SIN_DOC : TipoDocumento.DNI;
+                : normalizar(dniCliente).isBlank() ? TipoDocumento.SIN_DOC : TipoDocumento.DNI;
         String documento = tipoDocumento == TipoDocumento.RUC
                 ? facturaRuc
-                : tipoDocumento == TipoDocumento.SIN_DOC ? null : normalizar(pedido.getClienteDni());
+                : tipoDocumento == TipoDocumento.SIN_DOC ? null : normalizar(dniCliente);
         String nombreCliente = nombreCliente(pedido, tipoDocumento, razonSocial);
         String telefono = blankToNull(pedido.getClienteTelefono());
         if (telefono != null) {
@@ -694,9 +841,7 @@ public class EcommercePedidoService {
                     .findFirstByTelefonoAndDeletedAtIsNullAndEmpresa_IdEmpresaOrderByIdClienteAsc(
                             telefono,
                             empresa.getIdEmpresa())
-                    .map(cliente -> tipoDocumento == TipoDocumento.SIN_DOC
-                            ? actualizarClientePedido(cliente, pedido, cliente.getTipoDocumento(), cliente.getNroDocumento(), nombreCliente)
-                            : actualizarClientePedido(cliente, pedido, tipoDocumento, documento, nombreCliente))
+                    .map(cliente -> cliente)
                     .orElseGet(() -> buscarOCrearClientePorDocumento(pedido, usuario, empresa, tipoDocumento, documento, nombreCliente, telefono));
         }
         return buscarOCrearClientePorDocumento(pedido, usuario, empresa, tipoDocumento, documento, nombreCliente, null);
@@ -710,41 +855,64 @@ public class EcommercePedidoService {
             String documento,
             String nombreCliente,
             String telefono) {
+        if (tipoDocumento == TipoDocumento.SIN_DOC) {
+            return crearClientePedido(pedido, usuario, empresa, tipoDocumento, null, nombreCliente, telefono);
+        }
         return clienteRepository
                 .findFirstByEmpresa_IdEmpresaAndTipoDocumentoAndNroDocumentoAndDeletedAtIsNullOrderByIdClienteAsc(
                         empresa.getIdEmpresa(),
                         tipoDocumento,
                         documento)
-                .map(cliente -> actualizarClientePedido(cliente, pedido, tipoDocumento, documento, nombreCliente))
-                .orElseGet(() -> {
-                    Cliente cliente = new Cliente();
-                    cliente.setEmpresa(empresa);
-                    cliente.setUsuarioCreacion(usuario);
-                    cliente.setTipoDocumento(tipoDocumento);
-                    cliente.setNroDocumento(documento);
-                    cliente.setNombres(nombreCliente);
-                    cliente.setTelefono(telefono);
-                    cliente.setCorreo(blankToNull(pedido.getClienteCorreo()));
-                    cliente.setDireccion(blankToNull(pedido.getEnvioDireccion()));
-                    cliente.setEstado("ACTIVO");
-                    return clienteRepository.save(cliente);
-                });
+                .map(cliente -> actualizarClientePedidoSinDocumento(cliente, pedido, telefono))
+                .orElseGet(() -> crearClientePedido(pedido, usuario, empresa, tipoDocumento, documento, nombreCliente, telefono));
     }
 
-    private Cliente actualizarClientePedido(
-            Cliente cliente,
+    private Cliente crearClientePedido(
             EcommercePedido pedido,
+            Usuario usuario,
+            Empresa empresa,
             TipoDocumento tipoDocumento,
             String documento,
-            String nombreCliente) {
+            String nombreCliente,
+            String telefono) {
+        Cliente cliente = new Cliente();
+        cliente.setEmpresa(empresa);
+        cliente.setUsuarioCreacion(usuario);
         cliente.setTipoDocumento(tipoDocumento);
         cliente.setNroDocumento(documento);
         cliente.setNombres(nombreCliente);
-        cliente.setTelefono(blankToNull(pedido.getClienteTelefono()));
+        cliente.setTelefono(telefono);
         cliente.setCorreo(blankToNull(pedido.getClienteCorreo()));
         cliente.setDireccion(blankToNull(pedido.getEnvioDireccion()));
         cliente.setEstado("ACTIVO");
         return clienteRepository.save(cliente);
+    }
+
+    private Cliente actualizarClientePedidoSinDocumento(
+            Cliente cliente,
+            EcommercePedido pedido,
+            String telefono) {
+        if (blankToNull(cliente.getTelefono()) == null) {
+            cliente.setTelefono(telefono);
+        }
+        cliente.setCorreo(blankToNull(pedido.getClienteCorreo()));
+        cliente.setDireccion(blankToNull(pedido.getEnvioDireccion()));
+        cliente.setEstado("ACTIVO");
+        return clienteRepository.save(cliente);
+    }
+
+    private boolean nombreDiferente(Cliente cliente, EcommercePedido pedido) {
+        String nombrePedido = normalizar((normalizar(pedido.getClienteNombres()) + " " + normalizar(pedido.getClienteApellidos())).trim());
+        String nombrePos = normalizar(cliente.getNombres());
+        return !nombrePedido.isBlank() && !nombrePos.isBlank() && !nombrePedido.equalsIgnoreCase(nombrePos);
+    }
+
+    private boolean documentoDiferente(Cliente cliente, EcommercePedido pedido) {
+        String documentoPedido = Boolean.TRUE.equals(pedido.getDeseaFactura())
+                ? normalizar(pedido.getFacturaRuc())
+                : normalizar(pedido.getClienteDni());
+        String documentoPos = normalizar(cliente.getNroDocumento());
+        return !documentoPedido.isBlank() && !documentoPos.isBlank() && !documentoPedido.equals(documentoPos);
     }
 
     private Usuario obtenerUsuarioAutenticado(String correo) {
@@ -781,6 +949,24 @@ public class EcommercePedidoService {
             return normalizar(razonSocial);
         }
         return nombreCliente(pedido);
+    }
+
+    private String metodoEntregaPedido(EcommercePedido pedido) {
+        String tipo = normalizar(pedido.getEnvioTipo()).toUpperCase(Locale.ROOT);
+        if (tipo.equals("PICKUP")) {
+            return "Recojo en tienda";
+        }
+        String tarifa = normalizar(pedido.getEnvioTarifa()).toUpperCase(Locale.ROOT);
+        if (tarifa.equals("MOTORIZADO")) {
+            return "Motorizado";
+        }
+        if (tarifa.equals("SHALOM")) {
+            return "Shalom";
+        }
+        if (tarifa.equals("OLVA")) {
+            return "Olva";
+        }
+        return !tarifa.isBlank() ? pedido.getEnvioTarifa() : pedido.getEnvioTipo();
     }
 
     private String nombreUsuario(Usuario usuario) {
@@ -839,11 +1025,7 @@ public class EcommercePedidoService {
                     : imagenes.get(new ImagenDetalleKey(
                             variante.getProducto().getIdProducto(),
                             variante.getColor().getIdColor()));
-            return tieneTexto(imagen)
-                    ? imagen
-                    : preferirNoVacio(
-                            variante.getProducto().getImagenGlobalUrl(),
-                            variante.getProducto().getImagenGlobalThumbUrl());
+            return tieneTexto(imagen) ? imagen : null;
         }
         if (variante.getColor() != null) {
             String imagenColor = productoColorImagenRepository
@@ -862,9 +1044,7 @@ public class EcommercePedidoService {
                 return imagenColor;
             }
         }
-        return preferirNoVacio(
-                variante.getProducto().getImagenGlobalUrl(),
-                variante.getProducto().getImagenGlobalThumbUrl());
+        return null;
     }
 
     private List<EcommercePedido> cargarPedidosConDetalles(Page<EcommercePedido> pedidosPage) {
@@ -971,5 +1151,26 @@ public class EcommercePedidoService {
 
     private String normalizar(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private String normalizarNombre(String value) {
+        String limpio = normalizar(value).replaceAll("\\s+", " ").toLowerCase(Locale.ROOT);
+        if (limpio.isBlank()) {
+            return "";
+        }
+        StringBuilder resultado = new StringBuilder(limpio.length());
+        for (String parte : limpio.split(" ")) {
+            if (parte.isBlank()) {
+                continue;
+            }
+            if (!resultado.isEmpty()) {
+                resultado.append(' ');
+            }
+            resultado.append(parte.substring(0, 1).toUpperCase(Locale.ROOT));
+            if (parte.length() > 1) {
+                resultado.append(parte.substring(1));
+            }
+        }
+        return resultado.toString();
     }
 }

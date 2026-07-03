@@ -46,7 +46,8 @@ public record VentaReporteResponse(
             BigDecimal subtotal,
             BigDecimal descuentoTotal,
             BigDecimal igv,
-            BigDecimal total) {
+            BigDecimal total,
+            String origen) {
     }
 
     public record ClienteItem(

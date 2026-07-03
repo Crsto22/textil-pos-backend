@@ -14,6 +14,7 @@ public record EcommercePedidoAdminResponse(
         String metodoPago,
         String comprobanteUrl,
         Cliente cliente,
+        ClientePos clientePos,
         Envio envio,
         Integer idSucursal,
         String nombreSucursal,
@@ -32,6 +33,16 @@ public record EcommercePedidoAdminResponse(
             String telefono,
             Boolean deseaFactura,
             String ruc) {
+    }
+
+    public record ClientePos(
+            Integer idCliente,
+            String tipoDocumento,
+            String nroDocumento,
+            String nombres,
+            String telefono,
+            Boolean nombreDiferente,
+            Boolean documentoDiferente) {
     }
 
     public record Envio(

@@ -65,6 +65,7 @@ import com.lowagie.text.pdf.PdfWriter;
 import com.sistemapos.sistematextil.events.VentaRegistradaEvent;
 import com.sistemapos.sistematextil.model.Cliente;
 import com.sistemapos.sistematextil.model.ComprobanteConfig;
+import com.sistemapos.sistematextil.model.EcommercePedido;
 import com.sistemapos.sistematextil.model.Empresa;
 import com.sistemapos.sistematextil.model.HistorialStock;
 import com.sistemapos.sistematextil.model.MetodoPagoConfig;
@@ -80,6 +81,7 @@ import com.sistemapos.sistematextil.model.VentaComprobanteConversionHistorial;
 import com.sistemapos.sistematextil.model.VentaDetalle;
 import com.sistemapos.sistematextil.repositories.ClienteRepository;
 import com.sistemapos.sistematextil.repositories.ComprobanteConfigRepository;
+import com.sistemapos.sistematextil.repositories.EcommercePedidoRepository;
 import com.sistemapos.sistematextil.repositories.EmpresaRepository;
 import com.sistemapos.sistematextil.repositories.MetodoPagoConfigRepository;
 import com.sistemapos.sistematextil.repositories.PagoRepository;
@@ -130,6 +132,7 @@ public class VentaService {
     private final UsuarioRepository usuarioRepository;
     private final SucursalRepository sucursalRepository;
     private final ClienteRepository clienteRepository;
+    private final EcommercePedidoRepository ecommercePedidoRepository;
     private final VentaComprobanteConversionHistorialRepository ventaConversionHistorialRepository;
     private final EmpresaRepository empresaRepository;
     private final StockMovimientoService stockMovimientoService;
@@ -285,7 +288,60 @@ public class VentaService {
                 : pagoRepository.findActivosByVentaIds(ventaIds);
         Map<Integer, List<VentaDetalle>> detallesPorVenta = agruparDetallesPorVenta(detallesVenta);
         Map<Integer, List<Pago>> pagosPorVenta = agruparPagosPorVenta(pagosVenta);
-        return construirPdfReporteVentas(reporte, detallesPorVenta, pagosPorVenta);
+        Map<Integer, EcommercePedido> pedidosWebPorVenta = buscarPedidosWebPorVenta(ventaIds);
+        return construirPdfReporteVentas(reporte, detallesPorVenta, pagosPorVenta, pedidosWebPorVenta);
+    }
+
+    public byte[] exportarReportePdfEnviosWeb(
+            LocalDate desde,
+            LocalDate hasta,
+            String correoUsuarioAutenticado) {
+        VentaReporteResponse reporte = obtenerReporteVentas(
+                null,
+                (desde != null || hasta != null) ? "RANGO" : null,
+                desde,
+                hasta,
+                null,
+                null,
+                null,
+                null,
+                false,
+                correoUsuarioAutenticado);
+        List<VentaReporteResponse.DetalleItem> ventasWeb = reporte.detalleVentas().stream()
+                .filter(item -> "WEB".equalsIgnoreCase(valorTexto(item.origen())))
+                .toList();
+        List<Integer> ventaIds = ventasWeb.stream()
+                .map(VentaReporteResponse.DetalleItem::idVenta)
+                .filter(id -> id != null)
+                .toList();
+        List<VentaDetalle> detallesVenta = ventaIds.isEmpty()
+                ? List.of()
+                : ventaDetalleRepository.findActivosByVentaIds(ventaIds);
+        List<Pago> pagosVenta = ventaIds.isEmpty()
+                ? List.of()
+                : pagoRepository.findActivosByVentaIds(ventaIds);
+        Map<Integer, List<VentaDetalle>> detallesPorVenta = agruparDetallesPorVenta(detallesVenta);
+        Map<Integer, List<Pago>> pagosPorVenta = agruparPagosPorVenta(pagosVenta);
+        Map<Integer, EcommercePedido> pedidosWebPorVenta = buscarPedidosWebPorVenta(ventaIds);
+        VentaReporteResponse reporteWeb = new VentaReporteResponse(
+                reporte.agrupacion(),
+                reporte.periodoFiltro(),
+                reporte.desde(),
+                reporte.hasta(),
+                reporte.idSucursal(),
+                reporte.nombreSucursal(),
+                reporte.idUsuario(),
+                reporte.nombreUsuario(),
+                reporte.incluirAnuladas(),
+                ventasWeb.stream().map(VentaReporteResponse.DetalleItem::total).map(this::moneda).reduce(CERO_MONETARIO, BigDecimal::add),
+                ventasWeb.size(),
+                ventasWeb.isEmpty() ? CERO_MONETARIO : promedio(
+                        ventasWeb.stream().map(VentaReporteResponse.DetalleItem::total).map(this::moneda).reduce(CERO_MONETARIO, BigDecimal::add),
+                        ventasWeb.size()),
+                List.of(),
+                ventasWeb,
+                List.of());
+        return construirPdfReporteVentas(reporteWeb, detallesPorVenta, pagosPorVenta, pedidosWebPorVenta);
     }
 
     public VentaResponse obtenerDetalle(Integer idVenta, String correoUsuarioAutenticado) {
@@ -2914,7 +2970,8 @@ public class VentaService {
                     moneda(venta.getSubtotal()),
                     moneda(venta.getDescuentoTotal()),
                     moneda(venta.getIgv()),
-                    totalVenta));
+                    totalVenta,
+                    valorTexto(venta.getOrigen())));
         }
 
         List<VentaReporteResponse.PeriodoItem> periodos = acumuladoPorPeriodo.values().stream()
@@ -2997,8 +3054,21 @@ public class VentaService {
             Map<Integer, List<VentaDetalle>> detallesPorVenta = agruparDetallesPorVenta(detallesVenta);
             Map<Integer, List<Pago>> pagosPorVenta = agruparPagosPorVenta(pagosVenta);
 
-            construirHojaDetalle(workbook, reporte, detallesPorVenta, pagosPorVenta, headerStyle, moneyStyle);
-            construirHojaDetalleItems(workbook, reporte, detallesPorVenta, headerStyle, moneyStyle);
+            List<VentaReporteResponse.DetalleItem> ventasPos = reporte.detalleVentas().stream()
+                    .filter(item -> !esVentaWeb(item))
+                    .toList();
+            List<VentaReporteResponse.DetalleItem> ventasWeb = reporte.detalleVentas().stream()
+                    .filter(this::esVentaWeb)
+                    .toList();
+
+            if (!ventasPos.isEmpty() || ventasWeb.isEmpty()) {
+                construirHojaDetalle(workbook, "Detalle Ventas", ventasPos, detallesPorVenta, pagosPorVenta, headerStyle, moneyStyle);
+                construirHojaDetalleItems(workbook, "Items Venta", ventasPos, detallesPorVenta, headerStyle, moneyStyle);
+            }
+            if (!ventasWeb.isEmpty()) {
+                construirHojaDetalle(workbook, "Detalle Ventas Web", ventasWeb, detallesPorVenta, pagosPorVenta, headerStyle, moneyStyle);
+                construirHojaDetalleItems(workbook, "Items Venta Web", ventasWeb, detallesPorVenta, headerStyle, moneyStyle);
+            }
 
             workbook.write(output);
             return output.toByteArray();
@@ -3011,12 +3081,13 @@ public class VentaService {
 
     private void construirHojaDetalle(
             Workbook workbook,
-            VentaReporteResponse reporte,
+            String nombreHoja,
+            List<VentaReporteResponse.DetalleItem> ventas,
             Map<Integer, List<VentaDetalle>> detallesPorVenta,
             Map<Integer, List<Pago>> pagosPorVenta,
             CellStyle headerStyle,
             CellStyle moneyStyle) {
-        Sheet sheet = workbook.createSheet("Detalle Ventas");
+        Sheet sheet = workbook.createSheet(nombreHoja);
         int rowIdx = 0;
 
         Row h = sheet.createRow(rowIdx++);
@@ -3042,7 +3113,7 @@ public class VentaService {
             h.getCell(i).setCellStyle(headerStyle);
         }
 
-        for (VentaReporteResponse.DetalleItem item : reporte.detalleVentas()) {
+        for (VentaReporteResponse.DetalleItem item : ventas) {
             Row r = sheet.createRow(rowIdx++);
             int cantidadItems = item.idVenta() == null
                     ? 0
@@ -3074,7 +3145,7 @@ public class VentaService {
 
         Row total = sheet.createRow(rowIdx);
         total.createCell(0).setCellValue("TOTAL");
-        total.createCell(14).setCellValue(moneda(reporte.montoTotal()).doubleValue());
+        total.createCell(14).setCellValue(totalVentas(ventas).doubleValue());
         total.getCell(14).setCellStyle(moneyStyle);
 
         for (int i = 0; i <= 14; i++) {
@@ -3084,11 +3155,12 @@ public class VentaService {
 
     private void construirHojaDetalleItems(
             Workbook workbook,
-            VentaReporteResponse reporte,
+            String nombreHoja,
+            List<VentaReporteResponse.DetalleItem> ventas,
             Map<Integer, List<VentaDetalle>> detallesPorVenta,
             CellStyle headerStyle,
             CellStyle moneyStyle) {
-        Sheet sheet = workbook.createSheet("Items Venta");
+        Sheet sheet = workbook.createSheet(nombreHoja);
         int rowIdx = 0;
 
         Row h = sheet.createRow(rowIdx++);
@@ -3114,7 +3186,7 @@ public class VentaService {
         BigDecimal totalItems = CERO_MONETARIO;
         BigDecimal totalDescuentoItems = CERO_MONETARIO;
         BigDecimal totalIgvItems = CERO_MONETARIO;
-        for (VentaReporteResponse.DetalleItem venta : reporte.detalleVentas()) {
+        for (VentaReporteResponse.DetalleItem venta : ventas) {
             Integer idVenta = venta.idVenta();
             if (idVenta == null) {
                 continue;
@@ -3179,10 +3251,22 @@ public class VentaService {
 
     // ─── PDF Reporte de Ventas ────────────────────────────────────────────────
 
+    private boolean esVentaWeb(VentaReporteResponse.DetalleItem item) {
+        return "WEB".equalsIgnoreCase(valorTexto(item.origen()));
+    }
+
+    private BigDecimal totalVentas(List<VentaReporteResponse.DetalleItem> ventas) {
+        return ventas.stream()
+                .map(VentaReporteResponse.DetalleItem::total)
+                .map(this::moneda)
+                .reduce(CERO_MONETARIO, BigDecimal::add);
+    }
+
     private byte[] construirPdfReporteVentas(
             VentaReporteResponse reporte,
             Map<Integer, List<VentaDetalle>> detallesPorVenta,
-            Map<Integer, List<Pago>> pagosPorVenta) {
+            Map<Integer, List<Pago>> pagosPorVenta,
+            Map<Integer, EcommercePedido> pedidosWebPorVenta) {
         try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             Document document = new Document(PageSize.A4.rotate(), 20f, 20f, 22f, 20f);
             PdfWriter.getInstance(document, output);
@@ -3190,7 +3274,22 @@ public class VentaService {
 
             agregarEncabezadoReportePdf(document, reporte);
             document.add(new Paragraph(" "));
-            agregarTablaItemsReportePdf(document, reporte, detallesPorVenta, pagosPorVenta);
+            List<VentaReporteResponse.DetalleItem> ventasPos = reporte.detalleVentas().stream()
+                    .filter(item -> !"WEB".equalsIgnoreCase(valorTexto(item.origen())))
+                    .toList();
+            List<VentaReporteResponse.DetalleItem> ventasWeb = reporte.detalleVentas().stream()
+                    .filter(item -> "WEB".equalsIgnoreCase(valorTexto(item.origen())))
+                    .toList();
+            boolean mostrarTitulos = !ventasPos.isEmpty() && !ventasWeb.isEmpty();
+            if (!ventasPos.isEmpty()) {
+                agregarTablaItemsReportePdf(document, ventasPos, detallesPorVenta, pagosPorVenta, pedidosWebPorVenta, false, mostrarTitulos ? "VENTAS POS" : null);
+            }
+            if (!ventasWeb.isEmpty()) {
+                if (!ventasPos.isEmpty()) {
+                    document.add(new Paragraph(" "));
+                }
+                agregarTablaItemsReportePdf(document, ventasWeb, detallesPorVenta, pagosPorVenta, pedidosWebPorVenta, true, mostrarTitulos ? "VENTAS WEB" : null);
+            }
 
             document.close();
             return output.toByteArray();
@@ -3247,10 +3346,19 @@ public class VentaService {
 
     private void agregarTablaItemsReportePdf(
             Document document,
-            VentaReporteResponse reporte,
+            List<VentaReporteResponse.DetalleItem> ventas,
             Map<Integer, List<VentaDetalle>> detallesPorVenta,
-            Map<Integer, List<Pago>> pagosPorVenta) throws DocumentException {
+            Map<Integer, List<Pago>> pagosPorVenta,
+            Map<Integer, EcommercePedido> pedidosWebPorVenta,
+            boolean web,
+            String titulo) throws DocumentException {
         Color colorHeaderBg = new Color(245, 222, 117);
+        if (titulo != null && !titulo.isBlank()) {
+            Paragraph tituloTabla = new Paragraph(titulo, fuentePdf(true, 9f));
+            tituloTabla.setSpacingBefore(2f);
+            tituloTabla.setSpacingAfter(2f);
+            document.add(tituloTabla);
+        }
 
         // columnas: Hora venta | Cod. de pago | Fecha operacion | Monto | Metodo de pago | Nro celular | Modelo | Color | T | Cant | Sep | Env | Observacion
         PdfPTable tabla = new PdfPTable(new float[] { 1.1f, 2.3f, 2.1f, 1.4f, 1.9f, 2.0f, 2.5f, 1.5f, 0.7f, 0.8f, 0.7f, 0.7f, 4.0f });
@@ -3258,7 +3366,7 @@ public class VentaService {
         tabla.setHeaderRows(1);
         tabla.setSpacingBefore(4f);
 
-        String[] headers = { "HORA", "COD. DE PAGO", "F. HORA OPERACION", "MONTO", "M. DE PAGO", "NRO CELULAR", "MODELO",
+        String[] headers = { "HORA", web ? "CODIGO PEDIDO" : "COD. DE PAGO", web ? "METODO ENTREGA" : "F. HORA OPERACION", "MONTO", "M. DE PAGO", "NRO CELULAR", "MODELO",
                 "COLOR", "T", "CANT", "SEP", "ENV", "OBSERVACION" };
         int[] aligns = { Element.ALIGN_CENTER, Element.ALIGN_CENTER, Element.ALIGN_CENTER, Element.ALIGN_RIGHT,
                 Element.ALIGN_CENTER, Element.ALIGN_CENTER, Element.ALIGN_LEFT, Element.ALIGN_CENTER,
@@ -3271,7 +3379,7 @@ public class VentaService {
         // Cada fila del PDF representa un detalle de venta.
         DateTimeFormatter fmtHora = DateTimeFormatter.ofPattern("HH:mm");
 
-        for (VentaReporteResponse.DetalleItem ventaItem : reporte.detalleVentas()) {
+        for (VentaReporteResponse.DetalleItem ventaItem : ventas) {
             Integer idVenta = ventaItem.idVenta();
             if (idVenta == null) {
                 continue;
@@ -3279,12 +3387,14 @@ public class VentaService {
 
             List<VentaDetalle> itemsVenta = detallesPorVenta.getOrDefault(idVenta, List.of());
             List<Pago> pagosVenta = pagosPorVenta.getOrDefault(idVenta, List.of());
+            EcommercePedido pedidoWeb = pedidosWebPorVenta.get(idVenta);
             String hora = ventaItem.fecha() != null ? ventaItem.fecha().format(fmtHora) : "";
-            String codigoPago = construirCodigosOperacionPagoPdf(pagosVenta);
-            String fechaOperacionPago = construirFechasOperacionPagoPdf(pagosVenta);
+            String codigoPago = web ? (pedidoWeb != null ? valorTexto(pedidoWeb.getCodigo()) : "") : construirCodigosOperacionPagoPdf(pagosVenta);
+            String fechaOperacionPago = web ? metodoEntregaPedido(pedidoWeb) : construirFechasOperacionPagoPdf(pagosVenta);
             String montoPago = formatearMonedaPdf(pagosVenta.isEmpty() ? ventaItem.total() : sumarMontoPagosReportePdf(pagosVenta));
             String metodoPago = construirTextoPagosPdf(pagosVenta);
             String celular = valorTexto(ventaItem.telefonoCliente());
+            String nombreWeb = web ? nombreCompradorWeb(pedidoWeb, ventaItem) : "";
 
             boolean primeraFilaVenta = true;
             for (VentaDetalle detalle : itemsVenta) {
@@ -3311,7 +3421,9 @@ public class VentaService {
                 tabla.addCell(crearCeldaReportePdf(fechaOperacionPagoMostrar, Element.ALIGN_CENTER, 18f));
                 tabla.addCell(crearCeldaReportePdf(montoPagoMostrar, Element.ALIGN_RIGHT, 18f));
                 tabla.addCell(crearCeldaReportePdf(metodoPagoMostrar, Element.ALIGN_CENTER, 18f));
-                tabla.addCell(crearCeldaReportePdf(celularMostrar, Element.ALIGN_CENTER, 18f));
+                tabla.addCell(web && primeraFilaVenta
+                        ? crearCeldaContactoWebReportePdf(nombreWeb, celularMostrar)
+                        : crearCeldaReportePdf(celularMostrar, Element.ALIGN_CENTER, 18f));
                 tabla.addCell(crearCeldaReportePdf(producto, Element.ALIGN_LEFT, 18f));
                 tabla.addCell(crearCeldaReportePdf(color, Element.ALIGN_CENTER, 18f));
                 tabla.addCell(crearCeldaReportePdf(talla, Element.ALIGN_CENTER, 18f));
@@ -3368,6 +3480,25 @@ public class VentaService {
         Paragraph paragraph = new Paragraph(valorTexto(texto), fuentePdf(false, 8f));
         paragraph.setAlignment(alineacion);
         cell.addElement(paragraph);
+        return cell;
+    }
+
+    private PdfPCell crearCeldaContactoWebReportePdf(String nombre, String celular) {
+        PdfPCell cell = crearCeldaBase(Rectangle.BOX, 3f);
+        cell.setBorderColor(new Color(180, 180, 180));
+        cell.setHorizontalAlignment(Element.ALIGN_CENTER);
+        cell.setVerticalAlignment(Element.ALIGN_MIDDLE);
+        cell.setUseAscender(true);
+        cell.setMinimumHeight(22f);
+        if (!valorTexto(nombre).isBlank()) {
+            Paragraph nombreP = new Paragraph(valorTexto(nombre), fuentePdf(false, 7.2f));
+            nombreP.setAlignment(Element.ALIGN_CENTER);
+            nombreP.setSpacingAfter(1f);
+            cell.addElement(nombreP);
+        }
+        Paragraph celularP = new Paragraph(valorTexto(celular), fuentePdf(false, 8f));
+        celularP.setAlignment(Element.ALIGN_CENTER);
+        cell.addElement(celularP);
         return cell;
     }
 
@@ -3441,6 +3572,50 @@ public class VentaService {
             resultado.computeIfAbsent(idVenta, key -> new ArrayList<>()).add(pago);
         }
         return resultado;
+    }
+
+    private Map<Integer, EcommercePedido> buscarPedidosWebPorVenta(List<Integer> ventaIds) {
+        if (ventaIds == null || ventaIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<Integer, EcommercePedido> resultado = new HashMap<>();
+        for (EcommercePedido pedido : ecommercePedidoRepository.findByVentaIds(ventaIds)) {
+            Integer idVenta = pedido.getVenta() != null ? pedido.getVenta().getIdVenta() : null;
+            if (idVenta != null) {
+                resultado.put(idVenta, pedido);
+            }
+        }
+        return resultado;
+    }
+
+    private String metodoEntregaPedido(EcommercePedido pedido) {
+        if (pedido == null) {
+            return "";
+        }
+        String tipo = valorTexto(pedido.getEnvioTipo()).toUpperCase(Locale.ROOT);
+        if (tipo.equals("PICKUP")) {
+            return "Recojo en tienda";
+        }
+        String tarifa = valorTexto(pedido.getEnvioTarifa()).toUpperCase(Locale.ROOT);
+        if (tarifa.equals("MOTORIZADO")) {
+            return "Motorizado";
+        }
+        if (tarifa.equals("SHALOM")) {
+            return "Shalom";
+        }
+        if (tarifa.equals("OLVA")) {
+            return "Olva";
+        }
+        return !tarifa.isBlank() ? valorTexto(pedido.getEnvioTarifa()) : valorTexto(pedido.getEnvioTipo());
+    }
+
+    private String nombreCompradorWeb(EcommercePedido pedido, VentaReporteResponse.DetalleItem ventaItem) {
+        if (pedido != null && !valorTexto(pedido.getClienteNombres()).isBlank()) {
+            return valorTexto(pedido.getClienteNombres());
+        }
+        String nombreVenta = valorTexto(ventaItem.nombreCliente());
+        int separadorTelefono = nombreVenta.indexOf(" - ");
+        return separadorTelefono >= 0 ? nombreVenta.substring(0, separadorTelefono).trim() : nombreVenta;
     }
 
     private CellStyle crearEstiloHeader(Workbook workbook) {

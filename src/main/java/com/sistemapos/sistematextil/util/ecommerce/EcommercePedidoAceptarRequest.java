@@ -15,6 +15,11 @@ public record EcommercePedidoAceptarRequest(
         @Size(max = 11, message = "El RUC no debe superar 11 caracteres")
         String facturaRuc,
 
+        @Size(max = 8, message = "El DNI no debe superar 8 caracteres")
+        String dniCliente,
+
+        Boolean consumidorFinal,
+
         @Size(max = 150, message = "La razon social no debe superar 150 caracteres")
         String razonSocial
 ) {

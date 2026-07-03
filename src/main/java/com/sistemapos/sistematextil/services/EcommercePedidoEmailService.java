@@ -145,13 +145,15 @@ public class EcommercePedidoEmailService {
         StringBuilder html = new StringBuilder();
         for (EcommercePedidoDetalle detalle : pedido.getDetalles()) {
             html.append("""
-                    <div style="display:flex;justify-content:space-between;gap:12px;padding:13px 0;border-bottom:1px solid #eee">
-                      <div style="min-width:0">
-                        <div style="font-size:13px;font-weight:500;color:#222;text-transform:uppercase;letter-spacing:.04em">%s</div>
-                        <div style="font-size:12px;color:#777;margin-top:3px">Cantidad: %s</div>
-                      </div>
-                      <div style="font-size:13px;font-weight:600;color:#222;white-space:nowrap">%s</div>
-                    </div>
+                    <table role="presentation" width="100%%" cellpadding="0" cellspacing="0" style="border-bottom:1px solid #eee">
+                      <tr>
+                        <td style="padding:13px 12px 13px 0;vertical-align:top">
+                          <div style="font-size:13px;font-weight:500;color:#222;text-transform:uppercase;letter-spacing:.04em">%s</div>
+                          <div style="font-size:12px;color:#777;margin-top:3px">Cantidad: %s</div>
+                        </td>
+                        <td align="right" style="padding:13px 0;vertical-align:top;font-size:13px;font-weight:600;color:#222;white-space:nowrap">%s</td>
+                      </tr>
+                    </table>
                     """.formatted(
                     escape(detalle.getDescripcion()),
                     detalle.getCantidad(),
@@ -175,7 +177,7 @@ public class EcommercePedidoEmailService {
     }
 
     public String linkPago(String token) {
-        return baseUrl(ecommerceFrontendUrl) + "/pago?pedidoToken=" + url(token);
+        return baseUrl(ecommerceFrontendUrl) + "/pago/" + url(token);
     }
 
     private String nombreCliente(EcommercePedido pedido) {

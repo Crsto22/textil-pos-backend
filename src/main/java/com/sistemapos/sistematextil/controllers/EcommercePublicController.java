@@ -17,9 +17,11 @@ import org.springframework.web.multipart.MultipartFile;
 
 import com.sistemapos.sistematextil.services.EcommercePedidoService;
 import com.sistemapos.sistematextil.services.EcommerceProductoPublicService;
+import com.sistemapos.sistematextil.util.ecommerce.EcommerceCarritoValidarRequest;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceInicioResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommercePedidoCreateRequest;
 import com.sistemapos.sistematextil.util.ecommerce.EcommercePedidoResponse;
+import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoColorStockResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoDetalleSlugResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoListadoResponse;
 
@@ -80,6 +82,43 @@ public class EcommercePublicController {
         }
     }
 
+    @GetMapping("productos/{slug}/colores/{idColor}/stock")
+    public ResponseEntity<?> obtenerStockColorPorSlug(
+            @PathVariable String slug,
+            @PathVariable Integer idColor) {
+        try {
+            EcommerceProductoColorStockResponse response = ecommerceProductoPublicService.obtenerStockColorPorSlug(slug, idColor);
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Producto no encontrado" : e.getMessage();
+            HttpStatus status = TIENDA_NO_CONFIGURADA.equals(message)
+                    ? HttpStatus.CONFLICT
+                    : HttpStatus.NOT_FOUND;
+            String publicMessage = TIENDA_NO_CONFIGURADA.equals(message)
+                    ? "Tienda ecommerce no configurada"
+                    : message;
+            return ResponseEntity.status(status).body(Map.of("message", publicMessage, "code", message));
+        }
+    }
+
+    @GetMapping("productos/{slug}/variantes/{idProductoVariante}/stock")
+    public ResponseEntity<?> obtenerStockVariantePorSlug(
+            @PathVariable String slug,
+            @PathVariable Integer idProductoVariante) {
+        try {
+            return ResponseEntity.ok(ecommerceProductoPublicService.obtenerStockVariantePorSlug(slug, idProductoVariante));
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "Producto no encontrado" : e.getMessage();
+            HttpStatus status = TIENDA_NO_CONFIGURADA.equals(message)
+                    ? HttpStatus.CONFLICT
+                    : HttpStatus.NOT_FOUND;
+            String publicMessage = TIENDA_NO_CONFIGURADA.equals(message)
+                    ? "Tienda ecommerce no configurada"
+                    : message;
+            return ResponseEntity.status(status).body(Map.of("message", publicMessage, "code", message));
+        }
+    }
+
     @PostMapping("pedidos")
     public ResponseEntity<?> crearPedido(
             @Valid @RequestBody EcommercePedidoCreateRequest request,
@@ -87,6 +126,15 @@ public class EcommercePublicController {
         try {
             EcommercePedidoResponse response = ecommercePedidoService.crear(request, clienteIp(servletRequest));
             return ResponseEntity.status(HttpStatus.CREATED).body(response);
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", mensaje(e)));
+        }
+    }
+
+    @PostMapping("carrito/validar")
+    public ResponseEntity<?> validarCarrito(@Valid @RequestBody EcommerceCarritoValidarRequest request) {
+        try {
+            return ResponseEntity.ok(ecommercePedidoService.validarCarrito(request));
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().body(Map.of("message", mensaje(e)));
         }

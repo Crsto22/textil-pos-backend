@@ -428,6 +428,56 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
             """)
     List<ProductoVariante> listarVariantesEcommercePorProducto(@Param("idProducto") Integer idProducto);
 
+    @Query("""
+            SELECT v
+            FROM ProductoVariante v
+            JOIN FETCH v.producto p
+            JOIN FETCH p.categoria cat
+            JOIN FETCH v.color c
+            JOIN FETCH v.talla t
+            WHERE p.publicarEcommerce = true
+              AND p.deletedAt IS NULL
+              AND p.activo = 'ACTIVO'
+              AND p.estado = 'ACTIVO'
+              AND cat.deletedAt IS NULL
+              AND cat.estado = 'ACTIVO'
+              AND v.deletedAt IS NULL
+              AND v.activo = 'ACTIVO'
+              AND c.deletedAt IS NULL
+              AND c.estado = 'ACTIVO'
+              AND t.deletedAt IS NULL
+              AND t.estado = 'ACTIVO'
+              AND p.idProducto = :idProducto
+              AND c.idColor = :idColor
+            ORDER BY t.nombre ASC, v.idProductoVariante ASC
+            """)
+    List<ProductoVariante> listarVariantesEcommercePorProductoYColor(
+            @Param("idProducto") Integer idProducto,
+            @Param("idColor") Integer idColor);
+
+    @Query("""
+            SELECT v
+            FROM ProductoVariante v
+            JOIN FETCH v.producto p
+            JOIN FETCH v.color c
+            JOIN FETCH v.talla t
+            WHERE p.publicarEcommerce = true
+              AND p.deletedAt IS NULL
+              AND p.activo = 'ACTIVO'
+              AND p.estado = 'ACTIVO'
+              AND v.deletedAt IS NULL
+              AND v.activo = 'ACTIVO'
+              AND c.deletedAt IS NULL
+              AND c.estado = 'ACTIVO'
+              AND t.deletedAt IS NULL
+              AND t.estado = 'ACTIVO'
+              AND p.idProducto = :idProducto
+              AND v.idProductoVariante = :idProductoVariante
+            """)
+    Optional<ProductoVariante> buscarVarianteEcommercePorProducto(
+            @Param("idProducto") Integer idProducto,
+            @Param("idProductoVariante") Integer idProductoVariante);
+
     @Query(
             value = """
                     SELECT

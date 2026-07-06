@@ -56,6 +56,8 @@ import com.sistemapos.sistematextil.repositories.ProductoVarianteRepository;
 import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
 import com.sistemapos.sistematextil.repositories.VentaRepository;
+import com.sistemapos.sistematextil.util.ecommerce.EcommerceCarritoValidarRequest;
+import com.sistemapos.sistematextil.util.ecommerce.EcommerceCarritoValidarResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommercePedidoCreateRequest;
 import com.sistemapos.sistematextil.util.ecommerce.EcommercePedidoAceptarRequest;
 import com.sistemapos.sistematextil.util.ecommerce.EcommercePedidoAdminPageResponse;
@@ -105,6 +107,20 @@ public class EcommercePedidoService {
     private final EcommercePedidoEmailService ecommercePedidoEmailService;
     private final TurnstileService turnstileService;
     private final DocumentoConsultaService documentoConsultaService;
+
+    @Transactional(readOnly = true)
+    public EcommerceCarritoValidarResponse validarCarrito(EcommerceCarritoValidarRequest request) {
+        validarItemsCarrito(request);
+        Sucursal sucursal = obtenerSucursalEcommerce();
+        List<EcommerceCarritoValidarResponse.Item> items = request.items().stream()
+                .map(item -> validarItemCarrito(item, sucursal.getIdSucursal()))
+                .toList();
+        boolean valido = items.stream().allMatch(item ->
+                item.disponible()
+                        && item.cantidadValida()
+                        && !item.precioCambiado());
+        return new EcommerceCarritoValidarResponse(valido, items);
+    }
 
     @Transactional
     public EcommercePedidoResponse crear(EcommercePedidoCreateRequest request, String ipCliente) {
@@ -190,6 +206,52 @@ public class EcommercePedidoService {
         EcommercePedido guardado = pedidoRepository.save(pedido);
         ecommercePedidoEmailService.enviarPedidoCreado(guardado, comprobanteToken);
         return toResponse(guardado, comprobanteToken);
+    }
+
+    private EcommerceCarritoValidarResponse.Item validarItemCarrito(
+            EcommerceCarritoValidarRequest.Item item,
+            Integer idSucursal) {
+        ProductoVariante variante = productoVarianteRepository
+                .findByIdProductoVarianteAndDeletedAtIsNullAndSucursal_IdSucursal(
+                        item.idProductoVariante(),
+                        idSucursal)
+                .filter(v -> v.getProducto() != null && Boolean.TRUE.equals(v.getProducto().getPublicarEcommerce()))
+                .orElse(null);
+        if (variante == null) {
+            return new EcommerceCarritoValidarResponse.Item(
+                    item.idProductoVariante(),
+                    "Producto no disponible",
+                    item.cantidad(),
+                    0,
+                    false,
+                    0,
+                    false,
+                    BigDecimal.ZERO,
+                    false,
+                    "Producto no disponible");
+        }
+
+        int stockActual = stockMovimientoService
+                .obtenerContexto(idSucursal, variante.getIdProductoVariante())
+                .stockActual();
+        BigDecimal precioVigente = BigDecimal.valueOf(precioOfertaService.resolverPrecioVigente(variante, idSucursal));
+        boolean precioCambiado = item.precio() != null && precioVigente.compareTo(item.precio()) != 0;
+        int cantidadPermitida = Math.min(Math.max(stockActual, 0), MAX_CANTIDAD_POR_VARIANTE);
+        boolean cantidadValida = item.cantidad() != null && stockActual >= item.cantidad();
+        boolean disponible = stockActual > 0;
+        String mensaje = resolverMensajeCarrito(item.cantidad(), stockActual, precioCambiado);
+
+        return new EcommerceCarritoValidarResponse.Item(
+                variante.getIdProductoVariante(),
+                descripcion(variante),
+                item.cantidad(),
+                cantidadPermitida,
+                cantidadValida,
+                stockActual,
+                disponible,
+                precioVigente,
+                precioCambiado,
+                mensaje);
     }
 
     public EcommerceDniValidationResponse validarDniEcommerce(String dni) {
@@ -485,6 +547,36 @@ public class EcommercePedidoService {
             }
             cantidadesPorVariante.put(item.idProductoVariante(), cantidadAcumulada);
         }
+    }
+
+    private void validarItemsCarrito(EcommerceCarritoValidarRequest request) {
+        if (request == null || request.items() == null || request.items().isEmpty()) {
+            throw new RuntimeException("Ingrese productos");
+        }
+        Map<Integer, Integer> cantidadesPorVariante = new HashMap<>();
+        for (EcommerceCarritoValidarRequest.Item item : request.items()) {
+            if (item.idProductoVariante() == null || item.cantidad() == null || item.cantidad() <= 0) {
+                throw new RuntimeException("La cantidad debe ser mayor a 0");
+            }
+            int cantidadAcumulada = cantidadesPorVariante.getOrDefault(item.idProductoVariante(), 0) + item.cantidad();
+            if (cantidadAcumulada > MAX_CANTIDAD_POR_VARIANTE) {
+                throw new RuntimeException("Solo se permiten 5 unidades maximo por variante");
+            }
+            cantidadesPorVariante.put(item.idProductoVariante(), cantidadAcumulada);
+        }
+    }
+
+    private String resolverMensajeCarrito(Integer cantidadSolicitada, int stockActual, boolean precioCambiado) {
+        if (stockActual <= 0) {
+            return "Producto agotado";
+        }
+        if (cantidadSolicitada != null && stockActual < cantidadSolicitada) {
+            return "Solo queda " + stockActual + " unidad" + (stockActual == 1 ? "" : "es");
+        }
+        if (precioCambiado) {
+            return "El precio fue actualizado";
+        }
+        return null;
     }
 
     private boolean esDniNoValido(RuntimeException e) {

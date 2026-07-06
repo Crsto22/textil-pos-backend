@@ -37,6 +37,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/actuator/health").permitAll()
                         .requestMatchers("/error").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/public/ecommerce/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/public/ecommerce/carrito/validar").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/public/ecommerce/pedidos", "/api/public/ecommerce/pedidos/**").permitAll()
                         .requestMatchers("/api/auth/autenticarse", "/api/auth/refresh").permitAll()
                         .requestMatchers("/api/auth/registro").hasAnyAuthority("ADMINISTRADOR", "SISTEMA")

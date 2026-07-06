@@ -30,6 +30,7 @@ import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoColorGroupPr
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceInicioResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceInicioImagenProductoResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoColorListItemResponse;
+import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoColorStockResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoDetalleSlugResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoListadoResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteStockSucursalRow;
@@ -254,6 +255,77 @@ public class EcommerceProductoPublicService {
                                 idProducto,
                                 5),
                         sucursal));
+    }
+
+    public EcommerceProductoColorStockResponse obtenerStockColorPorSlug(String slug, Integer idColor) {
+        Sucursal sucursal = obtenerSucursalEcommerce();
+        if (sucursal == null) {
+            throw new RuntimeException(TIENDA_NO_CONFIGURADA);
+        }
+        String slugNormalizado = ProductoService.normalizarSlug(slug);
+        if (slugNormalizado == null || idColor == null) {
+            throw new RuntimeException("Producto no encontrado");
+        }
+        Producto producto = productoRepository.findBySlugAndDeletedAtIsNull(slugNormalizado)
+                .orElseThrow(() -> new RuntimeException("Producto no encontrado"));
+        if (!Boolean.TRUE.equals(producto.getPublicarEcommerce())) {
+            throw new RuntimeException("Producto no encontrado");
+        }
+
+        List<ProductoVariante> variantes = productoVarianteRepository
+                .listarVariantesEcommercePorProductoYColor(producto.getIdProducto(), idColor);
+        if (variantes.isEmpty()) {
+            throw new RuntimeException("Producto no encontrado");
+        }
+
+        Set<Integer> varianteIds = variantes.stream()
+                .map(ProductoVariante::getIdProductoVariante)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Integer, Integer> stocks = obtenerStocks(varianteIds, sucursal.getIdSucursal());
+        Map<Integer, ProductoVarianteOfertaSucursal> ofertas = precioOfertaService
+                .obtenerOfertasSucursalPorVariantes(varianteIds, sucursal.getIdSucursal());
+        EcommerceProductoColorListItemResponse item = construirItemDesdeVariantes(
+                variantes,
+                Map.of(),
+                stocks,
+                ofertas);
+
+        return new EcommerceProductoColorStockResponse(
+                producto.getIdProducto(),
+                producto.getSlug(),
+                item.color(),
+                item.estadoStock(),
+                item.stockTotalColor(),
+                item.variantes());
+    }
+
+    public EcommerceProductoColorListItemResponse.VarianteItem obtenerStockVariantePorSlug(
+            String slug,
+            Integer idProductoVariante) {
+        Sucursal sucursal = obtenerSucursalEcommerce();
+        if (sucursal == null) {
+            throw new RuntimeException(TIENDA_NO_CONFIGURADA);
+        }
+        String slugNormalizado = ProductoService.normalizarSlug(slug);
+        if (slugNormalizado == null || idProductoVariante == null) {
+            throw new RuntimeException("Producto no encontrado");
+        }
+        Producto producto = productoRepository.findBySlugAndDeletedAtIsNull(slugNormalizado)
+                .orElseThrow(() -> new RuntimeException("Producto no encontrado"));
+        if (!Boolean.TRUE.equals(producto.getPublicarEcommerce())) {
+            throw new RuntimeException("Producto no encontrado");
+        }
+        ProductoVariante variante = productoVarianteRepository
+                .buscarVarianteEcommercePorProducto(producto.getIdProducto(), idProductoVariante)
+                .orElseThrow(() -> new RuntimeException("Producto no encontrado"));
+        Map<Integer, Integer> stocks = obtenerStocks(Set.of(variante.getIdProductoVariante()), sucursal.getIdSucursal());
+        Map<Integer, ProductoVarianteOfertaSucursal> ofertas = precioOfertaService
+                .obtenerOfertasSucursalPorVariantes(Set.of(variante.getIdProductoVariante()), sucursal.getIdSucursal());
+        return toVarianteItem(
+                variante,
+                stocks,
+                ofertas);
     }
 
     private List<EcommerceProductoColorListItemResponse> construirItems(

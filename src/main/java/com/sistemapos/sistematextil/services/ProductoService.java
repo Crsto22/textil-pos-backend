@@ -103,7 +103,7 @@ public class ProductoService {
 
         Integer idSucursalFiltro = resolverSucursalCatalogo(idSucursal);
         Sucursal sucursalContexto = obtenerSucursalContextoCatalogo(idSucursalFiltro);
-        Page<Producto> productos = buscarProductos(null, idCategoria, idColor, conOferta, idSucursalFiltro, false, page);
+        Page<Producto> productos = buscarProductos(null, idCategoria, idColor, conOferta, idSucursalFiltro, false, null, page);
         Map<Integer, VarianteCatalogo> catalogo = obtenerCatalogoPorProductos(productos.getContent(), idSucursalFiltro, false, false);
 
         return PagedResponse.fromPage(productos.map(producto -> toListItemResponse(
@@ -119,6 +119,7 @@ public class ProductoService {
             Integer idColor,
             Boolean conOferta,
             Boolean soloDisponibles,
+            Boolean publicarEcommerce,
             Integer idSucursal,
             String correoUsuarioAutenticado) {
         validarPagina(page);
@@ -133,6 +134,7 @@ public class ProductoService {
                     idColor,
                     conOferta,
                     soloDisponibles,
+                    publicarEcommerce,
                     idSucursal,
                     correoUsuarioAutenticado);
         }
@@ -146,6 +148,7 @@ public class ProductoService {
                 conOferta,
                 idSucursalFiltro,
                 Boolean.TRUE.equals(soloDisponibles),
+                publicarEcommerce,
                 page);
         Map<Integer, VarianteCatalogo> catalogo = obtenerCatalogoPorProductos(
                 productos.getContent(),
@@ -169,6 +172,7 @@ public class ProductoService {
             Integer idColor,
             Boolean conOferta,
             Boolean soloDisponibles,
+            Boolean publicarEcommerce,
             Integer idSucursal,
             String correoUsuarioAutenticado) {
         validarPagina(page);
@@ -184,6 +188,7 @@ public class ProductoService {
                 conOferta,
                 idSucursalFiltro,
                 Boolean.TRUE.equals(soloDisponibles),
+                publicarEcommerce,
                 page);
         Map<Integer, VarianteCatalogo> catalogo = obtenerCatalogoPorProductos(
                 productos.getContent(),
@@ -477,7 +482,7 @@ List<ProductoColorImagen> imagenesActuales = productoColorImagenRepository.findB
     }
 
     private Page<Producto> buscarProductos(String term, Integer idCategoria, Integer idColor, Boolean conOferta, int page) {
-        return buscarProductos(term, idCategoria, idColor, conOferta, null, false, page);
+        return buscarProductos(term, idCategoria, idColor, conOferta, null, false, null, page);
     }
 
     private Page<Producto> buscarProductos(
@@ -487,6 +492,7 @@ List<ProductoColorImagen> imagenesActuales = productoColorImagenRepository.findB
             Boolean conOferta,
             Integer idSucursalFiltro,
             boolean soloDisponibles,
+            Boolean publicarEcommerce,
             int page) {
         PageRequest pageable = PageRequest.of(page, defaultPageSize);
         List<String> tokens = tokensBusqueda(term);
@@ -504,6 +510,7 @@ List<ProductoColorImagen> imagenesActuales = productoColorImagenRepository.findB
                 conOferta,
                 resolverTipoSucursalCatalogo(idSucursalFiltro),
                 soloDisponibles,
+                publicarEcommerce,
                 pageable);
     }
 

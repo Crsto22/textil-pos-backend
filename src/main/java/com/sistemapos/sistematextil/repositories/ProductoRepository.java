@@ -26,6 +26,7 @@ public interface ProductoRepository extends JpaRepository<Producto, Integer> {
                     WHERE p.deletedAt IS NULL
                       AND (:idCategoria IS NULL OR p.categoria.idCategoria = :idCategoria)
                       AND (:idColor IS NULL OR v.color.idColor = :idColor)
+                      AND (:publicarEcommerce IS NULL OR p.publicarEcommerce = :publicarEcommerce)
                       AND (
                             :term IS NULL
                             OR LOWER(p.nombre) LIKE LOWER(CONCAT('%', :term, '%'))
@@ -178,6 +179,7 @@ public interface ProductoRepository extends JpaRepository<Producto, Integer> {
             @Param("conOferta") Boolean conOferta,
             @Param("tipoSucursal") SucursalTipo tipoSucursal,
             @Param("soloDisponibles") Boolean soloDisponibles,
+            @Param("publicarEcommerce") Boolean publicarEcommerce,
             Pageable pageable);
 
     Optional<Producto> findFirstByCategoria_IdCategoriaAndNombreIgnoreCaseAndDeletedAtIsNullOrderByIdProductoAsc(

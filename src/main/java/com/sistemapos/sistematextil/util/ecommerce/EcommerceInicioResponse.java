@@ -7,6 +7,7 @@ public record EcommerceInicioResponse(
         List<EcommercePortadaResponse> portadas,
         List<EcommerceInicioImagenProductoResponse> imagenesProductos,
         List<EcommerceProductoColorListItemResponse> aleatorios,
-        List<EcommerceProductoColorListItemResponse> masVendidos
+        List<EcommerceProductoColorListItemResponse> masVendidos,
+        List<EcommerceInicioComboResponse> combos
 ) {
 }

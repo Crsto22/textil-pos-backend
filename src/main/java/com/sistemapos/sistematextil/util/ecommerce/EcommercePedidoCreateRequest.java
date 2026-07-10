@@ -13,6 +13,7 @@ public record EcommercePedidoCreateRequest(
         @Valid @NotNull Envio envio,
         @NotNull String metodoPago,
         @Valid @NotEmpty List<Item> items,
+        List<Integer> promocionesEsperadas,
         String turnstileToken) {
 
     public record Cliente(

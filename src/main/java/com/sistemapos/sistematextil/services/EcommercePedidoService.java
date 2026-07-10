@@ -15,6 +15,7 @@ import java.util.Base64;
 import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -43,6 +44,7 @@ import com.sistemapos.sistematextil.model.EcommercePedido;
 import com.sistemapos.sistematextil.model.EcommercePedidoDetalle;
 import com.sistemapos.sistematextil.model.HistorialStock;
 import com.sistemapos.sistematextil.model.MetodoPagoConfig;
+import com.sistemapos.sistematextil.model.Producto;
 import com.sistemapos.sistematextil.model.ProductoVariante;
 import com.sistemapos.sistematextil.model.Sucursal;
 import com.sistemapos.sistematextil.model.SucursalTipo;
@@ -65,6 +67,8 @@ import com.sistemapos.sistematextil.util.ecommerce.EcommercePedidoAdminResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommercePedidoResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommercePedidoEstadisticasResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceDniValidationResponse;
+import com.sistemapos.sistematextil.util.ecommerce.EcommerceCarritoResumenRequest;
+import com.sistemapos.sistematextil.util.ecommerce.EcommerceCarritoResumenResponse;
 import com.sistemapos.sistematextil.util.cliente.TipoDocumento;
 import com.sistemapos.sistematextil.util.documento.ConsultaDniResponse;
 import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
@@ -101,6 +105,7 @@ public class EcommercePedidoService {
     private final ProductoColorImagenRepository productoColorImagenRepository;
     private final MetodoPagoConfigRepository metodoPagoConfigRepository;
     private final PrecioOfertaService precioOfertaService;
+    private final EcommercePromocionComboService ecommercePromocionComboService;
     private final StockMovimientoService stockMovimientoService;
     private final S3StorageService storageService;
     private final VentaService ventaService;
@@ -119,7 +124,14 @@ public class EcommercePedidoService {
                 item.disponible()
                         && item.cantidadValida()
                         && !item.precioCambiado());
-        return new EcommerceCarritoValidarResponse(valido, items);
+        EcommerceCarritoResumenResponse resumen = resumirItemsValidacion(request.items(), sucursal);
+        List<EcommerceCarritoValidarResponse.PromocionNoDisponible> promocionesNoDisponibles =
+                ecommercePromocionComboService.promocionesNoDisponibles(request.promocionesEsperadas(), resumen);
+        return new EcommerceCarritoValidarResponse(
+                valido && promocionesNoDisponibles.isEmpty(),
+                items,
+                resumen,
+                promocionesNoDisponibles);
     }
 
     @Transactional
@@ -152,8 +164,8 @@ public class EcommercePedidoService {
                     .findByIdProductoVarianteAndDeletedAtIsNullAndSucursal_IdSucursal(
                             item.idProductoVariante(),
                             sucursal.getIdSucursal())
-                    .filter(v -> v.getProducto() != null && Boolean.TRUE.equals(v.getProducto().getPublicarEcommerce()))
-                    .orElseThrow(() -> new RuntimeException("Producto no disponible para ecommerce"));
+                    .filter(v -> productoVisibleEnEcommerce(v))
+                    .orElseThrow(() -> new RuntimeException("Producto ya no esta disponible en ecommerce"));
             int stockActual = stockMovimientoService
                     .obtenerContextoConBloqueo(sucursal.getIdSucursal(), variante.getIdProductoVariante())
                     .stockActual();
@@ -171,14 +183,22 @@ public class EcommercePedidoService {
         }
 
         Map<Integer, BigDecimal> preciosPorVariante = new HashMap<>();
-        BigDecimal total = BigDecimal.ZERO;
+        Map<Integer, Integer> cantidadesPorVariante = new HashMap<>();
+        List<ProductoVariante> variantesResumen = new ArrayList<>();
         for (ReservaItemContexto contexto : itemsReserva) {
             EcommercePedidoCreateRequest.Item item = contexto.item();
             ProductoVariante variante = contexto.variante();
             BigDecimal precio = BigDecimal.valueOf(precioOfertaService.resolverPrecioVigente(variante, sucursal.getIdSucursal()));
             preciosPorVariante.put(variante.getIdProductoVariante(), precio);
-            total = total.add(precio.multiply(BigDecimal.valueOf(item.cantidad())));
+            cantidadesPorVariante.merge(variante.getIdProductoVariante(), item.cantidad(), Integer::sum);
+            variantesResumen.add(variante);
         }
+        EcommerceCarritoResumenResponse resumen = ecommercePromocionComboService.calcular(
+                ecommercePromocionComboService.itemsDesdeVariantes(
+                        variantesUnicas(variantesResumen),
+                        cantidadesPorVariante,
+                        sucursal.getIdSucursal()));
+        validarPromocionesEsperadas(request.promocionesEsperadas(), resumen);
 
         for (ReservaItemContexto contexto : itemsReserva) {
             EcommercePedidoCreateRequest.Item item = contexto.item();
@@ -201,11 +221,81 @@ public class EcommercePedidoService {
             pedido.addDetalle(detalle);
         }
 
-        pedido.setSubtotal(total);
-        pedido.setTotal(total);
+        pedido.setSubtotal(resumen.subtotal());
+        pedido.setDescuentoPromocion(resumen.descuentoPromocion());
+        pedido.setPromocionResumen(promocionResumen(resumen));
+        pedido.setTotal(resumen.total());
         EcommercePedido guardado = pedidoRepository.save(pedido);
         ecommercePedidoEmailService.enviarPedidoCreado(guardado, comprobanteToken);
         return toResponse(guardado, comprobanteToken);
+    }
+
+    @Transactional(readOnly = true)
+    public EcommerceCarritoResumenResponse resumirCarrito(EcommerceCarritoResumenRequest request) {
+        if (request == null) {
+            throw new RuntimeException("Ingrese al menos un item");
+        }
+        validarItemsResumen(request.items());
+        Sucursal sucursal = obtenerSucursalEcommerce();
+        List<ProductoVariante> variantes = new ArrayList<>();
+        Map<Integer, Integer> cantidades = new HashMap<>();
+        for (EcommerceCarritoResumenRequest.Item item : request.items()) {
+            ProductoVariante variante = productoVarianteRepository
+                    .findByIdProductoVarianteAndDeletedAtIsNullAndSucursal_IdSucursal(
+                            item.idProductoVariante(),
+                            sucursal.getIdSucursal())
+                    .filter(v -> productoVisibleEnEcommerce(v))
+                    .orElseThrow(() -> new RuntimeException("Producto ya no esta disponible en ecommerce"));
+            variantes.add(variante);
+            cantidades.merge(variante.getIdProductoVariante(), item.cantidad(), Integer::sum);
+        }
+        return ecommercePromocionComboService.calcular(
+                ecommercePromocionComboService.itemsDesdeVariantes(
+                        variantesUnicas(variantes),
+                        cantidades,
+                        sucursal.getIdSucursal()));
+    }
+
+    private EcommerceCarritoResumenResponse resumirItemsValidacion(
+            List<EcommerceCarritoValidarRequest.Item> items,
+            Sucursal sucursal) {
+        try {
+            List<ProductoVariante> variantes = new ArrayList<>();
+            Map<Integer, Integer> cantidades = new HashMap<>();
+            for (EcommerceCarritoValidarRequest.Item item : items) {
+                ProductoVariante variante = productoVarianteRepository
+                        .findByIdProductoVarianteAndDeletedAtIsNullAndSucursal_IdSucursal(
+                                item.idProductoVariante(),
+                                sucursal.getIdSucursal())
+                        .filter(v -> productoVisibleEnEcommerce(v))
+                        .orElse(null);
+                if (variante == null) {
+                    continue;
+                }
+                variantes.add(variante);
+                cantidades.merge(variante.getIdProductoVariante(), item.cantidad(), Integer::sum);
+            }
+            return ecommercePromocionComboService.calcular(
+                    ecommercePromocionComboService.itemsDesdeVariantes(
+                            variantesUnicas(variantes),
+                            cantidades,
+                            sucursal.getIdSucursal()));
+        } catch (RuntimeException e) {
+            return new EcommerceCarritoResumenResponse(BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, List.of(), List.of());
+        }
+    }
+
+    private void validarPromocionesEsperadas(
+            List<Integer> promocionesEsperadas,
+            EcommerceCarritoResumenResponse resumen) {
+        List<EcommerceCarritoValidarResponse.PromocionNoDisponible> noDisponibles =
+                ecommercePromocionComboService.promocionesNoDisponibles(promocionesEsperadas, resumen);
+        if (!noDisponibles.isEmpty()) {
+            String nombres = noDisponibles.stream()
+                    .map(EcommerceCarritoValidarResponse.PromocionNoDisponible::nombre)
+                    .collect(java.util.stream.Collectors.joining(", "));
+            throw new RuntimeException("La promocion " + nombres + " ya no esta disponible");
+        }
     }
 
     private EcommerceCarritoValidarResponse.Item validarItemCarrito(
@@ -215,12 +305,14 @@ public class EcommercePedidoService {
                 .findByIdProductoVarianteAndDeletedAtIsNullAndSucursal_IdSucursal(
                         item.idProductoVariante(),
                         idSucursal)
-                .filter(v -> v.getProducto() != null && Boolean.TRUE.equals(v.getProducto().getPublicarEcommerce()))
                 .orElse(null);
-        if (variante == null) {
+        if (variante == null || !productoVisibleEnEcommerce(variante)) {
+            String nombre = variante != null && variante.getProducto() != null
+                    ? variante.getProducto().getNombre()
+                    : "Producto no disponible";
             return new EcommerceCarritoValidarResponse.Item(
                     item.idProductoVariante(),
-                    "Producto no disponible",
+                    nombre,
                     item.cantidad(),
                     0,
                     false,
@@ -228,7 +320,7 @@ public class EcommercePedidoService {
                     false,
                     BigDecimal.ZERO,
                     false,
-                    "Producto no disponible");
+                    "Producto ya no esta disponible en ecommerce");
         }
 
         int stockActual = stockMovimientoService
@@ -252,6 +344,15 @@ public class EcommercePedidoService {
                 precioVigente,
                 precioCambiado,
                 mensaje);
+    }
+
+    private boolean productoVisibleEnEcommerce(ProductoVariante variante) {
+        Producto producto = variante.getProducto();
+        return producto != null
+                && Boolean.TRUE.equals(producto.getPublicarEcommerce())
+                && "ACTIVO".equals(producto.getEstado())
+                && "ACTIVO".equals(producto.getActivo())
+                && producto.getDeletedAt() == null;
     }
 
     public EcommerceDniValidationResponse validarDniEcommerce(String dni) {
@@ -396,7 +497,7 @@ public class EcommercePedidoService {
                 "PEN",
                 "CONTADO",
                 null,
-                0.0,
+                pedido.getDescuentoPromocion() == null ? 0.0 : pedido.getDescuentoPromocion().doubleValue(),
                 "MONTO",
                 pedido.getDetalles().stream()
                         .map(detalle -> new VentaDetalleCreateItem(
@@ -664,6 +765,9 @@ public class EcommercePedidoService {
                 pedido.getEstado(),
                 pedido.getFecha(),
                 pedido.getReservaExpiraAt(),
+                pedido.getSubtotal(),
+                pedido.getDescuentoPromocion(),
+                pedido.getPromocionResumen(),
                 pedido.getTotal(),
                 pedido.getMetodoPago() != null ? pedido.getMetodoPago().getNombre() : null,
                 pedido.getComprobanteUrl(),
@@ -720,6 +824,9 @@ public class EcommercePedidoService {
                 pedido.getCodigo(),
                 pedido.getEstado(),
                 pedido.getReservaExpiraAt(),
+                pedido.getSubtotal(),
+                pedido.getDescuentoPromocion(),
+                pedido.getPromocionResumen(),
                 pedido.getTotal(),
                 pedido.getMetodoPago() != null ? pedido.getMetodoPago().getNombre() : null,
                 pedido.getComprobanteUrl(),
@@ -1105,6 +1212,43 @@ public class EcommercePedidoService {
                             imagen);
                 })
                 .toList();
+    }
+
+    private void validarItemsResumen(List<EcommerceCarritoResumenRequest.Item> items) {
+        if (items == null || items.isEmpty()) {
+            throw new RuntimeException("Ingrese al menos un item");
+        }
+        Map<Integer, Integer> cantidadesPorVariante = new HashMap<>();
+        for (EcommerceCarritoResumenRequest.Item item : items) {
+            if (item.idProductoVariante() == null) {
+                throw new RuntimeException("Cada item debe incluir idProductoVariante");
+            }
+            if (item.cantidad() == null || item.cantidad() <= 0) {
+                throw new RuntimeException("La cantidad debe ser mayor a 0");
+            }
+            int cantidadAcumulada = cantidadesPorVariante.getOrDefault(item.idProductoVariante(), 0) + item.cantidad();
+            if (cantidadAcumulada > MAX_CANTIDAD_POR_VARIANTE) {
+                throw new RuntimeException("Solo se permiten 5 unidades maximo por variante");
+            }
+            cantidadesPorVariante.put(item.idProductoVariante(), cantidadAcumulada);
+        }
+    }
+
+    private String promocionResumen(EcommerceCarritoResumenResponse resumen) {
+        if (resumen == null || resumen.combosAplicados() == null || resumen.combosAplicados().isEmpty()) {
+            return null;
+        }
+        return resumen.combosAplicados().stream()
+                .map(combo -> combo.nombre() + " (-S/ " + combo.descuento() + ")")
+                .collect(java.util.stream.Collectors.joining("; "));
+    }
+
+    private List<ProductoVariante> variantesUnicas(List<ProductoVariante> variantes) {
+        Map<Integer, ProductoVariante> porId = new LinkedHashMap<>();
+        for (ProductoVariante variante : variantes) {
+            porId.putIfAbsent(variante.getIdProductoVariante(), variante);
+        }
+        return new ArrayList<>(porId.values());
     }
 
     private String resolverImagenDetalle(ProductoVariante variante, Map<ImagenDetalleKey, String> imagenes) {

@@ -17,13 +17,17 @@ import org.springframework.web.multipart.MultipartFile;
 
 import com.sistemapos.sistematextil.services.EcommercePedidoService;
 import com.sistemapos.sistematextil.services.EcommerceProductoPublicService;
+import com.sistemapos.sistematextil.services.EcommercePromocionComboService;
+import com.sistemapos.sistematextil.util.ecommerce.EcommerceCarritoResumenRequest;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceCarritoValidarRequest;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceInicioResponse;
+import com.sistemapos.sistematextil.util.ecommerce.EcommerceInicioComboResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommercePedidoCreateRequest;
 import com.sistemapos.sistematextil.util.ecommerce.EcommercePedidoResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoColorStockResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoDetalleSlugResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoListadoResponse;
+import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -38,6 +42,7 @@ public class EcommercePublicController {
 
     private final EcommerceProductoPublicService ecommerceProductoPublicService;
     private final EcommercePedidoService ecommercePedidoService;
+    private final EcommercePromocionComboService ecommercePromocionComboService;
 
     @GetMapping("productos")
     public ResponseEntity<EcommerceProductoListadoResponse> listarProductos(
@@ -63,6 +68,13 @@ public class EcommercePublicController {
     @GetMapping("inicio")
     public ResponseEntity<EcommerceInicioResponse> inicio() {
         return ResponseEntity.ok(ecommerceProductoPublicService.obtenerInicio());
+    }
+
+    @GetMapping("promociones")
+    public ResponseEntity<PagedResponse<EcommerceInicioComboResponse>> listarPromociones(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "9") int size) {
+        return ResponseEntity.ok(ecommercePromocionComboService.listarPublicas(page, size));
     }
 
     @GetMapping("productos/{slug}")
@@ -126,6 +138,15 @@ public class EcommercePublicController {
         try {
             EcommercePedidoResponse response = ecommercePedidoService.crear(request, clienteIp(servletRequest));
             return ResponseEntity.status(HttpStatus.CREATED).body(response);
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", mensaje(e)));
+        }
+    }
+
+    @PostMapping("pedidos/resumen")
+    public ResponseEntity<?> resumenPedido(@Valid @RequestBody EcommerceCarritoResumenRequest request) {
+        try {
+            return ResponseEntity.ok(ecommercePedidoService.resumirCarrito(request));
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().body(Map.of("message", mensaje(e)));
         }

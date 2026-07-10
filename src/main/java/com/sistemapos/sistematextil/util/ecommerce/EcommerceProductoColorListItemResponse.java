@@ -13,6 +13,7 @@ public record EcommerceProductoColorListItemResponse(
         Double precioMaximo,
         String estadoStock,
         Integer stockTotalColor,
+        List<PromocionComboItem> promocionesCombo,
         List<VarianteItem> variantes
 ) {
     public record ProductoItem(
@@ -57,6 +58,15 @@ public record EcommerceProductoColorListItemResponse(
             Boolean esPrincipal,
             String estado,
             String origen
+    ) {
+    }
+
+    public record PromocionComboItem(
+            Integer idPromocionCombo,
+            String nombre,
+            String regla,
+            java.math.BigDecimal precioCombo,
+            Boolean mismoProducto
     ) {
     }
 

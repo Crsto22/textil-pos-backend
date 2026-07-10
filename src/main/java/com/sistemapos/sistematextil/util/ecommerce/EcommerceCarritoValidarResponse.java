@@ -5,7 +5,9 @@ import java.util.List;
 
 public record EcommerceCarritoValidarResponse(
         boolean valido,
-        List<Item> items
+        List<Item> items,
+        EcommerceCarritoResumenResponse resumen,
+        List<PromocionNoDisponible> promocionesNoDisponibles
 ) {
     public record Item(
             Integer idProductoVariante,
@@ -18,6 +20,12 @@ public record EcommerceCarritoValidarResponse(
             BigDecimal precioVigente,
             boolean precioCambiado,
             String mensaje
+    ) {
+    }
+
+    public record PromocionNoDisponible(
+            Integer idPromocionCombo,
+            String nombre
     ) {
     }
 }

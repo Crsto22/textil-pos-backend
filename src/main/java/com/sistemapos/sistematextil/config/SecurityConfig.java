@@ -72,6 +72,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/config/comprobantes/**").hasAnyAuthority("ADMINISTRADOR", "SISTEMA")
                         .requestMatchers("/api/config/ecommerce/**").hasAnyAuthority("ADMINISTRADOR", "SISTEMA")
                         .requestMatchers("/api/config/sunat/**").hasAnyAuthority("ADMINISTRADOR", "SISTEMA")
+                        .requestMatchers("/api/ecommerce/promociones-combo", "/api/ecommerce/promociones-combo/**").hasAnyAuthority("ADMINISTRADOR", "SISTEMA")
                         .requestMatchers("/api/ecommerce/pedidos", "/api/ecommerce/pedidos/**").hasAnyAuthority("ADMINISTRADOR", "VENTAS", "VENTAS_ALMACEN", "SISTEMA")
                         .requestMatchers(HttpMethod.PUT, "/api/producto/**").hasAnyAuthority("ADMINISTRADOR", "ALMACEN", "SISTEMA")
                         .requestMatchers(HttpMethod.DELETE, "/api/producto/**").hasAnyAuthority("ADMINISTRADOR", "ALMACEN", "SISTEMA")

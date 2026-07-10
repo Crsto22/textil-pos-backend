@@ -91,6 +91,12 @@ public class EcommercePedido {
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal subtotal;
 
+    @Column(name = "descuento_promocion", nullable = false, precision = 10, scale = 2)
+    private BigDecimal descuentoPromocion;
+
+    @Column(name = "promocion_resumen", length = 600)
+    private String promocionResumen;
+
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal total;
 
@@ -138,6 +144,9 @@ public class EcommercePedido {
         }
         if (subtotal == null) {
             subtotal = BigDecimal.ZERO;
+        }
+        if (descuentoPromocion == null) {
+            descuentoPromocion = BigDecimal.ZERO;
         }
         if (total == null) {
             total = BigDecimal.ZERO;

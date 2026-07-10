@@ -51,6 +51,7 @@ public class EcommerceProductoPublicService {
     private final ProductoVarianteRepository productoVarianteRepository;
     private final ProductoColorImagenRepository productoColorImagenRepository;
     private final PrecioOfertaService precioOfertaService;
+    private final EcommercePromocionComboService ecommercePromocionComboService;
     private final VentaDetalleRepository ventaDetalleRepository;
     private final EcommercePortadaService ecommercePortadaService;
 
@@ -116,7 +117,7 @@ public class EcommerceProductoPublicService {
     public EcommerceInicioResponse obtenerInicio() {
         Sucursal sucursal = obtenerSucursalEcommerce();
         if (sucursal == null) {
-            return new EcommerceInicioResponse(false, List.of(), List.of(), List.of(), List.of());
+            return new EcommerceInicioResponse(false, List.of(), List.of(), List.of(), List.of(), List.of());
         }
         Integer idSucursal = sucursal.getIdSucursal();
 
@@ -181,7 +182,8 @@ public class EcommerceProductoPublicService {
                 ecommercePortadaService.listarPublicas(),
                 obtenerImagenesProductosInicio(),
                 aleatorios,
-                masVendidos);
+                masVendidos,
+                ecommercePromocionComboService.listarInicioAleatorias(3));
     }
 
     public EcommerceProductoDetalleSlugResponse obtenerDetallePorSlug(String slug) {
@@ -248,6 +250,7 @@ public class EcommerceProductoPublicService {
         return new EcommerceProductoDetalleSlugResponse(
                 true,
                 toProductoItem(producto),
+                promocionesCombo(producto),
                 colores,
                 construirItems(
                         productoVarianteRepository.listarRecomendadosEcommerce(
@@ -422,7 +425,23 @@ public class EcommerceProductoPublicService {
                 precioMaximo,
                 resolverEstadoStock(varianteItems),
                 stockTotal,
+                promocionesCombo(producto),
                 varianteItems);
+    }
+
+    private List<EcommerceProductoColorListItemResponse.PromocionComboItem> promocionesCombo(Producto producto) {
+        if (producto == null || producto.getIdProducto() == null) {
+            return List.of();
+        }
+        return ecommercePromocionComboService.listarActivasPorProductos(Set.of(producto.getIdProducto()))
+                .stream()
+                .map(promo -> new EcommerceProductoColorListItemResponse.PromocionComboItem(
+                        promo.idPromocionCombo(),
+                        promo.nombre(),
+                        promo.regla(),
+                        promo.precioCombo(),
+                        promo.items() != null && promo.items().size() == 1))
+                .toList();
     }
 
     private EcommerceProductoColorListItemResponse.VarianteItem toVarianteItem(

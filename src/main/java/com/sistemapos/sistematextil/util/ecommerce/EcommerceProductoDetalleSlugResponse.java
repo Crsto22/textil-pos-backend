@@ -5,6 +5,7 @@ import java.util.List;
 public record EcommerceProductoDetalleSlugResponse(
         boolean tiendaConfigurada,
         EcommerceProductoColorListItemResponse.ProductoItem producto,
+        List<EcommerceProductoColorListItemResponse.PromocionComboItem> promocionesCombo,
         List<ColorCompletoItem> colores,
         List<EcommerceProductoColorListItemResponse> recomendados
 ) {

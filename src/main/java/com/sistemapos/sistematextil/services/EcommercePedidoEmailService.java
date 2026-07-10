@@ -25,6 +25,7 @@ public class EcommercePedidoEmailService {
 
     private static final Logger log = LoggerFactory.getLogger(EcommercePedidoEmailService.class);
     private static final DateTimeFormatter FECHA = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
+    private static final String ICON_PAYMENT_PENDING = "https://cdn-icons-png.flaticon.com/512/3240/3240587.png";
     private static final String ICON_SUCCESS = "https://cdn-icons-png.flaticon.com/512/845/845646.png";
     private static final String ICON_ERROR = "https://cdn-icons-png.flaticon.com/512/7068/7068033.png";
 
@@ -37,7 +38,7 @@ public class EcommercePedidoEmailService {
     public void enviarPedidoCreado(EcommercePedido pedido, String token) {
         String linkPago = linkPago(token);
         String html = layout(
-                iconoImg(ICON_SUCCESS),
+                iconoImg(ICON_PAYMENT_PENDING),
                 "Completa tu pago",
                 "Tu pedido fue reservado por 10 minutos. Sube tu comprobante para terminar la compra.",
                 pedido,

@@ -1,6 +1,7 @@
 package com.sistemapos.sistematextil.services;
 
 import java.text.Normalizer;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -222,6 +223,7 @@ public class ProductoService {
         producto.setGuiaTallasThumbUrl(normalizar(request.guiaTallasThumbUrl()));
         validarCambioPublicarEcommerce(usuario, false, request.publicarEcommerce());
         producto.setPublicarEcommerce(Boolean.TRUE.equals(request.publicarEcommerce()));
+        aplicarPreventa(producto, request.preventa(), request.fechaEnvioPreventa());
         producto.setEstado(ESTADO_ACTIVO);
         producto.setActivo(ESTADO_ACTIVO);
         producto.setDeletedAt(null);
@@ -253,6 +255,7 @@ public class ProductoService {
         producto.setGuiaTallasThumbUrl(normalizar(request.guiaTallasThumbUrl()));
         validarCambioPublicarEcommerce(usuario, false, request.publicarEcommerce());
         producto.setPublicarEcommerce(Boolean.TRUE.equals(request.publicarEcommerce()));
+        aplicarPreventa(producto, request.preventa(), request.fechaEnvioPreventa());
         producto.setEstado(ESTADO_ACTIVO);
         producto.setActivo(ESTADO_ACTIVO);
         producto.setDeletedAt(null);
@@ -295,6 +298,7 @@ public class ProductoService {
         if (request.publicarEcommerce() != null) {
             producto.setPublicarEcommerce(request.publicarEcommerce());
         }
+        aplicarPreventa(producto, request.preventa(), request.fechaEnvioPreventa());
         producto.setEstado(ESTADO_ACTIVO);
         producto.setActivo(ESTADO_ACTIVO);
         producto.setDeletedAt(null);
@@ -376,6 +380,7 @@ List<ProductoColorImagen> imagenesActuales = productoColorImagenRepository.findB
         if (request.publicarEcommerce() != null) {
             producto.setPublicarEcommerce(request.publicarEcommerce());
         }
+        aplicarPreventa(producto, request.preventa(), request.fechaEnvioPreventa());
         producto.setEstado(ESTADO_ACTIVO);
         producto.setActivo(ESTADO_ACTIVO);
         producto.setDeletedAt(null);
@@ -865,6 +870,8 @@ List<ProductoColorImagen> imagenesActuales = productoColorImagenRepository.findB
                 producto.getGuiaTallasUrl(),
                 producto.getGuiaTallasThumbUrl(),
                 Boolean.TRUE.equals(producto.getPublicarEcommerce()),
+                preventaActiva(producto),
+                preventaActiva(producto) ? producto.getFechaEnvioPreventa() : null,
                 producto.getEstado(),
                 producto.getFechaCreacion(),
                 producto.getCategoria() != null ? producto.getCategoria().getIdCategoria() : null,
@@ -892,6 +899,8 @@ List<ProductoColorImagen> imagenesActuales = productoColorImagenRepository.findB
                 producto.getGuiaTallasUrl(),
                 producto.getGuiaTallasThumbUrl(),
                 Boolean.TRUE.equals(producto.getPublicarEcommerce()),
+                preventaActiva(producto),
+                preventaActiva(producto) ? producto.getFechaEnvioPreventa() : null,
                 producto.getEstado(),
                 producto.getFechaCreacion(),
                 catalogo != null ? catalogo.precioMin() : null,
@@ -1006,6 +1015,29 @@ List<ProductoColorImagen> imagenesActuales = productoColorImagenRepository.findB
         if (!usuario.getRol().esAdministrador()) {
             throw new RuntimeException("El usuario autenticado no tiene permisos para modificar la publicacion ecommerce");
         }
+    }
+
+    private void aplicarPreventa(Producto producto, Boolean preventa, LocalDate fechaEnvioPreventa) {
+        if (!Boolean.TRUE.equals(preventa)) {
+            producto.setPreventa(Boolean.FALSE);
+            producto.setFechaEnvioPreventa(null);
+            return;
+        }
+        if (fechaEnvioPreventa == null) {
+            throw new RuntimeException("Ingrese la fecha de envio de preventa");
+        }
+        if (!fechaEnvioPreventa.isAfter(LocalDate.now())) {
+            throw new RuntimeException("La fecha de envio de preventa debe ser futura");
+        }
+        producto.setPreventa(Boolean.TRUE);
+        producto.setFechaEnvioPreventa(fechaEnvioPreventa);
+    }
+
+    private boolean preventaActiva(Producto producto) {
+        return producto != null
+                && Boolean.TRUE.equals(producto.getPreventa())
+                && producto.getFechaEnvioPreventa() != null
+                && producto.getFechaEnvioPreventa().isAfter(LocalDate.now());
     }
 
     private Usuario obtenerUsuarioAutenticado(String correoUsuarioAutenticado) {

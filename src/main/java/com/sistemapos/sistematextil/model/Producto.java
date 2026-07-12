@@ -1,5 +1,6 @@
 package com.sistemapos.sistematextil.model;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
@@ -61,6 +62,12 @@ public class Producto {
     private Boolean publicarEcommerce = Boolean.FALSE;
 
     @Column(nullable = false)
+    private Boolean preventa = Boolean.FALSE;
+
+    @Column(name = "fecha_envio_preventa")
+    private LocalDate fechaEnvioPreventa;
+
+    @Column(nullable = false)
     private String estado;
 
     @Convert(converter = EstadoActivoConverter.class)
@@ -99,6 +106,9 @@ public class Producto {
         }
         if (this.publicarEcommerce == null) {
             this.publicarEcommerce = Boolean.FALSE;
+        }
+        if (this.preventa == null) {
+            this.preventa = Boolean.FALSE;
         }
     }
 

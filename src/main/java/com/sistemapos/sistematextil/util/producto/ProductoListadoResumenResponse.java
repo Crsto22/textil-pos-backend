@@ -1,5 +1,6 @@
 package com.sistemapos.sistematextil.util.producto;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -14,6 +15,8 @@ public record ProductoListadoResumenResponse(
         String guiaTallasUrl,
         String guiaTallasThumbUrl,
         Boolean publicarEcommerce,
+        Boolean preventa,
+        LocalDate fechaEnvioPreventa,
         String estado,
         LocalDateTime fechaCreacion,
         Double precioMin,

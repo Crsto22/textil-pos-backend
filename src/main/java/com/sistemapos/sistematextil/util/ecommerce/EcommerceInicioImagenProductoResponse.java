@@ -5,6 +5,7 @@ public record EcommerceInicioImagenProductoResponse(
         String nombre,
         String slug,
         String imagenUrl,
-        String imagenThumbUrl
+        String imagenThumbUrl,
+        Boolean preventa
 ) {
 }

@@ -487,7 +487,16 @@ public class EcommerceProductoPublicService {
                 producto.getImagenGlobalUrl(),
                 producto.getImagenGlobalThumbUrl(),
                 producto.getGuiaTallasUrl(),
-                producto.getGuiaTallasThumbUrl());
+                producto.getGuiaTallasThumbUrl(),
+                preventaActiva(producto),
+                preventaActiva(producto) ? producto.getFechaEnvioPreventa() : null);
+    }
+
+    private boolean preventaActiva(Producto producto) {
+        return producto != null
+                && Boolean.TRUE.equals(producto.getPreventa())
+                && producto.getFechaEnvioPreventa() != null
+                && producto.getFechaEnvioPreventa().isAfter(java.time.LocalDate.now());
     }
 
     private List<EcommerceInicioImagenProductoResponse> obtenerImagenesProductosInicio() {
@@ -498,7 +507,8 @@ public class EcommerceProductoPublicService {
                         producto.getNombre(),
                         producto.getSlug(),
                         producto.getImagenGlobalUrl(),
-                        producto.getImagenGlobalThumbUrl()))
+                        producto.getImagenGlobalThumbUrl(),
+                        preventaActiva(producto)))
                 .toList();
     }
 

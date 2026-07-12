@@ -1,5 +1,6 @@
 package com.sistemapos.sistematextil.util.producto;
 
+import java.time.LocalDate;
 import java.util.List;
 
 import jakarta.validation.Valid;
@@ -35,6 +36,10 @@ public record ProductoCompletoUpdateRequest(
         String guiaTallasThumbUrl,
 
         Boolean publicarEcommerce,
+
+        Boolean preventa,
+
+        LocalDate fechaEnvioPreventa,
 
         @NotEmpty(message = "Ingrese variantes del producto")
         @Valid

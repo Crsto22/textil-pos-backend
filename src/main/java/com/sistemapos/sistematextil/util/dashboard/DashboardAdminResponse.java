@@ -27,6 +27,7 @@ public record DashboardAdminResponse(
             BigDecimal ventasTotalesFiltro,
             BigDecimal ventasDelDia,
             BigDecimal ventasDelMes,
+            BigDecimal ventasMesAnterior,
             BigDecimal ticketPromedio,
             long comprobantesEmitidos,
             long comprobantesAnulados,

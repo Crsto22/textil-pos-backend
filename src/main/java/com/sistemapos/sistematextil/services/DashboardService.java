@@ -109,8 +109,11 @@ public class DashboardService {
         LocalDateTime inicioDia = hoy.atStartOfDay();
         LocalDateTime finDiaExclusive = hoy.plusDays(1).atStartOfDay();
         YearMonth mesActual = YearMonth.from(hoy);
+        YearMonth mesAnterior = mesActual.minusMonths(1);
         LocalDateTime inicioMes = mesActual.atDay(1).atStartOfDay();
         LocalDateTime finMesExclusive = mesActual.plusMonths(1).atDay(1).atStartOfDay();
+        LocalDateTime inicioMesAnterior = mesAnterior.atDay(1).atStartOfDay();
+        LocalDateTime finMesAnteriorExclusive = inicioMes;
 
         BigDecimal ventasTotales = asegurarMoneda(
                 ventaRepository.sumarTotalEmitido(idSucursal, null, desde, hastaExclusiva));
@@ -125,6 +128,8 @@ public class DashboardService {
                 ventaRepository.sumarTotalEmitido(idSucursal, null, inicioDia, finDiaExclusive));
         BigDecimal ventasDelMes = asegurarMoneda(
                 ventaRepository.sumarTotalEmitido(idSucursal, null, inicioMes, finMesExclusive));
+        BigDecimal ventasMesAnterior = asegurarMoneda(
+                ventaRepository.sumarTotalEmitido(idSucursal, null, inicioMesAnterior, finMesAnteriorExclusive));
         BigDecimal ticketPromedio = asegurarMoneda(
                 ventaRepository.promedioVentaEmitida(idSucursal, null, desde, hastaExclusiva));
 
@@ -190,6 +195,7 @@ public class DashboardService {
                         ventasTotales,
                         ventasDelDia,
                         ventasDelMes,
+                        ventasMesAnterior,
                         ticketPromedio,
                         ticketsEmitidos,
                         comprobantesAnulados,

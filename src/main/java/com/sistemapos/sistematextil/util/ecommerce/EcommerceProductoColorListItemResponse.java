@@ -1,5 +1,6 @@
 package com.sistemapos.sistematextil.util.ecommerce;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -27,7 +28,9 @@ public record EcommerceProductoColorListItemResponse(
             String imagenGlobalUrl,
             String imagenGlobalThumbUrl,
             String guiaTallasUrl,
-            String guiaTallasThumbUrl
+            String guiaTallasThumbUrl,
+            Boolean preventa,
+            LocalDate fechaEnvioPreventa
     ) {
     }
 

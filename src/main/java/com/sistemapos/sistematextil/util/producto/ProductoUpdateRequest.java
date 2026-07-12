@@ -1,5 +1,7 @@
 package com.sistemapos.sistematextil.util.producto;
 
+import java.time.LocalDate;
+
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -30,6 +32,10 @@ public record ProductoUpdateRequest(
         @Size(max = 600, message = "La url del thumbnail de la guia de tallas no debe superar 600 caracteres")
         String guiaTallasThumbUrl,
 
-        Boolean publicarEcommerce
+        Boolean publicarEcommerce,
+
+        Boolean preventa,
+
+        LocalDate fechaEnvioPreventa
 ) {
 }

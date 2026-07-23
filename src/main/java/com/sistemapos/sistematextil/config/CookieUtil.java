@@ -1,5 +1,6 @@
 package com.sistemapos.sistematextil.config;
 
+import jakarta.annotation.PostConstruct;
 import org.springframework.http.ResponseCookie;
 import org.springframework.stereotype.Component;
 
@@ -13,6 +14,19 @@ public class CookieUtil {
     private static final String COOKIE_PATH = "/api/auth";
 
     private final JwtConfig jwtConfig;
+
+    @PostConstruct
+    void validarConfiguracion() {
+        String sameSite = resolverSameSite();
+        if ("None".equalsIgnoreCase(sameSite) && !Boolean.TRUE.equals(jwtConfig.getCookieSecure())) {
+            throw new IllegalStateException("COOKIE_SAME_SITE=None requiere COOKIE_SECURE=true");
+        }
+        String domain = jwtConfig.getCookieDomain();
+        if (domain != null && !domain.isBlank()
+                && !domain.trim().matches("^\\.?[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$")) {
+            throw new IllegalStateException("COOKIE_DOMAIN debe ser un dominio valido sin protocolo ni ruta");
+        }
+    }
 
     // Crear cookie con refresh token
     public ResponseCookie createRefreshTokenCookie(String refreshToken) {

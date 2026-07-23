@@ -9,6 +9,7 @@ public record TurnoListItemResponse(
         String nombre,
         LocalTime horaInicio,
         LocalTime horaFin,
+        Integer toleranciaMinutos,
         List<DiaSemana> dias,
         List<TurnoDiaHorarioResponse> horariosDias,
         String estado,

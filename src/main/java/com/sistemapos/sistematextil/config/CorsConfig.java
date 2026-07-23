@@ -33,11 +33,10 @@ public class CorsConfig {
         if (origins.isEmpty()) {
             throw new IllegalStateException("Configure CORS_ALLOWED_ORIGINS con el dominio HTTPS del frontend");
         }
-        if (origins.stream().anyMatch("*"::equals)) {
-            configuration.setAllowedOriginPatterns(List.of("*"));
-        } else {
-            configuration.setAllowedOrigins(origins);
+        if (origins.stream().anyMatch(origin -> origin.contains("*"))) {
+            throw new IllegalStateException("CORS_ALLOWED_ORIGINS no permite comodines cuando se usan credenciales");
         }
+        configuration.setAllowedOrigins(origins);
         configuration.setAllowedMethods(Arrays.stream(allowedMethods.split(","))
                 .map(String::trim)
                 .filter(method -> !method.isBlank())

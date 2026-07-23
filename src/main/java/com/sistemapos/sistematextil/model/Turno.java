@@ -49,6 +49,9 @@ public class Turno {
     @Column(name = "hora_fin", nullable = false)
     private LocalTime horaFin;
 
+    @Column(name = "tolerancia_minutos", nullable = false)
+    private Integer toleranciaMinutos = 10;
+
     @Convert(converter = EstadoActivoConverter.class)
     @Column(name = "activo", nullable = false)
     private String estado = "ACTIVO";
@@ -74,6 +77,9 @@ public class Turno {
         this.updatedAt = now;
         if (this.estado == null || this.estado.isBlank()) {
             this.estado = "ACTIVO";
+        }
+        if (this.toleranciaMinutos == null) {
+            this.toleranciaMinutos = 10;
         }
         this.deletedAt = null;
     }

@@ -36,6 +36,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.GET, "/actuator/health").permitAll()
                         .requestMatchers("/error").permitAll()
+                        .requestMatchers("/iclock/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/public/ecommerce/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/public/ecommerce/carrito/validar").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/public/ecommerce/pedidos", "/api/public/ecommerce/pedidos/**").permitAll()
@@ -48,6 +49,8 @@ public class SecurityConfig {
                         .requestMatchers("/api/dashboard")
                         .hasAnyAuthority("ADMINISTRADOR", "VENTAS", "ALMACEN", "VENTAS_ALMACEN", "SISTEMA")
                         .requestMatchers("/api/turno/**").hasAnyAuthority("ADMINISTRADOR", "SISTEMA")
+                        .requestMatchers("/api/trabajadores/**", "/api/dispositivos-asistencia/**", "/api/asistencia/**")
+                        .hasAnyAuthority("ADMINISTRADOR", "SISTEMA")
                         .requestMatchers("/api/usuario/**").hasAnyAuthority("ADMINISTRADOR", "SISTEMA")
                         .requestMatchers("/api/cliente/**")
                         .hasAnyAuthority("ADMINISTRADOR", "VENTAS", "VENTAS_ALMACEN", "SISTEMA")

@@ -3,6 +3,7 @@ package com.sistemapos.sistematextil.services;
 import java.time.LocalDateTime;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.List;
@@ -36,6 +37,7 @@ public class TurnoService {
 
     private static final String ESTADO_ACTIVO = "ACTIVO";
     private static final String ESTADO_INACTIVO = "INACTIVO";
+    private static final ZoneId ZONA_LIMA = ZoneId.of("America/Lima");
 
     private final TurnoRepository turnoRepository;
 
@@ -84,6 +86,7 @@ public class TurnoService {
             existente.setNombre(nombre);
             existente.setHoraInicio(request.horaInicio());
             existente.setHoraFin(request.horaFin());
+            existente.setToleranciaMinutos(request.toleranciaMinutos() != null ? request.toleranciaMinutos() : 10);
             existente.setEstado(ESTADO_ACTIVO);
             existente.setDeletedAt(null);
             existente.sincronizarHorariosSemana(horariosSemana);
@@ -94,6 +97,7 @@ public class TurnoService {
         turno.setNombre(nombre);
         turno.setHoraInicio(request.horaInicio());
         turno.setHoraFin(request.horaFin());
+        turno.setToleranciaMinutos(request.toleranciaMinutos() != null ? request.toleranciaMinutos() : 10);
         turno.setEstado(ESTADO_ACTIVO);
         turno.setDeletedAt(null);
         turno.sincronizarHorariosSemana(horariosSemana);
@@ -121,6 +125,9 @@ public class TurnoService {
         turno.setNombre(nombre);
         turno.setHoraInicio(request.horaInicio());
         turno.setHoraFin(request.horaFin());
+        if (request.toleranciaMinutos() != null) {
+            turno.setToleranciaMinutos(request.toleranciaMinutos());
+        }
         turno.setEstado(request.estado().trim().toUpperCase());
         turno.sincronizarHorariosSemana(horariosSemana);
 
@@ -156,16 +163,15 @@ public class TurnoService {
             throw new RuntimeException("El turno asignado al usuario esta inactivo");
         }
 
-        DiaSemana hoy = DiaSemana.fromJavaDayOfWeek(LocalDate.now().getDayOfWeek());
-        TurnoDia horarioHoy = obtenerHorarioPorDia(turno, hoy);
-        if (horarioHoy == null) {
-            throw new RuntimeException("El usuario no puede ingresar en un dia no habilitado para su turno");
-        }
-
-        LocalTime horaInicio = horarioHoy.getHoraInicio() != null ? horarioHoy.getHoraInicio() : turno.getHoraInicio();
-        LocalTime horaFin = horarioHoy.getHoraFin() != null ? horarioHoy.getHoraFin() : turno.getHoraFin();
-        LocalTime ahora = LocalTime.now();
-        if (ahora.isBefore(horaInicio) || ahora.isAfter(horaFin)) {
+        LocalDateTime ahoraLima = LocalDateTime.now(ZONA_LIMA);
+        LocalDate fechaHoy = ahoraLima.toLocalDate();
+        LocalTime ahora = ahoraLima.toLocalTime();
+        TurnoDia horarioHoy = obtenerHorarioPorDia(
+                turno, DiaSemana.fromJavaDayOfWeek(fechaHoy.getDayOfWeek()));
+        TurnoDia horarioAyer = obtenerHorarioPorDia(
+                turno, DiaSemana.fromJavaDayOfWeek(fechaHoy.minusDays(1).getDayOfWeek()));
+        if (!estaDentroDelHorario(turno, horarioHoy, ahora, false)
+                && !estaDentroDelHorario(turno, horarioAyer, ahora, true)) {
             throw new RuntimeException("El usuario no puede ingresar fuera del horario de su turno");
         }
     }
@@ -179,8 +185,8 @@ public class TurnoService {
         if (horaInicio == null || horaFin == null) {
             throw new RuntimeException("Ingrese horaInicio y horaFin");
         }
-        if (horaFin.equals(horaInicio) || horaFin.isBefore(horaInicio)) {
-            throw new RuntimeException("horaFin debe ser mayor que horaInicio");
+        if (horaFin.equals(horaInicio)) {
+            throw new RuntimeException("horaInicio y horaFin deben ser diferentes");
         }
     }
 
@@ -289,6 +295,19 @@ public class TurnoService {
                 .orElse(null);
     }
 
+    private boolean estaDentroDelHorario(Turno turno, TurnoDia horario, LocalTime ahora, boolean diaAnterior) {
+        if (horario == null) {
+            return false;
+        }
+        LocalTime inicio = horario.getHoraInicio() != null ? horario.getHoraInicio() : turno.getHoraInicio();
+        LocalTime fin = horario.getHoraFin() != null ? horario.getHoraFin() : turno.getHoraFin();
+        boolean nocturno = !fin.isAfter(inicio);
+        if (diaAnterior) {
+            return nocturno && !ahora.isAfter(fin);
+        }
+        return nocturno ? !ahora.isBefore(inicio) : !ahora.isBefore(inicio) && !ahora.isAfter(fin);
+    }
+
     private String normalizar(String value) {
         if (value == null) {
             return null;
@@ -303,6 +322,7 @@ public class TurnoService {
                 turno.getNombre(),
                 turno.getHoraInicio(),
                 turno.getHoraFin(),
+                turno.getToleranciaMinutos(),
                 obtenerDias(turno),
                 obtenerHorarios(turno),
                 turno.getEstado(),

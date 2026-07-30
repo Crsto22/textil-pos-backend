@@ -128,7 +128,7 @@ class AsistenciaServiceTest {
     }
 
     @Test
-    void rechazaCodigoInactivoYAceptaTrabajadorRotativoActivo() {
+    void conservaCodigoInactivoSinVincularYAceptaTrabajadorRotativoActivo() {
         DispositivoAsistenciaRepository dispositivos = mock(DispositivoAsistenciaRepository.class);
         TrabajadorRepository trabajadores = mock(TrabajadorRepository.class);
         MarcacionAsistenciaRepository marcaciones = mock(MarcacionAsistenciaRepository.class);
@@ -140,8 +140,9 @@ class AsistenciaServiceTest {
         String ahora = LocalDateTime.now(ZoneId.of("America/Lima"))
                 .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
 
-        assertThrows(IllegalArgumentException.class, () -> asistencia.recibirAdms("SN-1", "ATTLOG", "1001\t" + ahora));
-        verifyNoInteractions(marcaciones);
+        assertEquals(1, asistencia.recibirAdms("SN-1", "ATTLOG", "1001\t" + ahora));
+        verify(marcaciones).insertarSiNoExiste(anyInt(), anyInt(), org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.eq("1001"), any(), any(), any(), any());
 
         Trabajador rotativo = new Trabajador();
         rotativo.setIdTrabajador(7);
@@ -171,7 +172,7 @@ class AsistenciaServiceTest {
     }
 
     @Test
-    void aceptaFechaAdmsFuturaYRechazaCodigoDesconocido() {
+    void aceptaFechaAdmsFuturaYCodigoDesconocidoSinVincular() {
         DispositivoAsistenciaRepository dispositivos = mock(DispositivoAsistenciaRepository.class);
         TrabajadorRepository trabajadores = mock(TrabajadorRepository.class);
         MarcacionAsistenciaRepository marcaciones = mock(MarcacionAsistenciaRepository.class);
@@ -190,10 +191,11 @@ class AsistenciaServiceTest {
         assertEquals(1, asistencia.recibirAdms("SN-1", "ATTLOG", "1001\t" + futura));
 
         when(trabajadores.findByCodigoZktecoAndDeletedAtIsNull("1001")).thenReturn(java.util.Optional.empty());
-        assertThrows(IllegalArgumentException.class,
-                () -> asistencia.recibirAdms("SN-1", "ATTLOG", "1001\t" + ahora));
+        assertEquals(1, asistencia.recibirAdms("SN-1", "ATTLOG", "1001\t" + ahora));
 
         verify(marcaciones).insertarSiNoExiste(anyInt(), anyInt(), org.mockito.ArgumentMatchers.eq(7),
+                org.mockito.ArgumentMatchers.eq("1001"), any(), any(), any(), any());
+        verify(marcaciones).insertarSiNoExiste(anyInt(), anyInt(), org.mockito.ArgumentMatchers.isNull(),
                 org.mockito.ArgumentMatchers.eq("1001"), any(), any(), any(), any());
     }
 

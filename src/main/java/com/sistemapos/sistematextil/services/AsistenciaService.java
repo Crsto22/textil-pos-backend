@@ -724,7 +724,9 @@ public class AsistenciaService {
         validarEventosAdms(eventos);
         Map<String, Integer> trabajadores = new HashMap<>();
         for (AdmsMarcacion evento : eventos) {
-            trabajadores.computeIfAbsent(evento.codigoZkteco(), this::idTrabajadorActivoAdms);
+            if (!trabajadores.containsKey(evento.codigoZkteco())) {
+                trabajadores.put(evento.codigoZkteco(), idTrabajadorActivoAdms(evento.codigoZkteco()));
+            }
         }
         for (AdmsMarcacion evento : eventos) {
             marcacionRepository.insertarSiNoExiste(
@@ -792,12 +794,10 @@ public class AsistenciaService {
     }
 
     private Integer idTrabajadorActivoAdms(String codigoZkteco) {
-        Trabajador trabajador = trabajadorRepository.findByCodigoZktecoAndDeletedAtIsNull(codigoZkteco)
-                .orElseThrow(() -> new IllegalArgumentException("Codigo ZKTeco no registrado o inactivo"));
-        if (!"ACTIVO".equals(trabajador.getEstado())) {
-            throw new IllegalArgumentException("Codigo ZKTeco no registrado o inactivo");
-        }
-        return trabajador.getIdTrabajador();
+        return trabajadorRepository.findByCodigoZktecoAndDeletedAtIsNull(codigoZkteco)
+                .filter(trabajador -> "ACTIVO".equals(trabajador.getEstado()))
+                .map(Trabajador::getIdTrabajador)
+                .orElse(null);
     }
 
     private void aplicarTrabajador(Trabajador trabajador, TrabajadorRequest request, boolean creando) {

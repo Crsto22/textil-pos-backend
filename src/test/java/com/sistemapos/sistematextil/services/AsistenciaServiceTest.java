@@ -107,24 +107,19 @@ class AsistenciaServiceTest {
     }
 
     @Test
-    void aceptaMarcacionesAdmsAntiguas() {
+    void rechazaMarcacionesAdmsFueraDeRangoAntesDeInsertar() {
         DispositivoAsistenciaRepository dispositivos = mock(DispositivoAsistenciaRepository.class);
         TrabajadorRepository trabajadores = mock(TrabajadorRepository.class);
         MarcacionAsistenciaRepository marcaciones = mock(MarcacionAsistenciaRepository.class);
         AsistenciaService asistencia = servicioAdms(trabajadores, dispositivos, marcaciones);
         when(dispositivos.findByNumeroSerieIgnoreCase("SN-1")).thenReturn(java.util.Optional.of(dispositivoActivo()));
-        Trabajador trabajador = new Trabajador();
-        trabajador.setIdTrabajador(7);
-        trabajador.setEstado("ACTIVO");
-        when(trabajadores.findByCodigoZktecoAndDeletedAtIsNull("1001"))
-                .thenReturn(java.util.Optional.of(trabajador));
         String fechaAntigua = LocalDateTime.now(ZoneId.of("America/Lima")).minusDays(8)
                 .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
 
-        assertEquals(1, asistencia.recibirAdms("SN-1", "ATTLOG", "1001\t" + fechaAntigua));
+        assertThrows(IllegalArgumentException.class,
+                () -> asistencia.recibirAdms("SN-1", "ATTLOG", "1001\t" + fechaAntigua));
 
-        verify(marcaciones).insertarSiNoExiste(anyInt(), anyInt(), org.mockito.ArgumentMatchers.eq(7),
-                org.mockito.ArgumentMatchers.eq("1001"), any(), any(), any(), any());
+        verifyNoInteractions(trabajadores, marcaciones);
     }
 
     @Test
@@ -172,7 +167,7 @@ class AsistenciaServiceTest {
     }
 
     @Test
-    void aceptaFechaAdmsFuturaYCodigoDesconocidoSinVincular() {
+    void rechazaFechaAdmsFuturaYConservaCodigoDesconocidoSinVincular() {
         DispositivoAsistenciaRepository dispositivos = mock(DispositivoAsistenciaRepository.class);
         TrabajadorRepository trabajadores = mock(TrabajadorRepository.class);
         MarcacionAsistenciaRepository marcaciones = mock(MarcacionAsistenciaRepository.class);
@@ -183,18 +178,12 @@ class AsistenciaServiceTest {
         String ahora = LocalDateTime.now(ZoneId.of("America/Lima"))
                 .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
 
-        Trabajador trabajador = new Trabajador();
-        trabajador.setIdTrabajador(7);
-        trabajador.setEstado("ACTIVO");
-        when(trabajadores.findByCodigoZktecoAndDeletedAtIsNull("1001"))
-                .thenReturn(java.util.Optional.of(trabajador));
-        assertEquals(1, asistencia.recibirAdms("SN-1", "ATTLOG", "1001\t" + futura));
+        assertThrows(IllegalArgumentException.class,
+                () -> asistencia.recibirAdms("SN-1", "ATTLOG", "1001\t" + futura));
 
         when(trabajadores.findByCodigoZktecoAndDeletedAtIsNull("1001")).thenReturn(java.util.Optional.empty());
         assertEquals(1, asistencia.recibirAdms("SN-1", "ATTLOG", "1001\t" + ahora));
 
-        verify(marcaciones).insertarSiNoExiste(anyInt(), anyInt(), org.mockito.ArgumentMatchers.eq(7),
-                org.mockito.ArgumentMatchers.eq("1001"), any(), any(), any(), any());
         verify(marcaciones).insertarSiNoExiste(anyInt(), anyInt(), org.mockito.ArgumentMatchers.isNull(),
                 org.mockito.ArgumentMatchers.eq("1001"), any(), any(), any(), any());
     }
@@ -754,6 +743,8 @@ class AsistenciaServiceTest {
                 dispositivos, marcaciones, mock(SucursalRepository.class), mock(TurnoRepository.class),
                 mock(UsuarioRepository.class));
         ReflectionTestUtils.setField(asistencia, "admsMaxEvents", 1000);
+        ReflectionTestUtils.setField(asistencia, "admsMaxPastDays", 7);
+        ReflectionTestUtils.setField(asistencia, "admsMaxFutureMinutes", 10);
         ReflectionTestUtils.setField(asistencia, "admsMaxBodyBytes", 256 * 1024);
         return asistencia;
     }

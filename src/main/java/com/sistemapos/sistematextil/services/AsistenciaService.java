@@ -94,6 +94,12 @@ public class AsistenciaService {
     @Value("${asistencia.adms.max-events:1000}")
     private int admsMaxEvents;
 
+    @Value("${asistencia.adms.max-past-days:7}")
+    private int admsMaxPastDays;
+
+    @Value("${asistencia.adms.max-future-minutes:10}")
+    private int admsMaxFutureMinutes;
+
     @Value("${asistencia.adms.max-body-bytes:262144}")
     private int admsMaxBodyBytes = 256 * 1024;
 
@@ -721,7 +727,7 @@ public class AsistenciaService {
 
         List<AdmsMarcacion> eventos = parsearAdms(body);
         LocalDateTime recibidoAt = ahoraLima();
-        validarEventosAdms(eventos);
+        validarEventosAdms(eventos, recibidoAt);
         Map<String, Integer> trabajadores = new HashMap<>();
         for (AdmsMarcacion evento : eventos) {
             if (!trabajadores.containsKey(evento.codigoZkteco())) {
@@ -784,12 +790,19 @@ public class AsistenciaService {
         return eventos;
     }
 
-    private void validarEventosAdms(List<AdmsMarcacion> eventos) {
-        if (admsMaxEvents < 1) {
+    private void validarEventosAdms(List<AdmsMarcacion> eventos, LocalDateTime recibidoAt) {
+        if (admsMaxEvents < 1 || admsMaxPastDays < 0 || admsMaxFutureMinutes < 0) {
             throw new IllegalStateException("Configuracion ADMS invalida");
         }
         if (eventos.size() > admsMaxEvents) {
             throw new IllegalArgumentException("Lote ADMS excede el maximo permitido");
+        }
+        LocalDateTime minimo = recibidoAt.minusDays(admsMaxPastDays);
+        LocalDateTime maximo = recibidoAt.plusMinutes(admsMaxFutureMinutes);
+        for (AdmsMarcacion evento : eventos) {
+            if (evento.fechaHora().isBefore(minimo) || evento.fechaHora().isAfter(maximo)) {
+                throw new IllegalArgumentException("Fecha de marcacion ADMS fuera del rango permitido");
+            }
         }
     }
 

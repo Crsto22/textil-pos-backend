@@ -56,8 +56,7 @@ public final class AsistenciaExcelExporter {
 
             crearHojaAsistencia(workbook, estilos, porTrabajador, desde, hasta, filtros, usuario, sucursalFiltro);
             crearHojaHoras(workbook, estilos, porTrabajador, desde, hasta, filtros, usuario, sucursalFiltro);
-            crearHojaDetalle(workbook, estilos, resumen, desde, hasta, filtros, usuario, sucursalFiltro);
-            crearHojaSesiones(workbook, estilos, resumen, desde, hasta, filtros, usuario, sucursalFiltro);
+            crearHojaRotativos(workbook, estilos, resumen, desde, hasta, filtros, usuario, sucursalFiltro);
 
             workbook.write(output);
             return output.toByteArray();
@@ -114,6 +113,56 @@ public final class AsistenciaExcelExporter {
         }
         ajustarColumnas(sheet, 10);
         sheet.createFreezePane(2, 7);
+    }
+
+    private static void crearHojaRotativos(
+            Workbook workbook,
+            Estilos estilos,
+            List<ResumenResponse> resumen,
+            LocalDate desde,
+            LocalDate hasta,
+            String filtros,
+            Usuario usuario,
+            Sucursal sucursalFiltro) {
+        Sheet sheet = workbook.createSheet("Rotativos por sucursal");
+        int rowIndex = cabecera(sheet, "ROTATIVOS POR SUCURSAL", desde, hasta, filtros, usuario, sucursalFiltro) + 1;
+        String[] headers = { "FECHA", "CODIGO", "TRABAJADOR", "SUCURSAL ENTRADA", "SUCURSAL SALIDA",
+                "ENTRADA", "SALIDA", "DURACION", "ESTADO" };
+        int headerRow = rowIndex;
+        rowIndex = header(sheet, rowIndex, headers, estilos);
+        int dataStart = rowIndex;
+        for (ResumenResponse item : resumen) {
+            if (!item.rotativo()) {
+                continue;
+            }
+            for (SesionAsistenciaResponse sesion : item.sesiones()) {
+                Row row = sheet.createRow(rowIndex++);
+                celda(row, 0, item.fecha().format(FECHA), estilos.texto);
+                celda(row, 1, item.codigoZkteco(), estilos.texto);
+                celda(row, 2, item.trabajador(), estilos.texto);
+                celda(row, 3, sesion.sucursal(), estilos.texto);
+                celda(row, 4, valor(sesion.sucursalSalida(), "-"), estilos.texto);
+                celda(row, 5, fechaHora(sesion.entrada()), estilos.texto);
+                celda(row, 6, fechaHora(sesion.salida()), estilos.texto);
+                Cell duracion = row.createCell(7);
+                if (sesion.completa()) {
+                    duracion.setCellValue(sesion.segundosTrabajados() / 86400d);
+                    duracion.setCellStyle(estilos.horas);
+                } else {
+                    duracion.setCellValue("-");
+                    duracion.setCellStyle(estilos.centrada);
+                }
+                celda(row, 8, sesion.completa() ? "COMPLETA" : "INCOMPLETA",
+                        sesion.completa() ? estilos.verde : estilos.rojo);
+            }
+        }
+        if (rowIndex == dataStart) {
+            sinResultados(sheet, rowIndex, estilos);
+        } else {
+            sheet.setAutoFilter(new CellRangeAddress(headerRow, rowIndex - 1, 0, headers.length - 1));
+        }
+        ajustarColumnas(sheet, headers.length);
+        sheet.createFreezePane(0, headerRow + 1);
     }
 
     private static int bloqueSemanal(
@@ -176,105 +225,6 @@ public final class AsistenciaExcelExporter {
         return rowIndex;
     }
 
-    private static void crearHojaDetalle(
-            Workbook workbook,
-            Estilos estilos,
-            List<ResumenResponse> resumen,
-            LocalDate desde,
-            LocalDate hasta,
-            String filtros,
-            Usuario usuario,
-            Sucursal sucursalFiltro) {
-        Sheet sheet = workbook.createSheet("Detalle diario");
-        int rowIndex = cabecera(sheet, "DETALLE DIARIO", desde, hasta, filtros, usuario, sucursalFiltro) + 1;
-        String[] headers = { "FECHA", "CODIGO", "TRABAJADOR", "MODALIDAD", "SUCURSAL BASE",
-                "SUCURSALES VISITADAS", "TURNO", "PRIMERA MARCA", "ULTIMA MARCA", "ESTADO",
-                "TARDANZA", "SALIDA ANTICIPADA", "HORAS", "MARCACIONES" };
-        int headerRow = rowIndex;
-        rowIndex = header(sheet, rowIndex, headers, estilos);
-        if (resumen.isEmpty()) {
-            sinResultados(sheet, rowIndex, estilos);
-        } else {
-            for (ResumenResponse item : resumen) {
-                Row row = sheet.createRow(rowIndex++);
-                celda(row, 0, item.fecha().format(FECHA), estilos.texto);
-                celda(row, 1, item.codigoZkteco(), estilos.texto);
-                celda(row, 2, item.trabajador(), estilos.texto);
-                celda(row, 3, item.rotativo() ? "ROTATIVO" : "FIJO", estilos.texto);
-                celda(row, 4, valor(item.sucursal(), "Sin sucursal base"), estilos.texto);
-                celda(row, 5, item.sucursalesMarcacion().stream().map(s -> s.sucursal()).distinct()
-                        .reduce((a, b) -> a + ", " + b).orElse("-"), estilos.texto);
-                celda(row, 6, valor(item.turno(), "Sin turno"), estilos.texto);
-                celda(row, 7, fechaHora(item.primeraMarcacion()), estilos.texto);
-                celda(row, 8, fechaHora(item.ultimaMarcacion()), estilos.texto);
-                celda(row, 9, estadoVisible(item), esDiaFuturo(item) ? estilos.gris : estilos.estado(item));
-                celdaNumero(row, 10, item.minutosTardanza(), estilos.numero);
-                celdaNumero(row, 11, item.minutosSalidaAnticipada(), estilos.numero);
-                Cell horas = row.createCell(12);
-                if (tieneHoras(item)) {
-                    horas.setCellValue(item.segundosTrabajados() / 86400d);
-                    horas.setCellStyle(estilos.horas);
-                } else {
-                    horas.setCellValue("-");
-                    horas.setCellStyle(estilos.centrada);
-                }
-                celdaNumero(row, 13, item.cantidadMarcaciones(), estilos.numero);
-            }
-            sheet.setAutoFilter(new CellRangeAddress(headerRow, rowIndex - 1, 0, headers.length - 1));
-        }
-        ajustarColumnas(sheet, headers.length);
-        sheet.createFreezePane(0, headerRow + 1);
-    }
-
-    private static void crearHojaSesiones(
-            Workbook workbook,
-            Estilos estilos,
-            List<ResumenResponse> resumen,
-            LocalDate desde,
-            LocalDate hasta,
-            String filtros,
-            Usuario usuario,
-            Sucursal sucursalFiltro) {
-        Sheet sheet = workbook.createSheet("Sesiones por sucursal");
-        int rowIndex = cabecera(sheet, "SESIONES POR SUCURSAL", desde, hasta, filtros, usuario, sucursalFiltro) + 1;
-        String[] headers = { "FECHA", "CODIGO", "TRABAJADOR", "SUCURSAL ENTRADA", "SUCURSAL SALIDA", "ENTRADA", "SALIDA",
-                "DISPOSITIVO ENTRADA", "DISPOSITIVO SALIDA", "DURACION", "ESTADO" };
-        int headerRow = rowIndex;
-        rowIndex = header(sheet, rowIndex, headers, estilos);
-        int dataStart = rowIndex;
-        for (ResumenResponse item : resumen) {
-            for (SesionAsistenciaResponse sesion : item.sesiones()) {
-                Row row = sheet.createRow(rowIndex++);
-                celda(row, 0, item.fecha().format(FECHA), estilos.texto);
-                celda(row, 1, item.codigoZkteco(), estilos.texto);
-                celda(row, 2, item.trabajador(), estilos.texto);
-                celda(row, 3, sesion.sucursal(), estilos.texto);
-                celda(row, 4, valor(sesion.sucursalSalida(), "-"), estilos.texto);
-                celda(row, 5, fechaHora(sesion.entrada()), estilos.texto);
-                celda(row, 6, fechaHora(sesion.salida()), estilos.texto);
-                celda(row, 7, valor(sesion.dispositivoEntrada(), "-"), estilos.texto);
-                celda(row, 8, valor(sesion.dispositivoSalida(), "-"), estilos.texto);
-                Cell duracion = row.createCell(9);
-                if (sesion.completa()) {
-                    duracion.setCellValue(sesion.segundosTrabajados() / 86400d);
-                    duracion.setCellStyle(estilos.horas);
-                } else {
-                    duracion.setCellValue("-");
-                    duracion.setCellStyle(estilos.centrada);
-                }
-                celda(row, 10, sesion.completa() ? "COMPLETA" : "INCOMPLETA",
-                        sesion.completa() ? estilos.verde : estilos.rojo);
-            }
-        }
-        if (rowIndex == dataStart) {
-            sinResultados(sheet, rowIndex, estilos);
-        } else {
-            sheet.setAutoFilter(new CellRangeAddress(headerRow, rowIndex - 1, 0, headers.length - 1));
-        }
-        ajustarColumnas(sheet, headers.length);
-        sheet.createFreezePane(0, headerRow + 1);
-    }
-
     private static int cabecera(
             Sheet sheet,
             String titulo,
@@ -333,16 +283,6 @@ public final class AsistenciaExcelExporter {
 
     private static boolean esDiaFuturo(ResumenResponse dia) {
         return dia.fecha().isAfter(LocalDate.now(ZONA_LIMA));
-    }
-
-    private static String estadoVisible(ResumenResponse dia) {
-        if (esDiaFuturo(dia)) {
-            return "DIA FUTURO";
-        }
-        if (dia.salidaAnticipada()) {
-            return "TARDANZA".equals(dia.estado()) ? "TARDANZA + SALIDA ANTICIPADA" : "SALIDA ANTICIPADA";
-        }
-        return dia.estado();
     }
 
     private static void escribirHoras(Cell cell, ResumenResponse dia, Estilos estilos) {
@@ -410,12 +350,6 @@ public final class AsistenciaExcelExporter {
         cell.setCellStyle(style);
     }
 
-    private static void celdaNumero(Row row, int column, long value, CellStyle style) {
-        Cell cell = row.createCell(column);
-        cell.setCellValue(value);
-        cell.setCellStyle(style);
-    }
-
     private static String fechaHora(LocalDateTime value) {
         return value == null ? "-" : value.format(FECHA_HORA);
     }
@@ -442,7 +376,6 @@ public final class AsistenciaExcelExporter {
     private static final class Estilos {
         private final CellStyle texto;
         private final CellStyle centrada;
-        private final CellStyle numero;
         private final CellStyle horas;
         private final CellStyle totalHoras;
         private final CellStyle header;
@@ -457,7 +390,6 @@ public final class AsistenciaExcelExporter {
         private Estilos(Workbook workbook) {
             texto = base(workbook, HorizontalAlignment.LEFT);
             centrada = base(workbook, HorizontalAlignment.CENTER);
-            numero = base(workbook, HorizontalAlignment.RIGHT);
             horas = base(workbook, HorizontalAlignment.CENTER);
             horas.setDataFormat(workbook.createDataFormat().getFormat("[h]:mm:ss"));
             totalHoras = workbook.createCellStyle();

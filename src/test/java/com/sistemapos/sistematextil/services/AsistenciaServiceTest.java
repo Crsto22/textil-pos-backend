@@ -1,7 +1,6 @@
 package com.sistemapos.sistematextil.services;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -566,6 +565,16 @@ class AsistenciaServiceTest {
         assertEquals(1, lunesCentral.sesiones().size());
         assertEquals("Central", lunesCentral.sucursalesMarcacion().getFirst().sucursal());
         assertEquals("Gamarra", lunesCentral.sesiones().getFirst().sucursalSalida());
+        assertEquals(1, asistencia.obtenerResumenSemanal(
+                lunes, lunes.plusDays(6), null, 1, null, null, null, null, 0)
+                .content().getFirst().dias().size());
+        ResumenResponse lunesGamarra = asistencia.obtenerResumenSemanal(
+                lunes, lunes.plusDays(6), null, 2, null, null, null, null, 0)
+                .content().getFirst().dias().getFirst();
+        assertEquals(43200, lunesGamarra.segundosTrabajados());
+        assertEquals("Gamarra", lunesGamarra.sucursalesMarcacion().getFirst().sucursal());
+        assertEquals(0, asistencia.obtenerResumenSemanal(
+                lunes, lunes.plusDays(6), null, 3, null, null, null, null, 0).totalElements());
     }
 
     @Test
@@ -609,23 +618,31 @@ class AsistenciaServiceTest {
         when(marcaciones.findByTrabajador_IdTrabajadorInAndFechaHoraBetweenOrderByFechaHoraAsc(
                 anyList(), any(LocalDateTime.class), any(LocalDateTime.class))).thenReturn(marcas);
         when(sucursales.findByIdSucursalAndDeletedAtIsNull(1)).thenReturn(java.util.Optional.of(central));
+        when(sucursales.findByIdSucursalAndDeletedAtIsNull(2)).thenReturn(java.util.Optional.of(marcas.getLast().getDispositivo().getSucursal()));
 
         byte[] todas = asistencia.exportarResumenExcel(
                 lunes, lunes.plusDays(6), null, null, null, null, null, null, "admin@kiments.pe");
         byte[] soloCentral = asistencia.exportarResumenExcel(
                 lunes, lunes.plusDays(6), null, 1, null, null, null, null, "admin@kiments.pe");
+        byte[] soloGamarra = asistencia.exportarResumenExcel(
+                lunes, lunes.plusDays(6), null, 2, null, null, null, null, "admin@kiments.pe");
 
         try (Workbook workbookTodas = WorkbookFactory.create(new ByteArrayInputStream(todas));
-                Workbook workbookCentral = WorkbookFactory.create(new ByteArrayInputStream(soloCentral))) {
-            List<String> sedesTodas = valoresColumna(workbookTodas, "Sesiones por sucursal", 3);
-            List<String> salidasTodas = valoresColumna(workbookTodas, "Sesiones por sucursal", 4);
-            List<String> sedesCentral = valoresColumna(workbookCentral, "Sesiones por sucursal", 3);
+                Workbook workbookCentral = WorkbookFactory.create(new ByteArrayInputStream(soloCentral));
+                Workbook workbookGamarra = WorkbookFactory.create(new ByteArrayInputStream(soloGamarra))) {
+            List<String> sedesTodas = valoresColumna(workbookTodas, "Rotativos por sucursal", 3);
+            List<String> salidasTodas = valoresColumna(workbookTodas, "Rotativos por sucursal", 4);
+            List<String> sedesCentral = valoresColumna(workbookCentral, "Rotativos por sucursal", 3);
+            List<String> salidasGamarra = valoresColumna(workbookGamarra, "Rotativos por sucursal", 4);
             assertTrue(sedesTodas.contains("Central"));
             assertTrue(salidasTodas.contains("Gamarra"));
             assertTrue(sedesCentral.contains("Central"));
-            assertFalse(sedesCentral.contains("Gamarra"));
+            assertTrue(salidasGamarra.contains("Gamarra"));
             assertEquals(43200 / 86400d,
                     workbookCentral.getSheet("Horas trabajadas").getRow(10).getCell(2).getNumericCellValue(),
+                    0.0000001);
+            assertEquals(43200 / 86400d,
+                    workbookGamarra.getSheet("Horas trabajadas").getRow(10).getCell(2).getNumericCellValue(),
                     0.0000001);
         }
     }
@@ -657,6 +674,18 @@ class AsistenciaServiceTest {
         assertEquals(900, resultado.indicadores().minutosTrabajados());
         assertEquals(1, resultado.indicadores().registrosIncompletos());
         assertEquals(900, resultado.horasPorSucursal().getFirst().minutosTrabajados());
+
+        ResumenResponse cruce = new ResumenResponse(
+                3, "1003", "Luz Rotativa", null, null, null, null, fecha, null, null,
+                fecha.atTime(6, 0), fecha.atTime(18, 0), "PRESENTE",
+                0, 720, 43200, 2, false, 0, true, List.of(),
+                List.of(new SesionAsistenciaResponse(1, "Central", fecha.atTime(6, 0),
+                        fecha.atTime(18, 0), "Reloj 1", "Reloj 2",
+                        2, "Gamarra", 720, 43200, true)));
+        AnalisisResponse gamarra = service.construirAnalisis(List.of(cruce), fecha, fecha, 2, 0);
+
+        assertEquals(720, gamarra.indicadores().minutosTrabajados());
+        assertEquals("Gamarra", gamarra.horasPorSucursal().getFirst().sucursal());
     }
 
     private ResumenResponse resumen(

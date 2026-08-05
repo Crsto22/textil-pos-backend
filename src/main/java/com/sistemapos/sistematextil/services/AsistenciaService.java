@@ -391,8 +391,12 @@ public class AsistenciaService {
         List<ResumenSemanalResponse> resumen = porTrabajador.values().stream()
                 .filter(dias -> idSucursal == null || dias.stream().anyMatch(dia -> coincideSucursal(dia, idSucursal)))
                 .map(dias -> {
+                    boolean esRotativo = dias.getFirst().rotativo();
                     List<ResumenResponse> diasFiltrados = idSucursal == null ? dias
-                            : dias.stream().map(dia -> filtrarPorSucursal(dia, idSucursal)).toList();
+                            : dias.stream()
+                                    .filter(dia -> !esRotativo || coincideSucursal(dia, idSucursal))
+                                    .map(dia -> filtrarPorSucursal(dia, idSucursal))
+                                    .toList();
                     ResumenResponse primero = diasFiltrados.getFirst();
                     return new ResumenSemanalResponse(primero.idTrabajador(), primero.codigoZkteco(),
                             primero.trabajador(), primero.idSucursal(), primero.sucursal(),
@@ -424,8 +428,14 @@ public class AsistenciaService {
         List<ResumenResponse> filtrado = porTrabajador.values().stream()
                 .filter(dias -> idSucursal == null
                         || dias.stream().anyMatch(dia -> coincideSucursal(dia, idSucursal)))
-                .map(dias -> idSucursal == null ? dias
-                        : dias.stream().map(dia -> filtrarPorSucursal(dia, idSucursal)).toList())
+                .map(dias -> {
+                    boolean esRotativo = dias.getFirst().rotativo();
+                    return idSucursal == null ? dias
+                            : dias.stream()
+                                    .filter(dia -> !esRotativo || coincideSucursal(dia, idSucursal))
+                                    .map(dia -> filtrarPorSucursal(dia, idSucursal))
+                                    .toList();
+                })
                 .filter(dias -> estadoNormalizado == null
                         || dias.stream().anyMatch(dia -> coincideEstado(dia, estadoNormalizado)))
                 .flatMap(List::stream)
@@ -498,9 +508,11 @@ public class AsistenciaService {
         for (ResumenResponse item : resumen) {
             if (item.rotativo()) {
                 item.sesiones().stream().filter(SesionAsistenciaResponse::completa)
-                        .filter(sesion -> idSucursal == null || idSucursal.equals(sesion.idSucursal()))
-                        .forEach(sesion -> acumularSucursal(
-                                sucursales, sesion.idSucursal(), sesion.sucursal(), sesion.segundosTrabajados()));
+                        .filter(sesion -> idSucursal == null || sesionCoincideSucursal(sesion, idSucursal))
+                        .forEach(sesion -> acumularSucursal(sucursales,
+                                idSucursal == null ? sesion.idSucursal() : idSucursal,
+                                idSucursal == null ? sesion.sucursal() : nombreSucursalSesion(sesion, idSucursal),
+                                sesion.segundosTrabajados()));
             } else if (item.idSucursal() != null && (idSucursal == null || idSucursal.equals(item.idSucursal()))) {
                 acumularSucursal(sucursales, item.idSucursal(), item.sucursal(), item.segundosTrabajados());
             }
@@ -551,7 +563,7 @@ public class AsistenciaService {
             return idSucursal == null || idSucursal.equals(item.idSucursal()) ? item.segundosTrabajados() : 0;
         }
         return item.sesiones().stream().filter(SesionAsistenciaResponse::completa)
-                .filter(sesion -> idSucursal == null || idSucursal.equals(sesion.idSucursal()))
+                .filter(sesion -> idSucursal == null || sesionCoincideSucursal(sesion, idSucursal))
                 .mapToLong(SesionAsistenciaResponse::segundosTrabajados).sum();
     }
 
@@ -619,6 +631,9 @@ public class AsistenciaService {
                 }
                 ResumenResponse item = calcularResumen(
                         trabajador, fecha, marcaciones.getOrDefault(trabajador.getIdTrabajador(), List.of()), ahora);
+                if (trabajador.isRotativo() && item.cantidadMarcaciones() == 0) {
+                    continue;
+                }
                 resumen.add(item);
             }
         }
@@ -657,7 +672,7 @@ public class AsistenciaService {
 
     private boolean coincideSucursal(ResumenResponse item, Integer idSucursal) {
         if (!item.sesiones().isEmpty()) {
-            return item.sesiones().stream().anyMatch(sesion -> idSucursal.equals(sesion.idSucursal()));
+            return item.sesiones().stream().anyMatch(sesion -> sesionCoincideSucursal(sesion, idSucursal));
         }
         if (!item.sucursalesMarcacion().isEmpty()) {
             return item.sucursalesMarcacion().stream().anyMatch(sucursal -> idSucursal.equals(sucursal.idSucursal()));
@@ -667,7 +682,7 @@ public class AsistenciaService {
 
     private ResumenResponse filtrarPorSucursal(ResumenResponse item, Integer idSucursal) {
         List<SesionAsistenciaResponse> sesiones = item.sesiones().stream()
-                .filter(sesion -> idSucursal.equals(sesion.idSucursal()))
+                .filter(sesion -> sesionCoincideSucursal(sesion, idSucursal))
                 .toList();
         if (item.sesiones().isEmpty() && idSucursal.equals(item.idSucursal())) {
             return item;
@@ -700,8 +715,16 @@ public class AsistenciaService {
                 tardanza, segundos / 60, segundos, marcaciones, conservaSalidaAnticipada,
                 conservaSalidaAnticipada ? item.minutosSalidaAnticipada() : 0, item.rotativo(),
                 sesiones.isEmpty() ? List.of()
-                        : List.of(new SucursalMarcacionResponse(idSucursal, sesiones.getFirst().sucursal())),
+                        : List.of(new SucursalMarcacionResponse(idSucursal, nombreSucursalSesion(sesiones.getFirst(), idSucursal))),
                 sesiones);
+    }
+
+    private boolean sesionCoincideSucursal(SesionAsistenciaResponse sesion, Integer idSucursal) {
+        return idSucursal.equals(sesion.idSucursal()) || idSucursal.equals(sesion.idSucursalSalida());
+    }
+
+    private String nombreSucursalSesion(SesionAsistenciaResponse sesion, Integer idSucursal) {
+        return idSucursal.equals(sesion.idSucursalSalida()) ? sesion.sucursalSalida() : sesion.sucursal();
     }
 
     @Transactional

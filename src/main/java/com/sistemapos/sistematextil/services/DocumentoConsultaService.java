@@ -6,6 +6,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
@@ -32,62 +33,76 @@ public class DocumentoConsultaService {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final String baseUrl;
+    private final String apiToken;
+    private final String apisPeruBaseUrl;
 
     public DocumentoConsultaService(
-            @Value("${external.sunat-consulta.base-url:" + DEFAULT_SUNAT_CONSULTA_BASE_URL + "}") String baseUrl) {
+            @Value("${external.sunat-consulta.base-url:" + DEFAULT_SUNAT_CONSULTA_BASE_URL + "}") String baseUrl,
+            @Value("${external.documento-consulta.api-token:}") String apiToken,
+            @Value("${external.documento-consulta.apisperu-base-url:https://dniruc.apisperu.com/api/v1}") String apisPeruBaseUrl) {
         this.baseUrl = (baseUrl == null || baseUrl.isBlank())
                 ? DEFAULT_SUNAT_CONSULTA_BASE_URL
                 : baseUrl.trim();
+        this.apiToken = apiToken;
+        this.apisPeruBaseUrl = apisPeruBaseUrl;
     }
 
     public ConsultaDniResponse consultarDni(String dni) {
         String valor = validarDocumento(dni, 8, "DNI");
-        JsonNode node = consultar("obtenerDatosDni", "numDocumento", valor);
-        JsonNode item = extraerPrimerResultado(node, "DNI", valor);
+        try {
+            JsonNode node = consultar("obtenerDatosDni", "numDocumento", valor);
+            JsonNode item = extraerPrimerResultado(node, "DNI", valor);
 
-        String nombresApellidos = limpiarTexto(item.path("nombresapellidos").asText(null));
-        if (nombresApellidos == null || nombresApellidos.isBlank()) {
-            throw new RuntimeException("No se pudo obtener informacion para el DNI " + valor);
+            String nombresApellidos = limpiarTexto(item.path("nombresapellidos").asText(null));
+            if (nombresApellidos == null || nombresApellidos.isBlank()) {
+                throw new RuntimeException("No se pudo obtener informacion para el DNI " + valor);
+            }
+            NombrePersona nombrePersona = parsearNombrePersona(nombresApellidos);
+
+            return new ConsultaDniResponse(
+                    true,
+                    valor,
+                    nombrePersona.nombres(),
+                    nombrePersona.apellidoPaterno(),
+                    nombrePersona.apellidoMaterno(),
+                    null,
+                    null);
+        } catch (RuntimeException e) {
+            return consultarDniConApisPeru(valor);
         }
-        NombrePersona nombrePersona = parsearNombrePersona(nombresApellidos);
-
-        return new ConsultaDniResponse(
-                true,
-                valor,
-                nombrePersona.nombres(),
-                nombrePersona.apellidoPaterno(),
-                nombrePersona.apellidoMaterno(),
-                null,
-                null);
     }
 
     public ConsultaRucResponse consultarRuc(String ruc) {
         String valor = validarDocumento(ruc, 11, "RUC");
-        JsonNode node = consultar("obtenerDatosRuc", "nroRuc", valor);
-        JsonNode item = extraerPrimerResultado(node, "RUC", valor);
+        try {
+            JsonNode node = consultar("obtenerDatosRuc", "nroRuc", valor);
+            JsonNode item = extraerPrimerResultado(node, "RUC", valor);
 
-        String razonSocial = limpiarTexto(item.path("apenomdenunciado").asText(null));
-        if (razonSocial == null || razonSocial.isBlank()) {
-            throw new RuntimeException("No se pudo obtener informacion para el RUC " + valor);
+            String razonSocial = limpiarTexto(item.path("apenomdenunciado").asText(null));
+            if (razonSocial == null || razonSocial.isBlank()) {
+                throw new RuntimeException("No se pudo obtener informacion para el RUC " + valor);
+            }
+
+            return new ConsultaRucResponse(
+                    valor,
+                    razonSocial,
+                    null,
+                    List.of(),
+                    null,
+                    null,
+                    null,
+                    limpiarTexto(item.path("direstablecimiento").asText(null)),
+                    limpiarTexto(item.path("desdepartamento").asText(null)),
+                    limpiarTexto(item.path("desprovincia").asText(null)),
+                    limpiarTexto(item.path("desdistrito").asText(null)),
+                    construirUbigeo(
+                            limpiarTexto(item.path("iddepartamento").asText(null)),
+                            limpiarTexto(item.path("idprovincia").asText(null)),
+                            limpiarTexto(item.path("iddistrito").asText(null))),
+                    null);
+        } catch (RuntimeException e) {
+            return consultarRucConApisPeru(valor);
         }
-
-        return new ConsultaRucResponse(
-                valor,
-                razonSocial,
-                null,
-                List.of(),
-                null,
-                null,
-                null,
-                limpiarTexto(item.path("direstablecimiento").asText(null)),
-                limpiarTexto(item.path("desdepartamento").asText(null)),
-                limpiarTexto(item.path("desprovincia").asText(null)),
-                limpiarTexto(item.path("desdistrito").asText(null)),
-                construirUbigeo(
-                        limpiarTexto(item.path("iddepartamento").asText(null)),
-                        limpiarTexto(item.path("idprovincia").asText(null)),
-                        limpiarTexto(item.path("iddistrito").asText(null))),
-                null);
     }
 
     private JsonNode consultar(String accion, String nombreParametro, String numeroDocumento) {
@@ -220,6 +235,100 @@ public class DocumentoConsultaService {
             return "";
         }
         return valor.length() > maxLen ? valor.substring(0, maxLen) + "..." : valor;
+    }
+
+    private ConsultaDniResponse consultarDniConApisPeru(String dni) {
+        if (apiToken == null || apiToken.isBlank()) {
+            throw new RuntimeException("Token de apisperu no configurado");
+        }
+        URI uri = UriComponentsBuilder.fromUriString(apisPeruBaseUrl)
+                .pathSegment("dni", dni)
+                .queryParam("token", apiToken)
+                .build(true).toUri();
+
+        HttpRequest request = HttpRequest.newBuilder(uri)
+                .timeout(Duration.ofSeconds(20))
+                .header("Accept", "application/json")
+                .GET().build();
+
+        try {
+            HttpResponse<String> response = HTTP_CLIENT.send(request,
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new RuntimeException("Error consultando apisperu (HTTP " + response.statusCode() + ")");
+            }
+            JsonNode node = OBJECT_MAPPER.readTree(response.body());
+            if (!node.path("success").asBoolean(false)) {
+                throw new RuntimeException("No se pudo obtener informacion para el DNI " + dni);
+            }
+            return new ConsultaDniResponse(
+                    true, dni,
+                    limpiarTexto(node.path("nombres").asText(null)),
+                    limpiarTexto(node.path("apellidoPaterno").asText(null)),
+                    limpiarTexto(node.path("apellidoMaterno").asText(null)),
+                    node.path("codVerifica").isNull() ? null : node.path("codVerifica").asInt(),
+                    limpiarTexto(node.path("codVerificaLetra").asText(null)));
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new RuntimeException("No se pudo consultar el DNI: " + e.getMessage());
+        }
+    }
+
+    private ConsultaRucResponse consultarRucConApisPeru(String ruc) {
+        if (apiToken == null || apiToken.isBlank()) {
+            throw new RuntimeException("Token de apisperu no configurado");
+        }
+        URI uri = UriComponentsBuilder.fromUriString(apisPeruBaseUrl)
+                .pathSegment("ruc", ruc)
+                .queryParam("token", apiToken)
+                .build(true).toUri();
+
+        HttpRequest request = HttpRequest.newBuilder(uri)
+                .timeout(Duration.ofSeconds(20))
+                .header("Accept", "application/json")
+                .GET().build();
+
+        try {
+            HttpResponse<String> response = HTTP_CLIENT.send(request,
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new RuntimeException("Error consultando apisperu (HTTP " + response.statusCode() + ")");
+            }
+            JsonNode node = OBJECT_MAPPER.readTree(response.body());
+            return new ConsultaRucResponse(
+                    ruc,
+                    limpiarTexto(node.path("razonSocial").asText(null)),
+                    limpiarTexto(node.path("nombreComercial").asText(null)),
+                    parsearTelefonos(node.path("telefonos")),
+                    limpiarTexto(node.path("tipo").asText(null)),
+                    limpiarTexto(node.path("estado").asText(null)),
+                    limpiarTexto(node.path("condicion").asText(null)),
+                    limpiarTexto(node.path("direccion").asText(null)),
+                    limpiarTexto(node.path("departamento").asText(null)),
+                    limpiarTexto(node.path("provincia").asText(null)),
+                    limpiarTexto(node.path("distrito").asText(null)),
+                    limpiarTexto(node.path("ubigeo").asText(null)),
+                    limpiarTexto(node.path("capital").asText(null)));
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new RuntimeException("No se pudo consultar el RUC: " + e.getMessage());
+        }
+    }
+
+    private List<String> parsearTelefonos(JsonNode telefonosNode) {
+        if (telefonosNode == null || !telefonosNode.isArray()) {
+            return List.of();
+        }
+        List<String> telefonos = new ArrayList<>();
+        for (JsonNode t : telefonosNode) {
+            String tel = limpiarTexto(t.asText(null));
+            if (tel != null) {
+                telefonos.add(tel);
+            }
+        }
+        return telefonos;
     }
 
     private record NombrePersona(String nombres, String apellidoPaterno, String apellidoMaterno) {

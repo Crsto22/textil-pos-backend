@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.sistemapos.sistematextil.services.EcommercePedidoService;
+import com.sistemapos.sistematextil.services.EcommerceConfigService;
 import com.sistemapos.sistematextil.services.EcommerceProductoPublicService;
 import com.sistemapos.sistematextil.services.EcommercePromocionComboService;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceCarritoResumenRequest;
@@ -43,6 +44,7 @@ public class EcommercePublicController {
     private final EcommerceProductoPublicService ecommerceProductoPublicService;
     private final EcommercePedidoService ecommercePedidoService;
     private final EcommercePromocionComboService ecommercePromocionComboService;
+    private final EcommerceConfigService ecommerceConfigService;
 
     @GetMapping("productos")
     public ResponseEntity<EcommerceProductoListadoResponse> listarProductos(
@@ -68,6 +70,11 @@ public class EcommercePublicController {
     @GetMapping("inicio")
     public ResponseEntity<EcommerceInicioResponse> inicio() {
         return ResponseEntity.ok(ecommerceProductoPublicService.obtenerInicio());
+    }
+
+    @GetMapping("contacto")
+    public ResponseEntity<?> contacto() {
+        return ResponseEntity.ok(ecommerceConfigService.obtenerContacto());
     }
 
     @GetMapping("promociones")

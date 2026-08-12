@@ -1653,6 +1653,13 @@ CREATE TABLE IF NOT EXISTS ecommerce_portada (
   INDEX idx_ecommerce_portada_deleted_at (deleted_at)
 );
 
+CREATE TABLE IF NOT EXISTS ecommerce_config (
+  id_ecommerce_config INT NOT NULL PRIMARY KEY,
+  whatsapp_celular VARCHAR(9) DEFAULT NULL,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP(6)
+);
+
 UPDATE venta
 SET estado = 'ANULADA'
 WHERE estado = 'ANULACION_PENDIENTE';

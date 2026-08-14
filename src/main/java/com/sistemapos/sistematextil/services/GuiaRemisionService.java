@@ -164,6 +164,15 @@ public class GuiaRemisionService {
     public ArchivoDescargable descargarPdf(Integer id, String correoAutenticado) {
         obtenerUsuarioAutenticado(correoAutenticado);
         GuiaRemision guia = obtenerGuia(id);
+        return descargarPdfPublico(guia);
+    }
+
+    public ArchivoDescargable descargarPdfPublico(Integer id) {
+        GuiaRemision guia = obtenerGuia(id);
+        return descargarPdfPublico(guia);
+    }
+
+    private ArchivoDescargable descargarPdfPublico(GuiaRemision guia) {
         String nombreArchivo = numeroGuiaRemision(guia) + ".pdf";
 
         if (!documentStorageService.isStoredDocumentUpToDate(guia.getSunatPdfKey(), guia.getUpdatedAt())) {
@@ -718,6 +727,15 @@ public class GuiaRemisionService {
     public ArchivoDescargable descargarSunatXml(Integer id, String correoAutenticado) {
         obtenerUsuarioAutenticado(correoAutenticado);
         GuiaRemision guia = obtenerGuia(id);
+        return descargarSunatXmlPublico(guia);
+    }
+
+    public ArchivoDescargable descargarSunatXmlPublico(Integer id) {
+        GuiaRemision guia = obtenerGuia(id);
+        return descargarSunatXmlPublico(guia);
+    }
+
+    private ArchivoDescargable descargarSunatXmlPublico(GuiaRemision guia) {
         if (guia.getSunatXmlKey() == null || guia.getSunatXmlKey().isBlank()) {
             throw new RuntimeException("La guia de remision no tiene XML SUNAT registrado");
         }
@@ -729,6 +747,15 @@ public class GuiaRemisionService {
     public ArchivoDescargable descargarSunatCdr(Integer id, String correoAutenticado) {
         obtenerUsuarioAutenticado(correoAutenticado);
         GuiaRemision guia = obtenerGuia(id);
+        return descargarSunatCdrPublico(guia);
+    }
+
+    public ArchivoDescargable descargarSunatCdrPublico(Integer id) {
+        GuiaRemision guia = obtenerGuia(id);
+        return descargarSunatCdrPublico(guia);
+    }
+
+    private ArchivoDescargable descargarSunatCdrPublico(GuiaRemision guia) {
         if (guia.getSunatCdrKey() == null || guia.getSunatCdrKey().isBlank()) {
             throw new RuntimeException("La guia de remision no tiene CDR SUNAT registrado");
         }

@@ -273,6 +273,27 @@ public interface VentaRepository extends JpaRepository<Venta, Integer> {
             SELECT v
             FROM Venta v
             WHERE v.deletedAt IS NULL
+              AND v.tipoComprobante = :tipoComprobante
+              AND UPPER(v.serie) = UPPER(:serie)
+              AND v.correlativo = :correlativo
+              AND v.fecha >= :fechaInicio
+              AND v.fecha < :fechaFinExclusive
+              AND v.total = :total
+              AND v.sucursal.empresa.ruc = :rucEmisor
+            """)
+    Optional<Venta> buscarCpePublico(
+            @Param("rucEmisor") String rucEmisor,
+            @Param("tipoComprobante") String tipoComprobante,
+            @Param("serie") String serie,
+            @Param("correlativo") Integer correlativo,
+            @Param("fechaInicio") LocalDateTime fechaInicio,
+            @Param("fechaFinExclusive") LocalDateTime fechaFinExclusive,
+            @Param("total") BigDecimal total);
+
+    @Query("""
+            SELECT v
+            FROM Venta v
+            WHERE v.deletedAt IS NULL
               AND v.tipoComprobante IN ('FACTURA', 'BOLETA')
               AND (:tipoComprobante IS NULL OR v.tipoComprobante = :tipoComprobante)
               AND UPPER(v.serie) = UPPER(:serie)

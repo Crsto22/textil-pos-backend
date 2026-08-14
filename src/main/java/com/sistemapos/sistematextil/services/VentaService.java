@@ -373,6 +373,16 @@ public class VentaService {
         validarRolLectura(usuarioAutenticado);
 
         Venta venta = obtenerVentaConAlcance(idVenta, usuarioAutenticado);
+        return descargarComprobantePdfPublico(venta);
+    }
+
+    public ArchivoDescargable descargarComprobantePdfPublico(Integer idVenta) {
+        Venta venta = ventaRepository.findByIdVentaAndDeletedAtIsNull(idVenta)
+                .orElseThrow(() -> new RuntimeException("Venta no encontrada"));
+        return descargarComprobantePdfPublico(venta);
+    }
+
+    private ArchivoDescargable descargarComprobantePdfPublico(Venta venta) {
         List<VentaDetalle> detalles = ventaDetalleRepository
                 .findByVenta_IdVentaAndDeletedAtIsNullOrderByIdVentaDetalleAsc(venta.getIdVenta());
         List<Pago> pagos = pagoRepository.findByVenta_IdVentaAndDeletedAtIsNullOrderByIdPagoAsc(venta.getIdVenta());
@@ -768,6 +778,16 @@ public class VentaService {
         validarRolLectura(usuarioAutenticado);
 
         Venta venta = obtenerVentaConAlcance(idVenta, usuarioAutenticado);
+        return descargarSunatXmlPublico(venta);
+    }
+
+    public ArchivoDescargable descargarSunatXmlPublico(Integer idVenta) {
+        Venta venta = ventaRepository.findByIdVentaAndDeletedAtIsNull(idVenta)
+                .orElseThrow(() -> new RuntimeException("Venta no encontrada"));
+        return descargarSunatXmlPublico(venta);
+    }
+
+    private ArchivoDescargable descargarSunatXmlPublico(Venta venta) {
         if (!requiereComprobanteElectronico(venta.getTipoComprobante())) {
             throw new RuntimeException("La venta no requiere archivo XML SUNAT");
         }
@@ -793,6 +813,16 @@ public class VentaService {
         validarRolLectura(usuarioAutenticado);
 
         Venta venta = obtenerVentaConAlcance(idVenta, usuarioAutenticado);
+        return descargarSunatCdrPublico(venta, formato);
+    }
+
+    public ArchivoDescargable descargarSunatCdrPublico(Integer idVenta, String formato) {
+        Venta venta = ventaRepository.findByIdVentaAndDeletedAtIsNull(idVenta)
+                .orElseThrow(() -> new RuntimeException("Venta no encontrada"));
+        return descargarSunatCdrPublico(venta, formato);
+    }
+
+    private ArchivoDescargable descargarSunatCdrPublico(Venta venta, String formato) {
         if (!requiereComprobanteElectronico(venta.getTipoComprobante())) {
             throw new RuntimeException("La venta no requiere archivo CDR SUNAT");
         }

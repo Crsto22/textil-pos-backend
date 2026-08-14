@@ -19,6 +19,25 @@ public interface NotaCreditoRepository extends JpaRepository<NotaCredito, Intege
 
     Optional<NotaCredito> findByIdNotaCreditoAndDeletedAtIsNullAndSucursal_IdSucursal(Integer idNotaCredito, Integer idSucursal);
 
+    @Query("""
+            SELECT nc
+            FROM NotaCredito nc
+            WHERE nc.deletedAt IS NULL
+              AND UPPER(nc.serie) = UPPER(:serie)
+              AND nc.correlativo = :correlativo
+              AND nc.fecha >= :fechaInicio
+              AND nc.fecha < :fechaFinExclusive
+              AND nc.total = :total
+              AND nc.sucursal.empresa.ruc = :rucEmisor
+            """)
+    Optional<NotaCredito> buscarCpePublico(
+            @Param("rucEmisor") String rucEmisor,
+            @Param("serie") String serie,
+            @Param("correlativo") Integer correlativo,
+            @Param("fechaInicio") java.time.LocalDateTime fechaInicio,
+            @Param("fechaFinExclusive") java.time.LocalDateTime fechaFinExclusive,
+            @Param("total") java.math.BigDecimal total);
+
     List<NotaCredito> findByVentaReferencia_IdVentaAndDeletedAtIsNullOrderByIdNotaCreditoDesc(Integer idVenta);
 
     Optional<NotaCredito> findTopByVentaReferencia_IdVentaAndDeletedAtIsNullOrderByIdNotaCreditoDesc(Integer idVenta);

@@ -20,6 +20,22 @@ public interface GuiaRemisionRepository extends JpaRepository<GuiaRemision, Inte
     @Query("""
             SELECT g FROM GuiaRemision g
             WHERE g.deletedAt IS NULL
+              AND UPPER(g.serie) = UPPER(:serie)
+              AND g.correlativo = :correlativo
+              AND g.fechaEmision >= :fechaInicio
+              AND g.fechaEmision < :fechaFinExclusive
+              AND g.sucursal.empresa.ruc = :rucEmisor
+            """)
+    Optional<GuiaRemision> buscarCpePublico(
+            @Param("rucEmisor") String rucEmisor,
+            @Param("serie") String serie,
+            @Param("correlativo") Integer correlativo,
+            @Param("fechaInicio") java.time.LocalDateTime fechaInicio,
+            @Param("fechaFinExclusive") java.time.LocalDateTime fechaFinExclusive);
+
+    @Query("""
+            SELECT g FROM GuiaRemision g
+            WHERE g.deletedAt IS NULL
               AND (:idSucursal IS NULL OR g.sucursal.idSucursal = :idSucursal)
               AND (:estado IS NULL OR g.estado = :estado)
               AND (:sunatEstado IS NULL OR g.sunatEstado = :sunatEstado)

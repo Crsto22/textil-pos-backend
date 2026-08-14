@@ -343,6 +343,16 @@ public class NotaCreditoService {
         validarRolLecturaNotaCredito(usuarioAutenticado);
 
         NotaCredito notaCredito = obtenerNotaCreditoConAlcance(idNotaCredito, usuarioAutenticado);
+        return descargarComprobantePdfPublico(notaCredito);
+    }
+
+    public VentaService.ArchivoDescargable descargarComprobantePdfPublico(Integer idNotaCredito) {
+        NotaCredito notaCredito = notaCreditoRepository.findByIdNotaCreditoAndDeletedAtIsNull(idNotaCredito)
+                .orElseThrow(() -> new RuntimeException("Nota de credito no encontrada"));
+        return descargarComprobantePdfPublico(notaCredito);
+    }
+
+    private VentaService.ArchivoDescargable descargarComprobantePdfPublico(NotaCredito notaCredito) {
         List<NotaCreditoDetalle> detalles = notaCreditoDetalleRepository
                 .findByNotaCredito_IdNotaCreditoAndDeletedAtIsNull(notaCredito.getIdNotaCredito());
         String nombreArchivo = construirNombreArchivoPdfNotaCredito(notaCredito);
@@ -391,6 +401,16 @@ public class NotaCreditoService {
         validarRolLecturaNotaCredito(usuarioAutenticado);
 
         NotaCredito notaCredito = obtenerNotaCreditoConAlcance(idNotaCredito, usuarioAutenticado);
+        return descargarSunatXmlPublico(notaCredito);
+    }
+
+    public VentaService.ArchivoDescargable descargarSunatXmlPublico(Integer idNotaCredito) {
+        NotaCredito notaCredito = notaCreditoRepository.findByIdNotaCreditoAndDeletedAtIsNull(idNotaCredito)
+                .orElseThrow(() -> new RuntimeException("Nota de credito no encontrada"));
+        return descargarSunatXmlPublico(notaCredito);
+    }
+
+    private VentaService.ArchivoDescargable descargarSunatXmlPublico(NotaCredito notaCredito) {
         if (notaCredito.getSunatXmlKey() == null || notaCredito.getSunatXmlKey().isBlank()) {
             throw new RuntimeException("La nota de credito aun no tiene XML SUNAT disponible");
         }
@@ -416,6 +436,16 @@ public class NotaCreditoService {
         validarRolLecturaNotaCredito(usuarioAutenticado);
 
         NotaCredito notaCredito = obtenerNotaCreditoConAlcance(idNotaCredito, usuarioAutenticado);
+        return descargarSunatCdrPublico(notaCredito, formato);
+    }
+
+    public VentaService.ArchivoDescargable descargarSunatCdrPublico(Integer idNotaCredito, String formato) {
+        NotaCredito notaCredito = notaCreditoRepository.findByIdNotaCreditoAndDeletedAtIsNull(idNotaCredito)
+                .orElseThrow(() -> new RuntimeException("Nota de credito no encontrada"));
+        return descargarSunatCdrPublico(notaCredito, formato);
+    }
+
+    private VentaService.ArchivoDescargable descargarSunatCdrPublico(NotaCredito notaCredito, String formato) {
         if (notaCredito.getSunatCdrKey() == null || notaCredito.getSunatCdrKey().isBlank()) {
             throw new RuntimeException("La nota de credito aun no tiene CDR SUNAT disponible");
         }

@@ -38,6 +38,7 @@ public class SecurityConfig {
                         .requestMatchers("/error").permitAll()
                         .requestMatchers("/iclock/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/public/ecommerce/**").permitAll()
+                        .requestMatchers("/api/public/cpe/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/public/ecommerce/carrito/validar").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/public/ecommerce/pedidos", "/api/public/ecommerce/pedidos/**").permitAll()
                         .requestMatchers("/api/auth/autenticarse", "/api/auth/refresh").permitAll()

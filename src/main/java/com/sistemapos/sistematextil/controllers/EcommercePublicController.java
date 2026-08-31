@@ -27,6 +27,7 @@ import com.sistemapos.sistematextil.util.ecommerce.EcommercePedidoCreateRequest;
 import com.sistemapos.sistematextil.util.ecommerce.EcommercePedidoResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoColorStockResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoDetalleSlugResponse;
+import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoGlobalListadoResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoListadoResponse;
 import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
 
@@ -57,6 +58,27 @@ public class EcommercePublicController {
             @RequestParam(name = "precioMax", required = false) Double precioMax,
             @RequestParam(name = "soloDisponibles", required = false) Boolean soloDisponibles) {
         return ResponseEntity.ok(ecommerceProductoPublicService.listarProductos(
+                q,
+                page,
+                size,
+                idCategoria,
+                idColor,
+                tallas,
+                precioMax,
+                soloDisponibles));
+    }
+
+    @GetMapping("productos-globales")
+    public ResponseEntity<EcommerceProductoGlobalListadoResponse> listarProductosGlobales(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "6") int size,
+            @RequestParam(name = "q", required = false) String q,
+            @RequestParam(name = "idCategoria", required = false) Integer idCategoria,
+            @RequestParam(name = "idColor", required = false) Integer idColor,
+            @RequestParam(name = "tallas", required = false) List<String> tallas,
+            @RequestParam(name = "precioMax", required = false) Double precioMax,
+            @RequestParam(name = "soloDisponibles", required = false) Boolean soloDisponibles) {
+        return ResponseEntity.ok(ecommerceProductoPublicService.listarProductosGlobales(
                 q,
                 page,
                 size,

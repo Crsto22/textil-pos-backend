@@ -32,6 +32,8 @@ import com.sistemapos.sistematextil.util.ecommerce.EcommerceInicioImagenProducto
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoColorListItemResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoColorStockResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoDetalleSlugResponse;
+import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoGlobalListItemResponse;
+import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoGlobalListadoResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoListadoResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteStockSucursalRow;
 
@@ -112,6 +114,89 @@ public class EcommerceProductoPublicService {
                 grupos.isFirst(),
                 grupos.isLast(),
                 grupos.isEmpty());
+    }
+
+    public EcommerceProductoGlobalListadoResponse listarProductosGlobales(
+            String q,
+            int page,
+            int size,
+            Integer idCategoria,
+            Integer idColor,
+            List<String> tallas,
+            Double precioMax,
+            Boolean soloDisponibles) {
+        PageRequest pageable = PageRequest.of(Math.max(page, 0), normalizarSize(size));
+        Sucursal sucursal = obtenerSucursalEcommerce();
+        if (sucursal == null) {
+            return new EcommerceProductoGlobalListadoResponse(
+                    false,
+                    "Tienda ecommerce no configurada",
+                    List.of(),
+                    pageable.getPageNumber(),
+                    pageable.getPageSize(),
+                    0,
+                    0,
+                    0,
+                    true,
+                    true,
+                    true);
+        }
+
+        String term = normalizarTermino(q);
+        List<String> tokens = tokensBusqueda(term);
+        String tallasCsv = normalizarTallasCsv(tallas);
+        Double precioMaximo = precioMax != null && precioMax >= 0 ? precioMax : null;
+        boolean disponibles = Boolean.TRUE.equals(soloDisponibles);
+        Page<Integer> productos = productoVarianteRepository.listarProductosGlobalesEcommerce(
+                term,
+                token(tokens, 0),
+                token(tokens, 1),
+                token(tokens, 2),
+                token(tokens, 3),
+                token(tokens, 4),
+                token(tokens, 5),
+                sucursal.getIdSucursal(),
+                idCategoria,
+                idColor,
+                tallasCsv,
+                precioMaximo,
+                disponibles,
+                pageable);
+
+        List<Integer> productoIds = productos.getContent();
+        List<EcommerceProductoGlobalListItemResponse> content = productoIds.isEmpty()
+                ? List.of()
+                : construirItemsGlobales(
+                        productoIds,
+                        productoVarianteRepository.listarGruposEcommercePorProductos(
+                                productoIds,
+                                term,
+                                token(tokens, 0),
+                                token(tokens, 1),
+                                token(tokens, 2),
+                                token(tokens, 3),
+                                token(tokens, 4),
+                                token(tokens, 5),
+                                sucursal.getIdSucursal(),
+                                idCategoria,
+                                idColor,
+                                tallasCsv,
+                                precioMaximo,
+                                disponibles),
+                        sucursal);
+
+        return new EcommerceProductoGlobalListadoResponse(
+                true,
+                null,
+                content,
+                productos.getNumber(),
+                productos.getSize(),
+                productos.getTotalPages(),
+                productos.getTotalElements(),
+                content.size(),
+                productos.isFirst(),
+                productos.isLast(),
+                productos.isEmpty());
     }
 
     public EcommerceInicioResponse obtenerInicio() {
@@ -386,6 +471,65 @@ public class EcommerceProductoPublicService {
                     imagenes,
                     stocks,
                     ofertas));
+        }
+        return items;
+    }
+
+    private List<EcommerceProductoGlobalListItemResponse> construirItemsGlobales(
+            List<Integer> productoIds,
+            List<EcommerceProductoColorGroupProjection> grupos,
+            Sucursal sucursal) {
+        List<EcommerceProductoColorListItemResponse> colores = construirItems(grupos, sucursal);
+        Map<Integer, List<EcommerceProductoColorListItemResponse>> coloresPorProducto = colores.stream()
+                .collect(Collectors.groupingBy(
+                        item -> item.producto().idProducto(),
+                        LinkedHashMap::new,
+                        Collectors.toList()));
+
+        List<EcommerceProductoGlobalListItemResponse> items = new ArrayList<>();
+        for (Integer productoId : productoIds) {
+            List<EcommerceProductoColorListItemResponse> coloresProducto = coloresPorProducto
+                    .getOrDefault(productoId, List.of());
+            if (coloresProducto.isEmpty()) {
+                continue;
+            }
+            EcommerceProductoColorListItemResponse primero = coloresProducto.get(0);
+            List<EcommerceProductoColorListItemResponse.VarianteItem> variantes = coloresProducto.stream()
+                    .flatMap(color -> color.variantes().stream())
+                    .toList();
+            Double precioMinimo = coloresProducto.stream()
+                    .map(EcommerceProductoColorListItemResponse::precioMinimo)
+                    .filter(Objects::nonNull)
+                    .min(Double::compareTo)
+                    .orElse(null);
+            Double precioMaximo = coloresProducto.stream()
+                    .map(EcommerceProductoColorListItemResponse::precioMaximo)
+                    .filter(Objects::nonNull)
+                    .max(Double::compareTo)
+                    .orElse(null);
+            int stockTotal = coloresProducto.stream()
+                    .map(EcommerceProductoColorListItemResponse::stockTotalColor)
+                    .filter(Objects::nonNull)
+                    .mapToInt(Integer::intValue)
+                    .sum();
+
+            items.add(new EcommerceProductoGlobalListItemResponse(
+                    primero.producto(),
+                    precioMinimo,
+                    precioMaximo,
+                    resolverEstadoStock(variantes),
+                    stockTotal,
+                    primero.promocionesCombo(),
+                    coloresProducto.stream()
+                            .map(color -> new EcommerceProductoGlobalListItemResponse.ColorOpcionItem(
+                                    color.color(),
+                                    color.imagenPrincipal(),
+                                    color.precioMinimo(),
+                                    color.precioMaximo(),
+                                    color.estadoStock(),
+                                    color.stockTotalColor(),
+                                    color.variantes()))
+                            .toList()));
         }
         return items;
     }

@@ -754,7 +754,7 @@ public class VentaService {
             rep.setSpacingBefore(3f);
             document.add(rep);
 
-            Paragraph consulta = new Paragraph("Consulte la validez de este comprobante en SUNAT: https://e-factura.sunat.gob.pe/",
+            Paragraph consulta = new Paragraph("Consulte este comprobante y descargue PDF, XML y CDR en: https://www.nuvex.pe/consulta",
                     fuentePdf(false, 5f, colorGris));
             consulta.setAlignment(Element.ALIGN_CENTER);
             consulta.setSpacingBefore(1f);
@@ -1230,7 +1230,7 @@ public class VentaService {
             infoCell.addElement(rep);
 
             Paragraph consulta = new Paragraph(
-                    "Consulte la validez de este comprobante en SUNAT: https://e-factura.sunat.gob.pe/",
+                    "Consulte este comprobante y descargue PDF, XML y CDR en: https://www.nuvex.pe/consulta",
                     fuentePdf(false, 7f, colorGris));
             consulta.setSpacingBefore(3f);
             infoCell.addElement(consulta);

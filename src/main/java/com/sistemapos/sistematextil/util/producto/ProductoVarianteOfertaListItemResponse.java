@@ -19,6 +19,7 @@ public record ProductoVarianteOfertaListItemResponse(
         Double precioOferta,
         LocalDateTime ofertaInicio,
         LocalDateTime ofertaFin,
+        Boolean ofertaHastaAgotarStock,
         Double precioVigente,
         TipoOfertaAplicada tipoOfertaAplicada,
         Integer sucursalOfertaId,

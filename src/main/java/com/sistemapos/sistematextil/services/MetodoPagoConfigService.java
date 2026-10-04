@@ -66,7 +66,7 @@ public class MetodoPagoConfigService {
         metodoPago.setDescripcion(normalizarDescripcion(request.descripcion()));
         metodoPago.setEstado(normalizarEstadoOpcional(request.estado()));
         metodoPago.setDeletedAt(null);
-        metodoPago.setCuentas(mapearCuentas(request.cuentas()));
+        sincronizarCuentas(metodoPago, request.cuentas());
 
         try {
             return toResponse(metodoPagoConfigRepository.save(metodoPago));
@@ -83,7 +83,7 @@ public class MetodoPagoConfigService {
         metodoPago.setNombre(nombre);
         metodoPago.setDescripcion(normalizarDescripcion(request.descripcion()));
         metodoPago.setEstado(normalizarEstado(request.estado()));
-        metodoPago.setCuentas(mapearCuentas(request.cuentas()));
+        sincronizarCuentas(metodoPago, request.cuentas());
 
         try {
             return toResponse(metodoPagoConfigRepository.save(metodoPago));
@@ -188,27 +188,38 @@ public class MetodoPagoConfigService {
         return normalizada;
     }
 
-    private List<MetodoPagoCuenta> mapearCuentas(List<MetodoPagoCuentaRequest> cuentas) {
-        if (cuentas == null || cuentas.isEmpty()) {
-            return List.of();
-        }
-
+    private void sincronizarCuentas(MetodoPagoConfig metodoPago, List<MetodoPagoCuentaRequest> cuentas) {
+        List<MetodoPagoCuenta> existentes = metodoPago.getCuentas() == null
+                ? new ArrayList<>()
+                : metodoPago.getCuentas();
+        existentes.forEach(cuenta -> cuenta.setActivo(false));
+        if (cuentas == null || cuentas.isEmpty()) return;
         Set<String> numerosUnicos = new LinkedHashSet<>();
         for (MetodoPagoCuentaRequest cuenta : cuentas) {
-            if (cuenta == null) {
-                continue;
-            }
+            if (cuenta == null) continue;
             String numeroCuenta = normalizarNumeroCuenta(cuenta.numeroCuenta());
-            numerosUnicos.add(numeroCuenta);
+            if (numerosUnicos.add(numeroCuenta)) {
+                MetodoPagoCuenta entity = existentes.stream()
+                        .filter(item -> numeroCuenta.equals(item.getNumeroCuenta()))
+                        .findFirst()
+                        .orElseGet(() -> {
+                            MetodoPagoCuenta nueva = new MetodoPagoCuenta();
+                            metodoPago.addCuenta(nueva);
+                            return nueva;
+                        });
+                entity.setNumeroCuenta(numeroCuenta);
+                entity.setTitular(limpiarOpcional(cuenta.titular(), 150));
+                entity.setAliasesValidacion(limpiarOpcional(cuenta.aliasesValidacion(), 500));
+                entity.setActivo(true);
+            }
         }
+    }
 
-        List<MetodoPagoCuenta> cuentasMapeadas = new ArrayList<>();
-        for (String numeroCuenta : numerosUnicos) {
-            MetodoPagoCuenta cuenta = new MetodoPagoCuenta();
-            cuenta.setNumeroCuenta(numeroCuenta);
-            cuentasMapeadas.add(cuenta);
-        }
-        return cuentasMapeadas;
+    private String limpiarOpcional(String value, int max) {
+        if (value == null || value.isBlank()) return null;
+        String clean = value.trim();
+        if (clean.length() > max) throw new RuntimeException("Dato de cuenta demasiado extenso");
+        return clean;
     }
 
     private String normalizarNumeroCuenta(String numeroCuenta) {
@@ -226,9 +237,12 @@ public class MetodoPagoConfigService {
         List<MetodoPagoCuentaResponse> cuentas = metodoPago.getCuentas() == null
                 ? List.of()
                 : metodoPago.getCuentas().stream()
+                        .filter(cuenta -> !Boolean.FALSE.equals(cuenta.getActivo()))
                         .map(cuenta -> new MetodoPagoCuentaResponse(
                                 cuenta.getIdMetodoPagoCuenta(),
-                                cuenta.getNumeroCuenta()))
+                                cuenta.getNumeroCuenta(),
+                                cuenta.getTitular(),
+                                cuenta.getAliasesValidacion()))
                         .toList();
 
         return new MetodoPagoConfigResponse(

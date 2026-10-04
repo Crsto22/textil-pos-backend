@@ -29,6 +29,7 @@ public record AuthenticationResponse(
     LocalTime horaFinTurno,
     List<DiaSemana> diasTurno,
     List<TurnoDiaHorarioResponse> horariosTurno,
-    Boolean puedeAceptarPedidos
+    Boolean puedeAceptarPedidos,
+    Boolean accesoCrm
 ) {
 }

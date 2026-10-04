@@ -54,10 +54,6 @@ public class SistemaDashboardService {
             "https://e-beta.sunat.gob.pe/ol-ti-itcpfegem-beta/billService?wsdl";
     private static final String PRODUCCION_CPE_BILL_SERVICE_WSDL =
             "https://e-factura.sunat.gob.pe/ol-ti-itcpfegem/billService?wsdl";
-    private static final HttpClient SUNAT_HEALTH_CLIENT = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(3))
-            .build();
-
     private final StorageProperties storageProperties;
     private final JdbcTemplate jdbcTemplate;
 
@@ -91,6 +87,12 @@ public class SistemaDashboardService {
                 sunat,
                 usuarios,
                 construirAlertas(storage, database, runtime, disk, sunat));
+    }
+
+    private HttpClient sunatHealthClient() {
+        return HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(3))
+                .build();
     }
 
     private StorageResumen construirStorageResumen() {
@@ -325,7 +327,7 @@ public class SistemaDashboardService {
                     .GET()
                     .build();
 
-            HttpResponse<Void> response = SUNAT_HEALTH_CLIENT.send(
+            HttpResponse<Void> response = sunatHealthClient().send(
                     request,
                     HttpResponse.BodyHandlers.discarding());
             long latenciaMs = Duration.ofNanos(System.nanoTime() - inicio).toMillis();

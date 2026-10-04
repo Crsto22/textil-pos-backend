@@ -160,6 +160,50 @@ public class ProductoVarianteService {
         validarPagina(page);
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
         validarRolPermitido(usuarioAutenticado);
+        return listarResumenPaginadoInterno(
+                q,
+                page,
+                idCategoria,
+                idColor,
+                conOferta,
+                soloDisponibles,
+                idSucursal,
+                usuarioAutenticado);
+    }
+
+    public ProductoVarianteListadoResumenPageResponse listarResumenPaginadoCrm(
+            String q,
+            int page,
+            Integer idCategoria,
+            Integer idColor,
+            Boolean conOferta,
+            Boolean soloDisponibles,
+            Integer idSucursal,
+            Usuario usuarioAutenticado) {
+        validarPagina(page);
+        if (usuarioAutenticado == null || usuarioAutenticado.getIdUsuario() == null) {
+            throw new RuntimeException("No autenticado");
+        }
+        return listarResumenPaginadoInterno(
+                q,
+                page,
+                idCategoria,
+                idColor,
+                conOferta,
+                soloDisponibles,
+                idSucursal,
+                usuarioAutenticado);
+    }
+
+    private ProductoVarianteListadoResumenPageResponse listarResumenPaginadoInterno(
+            String q,
+            int page,
+            Integer idCategoria,
+            Integer idColor,
+            Boolean conOferta,
+            Boolean soloDisponibles,
+            Integer idSucursal,
+            Usuario usuarioAutenticado) {
         String term = normalizar(q);
         int pageSize = defaultPageSize > 0 ? defaultPageSize : 10;
         Integer idSucursalFiltro = resolverIdSucursalFiltro(usuarioAutenticado, idSucursal);
@@ -267,6 +311,7 @@ public class ProductoVarianteService {
             variante.setPrecioOferta(null);
             variante.setOfertaInicio(null);
             variante.setOfertaFin(null);
+            variante.setOfertaHastaAgotarStock(false);
             variante.setUsuarioCreacion(null);
         }
 
@@ -530,7 +575,8 @@ public class ProductoVarianteService {
         validarRolPermitido(usuarioAutenticado);
         ProductoVariante variante = obtenerVarianteConAlcance(id, usuarioAutenticado);
 
-        aplicarOferta(variante, request.precioOferta(), request.ofertaInicio(), request.ofertaFin(), usuarioAutenticado);
+        aplicarOferta(variante, request.precioOferta(), request.ofertaInicio(), request.ofertaFin(),
+                request.ofertaHastaAgotarStock(), usuarioAutenticado);
         ProductoVariante guardada = repository.save(variante);
         ecommerceCacheInvalidationService.invalidate();
         return guardada;
@@ -580,7 +626,8 @@ public class ProductoVarianteService {
         List<ProductoVariante> actualizadas = new ArrayList<>();
         for (ProductoVarianteOfertaLoteItemRequest item : request.items()) {
             ProductoVariante variante = variantesPorId.get(item.idProductoVariante());
-            aplicarOferta(variante, item.precioOferta(), item.ofertaInicio(), item.ofertaFin(), usuarioAutenticado);
+            aplicarOferta(variante, item.precioOferta(), item.ofertaInicio(), item.ofertaFin(),
+                    item.ofertaHastaAgotarStock(), usuarioAutenticado);
             actualizadas.add(variante);
         }
 
@@ -1004,16 +1051,23 @@ public class ProductoVarianteService {
             Double precioOfertaSolicitado,
             LocalDateTime ofertaInicioSolicitada,
             LocalDateTime ofertaFinSolicitada,
+            Boolean ofertaHastaAgotarStockSolicitada,
             Usuario usuarioAutenticado) {
         Double precioOferta = normalizarPrecioOferta(precioOfertaSolicitado);
         LocalDateTime ofertaInicio = ofertaInicioSolicitada;
         LocalDateTime ofertaFin = ofertaFinSolicitada;
+        boolean hastaAgotarStock = Boolean.TRUE.equals(ofertaHastaAgotarStockSolicitada);
         boolean sinOfertaAnterior = variante.getPrecioOferta() == null;
+
+        if (hastaAgotarStock) {
+            ofertaFin = null;
+        }
 
         validarPrecioOferta(variante.getPrecio(), precioOferta, ofertaInicio, ofertaFin);
         if (precioOferta == null) {
             ofertaInicio = null;
             ofertaFin = null;
+            hastaAgotarStock = false;
             variante.setUsuarioCreacion(null);
         } else if (sinOfertaAnterior) {
             variante.setUsuarioCreacion(usuarioAutenticado);
@@ -1022,6 +1076,7 @@ public class ProductoVarianteService {
         variante.setPrecioOferta(precioOferta);
         variante.setOfertaInicio(ofertaInicio);
         variante.setOfertaFin(ofertaFin);
+        variante.setOfertaHastaAgotarStock(hastaAgotarStock);
     }
 
     private void actualizarUsuarioCreacionOferta(
@@ -1307,6 +1362,15 @@ public class ProductoVarianteService {
                         .sum();
 
         PrecioOfertaService.ResultadoPrecioOferta precioResuelto = precioOfertaService.resolver(variante, ofertaSucursal);
+        Double precioOfertaConfigurada = ofertaSucursal != null
+                ? ofertaSucursal.getPrecioOferta()
+                : variante.getPrecioOferta();
+        LocalDateTime ofertaInicioConfigurada = ofertaSucursal != null
+                ? ofertaSucursal.getOfertaInicio()
+                : variante.getOfertaInicio();
+        LocalDateTime ofertaFinConfigurada = ofertaSucursal != null
+                ? ofertaSucursal.getOfertaFin()
+                : variante.getOfertaFin();
 
         return new ProductoVarianteListadoResumenResponse(
                 variante.getIdProductoVariante(),
@@ -1317,9 +1381,9 @@ public class ProductoVarianteService {
                 stocksSucursalesVenta,
                 variante.getPrecio(),
                 variante.getPrecioMayor(),
-                precioResuelto.precioOfertaAplicada(),
-                precioResuelto.ofertaInicioAplicada(),
-                precioResuelto.ofertaFinAplicada(),
+                precioOfertaConfigurada,
+                ofertaInicioConfigurada,
+                ofertaFinConfigurada,
                 precioResuelto.precioVigente(),
                 precioResuelto.tipoOfertaAplicada(),
                 precioResuelto.sucursalOfertaId(),
@@ -1409,6 +1473,17 @@ public class ProductoVarianteService {
                 ? nombreCompletoUsuario(usuarioCreacion)
                 : null;
         String usuarioCreacionCorreo = usuarioCreacion != null ? usuarioCreacion.getCorreo() : null;
+        Double precioOfertaConfigurada = ofertaSucursal != null
+                ? ofertaSucursal.getPrecioOferta()
+                : variante.getPrecioOferta();
+        LocalDateTime ofertaInicioConfigurada = ofertaSucursal != null
+                ? ofertaSucursal.getOfertaInicio()
+                : variante.getOfertaInicio();
+        LocalDateTime ofertaFinConfigurada = ofertaSucursal != null
+                ? ofertaSucursal.getOfertaFin()
+                : variante.getOfertaFin();
+        boolean hastaAgotarStock = ofertaSucursal == null
+                && Boolean.TRUE.equals(variante.getOfertaHastaAgotarStock());
 
         return new ProductoVarianteOfertaListItemResponse(
                 variante.getIdProductoVariante(),
@@ -1424,9 +1499,10 @@ public class ProductoVarianteService {
                 tallaId,
                 tallaNombre,
                 variante.getPrecio(),
-                precioResuelto.precioOfertaAplicada(),
-                precioResuelto.ofertaInicioAplicada(),
-                precioResuelto.ofertaFinAplicada(),
+                precioOfertaConfigurada,
+                ofertaInicioConfigurada,
+                ofertaFinConfigurada,
+                hastaAgotarStock,
                 precioResuelto.precioVigente(),
                 precioResuelto.tipoOfertaAplicada(),
                 precioResuelto.sucursalOfertaId(),

@@ -20,6 +20,30 @@ services:
     networks:
       - textil-network
 
+  whatsapp-bridge:
+    build:
+      context: ./whatsapp-bridge
+    container_name: textil-whatsapp-bridge
+    restart: always
+    ports:
+      - "${WHATSAPP_BRIDGE_PORT:-8095}:8095"
+    environment:
+      TZ: America/Lima
+      WHATSAPP_BRIDGE_PORT: 8095
+      WHATSAPP_BRIDGE_TOKEN: ${WHATSAPP_BRIDGE_TOKEN}
+      BACKEND_BASE_URL: ${BACKEND_BASE_URL:-http://backend:8080}
+      BACKEND_WEBHOOK_PATH: ${BACKEND_WEBHOOK_PATH:-/api/crm/whatsapp/webhook}
+      WHATSAPP_SESSION_DIR: /app/storage/session
+      WHATSAPP_MEDIA_DIR: /app/storage/media
+      WHATSAPP_CLIENT_ID: kiments-main
+    volumes:
+      - ./storage/whatsapp/session:/app/storage/session
+      - ./storage/whatsapp/media:/app/storage/media
+    depends_on:
+      - backend
+    networks:
+      - textil-network
+
 networks:
   textil-network:
     external: true

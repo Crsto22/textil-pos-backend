@@ -27,9 +27,6 @@ public class DocumentoConsultaService {
     private static final List<String> APELLIDO_CONNECTORS = List.of(
             "DA", "DAS", "DE", "DEL", "DI", "DO", "DOS", "LA", "LAS", "LOS", "MAC", "MC", "SAN", "SANTA", "VAN",
             "VON");
-    private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(15))
-            .build();
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final String baseUrl;
@@ -119,7 +116,7 @@ public class DocumentoConsultaService {
                 .build();
 
         try {
-            HttpResponse<String> response = HTTP_CLIENT.send(request,
+            HttpResponse<String> response = httpClient().send(request,
                     HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 throw new RuntimeException(
@@ -137,6 +134,12 @@ public class DocumentoConsultaService {
         } catch (Exception e) {
             throw new RuntimeException("No se pudo consultar el documento: " + e.getMessage());
         }
+    }
+
+    private HttpClient httpClient() {
+        return HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(15))
+                .build();
     }
 
     private String validarDocumento(String valor, int longitud, String etiqueta) {
@@ -252,7 +255,7 @@ public class DocumentoConsultaService {
                 .GET().build();
 
         try {
-            HttpResponse<String> response = HTTP_CLIENT.send(request,
+            HttpResponse<String> response = httpClient().send(request,
                     HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 throw new RuntimeException("Error consultando apisperu (HTTP " + response.statusCode() + ")");
@@ -290,7 +293,7 @@ public class DocumentoConsultaService {
                 .GET().build();
 
         try {
-            HttpResponse<String> response = HTTP_CLIENT.send(request,
+            HttpResponse<String> response = httpClient().send(request,
                     HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 throw new RuntimeException("Error consultando apisperu (HTTP " + response.statusCode() + ")");

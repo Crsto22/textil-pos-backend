@@ -36,9 +36,6 @@ public class SunatRestApiClientService {
             "https://gre-test.nubefact.com/v1/contribuyente/gem/comprobantes";
     private static final String PRODUCTION_GRE_CPE_BASE_URL =
             "https://api-cpe.sunat.gob.pe/v1/contribuyente/gem/comprobantes";
-    private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(20))
-            .build();
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final ConcurrentMap<String, CachedToken> TOKEN_CACHE = new ConcurrentHashMap<>();
 
@@ -276,7 +273,7 @@ public class SunatRestApiClientService {
     private HttpResponse<String> sendWithRetry(HttpRequest request, String operation) {
         for (int attempt = 1; attempt <= MAX_NETWORK_ATTEMPTS; attempt++) {
             try {
-                return HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+                return httpClient().send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new RuntimeException("La operacion fue interrumpida al " + operation, e);
@@ -301,6 +298,12 @@ public class SunatRestApiClientService {
             throw new RuntimeException(message);
         }
         return value.trim();
+    }
+
+    private HttpClient httpClient() {
+        return HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(20))
+                .build();
     }
 
     private String buildTokenCacheKey(SunatConfig config) {

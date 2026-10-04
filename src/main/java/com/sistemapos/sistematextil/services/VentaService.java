@@ -1765,6 +1765,30 @@ public class VentaService {
     }
 
     @Transactional
+    public VentaResponse registrarVentaDesdeCrm(VentaCreateRequest request, Usuario usuarioAutenticado) {
+        if (usuarioAutenticado == null || usuarioAutenticado.getIdUsuario() == null) {
+            throw new RuntimeException("No autenticado");
+        }
+        Usuario usuarioPersistido = usuarioRepository
+                .findByIdUsuarioAndDeletedAtIsNull(usuarioAutenticado.getIdUsuario())
+                .orElseThrow(() -> new RuntimeException("Usuario autenticado no encontrado"));
+        Sucursal sucursalVenta = resolverSucursalParaVenta(request.idSucursal(), usuarioPersistido);
+        return registrarVentaInterna(request, usuarioPersistido, sucursalVenta, true, "CRM_WHATSAPP");
+    }
+
+    @Transactional
+    public VentaResponse registrarVentaReservadaDesdeCrm(VentaCreateRequest request, Usuario usuarioAutenticado) {
+        if (usuarioAutenticado == null || usuarioAutenticado.getIdUsuario() == null) {
+            throw new RuntimeException("No autenticado");
+        }
+        Usuario usuarioPersistido = usuarioRepository
+                .findByIdUsuarioAndDeletedAtIsNull(usuarioAutenticado.getIdUsuario())
+                .orElseThrow(() -> new RuntimeException("Usuario autenticado no encontrado"));
+        Sucursal sucursalVenta = resolverSucursalParaVenta(request.idSucursal(), usuarioPersistido);
+        return registrarVentaInterna(request, usuarioPersistido, sucursalVenta, false, "CRM_WHATSAPP");
+    }
+
+    @Transactional
     public VentaResponse registrarVentaDesdeEcommerce(
             VentaCreateRequest request,
             String correoUsuarioAutenticado,

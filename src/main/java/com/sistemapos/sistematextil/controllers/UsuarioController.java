@@ -5,6 +5,7 @@ import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -89,6 +90,8 @@ public class UsuarioController {
             @Valid @RequestBody UsuarioUpdateRequest request) {
         try {
             return ResponseEntity.ok(usuarioService.actualizar(id, request));
+        } catch (AccessDeniedException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", e.getMessage()));
         } catch (RuntimeException e) {
             String message = e.getMessage() == null ? "Error al actualizar usuario" : e.getMessage();
             HttpStatus status = message.toLowerCase().contains("no encontrado")

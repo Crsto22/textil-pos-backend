@@ -172,6 +172,8 @@ public interface ProductoVarianteRepository extends JpaRepository<ProductoVarian
 
     List<ProductoVariante> findByPrecioOfertaIsNotNullAndOfertaFinLessThanEqualAndDeletedAtIsNull(LocalDateTime fechaHora);
 
+    List<ProductoVariante> findByPrecioOfertaIsNotNullAndOfertaHastaAgotarStockTrueAndDeletedAtIsNull();
+
     Page<ProductoVariante> findByPrecioOfertaIsNotNullAndDeletedAtIsNull(Pageable pageable);
 
     @Query(

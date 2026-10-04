@@ -14,6 +14,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
+import jakarta.servlet.DispatcherType;
 import lombok.RequiredArgsConstructor;
 
 @Configuration
@@ -34,6 +35,7 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .cors(Customizer.withDefaults())
                 .authorizeHttpRequests(auth -> auth
+                        .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR).permitAll()
                         .requestMatchers(HttpMethod.GET, "/actuator/health").permitAll()
                         .requestMatchers("/error").permitAll()
                         .requestMatchers("/iclock/**").permitAll()
@@ -41,6 +43,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/public/cpe/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/public/ecommerce/carrito/validar").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/public/ecommerce/pedidos", "/api/public/ecommerce/pedidos/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/crm/whatsapp/webhook", "/api/crm/whatsapp/connection-event").permitAll()
                         .requestMatchers("/api/auth/autenticarse", "/api/auth/refresh").permitAll()
                         .requestMatchers("/api/auth/registro").hasAnyAuthority("ADMINISTRADOR", "SISTEMA")
                         .requestMatchers("/api/auth/logout").authenticated()
@@ -52,6 +55,18 @@ public class SecurityConfig {
                         .requestMatchers("/api/turno/**").hasAnyAuthority("ADMINISTRADOR", "SISTEMA")
                         .requestMatchers("/api/trabajadores/**", "/api/dispositivos-asistencia/**", "/api/asistencia/**")
                         .hasAnyAuthority("ADMINISTRADOR", "SISTEMA")
+                        .requestMatchers(
+                                "/api/crm/whatsapp/conversations",
+                                "/api/crm/whatsapp/conversations/**",
+                                 "/api/crm/whatsapp/events",
+                                 "/api/crm/whatsapp/status",
+                                 "/api/crm/whatsapp/contacts",
+                                 "/api/crm/whatsapp/tags",
+                                 "/api/crm/whatsapp/tags/**",
+                                 "/api/crm/whatsapp/transfer-users",
+                                "/api/crm/whatsapp/messages/*/media")
+                        .hasAnyAuthority("ADMINISTRADOR", "CRM_CHAT")
+                        .requestMatchers("/api/crm/whatsapp/**").hasAuthority("ADMINISTRADOR")
                         .requestMatchers("/api/usuario/**").hasAnyAuthority("ADMINISTRADOR", "SISTEMA")
                         .requestMatchers("/api/cliente/**")
                         .hasAnyAuthority("ADMINISTRADOR", "VENTAS", "VENTAS_ALMACEN", "SISTEMA")

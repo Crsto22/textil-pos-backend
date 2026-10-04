@@ -44,7 +44,9 @@ public record RegisterRequest(
 
     Integer idTurno,
 
-    Boolean puedeAceptarPedidos
+    Boolean puedeAceptarPedidos,
+
+    Boolean accesoCrm
 
 ) {
 

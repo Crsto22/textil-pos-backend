@@ -95,6 +95,9 @@ public class Usuario {
     @Column(name = "puede_aceptar_pedidos", nullable = false)
     private Boolean puedeAceptarPedidos = Boolean.FALSE;
 
+    @Column(name = "acceso_crm", nullable = false)
+    private Boolean accesoCrm = Boolean.FALSE;
+
 
     @ManyToOne(optional = true)
     @JoinColumn(name = "id_sucursal", nullable = true)
@@ -115,6 +118,9 @@ public class Usuario {
         }
         if (this.puedeAceptarPedidos == null) {
             this.puedeAceptarPedidos = Boolean.FALSE;
+        }
+        if (this.accesoCrm == null) {
+            this.accesoCrm = Boolean.FALSE;
         }
     }
 

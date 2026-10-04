@@ -37,6 +37,15 @@ public class MetodoPagoCuenta {
     @Column(name = "numero_cuenta", nullable = false, length = 50)
     private String numeroCuenta;
 
+    @Column(name = "titular", length = 150)
+    private String titular;
+
+    @Column(name = "aliases_validacion", length = 500)
+    private String aliasesValidacion;
+
+    @Column(name = "activo", nullable = false)
+    private Boolean activo = true;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -50,6 +59,9 @@ public class MetodoPagoCuenta {
             this.createdAt = now;
         }
         this.updatedAt = now;
+        if (this.activo == null) {
+            this.activo = true;
+        }
     }
 
     @PreUpdate

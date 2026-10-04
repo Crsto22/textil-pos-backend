@@ -24,6 +24,8 @@ public record EcommercePromocionComboRequest(
 
         LocalDateTime fechaFin,
 
+        Boolean hastaAgotarStock,
+
         @NotEmpty(message = "Ingrese productos para el combo")
         List<@Valid Item> items
 ) {

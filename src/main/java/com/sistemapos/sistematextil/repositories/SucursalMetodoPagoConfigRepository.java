@@ -14,7 +14,7 @@ import com.sistemapos.sistematextil.model.SucursalMetodoPagoConfig;
 @Repository
 public interface SucursalMetodoPagoConfigRepository extends JpaRepository<SucursalMetodoPagoConfig, Integer> {
 
-    @EntityGraph(attributePaths = "metodoPago")
+    @EntityGraph(attributePaths = { "metodoPago", "metodoPago.cuentas" })
     @Query("""
             SELECT config
             FROM SucursalMetodoPagoConfig config
@@ -25,7 +25,7 @@ public interface SucursalMetodoPagoConfigRepository extends JpaRepository<Sucurs
             """)
     List<SucursalMetodoPagoConfig> findActivosBySucursal(@Param("idSucursal") Integer idSucursal);
 
-    @EntityGraph(attributePaths = "metodoPago")
+    @EntityGraph(attributePaths = { "metodoPago", "metodoPago.cuentas" })
     Optional<SucursalMetodoPagoConfig> findBySucursal_IdSucursalAndMetodoPago_IdMetodoPagoAndDeletedAtIsNull(
             Integer idSucursal,
             Integer idMetodoPago);

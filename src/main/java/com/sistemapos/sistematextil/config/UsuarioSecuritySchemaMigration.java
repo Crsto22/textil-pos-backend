@@ -10,9 +10,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 @Component
+@Order(Ordered.HIGHEST_PRECEDENCE + 2)
 public class UsuarioSecuritySchemaMigration implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(UsuarioSecuritySchemaMigration.class);
@@ -31,6 +34,8 @@ public class UsuarioSecuritySchemaMigration implements ApplicationRunner {
                     "ALTER TABLE usuario ADD COLUMN refresh_token_version INT NOT NULL DEFAULT 0 AFTER deleted_at");
             ensureColumn(statement, connection, "usuario", "puede_aceptar_pedidos",
                     "ALTER TABLE usuario ADD COLUMN puede_aceptar_pedidos TINYINT(1) NOT NULL DEFAULT 0 AFTER refresh_token_version");
+            ensureColumn(statement, connection, "usuario", "acceso_crm",
+                    "ALTER TABLE usuario ADD COLUMN acceso_crm TINYINT(1) NOT NULL DEFAULT 0 AFTER puede_aceptar_pedidos");
         }
     }
 

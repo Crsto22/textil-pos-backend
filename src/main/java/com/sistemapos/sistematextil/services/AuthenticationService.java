@@ -11,6 +11,9 @@ import javax.imageio.ImageIO;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -80,6 +83,7 @@ public class AuthenticationService {
                 .password(passwordEncoder.encode(request.password()))
                 .rol(request.rol())
                 .puedeAceptarPedidos(puedeAceptarPedidos(request.rol(), request.puedeAceptarPedidos()))
+                .accesoCrm(accesoCrm(request.rol(), request.accesoCrm(), false))
                 .sucursal(asignacion.principal())
                 .turno(turnoService.resolverTurnoAsignable(request.idTurno()))
                 .build();
@@ -257,7 +261,8 @@ public class AuthenticationService {
                 turno != null ? turno.getHoraFin() : null,
                 diasTurno,
                 horariosTurno,
-                Boolean.TRUE.equals(user.getPuedeAceptarPedidos()));
+                Boolean.TRUE.equals(user.getPuedeAceptarPedidos()),
+                Boolean.TRUE.equals(user.getAccesoCrm()));
     }
 
     private MeResponse toMeResponse(Usuario user) {
@@ -286,11 +291,35 @@ public class AuthenticationService {
                 turno != null ? turno.getHoraFin() : null,
                 diasTurno,
                 horariosTurno,
-                Boolean.TRUE.equals(user.getPuedeAceptarPedidos()));
+                Boolean.TRUE.equals(user.getPuedeAceptarPedidos()),
+                Boolean.TRUE.equals(user.getAccesoCrm()));
     }
 
     private boolean puedeAceptarPedidos(Rol rol, Boolean value) {
         return Boolean.TRUE.equals(value) && (rol == Rol.VENTAS || rol == Rol.VENTAS_ALMACEN);
+    }
+
+    private boolean accesoCrm(Rol rol, Boolean value, boolean currentValue) {
+        if (rol == Rol.ADMINISTRADOR) {
+            return false;
+        }
+        if (value == null) {
+            return currentValue;
+        }
+        boolean nextValue = Boolean.TRUE.equals(value);
+        if (!usuarioActualEsAdministrador() && nextValue != currentValue) {
+            throw new AccessDeniedException("Solo un administrador puede modificar el acceso al CRM");
+        }
+        return nextValue;
+    }
+
+    private boolean usuarioActualEsAdministrador() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null) {
+            return false;
+        }
+        return authentication.getAuthorities().stream()
+                .anyMatch(authority -> Rol.ADMINISTRADOR.name().equals(authority.getAuthority()));
     }
 
     private String construirFotoPerfilKey(Integer idUsuario) {

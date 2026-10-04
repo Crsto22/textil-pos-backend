@@ -12,6 +12,7 @@ public record EcommercePromocionComboResponse(
         String estado,
         LocalDateTime fechaInicio,
         LocalDateTime fechaFin,
+        Boolean hastaAgotarStock,
         Integer usuarioCreacionId,
         String usuarioCreacionNombre,
         List<Item> items

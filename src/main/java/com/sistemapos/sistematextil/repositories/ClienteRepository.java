@@ -55,6 +55,14 @@ public interface ClienteRepository extends JpaRepository<Cliente, Integer> {
             Integer idEmpresa,
             Integer idCliente);
 
+    List<Cliente> findByEmpresa_IdEmpresaAndTelefonoInAndDeletedAtIsNullOrderByIdClienteAsc(
+            Integer idEmpresa,
+            List<String> telefonos);
+
+    List<Cliente> findByEmpresa_IdEmpresaAndTelefonoInOrderByIdClienteAsc(
+            Integer idEmpresa,
+            List<String> telefonos);
+
     @Query("""
             SELECT COUNT(c)
             FROM Cliente c

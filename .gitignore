@@ -28,6 +28,7 @@ target/
 build/
 !**/src/main/**/build/
 !**/src/test/**/build/
+node_modules/
 
 ### VS Code ###
 .vscode/
@@ -39,6 +40,9 @@ build/
 
 # Local runtime and temporary files
 .tmp*/
+.codex_tmp/
 storage/
 .tools/
+*.log
+whatsapp-bridge/.wwebjs_cache/
 --help

@@ -43,6 +43,8 @@ public record UsuarioUpdateRequest(
 
         Integer idTurno,
 
-        Boolean puedeAceptarPedidos
+        Boolean puedeAceptarPedidos,
+
+        Boolean accesoCrm
 ) {
 }

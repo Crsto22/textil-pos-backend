@@ -35,10 +35,6 @@ public class SunatSoapClientService {
             "https://e-beta.sunat.gob.pe/ol-ti-itcpfegem-beta/billService";
     private static final String PRODUCCION_BILL_SERVICE_ENDPOINT =
             "https://e-factura.sunat.gob.pe/ol-ti-itcpfegem/billService";
-    private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(20))
-            .build();
-
     private final SunatSecretCryptoService sunatSecretCryptoService;
 
     public SendBillResponse sendBill(SunatConfig config, String zipFileName, byte[] zipBytes) {
@@ -82,7 +78,7 @@ public class SunatSoapClientService {
                 .build();
 
         try {
-            HttpResponse<String> response = HTTP_CLIENT.send(
+            HttpResponse<String> response = httpClient().send(
                     request,
                     HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             log.info("SUNAT respuesta HTTP status={}, bodyLength={}",
@@ -126,7 +122,7 @@ public class SunatSoapClientService {
                 .build();
 
         try {
-            HttpResponse<String> response = HTTP_CLIENT.send(
+            HttpResponse<String> response = httpClient().send(
                     request,
                     HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             log.info("SUNAT respuesta HTTP status={}, bodyLength={}",
@@ -159,7 +155,7 @@ public class SunatSoapClientService {
                 .build();
 
         try {
-            HttpResponse<String> response = HTTP_CLIENT.send(
+            HttpResponse<String> response = httpClient().send(
                     request,
                     HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             log.info("SUNAT respuesta HTTP status={}, bodyLength={}",
@@ -283,6 +279,12 @@ public class SunatSoapClientService {
         factory.setNamespaceAware(true);
         return factory.newDocumentBuilder()
                 .parse(new java.io.ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    private HttpClient httpClient() {
+        return HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(20))
+                .build();
     }
 
     private String firstTagText(Document document, String localName) {

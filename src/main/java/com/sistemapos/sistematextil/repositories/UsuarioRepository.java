@@ -56,6 +56,15 @@ public interface UsuarioRepository extends JpaRepository <Usuario, Integer>{
             @Param("idSucursal") Integer idSucursal,
             Pageable pageable);
     Optional<Usuario> findByIdUsuarioAndDeletedAtIsNull(Integer idUsuario);
+    @Query(value = """
+            SELECT *
+            FROM usuario u
+            WHERE u.deleted_at IS NULL
+              AND u.activo = 1
+              AND (u.rol = 'ADMINISTRADOR' OR u.acceso_crm = 1)
+            ORDER BY u.nombre ASC, u.apellido ASC, u.correo ASC
+            """, nativeQuery = true)
+    List<Usuario> findUsuariosConAccesoCrm();
     @Query("""
             SELECT COUNT(DISTINCT u)
             FROM Usuario u

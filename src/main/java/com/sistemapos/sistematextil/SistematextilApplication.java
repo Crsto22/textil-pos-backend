@@ -80,6 +80,21 @@ public class SistematextilApplication {
 			} else {
 				System.out.println("Usuario de sistema ya existe");
 			}
+
+			if (usuarioRepository.findByCorreo("ia-kiments@system.local").isEmpty()) {
+				Usuario usuarioIa = new Usuario();
+				usuarioIa.setNombre("IA");
+				usuarioIa.setApellido("Kiments");
+				usuarioIa.setDni("87654322");
+				usuarioIa.setTelefono("900000002");
+				usuarioIa.setCorreo("ia-kiments@system.local");
+				usuarioIa.setPassword(encoder.encode(java.util.UUID.randomUUID().toString()));
+				usuarioIa.setRol(Rol.SISTEMA);
+				usuarioIa.setSucursal(null);
+				usuarioIa.setTurno(null);
+				usuarioIa.setEstado("ACTIVO");
+				usuarioRepository.save(usuarioIa);
+			}
 		};
 	}
 	

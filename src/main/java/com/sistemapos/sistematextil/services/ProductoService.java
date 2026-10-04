@@ -140,7 +140,7 @@ public class ProductoService {
                     correoUsuarioAutenticado);
         }
 
-        Integer idSucursalFiltro = resolverSucursalCatalogo(idSucursal);
+        Integer idSucursalFiltro = resolverSucursalCatalogo(idSucursal, publicarEcommerce);
         Sucursal sucursalContexto = obtenerSucursalContextoCatalogo(idSucursalFiltro);
         Page<Producto> productos = buscarProductos(
                 term,
@@ -180,7 +180,7 @@ public class ProductoService {
         Usuario usuario = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
         validarRolLectura(usuario);
 
-        Integer idSucursalFiltro = resolverSucursalCatalogo(idSucursal);
+        Integer idSucursalFiltro = resolverSucursalCatalogo(idSucursal, publicarEcommerce);
         Sucursal sucursalContexto = obtenerSucursalContextoCatalogo(idSucursalFiltro);
         Page<Producto> productos = buscarProductos(
                 null,
@@ -848,6 +848,21 @@ List<ProductoColorImagen> imagenesActuales = productoColorImagenRepository.findB
             throw new RuntimeException("Sucursal no encontrada");
         }
         return sucursal.getIdSucursal();
+    }
+
+    private Integer resolverSucursalCatalogo(Integer idSucursal, Boolean publicarEcommerce) {
+        if (idSucursal != null) {
+            return resolverSucursalCatalogo(idSucursal);
+        }
+        if (!Boolean.TRUE.equals(publicarEcommerce)) {
+            return null;
+        }
+        return sucursalRepository
+                .findFirstByPublicarEcommerceTrueAndDeletedAtIsNullAndEstadoAndTipoOrderByIdSucursalAsc(
+                        ESTADO_ACTIVO,
+                        SucursalTipo.VENTA)
+                .map(Sucursal::getIdSucursal)
+                .orElseThrow(() -> new RuntimeException("No existe una sucursal ecommerce activa"));
     }
 
     private SucursalTipo resolverTipoSucursalCatalogo(Integer idSucursal) {

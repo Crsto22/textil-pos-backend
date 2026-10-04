@@ -47,6 +47,9 @@ public class EcommercePromocionCombo {
     @Column(name = "fecha_fin")
     private LocalDateTime fechaFin;
 
+    @Column(name = "hasta_agotar_stock", nullable = false)
+    private Boolean hastaAgotarStock = false;
+
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "id_usuario_creacion")
     private Usuario usuarioCreacion;
@@ -72,6 +75,9 @@ public class EcommercePromocionCombo {
         updatedAt = now;
         if (estado == null || estado.isBlank()) {
             estado = "ACTIVO";
+        }
+        if (hastaAgotarStock == null) {
+            hastaAgotarStock = false;
         }
     }
 

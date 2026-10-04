@@ -63,8 +63,24 @@ public class EcommercePromocionComboSchemaMigration implements ApplicationRunner
                       CONSTRAINT fk_epci_producto FOREIGN KEY (producto_id) REFERENCES producto(producto_id)
                     )
                     """);
+            ensurePromotionLifecycleColumns(connection, statement);
             ensurePedidoColumns(connection, statement);
             log.info("Tablas ecommerce_promocion_combo listas");
+        }
+    }
+
+    private void ensurePromotionLifecycleColumns(Connection connection, Statement statement) throws Exception {
+        if (!columnExists(connection, "producto_variante", "oferta_hasta_agotar_stock")) {
+            statement.execute("""
+                    ALTER TABLE producto_variante
+                    ADD COLUMN oferta_hasta_agotar_stock BOOLEAN NOT NULL DEFAULT FALSE AFTER oferta_fin
+                    """);
+        }
+        if (!columnExists(connection, "ecommerce_promocion_combo", "hasta_agotar_stock")) {
+            statement.execute("""
+                    ALTER TABLE ecommerce_promocion_combo
+                    ADD COLUMN hasta_agotar_stock BOOLEAN NOT NULL DEFAULT FALSE AFTER fecha_fin
+                    """);
         }
     }
 

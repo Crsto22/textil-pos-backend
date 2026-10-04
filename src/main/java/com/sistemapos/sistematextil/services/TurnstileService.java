@@ -20,9 +20,6 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class TurnstileService {
 
-    private static final HttpClient HTTP = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(5))
-            .build();
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private final TurnstileProperties properties;
@@ -44,7 +41,7 @@ public class TurnstileService {
                     .header("Content-Type", "application/x-www-form-urlencoded")
                     .POST(HttpRequest.BodyPublishers.ofString(body))
                     .build();
-            HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = httpClient().send(request, HttpResponse.BodyHandlers.ofString());
             JsonNode json = JSON.readTree(response.body());
             if (!json.path("success").asBoolean(false)) {
                 throw new RuntimeException("Verificacion de seguridad invalida");
@@ -58,6 +55,12 @@ public class TurnstileService {
 
     private String enc(String value) {
         return URLEncoder.encode(value, StandardCharsets.UTF_8);
+    }
+
+    private HttpClient httpClient() {
+        return HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(5))
+                .build();
     }
 
     private boolean isBlank(String value) {

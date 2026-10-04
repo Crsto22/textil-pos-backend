@@ -56,6 +56,9 @@ public class ProductoVariante {
     @Column(name = "oferta_fin")
     private LocalDateTime ofertaFin;
 
+    @Column(name = "oferta_hasta_agotar_stock", nullable = false)
+    private Boolean ofertaHastaAgotarStock = false;
+
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "id_usuario_creacion")
     @JsonIgnoreProperties({"hibernateLazyInitializer", "handler", "password", "sucursal", "turno"})

@@ -1,6 +1,7 @@
 package com.sistemapos.sistematextil.model;
 
 import java.util.Collection;
+import java.util.ArrayList;
 import java.util.List;
 
 import org.jspecify.annotations.Nullable;
@@ -22,13 +23,18 @@ public class CustomUser implements UserDetails {
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
         Rol rol = usuario.getRol();
+        List<GrantedAuthority> authorities = new ArrayList<>();
         if (rol == Rol.VENTAS_ALMACEN) {
-            return List.of(
-                    new SimpleGrantedAuthority(Rol.VENTAS_ALMACEN.name()),
-                    new SimpleGrantedAuthority(Rol.VENTAS.name()),
-                    new SimpleGrantedAuthority(Rol.ALMACEN.name()));
+            authorities.add(new SimpleGrantedAuthority(Rol.VENTAS_ALMACEN.name()));
+            authorities.add(new SimpleGrantedAuthority(Rol.VENTAS.name()));
+            authorities.add(new SimpleGrantedAuthority(Rol.ALMACEN.name()));
+        } else {
+            authorities.add(new SimpleGrantedAuthority(rol.name()));
         }
-        return List.of(new SimpleGrantedAuthority(rol.name()));
+        if (rol == Rol.ADMINISTRADOR || Boolean.TRUE.equals(usuario.getAccesoCrm())) {
+            authorities.add(new SimpleGrantedAuthority("CRM_CHAT"));
+        }
+        return authorities;
     }
 
     @Override

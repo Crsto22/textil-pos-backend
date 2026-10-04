@@ -14,6 +14,13 @@ import com.sistemapos.sistematextil.model.EcommercePromocionCombo;
 
 public interface EcommercePromocionComboRepository extends JpaRepository<EcommercePromocionCombo, Integer> {
 
+    @EntityGraph(attributePaths = {"items", "items.producto", "usuarioCreacion"})
+    List<EcommercePromocionCombo> findByDeletedAtIsNullAndFechaFinLessThanEqual(LocalDateTime fechaHora);
+
+    @EntityGraph(attributePaths = {"items", "items.producto", "usuarioCreacion"})
+    List<EcommercePromocionCombo> findByDeletedAtIsNullAndEstadoAndHastaAgotarStockTrue(
+            String estado);
+
     @EntityGraph(attributePaths = "usuarioCreacion")
     Page<EcommercePromocionCombo> findByDeletedAtIsNullOrderByCreatedAtDescIdEcommercePromocionComboDesc(Pageable pageable);
 

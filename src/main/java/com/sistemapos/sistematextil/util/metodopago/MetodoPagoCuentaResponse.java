@@ -2,6 +2,8 @@ package com.sistemapos.sistematextil.util.metodopago;
 
 public record MetodoPagoCuentaResponse(
         Integer idMetodoPagoCuenta,
-        String numeroCuenta
+        String numeroCuenta,
+        String titular,
+        String aliasesValidacion
 ) {
 }

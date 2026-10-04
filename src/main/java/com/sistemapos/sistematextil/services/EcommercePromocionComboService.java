@@ -24,10 +24,14 @@ import com.sistemapos.sistematextil.model.EcommercePromocionCombo;
 import com.sistemapos.sistematextil.model.EcommercePromocionComboItem;
 import com.sistemapos.sistematextil.model.Producto;
 import com.sistemapos.sistematextil.model.ProductoVariante;
+import com.sistemapos.sistematextil.model.Sucursal;
+import com.sistemapos.sistematextil.model.SucursalTipo;
 import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.repositories.EcommercePromocionComboRepository;
 import com.sistemapos.sistematextil.repositories.ProductoRepository;
 import com.sistemapos.sistematextil.repositories.ProductoVarianteRepository;
+import com.sistemapos.sistematextil.repositories.SucursalRepository;
+import com.sistemapos.sistematextil.repositories.SucursalStockRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceCarritoResumenResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceCarritoValidarResponse;
@@ -53,6 +57,8 @@ public class EcommercePromocionComboService {
     private final ProductoRepository productoRepository;
     private final ProductoVarianteRepository productoVarianteRepository;
     private final UsuarioRepository usuarioRepository;
+    private final SucursalRepository sucursalRepository;
+    private final SucursalStockRepository sucursalStockRepository;
     private final PrecioOfertaService precioOfertaService;
     private final EcommerceCacheInvalidationService ecommerceCacheInvalidationService;
 
@@ -250,7 +256,8 @@ public class EcommercePromocionComboService {
         combo.setPrecioCombo(request.precioCombo().setScale(2, RoundingMode.HALF_UP));
         combo.setEstado(normalizarEstado(request.estado()));
         combo.setFechaInicio(request.fechaInicio());
-        combo.setFechaFin(request.fechaFin());
+        combo.setHastaAgotarStock(Boolean.TRUE.equals(request.hastaAgotarStock()));
+        combo.setFechaFin(Boolean.TRUE.equals(combo.getHastaAgotarStock()) ? null : request.fechaFin());
         if (combo.getUsuarioCreacion() == null) {
             combo.setUsuarioCreacion(usuario);
         }
@@ -280,7 +287,27 @@ public class EcommercePromocionComboService {
             item.setCantidadRequerida(entry.getValue());
             combo.addItem(item);
         }
+        if (Boolean.TRUE.equals(combo.getHastaAgotarStock())) {
+            validarStockInicialEcommerce(combo);
+        }
         validarAhorroMinimo(combo);
+    }
+
+    private void validarStockInicialEcommerce(EcommercePromocionCombo combo) {
+        Sucursal branch = sucursalRepository
+                .findFirstByPublicarEcommerceTrueAndDeletedAtIsNullAndEstadoAndTipoOrderByIdSucursalAsc(
+                        ACTIVO,
+                        SucursalTipo.VENTA)
+                .orElseThrow(() -> new RuntimeException("No existe una sucursal ecommerce activa"));
+        for (EcommercePromocionComboItem item : combo.getItems()) {
+            long stock = sucursalStockRepository.sumarStockEcommercePorProducto(
+                    branch.getIdSucursal(),
+                    item.getProducto().getIdProducto());
+            if (stock < item.getCantidadRequerida()) {
+                throw new RuntimeException("El producto " + item.getProducto().getNombre()
+                        + " no tiene stock suficiente en la sucursal ecommerce");
+            }
+        }
     }
 
     private void validarAhorroMinimo(EcommercePromocionCombo combo) {
@@ -370,7 +397,7 @@ public class EcommercePromocionComboService {
         if (combo.getItems() == null || combo.getItems().isEmpty()) {
             return false;
         }
-        return combo.getItems().stream().allMatch(item -> {
+        boolean productsVisible = combo.getItems().stream().allMatch(item -> {
             Producto producto = item.getProducto();
             return producto != null
                     && Boolean.TRUE.equals(producto.getPublicarEcommerce())
@@ -378,6 +405,17 @@ public class EcommercePromocionComboService {
                     && ACTIVO.equalsIgnoreCase(normalizar(producto.getActivo()))
                     && producto.getDeletedAt() == null;
         });
+        if (!productsVisible) return false;
+        Sucursal branch = sucursalRepository
+                .findFirstByPublicarEcommerceTrueAndDeletedAtIsNullAndEstadoAndTipoOrderByIdSucursalAsc(
+                        ACTIVO,
+                        SucursalTipo.VENTA)
+                .orElse(null);
+        if (branch == null) return false;
+        return combo.getItems().stream().allMatch(item ->
+                sucursalStockRepository.sumarStockEcommercePorProducto(
+                        branch.getIdSucursal(),
+                        item.getProducto().getIdProducto()) >= item.getCantidadRequerida());
     }
 
     private List<EcommerceCarritoResumenResponse.ComboPendiente> pendientes(
@@ -488,6 +526,7 @@ public class EcommercePromocionComboService {
                 combo.getEstado(),
                 combo.getFechaInicio(),
                 combo.getFechaFin(),
+                Boolean.TRUE.equals(combo.getHastaAgotarStock()),
                 combo.getUsuarioCreacion() != null ? combo.getUsuarioCreacion().getIdUsuario() : null,
                 nombreUsuario(combo.getUsuarioCreacion()),
                 combo.getItems().stream()

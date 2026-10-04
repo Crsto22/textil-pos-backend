@@ -10,6 +10,8 @@ public record ProductoVarianteOfertaUpdateRequest(
 
         LocalDateTime ofertaInicio,
 
-        LocalDateTime ofertaFin
+        LocalDateTime ofertaFin,
+
+        Boolean ofertaHastaAgotarStock
 ) {
 }

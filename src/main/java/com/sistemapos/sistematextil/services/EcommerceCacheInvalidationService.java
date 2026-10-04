@@ -20,11 +20,6 @@ public class EcommerceCacheInvalidationService {
     private static final String TX_RESOURCE_KEY = EcommerceCacheInvalidationService.class.getName() + ".pending";
     private static final Duration TIMEOUT = Duration.ofSeconds(2);
 
-    private final HttpClient httpClient = HttpClient.newBuilder()
-            .version(HttpClient.Version.HTTP_1_1)
-            .connectTimeout(TIMEOUT)
-            .build();
-
     @Value("${ecommerce.cache.revalidate-url:}")
     private String revalidateUrl;
 
@@ -65,6 +60,10 @@ public class EcommerceCacheInvalidationService {
 
     private void send() {
         try {
+            HttpClient httpClient = HttpClient.newBuilder()
+                    .version(HttpClient.Version.HTTP_1_1)
+                    .connectTimeout(TIMEOUT)
+                    .build();
             HttpRequest request = HttpRequest.newBuilder(URI.create(revalidateUrl.trim()))
                     .timeout(TIMEOUT)
                     .header("x-revalidate-secret", revalidateSecret)

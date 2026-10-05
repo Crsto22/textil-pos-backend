@@ -34,10 +34,12 @@ import com.sistemapos.sistematextil.model.CrmWhatsappAiRun;
 import com.sistemapos.sistematextil.model.CrmWhatsappAiRunOutcome;
 import com.sistemapos.sistematextil.model.CrmWhatsappConversation;
 import com.sistemapos.sistematextil.model.CrmWhatsappMessage;
+import com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappAiConfigRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappAiJobRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappAiRunRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappMessageRepository;
+import com.sistemapos.sistematextil.repositories.CrmWhatsappPaymentEvidenceRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappConversationRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappAiProductQueryRepository;
 import com.sistemapos.sistematextil.model.CrmWhatsappAiProductQuery;
@@ -88,6 +90,7 @@ public class CrmWhatsappAiEngineService {
     private final CrmWhatsappAiRunRepository runRepository;
     private final CrmWhatsappAiConfigRepository configRepository;
     private final CrmWhatsappMessageRepository messageRepository;
+    private final CrmWhatsappPaymentEvidenceRepository paymentEvidenceRepository;
     private final CrmWhatsappEcommerceOrderParser ecommerceOrderParser;
     private final CrmWhatsappAiToolService toolService;
     private final AiModelProvider modelProvider;
@@ -142,6 +145,14 @@ public class CrmWhatsappAiEngineService {
         String body;
         Usage initialUsage = Usage.empty();
         if (!messageType.isBlank() && !"TEXT".equals(messageType)) {
+            if (paymentEvidenceRepository.findByMessage_IdMessage(message.getIdMessage()).isPresent()) {
+                return PreparedJob.skip(job, "El comprobante ya fue registrado por el flujo de pagos", false);
+            }
+            boolean paymentFlowActive = saleDraftService.hasActivePaymentFlow(conversation.getIdConversation())
+                    || conversation.getWaitingReason() == CrmWhatsappWaitingReason.PAYMENT_VERIFICATION;
+            if (paymentFlowActive && !isAudioMessage(messageType)) {
+                return PreparedJob.skip(job, "El adjunto pertenece al flujo activo de pagos", false);
+            }
             String paymentReminder = clean(saleDraftService.pendingPaymentEvidenceReminder(
                     conversation.getIdConversation()));
             if (!paymentReminder.isBlank() && isCompatiblePaymentEvidence(message)) {

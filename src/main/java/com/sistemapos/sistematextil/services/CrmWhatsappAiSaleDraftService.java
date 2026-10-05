@@ -301,6 +301,11 @@ public class CrmWhatsappAiSaleDraftService {
         return aiPaymentService.pendingEvidenceReminder(conversationId);
     }
 
+    @Transactional(readOnly = true)
+    public boolean hasActivePaymentFlow(Long conversationId) {
+        return aiPaymentService.hasActivePaymentFlow(conversationId);
+    }
+
     @Transactional
     public ActionOutcome selectConfirmedPaymentMethod(CrmWhatsappConversation conversation, String customerMessage) {
         if (conversation == null || clean(customerMessage).isBlank()) return null;

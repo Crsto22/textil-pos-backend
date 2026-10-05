@@ -141,6 +141,15 @@ public class CrmWhatsappAiPaymentService {
                 + request.getExpectedAmount().setScale(2, RoundingMode.HALF_UP).toPlainString() + ".";
     }
 
+    @Transactional(readOnly = true)
+    public boolean hasActivePaymentFlow(Long conversationId) {
+        if (conversationId == null) return false;
+        return requestRepository.findFirstByConversation_IdConversationAndStatusInOrderByCreatedAtDesc(
+                        conversationId, ACTIVE)
+                .filter(request -> request.getExpiresAt() == null || !request.getExpiresAt().isBefore(LocalDateTime.now()))
+                .isPresent();
+    }
+
     private ComprobanteConfig defaultReceipt() {
         return comprobanteRepository
                 .findTopByTipoComprobanteAndDeletedAtIsNullAndActivoOrderByIdComprobanteAsc("NOTA DE VENTA", "ACTIVO")

@@ -27,12 +27,15 @@ import com.sistemapos.sistematextil.model.CrmWhatsappAiTone;
 import com.sistemapos.sistematextil.model.CrmWhatsappConnection;
 import com.sistemapos.sistematextil.model.CrmWhatsappConversation;
 import com.sistemapos.sistematextil.model.CrmWhatsappMessage;
+import com.sistemapos.sistematextil.model.CrmWhatsappPaymentEvidence;
+import com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason;
 import com.sistemapos.sistematextil.model.Empresa;
 import com.sistemapos.sistematextil.model.Sucursal;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappAiConfigRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappAiJobRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappAiRunRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappMessageRepository;
+import com.sistemapos.sistematextil.repositories.CrmWhatsappPaymentEvidenceRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappAiProductQueryRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappConversationRepository;
 import com.sistemapos.sistematextil.services.ai.AiModelProvider;
@@ -54,6 +57,7 @@ class CrmWhatsappAiEngineServiceTest {
     private final CrmWhatsappAiRunRepository runs = mock(CrmWhatsappAiRunRepository.class);
     private final CrmWhatsappAiConfigRepository configs = mock(CrmWhatsappAiConfigRepository.class);
     private final CrmWhatsappMessageRepository messages = mock(CrmWhatsappMessageRepository.class);
+    private final CrmWhatsappPaymentEvidenceRepository paymentEvidences = mock(CrmWhatsappPaymentEvidenceRepository.class);
     private final CrmWhatsappEcommerceOrderParser ecommerceOrderParser = new CrmWhatsappEcommerceOrderParser();
     private final CrmWhatsappAiToolService tools = mock(CrmWhatsappAiToolService.class);
     private final AiModelProvider provider = mock(AiModelProvider.class);
@@ -68,7 +72,7 @@ class CrmWhatsappAiEngineServiceTest {
     private final CrmWhatsappConversationRepository conversations = mock(CrmWhatsappConversationRepository.class);
     private final S3StorageService storage = mock(S3StorageService.class);
     private final CrmWhatsappAiEngineService service = new CrmWhatsappAiEngineService(
-            jobs, runs, configs, messages, ecommerceOrderParser, tools, provider, events, memory, delivery, saleDrafts,
+            jobs, runs, configs, messages, paymentEvidences, ecommerceOrderParser, tools, provider, events, memory, delivery, saleDrafts,
             operations, safety, productQueries, audit, conversations, storage);
 
     @BeforeEach
@@ -224,13 +228,72 @@ class CrmWhatsappAiEngineServiceTest {
         when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
         when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
         when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
-        when(saleDrafts.pendingPaymentEvidenceReminder(10L))
-                .thenReturn("No se puede procesar tu pago con ese mensaje.");
+        when(saleDrafts.hasActivePaymentFlow(10L)).thenReturn(true);
 
         var result = service.execute(service.prepare(50L));
 
         assertEquals(CrmWhatsappAiRunOutcome.SKIPPED, result.outcome());
-        assertTrue(result.reason().contains("flujo de pagos"));
+        assertTrue(result.reason().contains("flujo activo de pagos"));
+        verifyNoInteractions(provider, tools);
+    }
+
+    @Test
+    void noRespondeImagenComunCuandoLaCapturaYaFueRegistradaComoEvidencia() {
+        CrmWhatsappAiJob job = mediaJob("IMAGE", "image/jpeg", "pago.jpg", "");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(paymentEvidences.findByMessage_IdMessage(job.getMessage().getIdMessage()))
+                .thenReturn(Optional.of(mock(CrmWhatsappPaymentEvidence.class)));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals(CrmWhatsappAiRunOutcome.SKIPPED, result.outcome());
+        assertTrue(result.reason().contains("comprobante ya fue registrado"));
+        verifyNoInteractions(provider, tools);
+    }
+
+    @Test
+    void ignoraAdjuntoNoCompatibleDuranteElFlujoActivoDePagos() {
+        CrmWhatsappAiJob job = mediaJob("IMAGE", "image/jpg", "pago.jpg", "");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(saleDrafts.hasActivePaymentFlow(10L)).thenReturn(true);
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals(CrmWhatsappAiRunOutcome.SKIPPED, result.outcome());
+        assertTrue(result.reason().contains("flujo activo de pagos"));
+        verifyNoInteractions(provider, tools);
+    }
+
+    @Test
+    void ignoraImagenMientrasLaConversacionEsperaValidacionDePago() {
+        CrmWhatsappAiJob job = mediaJob("IMAGE", "image/jpeg", "pago.jpg", "");
+        job.getMessage().getConversation().setWaitingReason(CrmWhatsappWaitingReason.PAYMENT_VERIFICATION);
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals(CrmWhatsappAiRunOutcome.SKIPPED, result.outcome());
+        assertTrue(result.reason().contains("flujo activo de pagos"));
+        verifyNoInteractions(provider, tools);
+    }
+
+    @Test
+    void respondeImagenGenericaSinFlujoDePagoActivo() {
+        CrmWhatsappAiJob job = mediaJob("IMAGE", "image/jpeg", "foto.jpg", "");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("ADJUNTO_NO_COMPATIBLE", result.intent());
+        assertTrue(result.draft().contains("interpretar imágenes"));
         verifyNoInteractions(provider, tools);
     }
 

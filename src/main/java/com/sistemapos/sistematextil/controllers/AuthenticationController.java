@@ -118,8 +118,19 @@ public class AuthenticationController {
     }
 
     @PostMapping("/logout")
-    public ResponseEntity<?> logout(Authentication authentication) {
-        authenticationService.logout(obtenerCorreoAutenticado(authentication));
+    public ResponseEntity<?> logout(
+            Authentication authentication,
+            @CookieValue(name = "refresh_token", required = false) String refreshToken) {
+        try {
+            if (authentication != null && authentication.getName() != null
+                    && !authentication.getName().isBlank()) {
+                authenticationService.logout(authentication.getName());
+            } else if (refreshToken != null && !refreshToken.isBlank()) {
+                authenticationService.logoutByRefreshToken(refreshToken);
+            }
+        } catch (RuntimeException ignored) {
+            // Logout idempotente: una sesion vencida igualmente debe borrar la cookie.
+        }
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, cookieUtil.deleteRefreshTokenCookie().toString())
                 .body(Map.of("ok", true));

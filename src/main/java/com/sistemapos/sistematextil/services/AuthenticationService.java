@@ -99,7 +99,6 @@ public class AuthenticationService {
 
         Usuario user = buscarUsuarioActivoPorCorreo(request.email());
         turnoService.validarAccesoPorTurno(user.getTurno());
-        rotarRefreshTokenVersion(user);
         CustomUser customUser = new CustomUser(user);
 
         String accessToken = jwtService.generateAccessToken(customUser);
@@ -109,21 +108,10 @@ public class AuthenticationService {
     }
 
     public RefreshResult refresh(String refreshToken) {
-        String email = jwtService.extractUsername(refreshToken);
-        Usuario user = buscarUsuarioActivoPorCorreo(email);
+        Usuario user = validarRefreshToken(refreshToken);
         turnoService.validarAccesoPorTurno(user.getTurno());
         CustomUser customUser = new CustomUser(user);
 
-        if (!jwtService.isTokenValid(refreshToken, customUser)) {
-            throw new RuntimeException("Refresh token invalido o expirado");
-        }
-        Integer tokenVersion = jwtService.extractRefreshTokenVersion(refreshToken);
-        Integer currentVersion = user.getRefreshTokenVersion() == null ? 0 : user.getRefreshTokenVersion();
-        if (tokenVersion == null || !tokenVersion.equals(currentVersion)) {
-            throw new RuntimeException("Refresh token invalido o expirado");
-        }
-
-        rotarRefreshTokenVersion(user);
         String newAccessToken = jwtService.generateAccessToken(customUser);
         String newRefreshToken = jwtService.generateRefreshToken(customUser);
 
@@ -153,6 +141,12 @@ public class AuthenticationService {
 
     public void logout(String email) {
         Usuario user = buscarUsuarioActivoPorCorreo(email);
+        incrementarRefreshTokenVersion(user);
+        usuarioRepository.save(user);
+    }
+
+    public void logoutByRefreshToken(String refreshToken) {
+        Usuario user = validarRefreshToken(refreshToken);
         incrementarRefreshTokenVersion(user);
         usuarioRepository.save(user);
     }
@@ -224,11 +218,6 @@ public class AuthenticationService {
                 .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
     }
 
-    private void rotarRefreshTokenVersion(Usuario user) {
-        incrementarRefreshTokenVersion(user);
-        usuarioRepository.save(user);
-    }
-
     private void incrementarRefreshTokenVersion(Usuario user) {
         int current = user.getRefreshTokenVersion() == null ? 0 : user.getRefreshTokenVersion();
         user.setRefreshTokenVersion(current + 1);
@@ -293,6 +282,22 @@ public class AuthenticationService {
                 horariosTurno,
                 Boolean.TRUE.equals(user.getPuedeAceptarPedidos()),
                 Boolean.TRUE.equals(user.getAccesoCrm()));
+    }
+
+    private Usuario validarRefreshToken(String refreshToken) {
+        String email = jwtService.extractUsername(refreshToken);
+        Usuario user = buscarUsuarioActivoPorCorreo(email);
+        CustomUser customUser = new CustomUser(user);
+
+        if (!jwtService.isTokenValid(refreshToken, customUser)) {
+            throw new RuntimeException("Refresh token invalido o expirado");
+        }
+        Integer tokenVersion = jwtService.extractRefreshTokenVersion(refreshToken);
+        Integer currentVersion = user.getRefreshTokenVersion() == null ? 0 : user.getRefreshTokenVersion();
+        if (tokenVersion == null || !tokenVersion.equals(currentVersion)) {
+            throw new RuntimeException("Refresh token invalido o expirado");
+        }
+        return user;
     }
 
     private boolean puedeAceptarPedidos(Rol rol, Boolean value) {

@@ -36,6 +36,7 @@ import com.sistemapos.sistematextil.repositories.CrmWhatsappMessageRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappAiProductQueryRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappConversationRepository;
 import com.sistemapos.sistematextil.services.ai.AiModelProvider;
+import com.sistemapos.sistematextil.services.ai.AiModelProvider.AudioTranscriptionResult;
 import com.sistemapos.sistematextil.services.ai.AiModelProvider.ClassificationResult;
 import com.sistemapos.sistematextil.services.ai.AiModelProvider.DraftResult;
 import com.sistemapos.sistematextil.services.ai.AiModelProvider.MediaSuggestion;
@@ -65,9 +66,10 @@ class CrmWhatsappAiEngineServiceTest {
     private final CrmWhatsappAiProductQueryRepository productQueries = mock(CrmWhatsappAiProductQueryRepository.class);
     private final CrmWhatsappAiAuditService audit = mock(CrmWhatsappAiAuditService.class);
     private final CrmWhatsappConversationRepository conversations = mock(CrmWhatsappConversationRepository.class);
+    private final S3StorageService storage = mock(S3StorageService.class);
     private final CrmWhatsappAiEngineService service = new CrmWhatsappAiEngineService(
             jobs, runs, configs, messages, ecommerceOrderParser, tools, provider, events, memory, delivery, saleDrafts,
-            operations, safety, productQueries, audit, conversations);
+            operations, safety, productQueries, audit, conversations, storage);
 
     @BeforeEach
     void setupOperations() { when(operations.automaticAllowedForConversation(any(), any())).thenReturn(true); }
@@ -104,9 +106,41 @@ class CrmWhatsappAiEngineServiceTest {
     }
 
     @Test
+    void pedirOtroProductoAbreLaConversacionSinForzarTodosLosDatos() {
+        CrmWhatsappAiJob job = job("Quiero otro producto");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("PRODUCTOS", result.intent());
+        assertEquals("Claro 💛 ¿Qué producto deseas consultar?", result.draft());
+        verifyNoInteractions(provider, tools);
+    }
+
+    @Test
+    void unaConsultaNormalNoEsInterceptadaMientrasEsperaComprobante() {
+        CrmWhatsappAiJob job = job("¿Qué colores tiene Alice Rayas?");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(saleDrafts.pendingPaymentEvidenceReminder(10L)).thenReturn("Envía la captura del comprobante.");
+        when(memory.resolvePendingReply(any(), any(), any())).thenReturn(
+                new PendingReplyResolution("COLORES_TALLAS", "Respuesta sobre colores", false));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("COLORES_TALLAS", result.intent());
+        assertEquals("Respuesta sobre colores", result.draft());
+        verifyNoInteractions(provider);
+    }
+
+    @Test
     void respondeAdjuntosNoCompatiblesSinConsumirGemini() {
         List<String[]> cases = List.of(
-                new String[] { "AUDIO", "audio/ogg", "audio.ogg", "escuchar audios" },
                 new String[] { "IMAGE", "image/jpeg", "foto.jpg", "interpretar imágenes" },
                 new String[] { "VIDEO", "video/mp4", "video.mp4", "revisar videos" },
                 new String[] { "DOCUMENT", "application/msword", "archivo.doc", "revisar archivos" },
@@ -126,6 +160,62 @@ class CrmWhatsappAiEngineServiceTest {
             assertTrue(!result.requiresHuman());
         }
         verifyNoInteractions(provider, tools);
+    }
+
+    @Test
+    void transcribeAudioDeHastaSesentaSegundosYReutilizaElTextoComoMensaje() {
+        CrmWhatsappAiJob job = mediaJob("AUDIO", "audio/ogg; codecs=opus", "audio.ogg", "");
+        job.getMessage().setMediaDurationSeconds(60);
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(storage.readBytes("crm/media/audio.ogg")).thenReturn(new byte[] { 1, 2, 3 });
+        when(provider.transcribeAudio(any())).thenReturn(new AudioTranscriptionResult(
+                "UNDERSTOOD", "Quiero una Belinda talla M", "es", 94, new Usage(20, 8, 28)));
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+
+        var prepared = service.prepare(50L);
+
+        assertEquals("Quiero una Belinda talla M", prepared.latestMessage());
+        assertTrue(prepared.conversationContext().contains("Cliente (audio transcrito): Quiero una Belinda talla M"));
+        assertEquals(28, prepared.initialUsage().totalTokens());
+        assertEquals("UNDERSTOOD", job.getMessage().getAudioTranscriptionStatus());
+        assertEquals("Quiero una Belinda talla M", job.getMessage().getAudioTranscription());
+        verify(messages).save(job.getMessage());
+    }
+
+    @Test
+    void rechazaAudioMayorAUnMinutoSinConsumirGemini() {
+        CrmWhatsappAiJob job = mediaJob("AUDIO", "audio/ogg", "audio.ogg", "");
+        job.getMessage().setMediaDurationSeconds(61);
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("AUDIO_NO_PROCESABLE", result.intent());
+        assertTrue(result.draft().contains("mas de 1 minuto"));
+        verifyNoInteractions(provider, tools);
+    }
+
+    @Test
+    void solicitaRepetirAudioCuandoGeminiNoLoEntiende() {
+        CrmWhatsappAiJob job = mediaJob("PTT", "audio/ogg", "audio.ogg", "");
+        job.getMessage().setMediaDurationSeconds(25);
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(storage.readBytes("crm/media/audio.ogg")).thenReturn(new byte[] { 1, 2, 3 });
+        when(provider.transcribeAudio(any())).thenReturn(new AudioTranscriptionResult(
+                "UNCLEAR", "", "es", 35, new Usage(16, 4, 20)));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("AUDIO_NO_ENTENDIDO", result.intent());
+        assertTrue(result.draft().contains("No pude entender bien el audio"));
+        assertEquals(20, result.usage().totalTokens());
+        assertEquals("UNCLEAR", job.getMessage().getAudioTranscriptionStatus());
     }
 
     @Test
@@ -293,7 +383,7 @@ class CrmWhatsappAiEngineServiceTest {
 
     @Test
     void mientrasEsperaComprobanteSolicitaOtraCapturaSinConsumirGemini() {
-        CrmWhatsappAiJob job = job("Hola, que hago ahora?");
+        CrmWhatsappAiJob job = job("Ya pague, que hago ahora?");
         when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
         when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
         when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
@@ -1016,6 +1106,7 @@ class CrmWhatsappAiEngineServiceTest {
         job.getMessage().setMediaMimeType(mimeType);
         job.getMessage().setMediaFileName(fileName);
         job.getMessage().setMediaStoragePath("crm/media/" + fileName);
+        job.getMessage().setMediaDurationSeconds(30);
         return job;
     }
 

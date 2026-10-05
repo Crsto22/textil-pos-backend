@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isAuthorized, isIndividualChatId, mediaExtension, normalizeChatId, normalizePhone } from "../src/helpers.js";
+import { isAuthorized, isIndividualChatId, mediaDurationSeconds, mediaExtension, normalizeChatId, normalizePhone } from "../src/helpers.js";
 
 test("normalizePhone deja solo digitos", () => {
   assert.equal(normalizePhone("+51 999-888-777"), "51999888777");
@@ -28,4 +28,11 @@ test("isIndividualChatId ignora grupos", () => {
 test("mediaExtension tiene fallback seguro", () => {
   assert.equal(mediaExtension("image/jpeg"), "jpeg");
   assert.equal(mediaExtension(""), "bin");
+});
+
+test("mediaDurationSeconds normaliza la duracion recibida por Baileys", () => {
+  assert.equal(mediaDurationSeconds(59.2), 60);
+  assert.equal(mediaDurationSeconds("60"), 60);
+  assert.equal(mediaDurationSeconds(0), null);
+  assert.equal(mediaDurationSeconds(undefined), null);
 });

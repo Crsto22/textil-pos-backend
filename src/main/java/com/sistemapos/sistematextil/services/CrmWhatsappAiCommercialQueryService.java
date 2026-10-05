@@ -44,7 +44,7 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class CrmWhatsappAiCommercialQueryService {
 
-    private static final int MAX_PRODUCTS = 5;
+    private static final int MAX_PRODUCTS = 10;
     private static final int MAX_VARIANTS = 20;
 
     private final SucursalStockRepository stockRepository;
@@ -77,9 +77,12 @@ public class CrmWhatsappAiCommercialQueryService {
         int safePage = Math.max(0, Math.min(page, 10));
         ProductResolution resolution = ProductResolution.none();
         List<Integer> productIds;
+        boolean hasMore = false;
         if (term.isBlank()) {
             productIds = stockRepository.listarIdsProductosEcommerceDisponiblesParaIa(
-                    context.branch().getIdSucursal(), PageRequest.of(safePage, MAX_PRODUCTS));
+                    context.branch().getIdSucursal(), PageRequest.of(safePage, MAX_PRODUCTS + 1));
+            hasMore = productIds.size() > MAX_PRODUCTS;
+            productIds = productIds.stream().limit(MAX_PRODUCTS).toList();
         } else {
             List<EcommerceProductNameView> names = stockRepository
                     .listarNombresProductosEcommerceDisponiblesParaIa(
@@ -94,7 +97,9 @@ public class CrmWhatsappAiCommercialQueryService {
                 productIds = List.of();
             } else {
                 productIds = stockRepository.buscarIdsProductosEcommerceDisponiblesParaIa(
-                        context.branch().getIdSucursal(), term, PageRequest.of(safePage, MAX_PRODUCTS));
+                        context.branch().getIdSucursal(), term, PageRequest.of(safePage, MAX_PRODUCTS + 1));
+                hasMore = productIds.size() > MAX_PRODUCTS;
+                productIds = productIds.stream().limit(MAX_PRODUCTS).toList();
             }
         }
         String interpretedProduct = "";
@@ -160,7 +165,7 @@ public class CrmWhatsappAiCommercialQueryService {
                 interpretedProduct, corrected, resolution.status(),
                 resolution.matches().stream()
                         .map(match -> new ProductCandidate(match.productId(), match.productName()))
-                        .toList(), products);
+                        .toList(), hasMore, products);
     }
 
     @Transactional(readOnly = true)
@@ -578,11 +583,17 @@ public class CrmWhatsappAiCommercialQueryService {
     public record CommercialContext(Sucursal branch, Cliente client) {}
     public record CatalogResult(Integer branchId, String branch, String query,
             String interpretedProduct, boolean corrected, String resolution,
-            List<ProductCandidate> candidates, List<ProductResult> products) {
+            List<ProductCandidate> candidates, boolean hasMore, List<ProductResult> products) {
         public CatalogResult(Integer branchId, String branch, String query,
                 String interpretedProduct, boolean corrected, List<ProductResult> products) {
             this(branchId, branch, query, interpretedProduct, corrected,
-                    products != null && products.size() == 1 ? "EXACT" : "NONE", List.of(), products);
+                    products != null && products.size() == 1 ? "EXACT" : "NONE", List.of(), false, products);
+        }
+
+        public CatalogResult(Integer branchId, String branch, String query,
+                String interpretedProduct, boolean corrected, String resolution,
+                List<ProductCandidate> candidates, List<ProductResult> products) {
+            this(branchId, branch, query, interpretedProduct, corrected, resolution, candidates, false, products);
         }
     }
     public record ProductCandidate(Integer productId, String name) {}

@@ -59,6 +59,21 @@ public class CrmWhatsappMessage {
     @Column(name = "media_storage_path", length = 500)
     private String mediaStoragePath;
 
+    @Column(name = "media_duration_seconds")
+    private Integer mediaDurationSeconds;
+
+    @Column(name = "audio_transcription", columnDefinition = "TEXT")
+    private String audioTranscription;
+
+    @Column(name = "audio_transcription_status", length = 20)
+    private String audioTranscriptionStatus;
+
+    @Column(name = "audio_transcription_language", length = 20)
+    private String audioTranscriptionLanguage;
+
+    @Column(name = "audio_transcription_confidence")
+    private Integer audioTranscriptionConfidence;
+
     @Column(name = "message_key_json", columnDefinition = "TEXT")
     private String messageKeyJson;
 

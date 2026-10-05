@@ -36,3 +36,8 @@ export function isAuthorized(headerValue, expectedToken) {
 export function mediaExtension(mimeType) {
   return mime.extension(mimeType || "") || "bin";
 }
+
+export function mediaDurationSeconds(value) {
+  const seconds = Number(value);
+  return Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds) : null;
+}

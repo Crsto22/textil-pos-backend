@@ -64,7 +64,7 @@ public class CrmWhatsappAiJobRunner {
         } catch (AiProviderException error) {
             log.warn("Gemini no pudo procesar el trabajo IA {}: {}. Causa tecnica: {}",
                     id, error.getMessage(), rootCauseSummary(error));
-            engineService.fail(id, error, false);
+            engineService.fail(id, error, error.isRetryable());
         } catch (RuntimeException error) {
             if (missingJob(error)) {
                 log.info("Trabajo IA {} descartado porque su mensaje o conversacion ya no existe", id);

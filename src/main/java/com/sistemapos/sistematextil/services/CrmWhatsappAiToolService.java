@@ -159,6 +159,7 @@ public class CrmWhatsappAiToolService {
         model.put("corrected", result.corrected());
         model.put("resolution", clean(result.resolution()));
         model.put("candidates", candidates);
+        model.put("hasMore", result.hasMore());
         model.put("products", products);
         List<Integer> ids = result.products().stream().map(ProductResult::productId).toList();
         List<MediaReference> media = result.products().stream()
@@ -187,6 +188,7 @@ public class CrmWhatsappAiToolService {
                         "corrected", result.corrected(),
                         "resolution", clean(result.resolution()),
                         "candidates", candidates,
+                        "hasMore", result.hasMore(),
                         "products", products),
                 media);
     }

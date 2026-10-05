@@ -12,6 +12,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -290,7 +291,8 @@ public class CrmWhatsappAiSaleDraftService {
                     .append(" a S/").append(money(draft.getTotal())).append(" según precios y promociones vigentes.\n");
         }
         text.append("\n💰 Total actualizado: S/").append(money(draft.getTotal()))
-                .append("\n\n¿Está todo correcto? Confírmanos para continuar con tu compra.");
+                .append("\n\nTu pedido queda guardado. Cuando desees continuar, puedes confirmarlo.")
+                .append("\n\n¿En qué más puedo ayudarte?");
         return text.toString().trim();
     }
 
@@ -315,6 +317,7 @@ public class CrmWhatsappAiSaleDraftService {
                 })
                 .toList();
         if (matches.size() != 1) return null;
+        if (!isExplicitPaymentSelection(customerMessage, matches.getFirst().name())) return null;
         return setPayment(conversation, draft, matches.getFirst().name());
     }
 
@@ -326,6 +329,12 @@ public class CrmWhatsappAiSaleDraftService {
                 || !isCustomerConfirmed(draft)) return null;
 
         String phone = extractPhone(customerMessage);
+        if (phone.isBlank() && matchesCatalogProduct(conversation, customerMessage)) return null;
+        if (phone.isBlank() && (!validCustomerName(draft.getPendingCustomerName(), draft.getPendingCustomerPhone())
+                ? !isLikelyCustomerNameReply(customerMessage)
+                : true)) {
+            return null;
+        }
         if (!phone.isBlank()) draft.setPendingCustomerPhone(phone);
         String name = extractName(customerMessage, phone, draft.getPendingCustomerName() == null);
         if (!name.isBlank()) draft.setPendingCustomerName(name);
@@ -599,8 +608,30 @@ public class CrmWhatsappAiSaleDraftService {
         CrmWhatsappAiSaleDraft draft = activeDraft(conversationId);
         return draft != null && Set.of(
                 CrmWhatsappAiSaleDraftStatus.READY_FOR_REVIEW,
-                CrmWhatsappAiSaleDraftStatus.IMPORTED,
-                CrmWhatsappAiSaleDraftStatus.PAYMENT_PENDING).contains(draft.getStatus());
+                CrmWhatsappAiSaleDraftStatus.IMPORTED).contains(draft.getStatus());
+    }
+
+    @Transactional(readOnly = true)
+    public boolean matchesPendingAttribute(CrmWhatsappConversation conversation, String productName,
+            String candidate, CrmWhatsappAiPendingQuestion pendingQuestion) {
+        if (conversation == null || clean(productName).isBlank() || clean(candidate).isBlank()) return false;
+        if (pendingQuestion != CrmWhatsappAiPendingQuestion.COLOR
+                && pendingQuestion != CrmWhatsappAiPendingQuestion.SIZE) return false;
+        String expected = normalize(candidate);
+        CatalogResult catalog = commercialQueryService.searchProducts(conversation, productName);
+        return catalog.products().stream().anyMatch(product -> {
+            List<String> values = pendingQuestion == CrmWhatsappAiPendingQuestion.COLOR
+                    ? product.availableColors() : product.availableSizes();
+            return values != null && values.stream().map(this::normalize).anyMatch(expected::equals);
+        });
+    }
+
+    @Transactional(readOnly = true)
+    public boolean matchesCatalogProduct(CrmWhatsappConversation conversation, String candidate) {
+        if (conversation == null || clean(candidate).isBlank()) return false;
+        CatalogResult catalog = commercialQueryService.searchProducts(conversation, candidate);
+        return catalog.products() != null && !catalog.products().isEmpty()
+                && !"AMBIGUOUS".equalsIgnoreCase(clean(catalog.resolution()));
     }
 
     @Transactional
@@ -984,6 +1015,31 @@ public class CrmWhatsappAiSaleDraftService {
         return normalizedPhone.isBlank() || !normalize(value).equals(normalize("CLIENTE " + normalizedPhone));
     }
 
+    private boolean isLikelyCustomerNameReply(String message) {
+        String value = clean(message);
+        if (value.isBlank() || value.contains("?") || value.contains("¿")) return false;
+        String normalized = normalize(value);
+        if (normalized.matches(".*\\b(hola|buenas|gracias|si|no|ok|quiero|deseo|busco|producto|modelo|color|talla|precio|stock|envio|tienda|horario|pago|promocion|oferta|pedido|cancelar|confirmar)\\b.*")) {
+            return false;
+        }
+        long letters = value.codePoints().filter(Character::isLetter).count();
+        int words = normalized.isBlank() ? 0 : normalized.split("\\s+").length;
+        return letters >= 2 && words >= 1 && words <= 6 && value.length() <= 150;
+    }
+
+    private boolean isExplicitPaymentSelection(String message, String paymentMethod) {
+        String value = normalize(message).replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ").trim();
+        String method = normalize(paymentMethod).replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ").trim();
+        if (method.isBlank()) return false;
+        if (value.equals(method) || value.equals(method + " por favor")) return true;
+        String quotedMethod = Pattern.quote(method);
+        return value.matches("^(quiero|elijo|prefiero|usare|pagare|voy a pagar|pago|pagar|por) (con )?"
+                + quotedMethod + "( por favor)?$")
+                || value.matches("^" + quotedMethod + "( lo)? (voy a usar|voy a pagar|usare|pagare)( por favor)?$");
+    }
+
     private ActionOutcome setPayment(CrmWhatsappConversation conversation, CrmWhatsappAiSaleDraft draft, String requested) {
         if (draft == null || draft.getItems().isEmpty()) return new ActionOutcome("Primero debemos preparar el pedido.", false, null);
         if (draft.getStatus() == CrmWhatsappAiSaleDraftStatus.AWAITING_CUSTOMER_DATA
@@ -1300,7 +1356,10 @@ public class CrmWhatsappAiSaleDraftService {
             text.append("Descuento promocional: -S/").append(draft.getPromotionDiscount().setScale(2)).append("\n");
         }
         text.append("Total estimado: S/").append(draft.getTotal().setScale(2));
-        if (askConfirmation) text.append("\n¿Está todo correcto? Confírmanos para continuar con tu compra.");
+        if (askConfirmation) {
+            text.append("\n\nTu pedido queda guardado. Cuando desees continuar, puedes confirmarlo.")
+                    .append("\n\n¿En qué más puedo ayudarte?");
+        }
         return text.toString();
     }
 

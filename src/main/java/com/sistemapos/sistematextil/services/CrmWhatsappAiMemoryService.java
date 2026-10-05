@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -79,7 +80,10 @@ public class CrmWhatsappAiMemoryService {
         memory.setLastIncomingMessageId(messageId);
         memory.setExpiresAt(LocalDateTime.now().plusHours(TTL_HOURS));
         extractCommercialContext(memory, run.getMessage().getBody(), result.evidence());
-        memory.setPendingQuestion(inferPendingQuestion(result.draft(), result.intent()));
+        CrmWhatsappAiPendingQuestion previousPending = pendingQuestion(memory);
+        CrmWhatsappAiPendingQuestion inferredPending = inferPendingQuestion(result.draft(), result.intent());
+        memory.setPendingQuestion(shouldPreservePending(previousPending, result.intent())
+                ? previousPending : inferredPending);
         memoryRepository.save(memory);
         publish(memory);
     }
@@ -213,7 +217,7 @@ public class CrmWhatsappAiMemoryService {
         CrmWhatsappAiSaleDraftService.ActionOutcome outcome = null;
         String intent = "MODIFICAR_CARRITO";
 
-        if (pending == CrmWhatsappAiPendingQuestion.QUANTITY) {
+        if (pending == CrmWhatsappAiPendingQuestion.QUANTITY && isQuantityOnlyReply(normalized)) {
             Integer quantity = parseQuantity(normalized);
             if (quantity != null && !clean(memory.getProductName()).isBlank()
                     && !clean(memory.getColor()).isBlank() && !clean(memory.getSize()).isBlank()) {
@@ -231,19 +235,24 @@ public class CrmWhatsappAiMemoryService {
                         "CANCEL", "", "", "", null));
             }
         } else if (pending == CrmWhatsappAiPendingQuestion.COLOR
-                && isShortReply(normalized) && !clean(memory.getProductName()).isBlank()) {
+                && isShortReply(normalized) && !clean(memory.getProductName()).isBlank()
+                && saleDraftService.matchesPendingAttribute(conversation, memory.getProductName(), customerMessage,
+                        CrmWhatsappAiPendingQuestion.COLOR)) {
             intent = "INTENCION_COMPRA";
             outcome = saleDraftService.applyAiAction(conversation, saleAction(
                     "ADD", memory.getProductName(), customerMessage, memory.getSize(), memory.getQuantity()));
         } else if (pending == CrmWhatsappAiPendingQuestion.SIZE
-                && isShortReply(normalized) && !clean(memory.getProductName()).isBlank()) {
+                && isShortReply(normalized) && !clean(memory.getProductName()).isBlank()
+                && saleDraftService.matchesPendingAttribute(conversation, memory.getProductName(), customerMessage,
+                        CrmWhatsappAiPendingQuestion.SIZE)) {
             intent = "INTENCION_COMPRA";
             outcome = saleDraftService.applyAiAction(conversation, saleAction(
                     "ADD", memory.getProductName(), memory.getColor(), customerMessage, memory.getQuantity()));
         } else if (pending == CrmWhatsappAiPendingQuestion.PRODUCT && isAffirmative(normalized)) {
             return cachePendingReply(memory, messageId, "PRODUCTOS",
                     "¿Qué información deseas consultar: colores, tallas o precio?");
-        } else if (pending == CrmWhatsappAiPendingQuestion.CATALOG_PRODUCT && !normalized.isBlank()) {
+        } else if (pending == CrmWhatsappAiPendingQuestion.CATALOG_PRODUCT && !normalized.isBlank()
+                && saleDraftService.matchesCatalogProduct(conversation, customerMessage)) {
             return new PendingReplyResolution("PRODUCTOS", "", false, customerMessage);
         } else if (pending == CrmWhatsappAiPendingQuestion.CATALOG_CONFIRMATION
                 && isAffirmative(normalized)) {
@@ -530,7 +539,10 @@ public class CrmWhatsappAiMemoryService {
         if (value.contains("celular peruano")) return CrmWhatsappAiPendingQuestion.CUSTOMER_PHONE;
         if (value.contains("varias cuentas") || value.contains("que cuenta")) return CrmWhatsappAiPendingQuestion.PAYMENT_ACCOUNT;
         if (value.contains("como deseas pagar") || value.contains("elige un metodo")) return CrmWhatsappAiPendingQuestion.PAYMENT_METHOD;
-        if (value.contains("confirmas este pedido")) return CrmWhatsappAiPendingQuestion.ORDER_CONFIRMATION;
+        if (value.contains("confirmas este pedido")
+                || value.contains("cuando desees continuar puedes confirmarlo")) {
+            return CrmWhatsappAiPendingQuestion.ORDER_CONFIRMATION;
+        }
         if (value.contains("para completar el combo") || value.contains("completar la promocion")) return CrmWhatsappAiPendingQuestion.COMBO_ITEM;
         if (value.contains("cuantas unidades") || value.contains("cantidad deseas")) return CrmWhatsappAiPendingQuestion.QUANTITY;
         if (value.contains("que color")) return CrmWhatsappAiPendingQuestion.COLOR;
@@ -557,6 +569,34 @@ public class CrmWhatsappAiMemoryService {
 
     private boolean isAffirmative(String value) {
         return value.matches("^(si|sí|ok|okay|confirmo|confirmado|perfecto|correcto|de acuerdo|esta bien|listo)( por favor)?[.!]?$" );
+    }
+
+    private boolean isQuantityOnlyReply(String value) {
+        if (value.isBlank() || parseQuantity(value) == null) return false;
+        String remainder = value
+                .replaceAll("\\b(solo|solamente|quiero|deseo|dame|agrega|anade|llevo|necesito|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|unidad|unidades|mas|por|favor)\\b", " ")
+                .replaceAll("\\d{1,2}", " ")
+                .replaceAll("[.!]", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        return remainder.isBlank();
+    }
+
+    private boolean shouldPreservePending(CrmWhatsappAiPendingQuestion pending, String intent) {
+        if (pending == CrmWhatsappAiPendingQuestion.NONE) return false;
+        String currentIntent = clean(intent).toUpperCase(Locale.ROOT);
+        return switch (pending) {
+            case ORDER_CONFIRMATION -> !Set.of("CONFIRMAR_PEDIDO", "CANCELAR_PEDIDO", "INTENCION_COMPRA",
+                    "MODIFICAR_CARRITO").contains(currentIntent);
+            case CUSTOMER_NAME, CUSTOMER_PHONE -> !"DATOS_CLIENTE".equals(currentIntent);
+            case PAYMENT_METHOD, PAYMENT_ACCOUNT -> !Set.of("METODOS_PAGO", "PAGO_PENDIENTE").contains(currentIntent);
+            case QUANTITY, COLOR, SIZE, COMBO_ITEM -> !Set.of("INTENCION_COMPRA", "MODIFICAR_CARRITO",
+                    "CONFIRMAR_PEDIDO", "CANCELAR_PEDIDO", "PROMOCIONES").contains(currentIntent);
+            case PRODUCT, CATALOG_PRODUCT, CATALOG_CONFIRMATION, SIZE_GUIDE_PRODUCT ->
+                    !Set.of("PRODUCTOS", "PRECIO", "STOCK", "COLORES_TALLAS", "GUIA_TALLAS",
+                            "ENLACE_ECOMMERCE", "INTENCION_COMPRA").contains(currentIntent);
+            case NONE -> false;
+        };
     }
 
     private boolean isNegative(String value) {

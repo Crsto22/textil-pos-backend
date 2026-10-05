@@ -14,7 +14,7 @@ import multer from "multer";
 import pino from "pino";
 import qrcode from "qrcode";
 import { prepareVoiceNote } from "./audio.js";
-import { isAuthorized, isIndividualChatId, mediaExtension, normalizeChatId, normalizePhone } from "./helpers.js";
+import { isAuthorized, isIndividualChatId, mediaDurationSeconds, mediaExtension, normalizeChatId, normalizePhone } from "./helpers.js";
 import { prepareImageForWhatsApp } from "./image.js";
 
 const bridgeRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -184,10 +184,12 @@ async function saveIncomingMedia(message) {
   const diskPath = path.join(config.mediaDir, fileName);
   await fs.writeFile(diskPath, buffer);
 
+  const durationSeconds = mediaDurationSeconds(media.seconds);
   return {
     mimeType: media.mimetype,
     fileName,
     storagePath: `/storage/whatsapp/media/${fileName}`,
+    ...(durationSeconds ? { durationSeconds } : {}),
   };
 }
 

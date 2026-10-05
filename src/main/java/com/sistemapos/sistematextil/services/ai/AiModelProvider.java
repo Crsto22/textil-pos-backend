@@ -13,6 +13,8 @@ public interface AiModelProvider {
 
     PaymentEvidenceExtraction extractPaymentEvidence(PaymentEvidenceRequest request);
 
+    AudioTranscriptionResult transcribeAudio(AudioTranscriptionRequest request);
+
     ConnectionTest testConnection(Long connectionId);
 
     String provider();
@@ -93,6 +95,19 @@ public interface AiModelProvider {
             String extractedText,
             Map<String, Integer> fieldConfidences,
             List<String> warnings,
+            Usage usage) {}
+
+    record AudioTranscriptionRequest(
+            Long connectionId,
+            byte[] fileBytes,
+            String mimeType,
+            String fileName) {}
+
+    record AudioTranscriptionResult(
+            String status,
+            String transcription,
+            String language,
+            int confidence,
             Usage usage) {}
 
     record Usage(Integer inputTokens, Integer outputTokens, Integer totalTokens) {

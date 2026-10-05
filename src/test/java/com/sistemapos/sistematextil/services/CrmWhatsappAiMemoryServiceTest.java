@@ -187,6 +187,7 @@ class CrmWhatsappAiMemoryServiceTest {
         conversation.setIdConversation(10L);
         CrmWhatsappAiMemory memory = memory(conversation, CrmWhatsappAiPendingQuestion.CATALOG_PRODUCT);
         when(memories.findForUpdate(10L)).thenReturn(Optional.of(memory));
+        when(saleDrafts.matchesCatalogProduct(conversation, "Julieta por favor")).thenReturn(true);
 
         var result = service.resolvePendingReply(conversation, 43L, "Julieta por favor");
 
@@ -194,6 +195,51 @@ class CrmWhatsappAiMemoryServiceTest {
         assertEquals("Julieta por favor", result.catalogQuery());
         assertEquals(true, result.requestsCatalog());
         assertEquals("", result.response());
+    }
+
+    @Test
+    void unaConsultaNuevaNoSeFuerzaComoRespuestaDeCantidad() {
+        CrmWhatsappConversation conversation = new CrmWhatsappConversation();
+        conversation.setIdConversation(10L);
+        CrmWhatsappAiMemory memory = memory(conversation, CrmWhatsappAiPendingQuestion.QUANTITY);
+        memory.setProductName("ALICE LISO");
+        memory.setColor("CHOCOLATE");
+        memory.setSize("M");
+        when(memories.findForUpdate(10L)).thenReturn(Optional.of(memory));
+
+        var result = service.resolvePendingReply(conversation, 45L, "¿Qué promociones tienen?");
+
+        assertNull(result);
+        verify(saleDrafts, times(0)).applyAiAction(any(), any());
+    }
+
+    @Test
+    void unaConsultaDeProductoNoConfirmaNiCancelaElPedidoPendiente() {
+        CrmWhatsappConversation conversation = new CrmWhatsappConversation();
+        conversation.setIdConversation(10L);
+        CrmWhatsappAiMemory memory = memory(conversation, CrmWhatsappAiPendingQuestion.ORDER_CONFIRMATION);
+        when(memories.findForUpdate(10L)).thenReturn(Optional.of(memory));
+
+        var result = service.resolvePendingReply(conversation, 46L, "Quiero Alice Rayas");
+
+        assertNull(result);
+        verify(saleDrafts, times(0)).applyAiAction(any(), any());
+    }
+
+    @Test
+    void unaConsultaSecundariaConservaLaConfirmacionPendiente() {
+        CrmWhatsappConversation conversation = new CrmWhatsappConversation();
+        conversation.setIdConversation(10L);
+        CrmWhatsappAiMemory memory = memory(conversation, CrmWhatsappAiPendingQuestion.ORDER_CONFIRMATION);
+        when(memories.findForUpdate(10L)).thenReturn(Optional.of(memory));
+        when(memories.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        ProcessingResult shipping = new ProcessingResult(
+                CrmWhatsappAiRunOutcome.DRAFT_READY, "ENVIOS", 100, false, "", "Realizamos envíos.",
+                List.of(), List.of(), List.of(), Usage.empty(), 0L, false);
+
+        service.updateFromRun(run(conversation, 47L, "¿Hacen envíos?"), shipping);
+
+        assertEquals(CrmWhatsappAiPendingQuestion.ORDER_CONFIRMATION, memory.getPendingQuestion());
     }
 
     @Test

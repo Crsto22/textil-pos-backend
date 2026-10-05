@@ -66,6 +66,11 @@ public class CrmWhatsappSchemaMigration implements ApplicationRunner {
                       media_mime_type VARCHAR(120) NULL,
                       media_file_name VARCHAR(255) NULL,
                       media_storage_path VARCHAR(500) NULL,
+                      media_duration_seconds INT NULL,
+                      audio_transcription TEXT NULL,
+                      audio_transcription_status VARCHAR(20) NULL,
+                      audio_transcription_language VARCHAR(20) NULL,
+                      audio_transcription_confidence INT NULL,
                       message_key_json TEXT NULL,
                       baileys_message_json MEDIUMTEXT NULL,
                       reply_to_message_id BIGINT NULL,
@@ -1025,6 +1030,14 @@ public class CrmWhatsappSchemaMigration implements ApplicationRunner {
                     "VARCHAR(30) NULL");
             addColumnIfMissing(connection, statement, "crm_whatsapp_message", "related_sale_id", "INT NULL");
             addColumnIfMissing(connection, statement, "crm_whatsapp_message", "receipt_format", "VARCHAR(10) NULL");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_message", "media_duration_seconds", "INT NULL");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_message", "audio_transcription", "TEXT NULL");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_message", "audio_transcription_status",
+                    "VARCHAR(20) NULL");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_message", "audio_transcription_language",
+                    "VARCHAR(20) NULL");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_message", "audio_transcription_confidence",
+                    "INT NULL");
             if (!indexExists(connection, "crm_whatsapp_message", "idx_crm_message_sale_receipt")) {
                 statement.execute("""
                         ALTER TABLE crm_whatsapp_message

@@ -1659,6 +1659,7 @@ public class CrmWhatsappChatService {
             message.setMediaMimeType(mediaMimeType.isBlank() ? null : mediaMimeType);
             message.setMediaFileName(mediaFileName.isBlank() ? null : mediaFileName);
             message.setMediaStoragePath(readString(request.media(), "storagePath"));
+            message.setMediaDurationSeconds(readPositiveInteger(request.media(), "durationSeconds"));
         }
 
         message = messageRepository.save(message);
@@ -2937,6 +2938,23 @@ public class CrmWhatsappChatService {
     private String readString(Map<String, Object> map, String key) {
         Object value = map.get(key);
         return value instanceof String text ? text : null;
+    }
+
+    private Integer readPositiveInteger(Map<String, Object> map, String key) {
+        Object value = map.get(key);
+        if (value instanceof Number number) {
+            int parsed = number.intValue();
+            return parsed > 0 ? parsed : null;
+        }
+        if (value instanceof String text) {
+            try {
+                int parsed = Integer.parseInt(text.trim());
+                return parsed > 0 ? parsed : null;
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
     }
 
     public record ConversationResponse(

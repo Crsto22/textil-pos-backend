@@ -1,6 +1,7 @@
 package com.sistemapos.sistematextil.services;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -138,7 +139,9 @@ public class CrmWhatsappEventService {
         subscribers.forEach((subscriberId, subscriber) -> {
             try {
                 synchronized (subscriber.emitter()) {
-                    subscriber.emitter().send(SseEmitter.event().comment("keepalive"));
+                    subscriber.emitter().send(SseEmitter.event()
+                            .name("heartbeat")
+                            .data(Map.of("timestamp", Instant.now().toString())));
                 }
             } catch (IOException | IllegalStateException error) {
                 subscribers.remove(subscriberId);

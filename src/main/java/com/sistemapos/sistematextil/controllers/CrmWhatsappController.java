@@ -720,8 +720,12 @@ public class CrmWhatsappController {
     }
 
     @GetMapping(value = "/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter eventos(Authentication authentication) {
-        return crmWhatsappChatService.suscribirEventos(currentUser(authentication));
+    public ResponseEntity<SseEmitter> eventos(Authentication authentication) {
+        SseEmitter emitter = crmWhatsappChatService.suscribirEventos(currentUser(authentication));
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CACHE_CONTROL, "no-cache, no-transform")
+                .header("X-Accel-Buffering", "no")
+                .body(emitter);
     }
 
     private Usuario currentUser(Authentication authentication) {

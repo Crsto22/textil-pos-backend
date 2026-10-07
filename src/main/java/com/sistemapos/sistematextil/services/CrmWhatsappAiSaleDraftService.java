@@ -32,6 +32,7 @@ import com.sistemapos.sistematextil.services.CrmWhatsappAiCommercialQueryService
 import com.sistemapos.sistematextil.services.CrmWhatsappEcommerceOrderParser.EcommerceWhatsappOrder;
 import com.sistemapos.sistematextil.services.CrmWhatsappEcommerceOrderParser.EcommerceWhatsappOrderItem;
 import com.sistemapos.sistematextil.services.ai.AiModelProvider.SaleActionResult;
+import com.sistemapos.sistematextil.services.ai.AiModelProvider.Usage;
 import com.sistemapos.sistematextil.util.usuario.Rol;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceCarritoResumenResponse;
 import com.sistemapos.sistematextil.util.crm.CrmWhatsappPhoneUtils;
@@ -95,6 +96,49 @@ public class CrmWhatsappAiSaleDraftService {
         }
         if (draft == null) draft = createDraft(conversation);
         return mutateItem(conversation, draft, action, command);
+    }
+
+    @Transactional
+    public ActionOutcome applyPendingComboItem(CrmWhatsappConversation conversation, String customerMessage) {
+        if (conversation == null || clean(customerMessage).isBlank()) return null;
+        CrmWhatsappAiSaleDraft draft = activeDraft(conversation.getIdConversation());
+        if (draft == null || draft.getPendingPromotionId() == null) return null;
+        PromotionResult promotion = commercialQueryService.promotions(
+                conversation, "", 0, null, draft.getPendingPromotionId()).promotions().stream()
+                .filter(item -> item.promotionId().equals(draft.getPendingPromotionId()))
+                .findFirst().orElse(null);
+        if (promotion == null) return null;
+
+        Map<Integer, Integer> quantities = new LinkedHashMap<>();
+        draft.getItems().forEach(item -> quantities.merge(item.getProductId(), item.getQuantity(), Integer::sum));
+        PromotionProductResult missingProduct = promotion.products().stream()
+                .filter(product -> product.quantity() > quantities.getOrDefault(product.productId(), 0))
+                .findFirst().orElse(null);
+        if (missingProduct == null) return null;
+        ProductResult detail = commercialQueryService.searchProducts(conversation, missingProduct.name())
+                .products().stream()
+                .filter(product -> product.productId().equals(missingProduct.productId()))
+                .findFirst().orElse(null);
+        if (detail == null) return null;
+
+        String color = catalogValueFromMessage(customerMessage, detail.availableColors());
+        String size = catalogValueFromMessage(customerMessage, detail.availableSizes());
+        if (color.isBlank() && size.isBlank()) return null;
+        if (color.isBlank()) {
+            return new ActionOutcome("🎨 ¿Qué color deseas para *" + missingProduct.name()
+                    + "*? Disponibles: " + String.join(", ", detail.availableColors()) + ".",
+                    false, response(draft));
+        }
+        if (size.isBlank()) {
+            return new ActionOutcome("📏 ¿Qué talla deseas para *" + missingProduct.name()
+                    + "*? Disponibles: " + String.join(", ", detail.availableSizes()) + ".",
+                    false, response(draft));
+        }
+        int missing = missingProduct.quantity() - quantities.getOrDefault(missingProduct.productId(), 0);
+        SaleActionResult action = new SaleActionResult(
+                "ADD", missingProduct.name(), null, color, size, missing,
+                "", 100, "Producto aplicado al combo pendiente " + promotion.name(), Usage.empty());
+        return mutateItem(conversation, draft, action, "ADD");
     }
 
     @Transactional
@@ -1328,6 +1372,14 @@ public class CrmWhatsappAiSaleDraftService {
                 .distinct()
                 .toList();
         return matches.size() == 1 ? matches.getFirst() : "";
+    }
+
+    private String catalogValueFromMessage(String message, List<String> available) {
+        String normalizedMessage = " " + normalize(message) + " ";
+        String exact = available.stream()
+                .filter(value -> normalizedMessage.contains(" " + normalize(value) + " "))
+                .findFirst().orElse("");
+        return exact.isBlank() ? canonicalCatalogValue(message, available) : exact;
     }
 
     private String unavailableQuantityMessage(int requested, int available) {

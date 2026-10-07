@@ -800,6 +800,15 @@ public class CrmWhatsappAiEngineService {
                         List.of(), List.of(), List.of(), Usage.empty(), elapsedMs(started));
             }
         }
+        if (pendingQuestion == CrmWhatsappAiPendingQuestion.COMBO_ITEM) {
+            var comboItem = saleDraftService.applyPendingComboItem(
+                    prepared.job().getConversation(), prepared.latestMessage());
+            if (comboItem != null && !clean(comboItem.response()).isBlank()) {
+                return ProcessingResult.draft("INTENCION_COMPRA", 100, comboItem.response(),
+                        "Color y talla aplicados al combo pendiente sin cambiar la promoción",
+                        List.of(), List.of(), List.of(), Usage.empty(), elapsedMs(started));
+            }
+        }
         if (isBareProductInterest(prepared.latestMessage())) {
             long toolStarted = System.nanoTime();
             ExecutionResult product = toolService.execute(prepared.job().getConversation(),
@@ -2398,6 +2407,8 @@ public class CrmWhatsappAiEngineService {
                 .replaceAll("\\s+", " ").trim();
         boolean directAdd = value.matches(".*\\b(anade|anademe|anadelo|anademelo|agrega|agregame|agregalo|agregamelo|sumalo|sumamelo|incluyelo|incluyemelo)\\b.*");
         boolean purchaseReference = value.matches(".*\\b(quiero comprarlo|quiero llevarlo|me lo llevo|lo quiero|ese quiero|quiero ese|este quiero|quiero este)\\b.*")
+                || value.matches(".*\\b(quiero|deseo|llevo|elijo|escojo|acepto|aprovecho)\\s+(esa|esta|ese|este)\\s+(promo|promocion|oferta|combo)\\b.*")
+                || value.matches(".*\\b(esa|esta|ese|este)\\s+(promo|promocion|oferta|combo)\\s+(quiero|deseo|llevo|elijo|escojo|acepto|aprovecho)\\b.*")
                 || value.matches(".*\\bcombo\\s*\\d{1,5}\\b.*\\b(quiero|compro|comprar|llevo|llevar|agrega|anade)\\b.*")
                 || value.matches(".*\\b(quiero|compro|comprar|llevo|llevar|agrega|anade)\\b.*\\bcombo\\s*\\d{1,5}\\b.*");
         if (!directAdd && !purchaseReference) return null;

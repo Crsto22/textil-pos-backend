@@ -308,6 +308,56 @@ class CrmWhatsappAiSaleDraftEcommerceOrderTest {
         assertTrue(result.response().contains("S, M"), result.response());
     }
 
+    @Test
+    void colorYTallaCompletanElComboSeleccionadoSinCambiarAOtraPromocion() {
+        CrmWhatsappConversation conversation = conversation();
+        CrmWhatsappAiSaleDraft draft = new CrmWhatsappAiSaleDraft();
+        draft.setIdAiSaleDraft(90L);
+        draft.setConversation(conversation);
+        draft.setConnection(conversation.getConnection());
+        draft.setSucursal(conversation.getConnection().getSucursal());
+        draft.setStatus(CrmWhatsappAiSaleDraftStatus.BUILDING);
+        draft.setVersion(1);
+        draft.setSubtotal(BigDecimal.ZERO);
+        draft.setPromotionDiscount(BigDecimal.ZERO);
+        draft.setTotal(BigDecimal.ZERO);
+        draft.setExpiresAt(LocalDateTime.now().plusHours(24));
+        when(drafts.findFirstByConversation_IdConversationAndStatusInOrderByCreatedAtDesc(any(), any()))
+                .thenReturn(Optional.of(draft));
+        PromotionResult combo45 = new PromotionResult(
+                145, "combo 45", "ALICE RAYAS + ALESSIA ENTERO", new BigDecimal("155.00"),
+                new BigDecimal("170.00"), new BigDecimal("15.00"),
+                List.of(new PromotionProductResult(12, "ALICE RAYAS", 1, "", ""),
+                        new PromotionProductResult(13, "ALESSIA ENTERO", 1, "", "")));
+        PromotionCatalogResult exact = new PromotionCatalogResult(
+                3, "", 0, 10, 1, false, List.of(combo45), combo45, combo45);
+        when(commercial.promotions(conversation, "", 0, null, 145)).thenReturn(exact);
+        ProductResult alice = new ProductResult(12, "ALICE RAYAS", "", "alice-rayas", "", false,
+                null, "", "", List.of("PLATA", "NEGRO"), List.of("L", "M"),
+                List.of(new VariantResult(101, "AR-PL-L", "", "PLATA", "L", 2, true,
+                        new BigDecimal("75.00"), new BigDecimal("75.00"), null, null, "", "", "")));
+        ProductResult alessia = new ProductResult(13, "ALESSIA ENTERO", "", "alessia-entero", "", false,
+                null, "", "", List.of("MARRON"), List.of("S", "M"), List.of());
+        when(commercial.searchProducts(conversation, "ALICE RAYAS"))
+                .thenReturn(new CatalogResult(3, "Centro", "ALICE RAYAS", "", false, List.of(alice)));
+        when(commercial.searchProducts(conversation, "ALESSIA ENTERO"))
+                .thenReturn(new CatalogResult(3, "Centro", "ALESSIA ENTERO", "", false, List.of(alessia)));
+
+        var selected = service.applyAiAction(conversation, new SaleActionResult(
+                "ADD_COMBO", "combo 45", 145, "", "", null,
+                "", 100, "combo elegido", Usage.empty()));
+        var completedFirstItem = service.applyPendingComboItem(conversation, "plata y L");
+
+        assertTrue(selected.response().contains("combo 45"), selected.response());
+        assertTrue(completedFirstItem.response().contains("combo 45"), completedFirstItem.response());
+        assertTrue(completedFirstItem.response().contains("ALESSIA ENTERO"), completedFirstItem.response());
+        assertEquals(145, completedFirstItem.draft().pendingPromotionId());
+        assertEquals(1, completedFirstItem.draft().items().size());
+        assertEquals("ALICE RAYAS", completedFirstItem.draft().items().getFirst().productName());
+        assertEquals("PLATA", completedFirstItem.draft().items().getFirst().color());
+        assertEquals("L", completedFirstItem.draft().items().getFirst().size());
+    }
+
     private CrmWhatsappAiSaleDraftItem item(
             CrmWhatsappAiSaleDraft draft, int productId, int variantId,
             String product, String color, String size, String price) {

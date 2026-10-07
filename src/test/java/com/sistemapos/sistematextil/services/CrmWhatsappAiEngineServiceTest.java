@@ -2254,6 +2254,65 @@ class CrmWhatsappAiEngineServiceTest {
     }
 
     @Test
+    void deseoEsaPromoRecuperaElUltimoComboMostradoEIniciaLaCompra() {
+        CrmWhatsappAiJob job = job("Deseo esa promo");
+        CrmWhatsappAiConfig config = configWithIntent("PROMOCIONES");
+        config.setIntencionesPermitidas(config.getIntencionesPermitidas() + ",INTENCION_COMPRA");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        CrmWhatsappMessage previous = incomingMessage(job.getConversation(), 19L,
+                "🎁 *combo 54*\n\n👗 Incluye: LIA RAYAS + NHARA RAYAS\n💰 Precio: S/140.00",
+                LocalDateTime.now().minusSeconds(30));
+        previous.setDirection("OUTGOING");
+        previous.setOrigin("AI_AUTOMATIC");
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage(), previous));
+        when(tools.execute(any(), any())).thenAnswer(invocation -> {
+            List<ToolCall> calls = invocation.getArgument(1);
+            assertEquals("consultar_promociones", calls.getFirst().name());
+            assertEquals(54, calls.getFirst().arguments().get("promotionNumber"));
+            return promotionExecution("", List.of(promotionMap(154, "combo 54", 140, 150, 10,
+                    List.of(java.util.Map.of("name", "LIA RAYAS", "quantity", 1),
+                            java.util.Map.of("name", "NHARA RAYAS", "quantity", 1)))));
+        });
+        when(saleDrafts.applyAiAction(any(), any())).thenReturn(
+                new CrmWhatsappAiSaleDraftService.ActionOutcome(
+                        "Para completar el combo 54, elige color y talla de LIA RAYAS.", false, null));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("INTENCION_COMPRA", result.intent());
+        assertTrue(result.draft().contains("combo 54"), result.draft());
+        verify(saleDrafts).applyAiAction(any(), argThat(action ->
+                "ADD_COMBO".equals(action.action())
+                        && Integer.valueOf(154).equals(action.promotionId())));
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void colorYTallaContinuanElComboPendienteSinVolverAInterpretarLaPromocion() {
+        CrmWhatsappAiJob job = job("plata y L");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L))
+                .thenReturn(Optional.of(configWithIntent("INTENCION_COMPRA")));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(memory.pendingQuestionFor(10L)).thenReturn(CrmWhatsappAiPendingQuestion.COMBO_ITEM);
+        when(saleDrafts.applyPendingComboItem(any(), eq("plata y L"))).thenReturn(
+                new CrmWhatsappAiSaleDraftService.ActionOutcome(
+                        "Para completar el combo 45, elige color y talla de ALESSIA ENTERO.",
+                        false, null));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("INTENCION_COMPRA", result.intent());
+        assertTrue(result.draft().contains("combo 45"), result.draft());
+        assertTrue(result.draft().contains("ALESSIA ENTERO"), result.draft());
+        verify(saleDrafts).applyPendingComboItem(any(), eq("plata y L"));
+        verifyNoInteractions(provider);
+    }
+
+    @Test
     void compraExplicitaDeComboNoSeConfundeConConsultaDePromociones() {
         CrmWhatsappAiJob job = job("El combo 42 quiero comprar");
         CrmWhatsappAiConfig config = configWithIntent("PROMOCIONES");

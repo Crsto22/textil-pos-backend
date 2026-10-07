@@ -2668,6 +2668,36 @@ class CrmWhatsappAiEngineServiceTest {
     }
 
     @Test
+    void solicitudDeFotoUsaElProductoRecordadoYAdjuntaLaImagenDelColor() {
+        CrmWhatsappAiJob job = job("Quiero ver la foto del color beige");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(configWithIntent("PRODUCTOS")));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(memory.selectionFor(10L)).thenReturn(
+                new MemorySelection(26, "ANNIE RAYAS", "BEIGE CLARO", "", null));
+        MediaReference beige = new MediaReference("PRODUCT_COLOR_IMAGE", 26, 211,
+                "ANNIE RAYAS", "BEIGE CLARO", "/storage/productos/annie-rayas-beige.webp", "");
+        MediaReference vino = new MediaReference("PRODUCT_COLOR_IMAGE", 26, 212,
+                "ANNIE RAYAS", "VINO", "/storage/productos/annie-rayas-vino.webp", "");
+        when(tools.execute(any(), any())).thenAnswer(invocation -> {
+            List<ToolCall> calls = invocation.getArgument(1);
+            assertEquals("ANNIE RAYAS", calls.getFirst().arguments().get("q"));
+            return new ExecutionResult(
+                    List.of(java.util.Map.of("tool", "buscar_productos", "products", List.of())),
+                    List.of(), List.of(), List.of(beige, vino));
+        });
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("PRODUCTOS", result.intent());
+        assertTrue(result.draft().contains("ANNIE RAYAS"), result.draft());
+        assertTrue(result.draft().contains("BEIGE CLARO"), result.draft());
+        assertEquals(List.of(beige), result.suggestedMedia());
+        verify(provider, org.mockito.Mockito.never()).classify(any());
+    }
+
+    @Test
     void stockAgotadoNoAdjuntaImagenDelProducto() {
         CrmWhatsappAiJob job = job("Plata talla S");
         when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));

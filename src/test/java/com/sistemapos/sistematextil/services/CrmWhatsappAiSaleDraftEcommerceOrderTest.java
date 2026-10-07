@@ -199,6 +199,43 @@ class CrmWhatsappAiSaleDraftEcommerceOrderTest {
     }
 
     @Test
+    void repetirLaUnicaUnidadYaAgregadaDevuelveElPedidoSinErrorDeStock() {
+        CrmWhatsappConversation conversation = conversation();
+        CrmWhatsappAiSaleDraft draft = new CrmWhatsappAiSaleDraft();
+        draft.setIdAiSaleDraft(90L);
+        draft.setConversation(conversation);
+        draft.setConnection(conversation.getConnection());
+        draft.setSucursal(conversation.getConnection().getSucursal());
+        draft.setStatus(CrmWhatsappAiSaleDraftStatus.AWAITING_CUSTOMER);
+        draft.setVersion(1);
+        draft.setSubtotal(new BigDecimal("75.00"));
+        draft.setPromotionDiscount(BigDecimal.ZERO);
+        draft.setTotal(new BigDecimal("75.00"));
+        draft.setExpiresAt(LocalDateTime.now().plusHours(24));
+        CrmWhatsappAiSaleDraftItem existing = item(
+                draft, 13, 101, "LIA RAYAS", "PLATA", "XS", "75.00");
+        existing.setStockSnapshot(1);
+        draft.getItems().add(existing);
+        when(drafts.findFirstByConversation_IdConversationAndStatusInOrderByCreatedAtDesc(any(), any()))
+                .thenReturn(Optional.of(draft));
+        ProductResult lia = new ProductResult(13, "LIA RAYAS", "", "lia-rayas", "",
+                false, null, "", "", List.of("PLATA"), List.of("XS"),
+                List.of(new VariantResult(101, "LR-PL-XS", "", "PLATA", "XS", 1, true,
+                        new BigDecimal("75.00"), new BigDecimal("75.00"), null, null, "", "", "")));
+        when(commercial.searchProducts(any(), eq("LIA RAYAS")))
+                .thenReturn(new CatalogResult(3, "Centro", "LIA RAYAS", "LIA RAYAS",
+                        false, List.of(lia)));
+
+        var result = service.applyAiAction(conversation, new SaleActionResult(
+                "ADD", "LIA RAYAS", null, "PLATA", "XS", 1,
+                "", 100, "confirmar una unidad", Usage.empty()));
+
+        assertEquals(1, draft.getItems().getFirst().getQuantity());
+        assertTrue(result.response().contains("LIA RAYAS"), result.response());
+        assertTrue(!result.response().contains("No puedes superar el stock"), result.response());
+    }
+
+    @Test
     void pedidoCompactoConProductoAmbiguoSolicitaElModeloExacto() {
         when(commercial.searchProducts(any(), eq("Alessia"))).thenReturn(new CatalogResult(
                 3, "Centro", "Alessia", "", false, "AMBIGUOUS",

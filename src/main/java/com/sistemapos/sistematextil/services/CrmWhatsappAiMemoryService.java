@@ -97,6 +97,11 @@ public class CrmWhatsappAiMemoryService {
         CrmWhatsappAiPendingQuestion inferredPending = inferPendingQuestion(result.draft(), result.intent());
         memory.setPendingQuestion(shouldPreservePending(previousPending, result.intent())
                 ? previousPending : inferredPending);
+        Integer offeredQuantity = offeredQuantity(result.draft());
+        if (memory.getPendingQuestion() == CrmWhatsappAiPendingQuestion.QUANTITY
+                && offeredQuantity != null) {
+            memory.setQuantity(offeredQuantity);
+        }
         memoryRepository.save(memory);
         publish(memory);
     }
@@ -241,6 +246,13 @@ public class CrmWhatsappAiMemoryService {
         if (pending == CrmWhatsappAiPendingQuestion.QUANTITY && isQuantityOnlyReply(normalized)) {
             Integer quantity = parseQuantity(normalized);
             if (quantity != null && !clean(memory.getProductName()).isBlank()
+                    && !clean(memory.getColor()).isBlank() && !clean(memory.getSize()).isBlank()) {
+                outcome = saleDraftService.applyAiAction(conversation, saleAction(
+                        "ADD", memory.getProductName(), memory.getColor(), memory.getSize(), quantity));
+            }
+        } else if (pending == CrmWhatsappAiPendingQuestion.QUANTITY && isAffirmative(normalized)) {
+            Integer quantity = memory.getQuantity();
+            if (quantity != null && quantity > 0 && !clean(memory.getProductName()).isBlank()
                     && !clean(memory.getColor()).isBlank() && !clean(memory.getSize()).isBlank()) {
                 outcome = saleDraftService.applyAiAction(conversation, saleAction(
                         "ADD", memory.getProductName(), memory.getColor(), memory.getSize(), quantity));
@@ -640,6 +652,15 @@ public class CrmWhatsappAiMemoryService {
             if ((" " + value + " ").matches(".*\\b" + entry.getKey() + "\\b.*")) return entry.getValue();
         }
         return null;
+    }
+
+    private Integer offeredQuantity(String response) {
+        String value = normalize(response);
+        Matcher matcher = Pattern.compile(
+                "(?:solo (?:nos )?(?:queda|quedan)|solo tenemos|deseas llevar)\\s+(\\d{1,2})\\b")
+                .matcher(value);
+        if (!matcher.find()) return null;
+        return Math.max(1, Math.min(99, Integer.parseInt(matcher.group(1))));
     }
 
     private boolean isAffirmative(String value) {

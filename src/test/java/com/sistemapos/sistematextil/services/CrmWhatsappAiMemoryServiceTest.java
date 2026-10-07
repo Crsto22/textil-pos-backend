@@ -160,6 +160,40 @@ class CrmWhatsappAiMemoryServiceTest {
     }
 
     @Test
+    void aceptarLaUnicaUnidadDisponibleAgregaUnaUnidadYNoReutilizaLaCantidadAnterior() {
+        CrmWhatsappConversation conversation = new CrmWhatsappConversation();
+        conversation.setIdConversation(10L);
+        conversation.setStatus("ESPERA");
+        CrmWhatsappAiMemory memory = memory(conversation, CrmWhatsappAiPendingQuestion.QUANTITY);
+        memory.setProductName("LIA RAYAS");
+        memory.setColor("PLATA");
+        memory.setSize("XS");
+        memory.setQuantity(2);
+        when(memories.findForUpdate(10L)).thenReturn(Optional.of(memory));
+        when(memories.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        ProcessingResult onlyOneAvailable = new ProcessingResult(
+                CrmWhatsappAiRunOutcome.DRAFT_READY, "STOCK", 100, false, "",
+                "De *LIA RAYAS* solo tenemos 1 unidad disponible.\n\n¿Deseas llevar 1?",
+                List.of(), List.of(), List.of(), Usage.empty(), 0L, false);
+
+        service.updateFromRun(run(conversation, 50L, "2"), onlyOneAvailable);
+
+        assertEquals(1, memory.getQuantity());
+        when(saleDrafts.applyAiAction(any(), any())).thenReturn(
+                new CrmWhatsappAiSaleDraftService.ActionOutcome("Pedido agregado", false, null));
+
+        var resolution = service.resolvePendingReply(conversation, 51L, "Sí");
+
+        assertEquals("MODIFICAR_CARRITO", resolution.intent());
+        assertEquals("Pedido agregado", resolution.response());
+        verify(saleDrafts).applyAiAction(any(), argThat(action ->
+                "LIA RAYAS".equals(action.productQuery())
+                        && "PLATA".equals(action.color())
+                        && "XS".equals(action.size())
+                        && Integer.valueOf(1).equals(action.quantity())));
+    }
+
+    @Test
     void beigeSeCanonizaComoBeigeClaroYLaCantidadEntraAlPedido() {
         CrmWhatsappConversation conversation = new CrmWhatsappConversation();
         conversation.setIdConversation(10L);

@@ -79,6 +79,7 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
                           com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.ADVISOR_REQUIRED,
                           com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.AI_DISABLED,
                           com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.IMAGE_RECEIVED,
+                          com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.AI_RESPONSE_FAILED,
                           com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.PAYMENT_VERIFICATION)
                          OR c.aiAttentionMode = com.sistemapos.sistematextil.model.CrmWhatsappAiAttentionMode.HUMANA)))
               AND (:isAdmin = true
@@ -123,6 +124,7 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
                           com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.ADVISOR_REQUIRED,
                           com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.AI_DISABLED,
                           com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.IMAGE_RECEIVED,
+                          com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.AI_RESPONSE_FAILED,
                           com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.PAYMENT_VERIFICATION)
                          OR c.aiAttentionMode = com.sistemapos.sistematextil.model.CrmWhatsappAiAttentionMode.HUMANA)))
               AND (:isAdmin = true
@@ -198,6 +200,7 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
                                           com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.ADVISOR_REQUIRED,
                                           com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.AI_DISABLED,
                                           com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.IMAGE_RECEIVED,
+                                          com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.AI_RESPONSE_FAILED,
                                           com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.PAYMENT_VERIFICATION)
                                           OR c.aiAttentionMode = com.sistemapos.sistematextil.model.CrmWhatsappAiAttentionMode.HUMANA)
                                 THEN 1 ELSE 0 END), 0),

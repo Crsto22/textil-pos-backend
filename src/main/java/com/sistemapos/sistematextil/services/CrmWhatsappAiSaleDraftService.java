@@ -817,8 +817,16 @@ public class CrmWhatsappAiSaleDraftService {
             item.setDraft(draft); item.setProductId(selected.product().productId());
             item.setVariantId(selected.variant().variantId()); draft.getItems().add(item);
         } else {
-            quantity += item.getQuantity();
-            if (quantity > selected.variant().stock()) return new ActionOutcome("No puedes superar el stock disponible de " + selected.variant().stock() + ".", false, response(draft));
+            int combinedQuantity = quantity + item.getQuantity();
+            if (combinedQuantity > selected.variant().stock()) {
+                if (quantity == item.getQuantity() && quantity <= selected.variant().stock()) {
+                    return new ActionOutcome(summary(draft, true), false, response(draft));
+                }
+                return new ActionOutcome(
+                        unavailableQuantityMessage(combinedQuantity, selected.variant().stock()),
+                        false, response(draft));
+            }
+            quantity = combinedQuantity;
         }
         item.setProductName(selected.product().name()); item.setSku(selected.variant().sku());
         item.setColor(selected.variant().color()); item.setSize(selected.variant().size());

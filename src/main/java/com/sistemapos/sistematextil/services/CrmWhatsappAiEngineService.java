@@ -463,6 +463,8 @@ public class CrmWhatsappAiEngineService {
         Long conversationId = prepared.job().getConversation().getIdConversation();
         CrmWhatsappAiPendingQuestion pendingQuestion = memoryService.pendingQuestionFor(conversationId);
         MemorySelection rememberedSelection = memoryService.selectionFor(conversationId);
+        ProcessingResult colorPhoto = productColorPhotoReply(prepared, rememberedSelection, started);
+        if (colorPhoto != null) return colorPhoto;
         Integer selectedPromotionNumber = referencedPromotionToAdd(
                 prepared.latestMessage(), prepared.conversationContext());
         if (selectedPromotionNumber != null) {
@@ -3238,6 +3240,50 @@ public class CrmWhatsappAiEngineService {
                 .findFirst()
                 .map(List::of)
                 .orElseGet(List::of);
+    }
+
+    private ProcessingResult productColorPhotoReply(
+            PreparedJob prepared, MemorySelection remembered, long started) {
+        String normalized = normalizedText(prepared.latestMessage())
+                .replaceAll("[^a-z0-9\\s]", " ").replaceAll("\\s+", " ").trim();
+        boolean asksForPhoto = normalized.matches(".*\\b(foto|fotito|imagen|imagenes)\\b.*")
+                || normalized.matches(".*\\b(quiero ver|deseo ver|muestra|muestrame|ensenam[e]?|ver como)\\b.*");
+        if (!asksForPhoto || !prepared.allowedIntents().contains("PRODUCTOS")) return null;
+
+        String rememberedProduct = remembered == null ? "" : clean(remembered.productName());
+        Map<String, Object> arguments = new LinkedHashMap<>();
+        arguments.put("q", rememberedProduct.isBlank() ? prepared.latestMessage() : rememberedProduct);
+        arguments.put("page", 0);
+        long toolStarted = System.nanoTime();
+        ExecutionResult product = toolService.execute(prepared.job().getConversation(),
+                List.of(new ToolCall("buscar_productos", arguments)));
+        if (product.mediaCandidates() == null || product.mediaCandidates().isEmpty()) return null;
+
+        List<MediaReference> colorImages = product.mediaCandidates().stream()
+                .filter(media -> "PRODUCT_COLOR_IMAGE".equals(media.type()))
+                .filter(media -> !clean(media.color()).isBlank() && !clean(media.url()).isBlank())
+                .toList();
+        List<String> availableColors = colorImages.stream().map(MediaReference::color)
+                .distinct().sorted(java.util.Comparator.comparingInt(String::length).reversed()).toList();
+        String requestedColor = matchingValue(normalized, availableColors);
+        if (requestedColor.isBlank() && remembered != null) {
+            requestedColor = canonicalValue(remembered.color(), availableColors);
+        }
+        if (requestedColor.isBlank()) return null;
+
+        String selectedColor = requestedColor;
+        MediaReference selected = colorImages.stream()
+                .filter(media -> normalizedText(media.color()).equals(normalizedText(selectedColor)))
+                .findFirst().orElse(null);
+        if (selected == null) return null;
+        String productName = clean(selected.product()).isBlank()
+                ? rememberedProduct : clean(selected.product());
+        String response = "👗 Te comparto la foto de *" + productName + "* en color *"
+                + selected.color() + "* 💛\n\n¿Qué talla deseas llevar?";
+        return ProcessingResult.draft("PRODUCTOS", 100, response,
+                "Imagen de la variante de color solicitada validada por el backend",
+                product.auditTrace(), product.evidence(), List.of(selected), Usage.empty(), elapsedMs(started))
+                .withGenerationTrace(false, false, null, null, elapsedMs(toolStarted), null);
     }
 
     private Integer singleProductId(List<Map<String, Object>> results) {

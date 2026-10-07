@@ -77,10 +77,13 @@ public class CrmWhatsappAiEngineService {
             .ofPattern("d 'de' MMMM 'de' yyyy", Locale.forLanguageTag("es-PE"));
     private static final String ADVISOR_OFFER = "Esta consulta necesita el apoyo de una asesora.\n\n"
             + "¿Te parece si te comunico con una?";
-    private static final String ORDER_PREPARATION_RESPONSE = "📦 Tu pedido estará listo para envío o recojo en un plazo "
-            + "aproximado de 1 a 2 días debido a la alta demanda.\n\n"
+    private static final String ORDER_PREPARATION_RESPONSE = "📦 El tiempo estimado para preparar y despachar tu pedido "
+            + "dependerá de la logística de Shalom:\n\n"
+            + "• Lima: aproximadamente de 1 a 2 días.\n"
+            + "• Provincias: aproximadamente de 1 a 3 días.\n\n"
+            + "Estos plazos son referenciales y no podemos garantizar una fecha exacta de entrega.\n\n"
             + "Si logramos prepararlo antes, nuestra asesora de envíos se comunicará contigo para corroborar tus datos 💛\n\n"
-            + "✨ Para productos en preventa, se respetará la fecha de envío indicada en cada modelo.";
+            + "✨ En productos de preventa, se respetará la fecha de envío indicada en cada modelo.";
     private static final Set<String> SENSITIVE_TERMS = Set.of(
             "reclamo", "queja", "devolucion", "devolución", "asesor", "humano",
             "hablar con una persona", "atencion humana", "atención humana",

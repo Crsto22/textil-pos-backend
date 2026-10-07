@@ -2427,8 +2427,11 @@ class CrmWhatsappAiEngineServiceTest {
 
         assertEquals("ENVIOS", result.intent());
         assertTrue(result.draft().contains("1 a 2 días"));
+        assertTrue(result.draft().contains("1 a 3 días"));
+        assertTrue(result.draft().contains("plazos son referenciales"));
+        assertTrue(result.draft().contains("no podemos garantizar una fecha exacta"));
         assertTrue(result.draft().contains("corroborar tus datos"));
-        assertTrue(result.draft().contains("productos en preventa"));
+        assertTrue(result.draft().toLowerCase().contains("productos de preventa"));
         verifyNoInteractions(provider, tools);
     }
 

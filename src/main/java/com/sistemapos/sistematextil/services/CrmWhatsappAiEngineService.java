@@ -84,6 +84,10 @@ public class CrmWhatsappAiEngineService {
             + "Estos plazos son referenciales y no podemos garantizar una fecha exacta de entrega.\n\n"
             + "Si logramos prepararlo antes, nuestra asesora de envíos se comunicará contigo para corroborar tus datos 💛\n\n"
             + "✨ En productos de preventa, se respetará la fecha de envío indicada en cada modelo.";
+    private static final String SHIPPING_INFORMATION_RESPONSE = "🚚 Realizamos envíos desde Lima mediante la agencia Shalom.\n\n"
+            + "📦 El tiempo estimado de entrega es de 1 a 4 días hábiles, dependiendo del destino y de la logística de la agencia.\n\n"
+            + "💰 El costo del envío es establecido directamente por Shalom.\n\n"
+            + "Ten en cuenta que estos plazos son referenciales y no podemos garantizar una fecha exacta de entrega.";
     private static final Set<String> SENSITIVE_TERMS = Set.of(
             "reclamo", "queja", "devolucion", "devolución", "asesor", "humano",
             "hablar con una persona", "atencion humana", "atención humana",
@@ -699,9 +703,7 @@ public class CrmWhatsappAiEngineService {
             ExecutionResult shipping = toolService.execute(prepared.job().getConversation(),
                     List.of(new ToolCall("consultar_informacion_negocio", Map.of(
                             "q", "envios a provincia agencia y recojo en almacen"))));
-            String fallback = knowledgeFallbackResponse(shipping.modelResults());
-            if (clean(fallback).isBlank()) fallback = OUT_OF_SCOPE_RESPONSE;
-            fallback = normalizeInformationalClosing(fallback, "ENVIOS");
+            String fallback = SHIPPING_INFORMATION_RESPONSE;
             return informationalResponse(prepared, "ENVIOS", 100, shipping, fallback,
                     List.of(), Usage.empty(), started, null, elapsedMs(toolStarted));
         }
@@ -1738,7 +1740,7 @@ public class CrmWhatsappAiEngineService {
             Long classificationLatencyMs,
             Long toolLatencyMs) {
         fallback = normalizeInformationalClosing(fallback, intent);
-        if (!usesNaturalResponse(prepared.config(), prepared.job().getConversation())) {
+        if ("ENVIOS".equals(intent) || !usesNaturalResponse(prepared.config(), prepared.job().getConversation())) {
             return ProcessingResult.draft(intent, confidence, fallback, "Respuesta segura estructurada",
                     execution.auditTrace(), execution.evidence(), fallbackMedia, usage, elapsedMs(started))
                     .withGenerationTrace(false, false, null, classificationLatencyMs, toolLatencyMs, null);
@@ -2015,6 +2017,9 @@ public class CrmWhatsappAiEngineService {
             String intent, List<Map<String, Object>> results, boolean includeEcommerceLink) {
         if ("SALUDO".equals(intent)) {
             return GREETING_RESPONSE;
+        }
+        if ("ENVIOS".equals(intent)) {
+            return SHIPPING_INFORMATION_RESPONSE;
         }
         if (results == null || results.isEmpty()) return "";
         Map<String, Object> result = results.get(0);

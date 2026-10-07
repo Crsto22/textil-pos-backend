@@ -2391,7 +2391,7 @@ class CrmWhatsappAiEngineServiceTest {
     }
 
     @Test
-    void respuestaDeEnviosNoSolicitaDatosQueElBackendNoProcesa() {
+    void respuestaDeEnviosUsaElMensajeFijoAprobado() {
         CrmWhatsappAiJob job = job("Y que metodo de envio tienes");
         CrmWhatsappAiConfig config = configWithIntent("ENVIOS");
         config.setNaturalResponseEnabled(true);
@@ -2403,16 +2403,15 @@ class CrmWhatsappAiEngineServiceTest {
         when(provider.classify(any())).thenReturn(new ClassificationResult(
                 "ENVIOS", 100, false, "consulta de envio", List.of(), new Usage(10, 5, 15)));
         when(tools.execute(any(), any())).thenReturn(shippingKnowledge());
-        when(provider.generateDraft(any())).thenReturn(new DraftResult(
-                "Realizamos envios por Shalom y ofrecemos recojo en almacen.\n\n"
-                        + "¿A que ciudad o distrito deseas el envio?",
-                false, "respuesta fundamentada", List.of(), new Usage(12, 8, 20)));
-
         var result = service.execute(service.prepare(50L));
 
         assertEquals("ENVIOS", result.intent());
         assertFalse(result.draft().toLowerCase().contains("ciudad o distrito"), result.draft());
-        assertTrue(result.draft().contains("¿Qué otro producto o consulta deseas realizar?"));
+        assertTrue(result.draft().contains("agencia Shalom"));
+        assertTrue(result.draft().contains("1 a 4 días hábiles"));
+        assertTrue(result.draft().contains("establecido directamente por Shalom"));
+        assertTrue(result.draft().contains("plazos son referenciales"));
+        assertTrue(result.draft().contains("no podemos garantizar una fecha exacta"));
     }
 
     @Test

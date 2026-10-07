@@ -30,7 +30,9 @@ class CrmWhatsappAiToolServiceTest {
 
     private final CrmWhatsappAiCommercialQueryService commercial = mock(CrmWhatsappAiCommercialQueryService.class);
     private final CrmWhatsappAiKnowledgeService knowledge = mock(CrmWhatsappAiKnowledgeService.class);
-    private final CrmWhatsappAiToolService service = new CrmWhatsappAiToolService(commercial, knowledge);
+    private final CrmWhatsappDeliveryScheduleService deliverySchedule = mock(CrmWhatsappDeliveryScheduleService.class);
+    private final CrmWhatsappAiToolService service = new CrmWhatsappAiToolService(
+            commercial, knowledge, deliverySchedule);
 
     @Test
     void ignoraIdsProporcionadosPorElModeloYAuditaSinDatosComerciales() {

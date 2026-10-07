@@ -2,6 +2,7 @@ package com.sistemapos.sistematextil.model;
 
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.LocalDate;
 import java.math.BigDecimal;
 
 import jakarta.persistence.Column;
@@ -132,6 +133,29 @@ public class CrmWhatsappAiConfig {
     @Column(name = "natural_response_rollout_percent", nullable = false)
     private Integer naturalResponseRolloutPercent;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "shipping_date_mode", nullable = false, length = 24)
+    private CrmWhatsappDeliveryDateMode shippingDateMode;
+
+    @Column(name = "shipping_specific_date")
+    private LocalDate shippingSpecificDate;
+
+    @Column(name = "same_day_shipping_cutoff", nullable = false)
+    private LocalTime sameDayShippingCutoff;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "pickup_date_mode", nullable = false, length = 24)
+    private CrmWhatsappDeliveryDateMode pickupDateMode;
+
+    @Column(name = "pickup_specific_date")
+    private LocalDate pickupSpecificDate;
+
+    @Column(name = "pickup_opens_at", nullable = false)
+    private LocalTime pickupOpensAt;
+
+    @Column(name = "pickup_closes_at", nullable = false)
+    private LocalTime pickupClosesAt;
+
     @Column(name = "operational_status", nullable = false, length = 30)
     private String operationalStatus;
 
@@ -163,6 +187,11 @@ public class CrmWhatsappAiConfig {
         if (automaticRolloutPercent == null) automaticRolloutPercent = 0;
         if (naturalResponseEnabled == null) naturalResponseEnabled = false;
         if (naturalResponseRolloutPercent == null) naturalResponseRolloutPercent = 0;
+        if (shippingDateMode == null) shippingDateMode = CrmWhatsappDeliveryDateMode.AUTOMATICA;
+        if (sameDayShippingCutoff == null) sameDayShippingCutoff = LocalTime.of(15, 0);
+        if (pickupDateMode == null) pickupDateMode = CrmWhatsappDeliveryDateMode.AUTOMATICA;
+        if (pickupOpensAt == null) pickupOpensAt = LocalTime.of(10, 0);
+        if (pickupClosesAt == null) pickupClosesAt = LocalTime.of(18, 0);
         if (operationalStatus == null || operationalStatus.isBlank()) operationalStatus = "ACTIVE";
     }
 

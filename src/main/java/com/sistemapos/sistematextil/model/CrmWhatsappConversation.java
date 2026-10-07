@@ -72,6 +72,9 @@ public class CrmWhatsappConversation {
     @Column(name = "waiting_reason", length = 30)
     private CrmWhatsappWaitingReason waitingReason;
 
+    @Column(name = "waiting_detail", length = 500)
+    private String waitingDetail;
+
     @ManyToOne(optional = true)
     @JoinColumn(name = "id_cliente", nullable = true)
     private Cliente cliente;
@@ -123,14 +126,17 @@ public class CrmWhatsappConversation {
         if ("RESUELTO".equals(status)) {
             attentionQueue = CrmWhatsappAttentionQueue.RESOLVED;
             waitingReason = null;
+            waitingDetail = null;
         } else if (assignedUser != null || "ATENDIDO".equals(status)) {
             attentionQueue = CrmWhatsappAttentionQueue.HUMAN_ACTIVE;
             waitingReason = null;
+            waitingDetail = null;
         } else if (waitingReason == CrmWhatsappWaitingReason.PAYMENT_VERIFICATION) {
             attentionQueue = CrmWhatsappAttentionQueue.PAYMENT_VERIFICATION;
         } else if (waitingReason == CrmWhatsappWaitingReason.AI_DISABLED
                 || waitingReason == CrmWhatsappWaitingReason.ADVISOR_REQUIRED
                 || waitingReason == CrmWhatsappWaitingReason.IMAGE_RECEIVED
+                || waitingReason == CrmWhatsappWaitingReason.AI_RESPONSE_FAILED
                 || aiAttentionMode == CrmWhatsappAiAttentionMode.HUMANA) {
             attentionQueue = CrmWhatsappAttentionQueue.ADVISOR_REQUIRED;
             if (waitingReason == null) {
@@ -139,6 +145,9 @@ public class CrmWhatsappConversation {
         } else {
             attentionQueue = CrmWhatsappAttentionQueue.AI_ACTIVE;
             waitingReason = null;
+            waitingDetail = null;
         }
+        if (waitingReason != CrmWhatsappWaitingReason.ADVISOR_REQUIRED
+                && waitingReason != CrmWhatsappWaitingReason.AI_RESPONSE_FAILED) waitingDetail = null;
     }
 }

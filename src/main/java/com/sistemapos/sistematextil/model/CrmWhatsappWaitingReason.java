@@ -4,5 +4,6 @@ public enum CrmWhatsappWaitingReason {
     ADVISOR_REQUIRED,
     PAYMENT_VERIFICATION,
     AI_DISABLED,
-    IMAGE_RECEIVED
+    IMAGE_RECEIVED,
+    AI_RESPONSE_FAILED
 }

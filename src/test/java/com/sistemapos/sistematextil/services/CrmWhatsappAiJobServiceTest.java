@@ -44,13 +44,14 @@ class CrmWhatsappAiJobServiceTest {
     private final CrmWhatsappMessageRepository messages = mock(CrmWhatsappMessageRepository.class);
     private final UsuarioRepository users = mock(UsuarioRepository.class);
     private final CrmWhatsappAiSaleDraftService saleDrafts = mock(CrmWhatsappAiSaleDraftService.class);
+    private final CrmWhatsappAiHandoffService handoff = mock(CrmWhatsappAiHandoffService.class);
     private final CrmWhatsappAiOperationsService operations = mock(CrmWhatsappAiOperationsService.class);
     private final CrmWhatsappAiAuditService audit = mock(CrmWhatsappAiAuditService.class);
     private final CrmWhatsappAiMemoryRepository memories = mock(CrmWhatsappAiMemoryRepository.class);
     private final CrmWhatsappEventService events = mock(CrmWhatsappEventService.class);
     private final CrmWhatsappConnectionStateService connectionState = mock(CrmWhatsappConnectionStateService.class);
     private final CrmWhatsappAiJobService service = new CrmWhatsappAiJobService(
-            jobs, runs, configs, conversations, messages, users, saleDrafts, operations, audit, memories, events,
+            jobs, runs, configs, conversations, messages, users, saleDrafts, handoff, operations, audit, memories, events,
             connectionState);
 
     @BeforeEach
@@ -68,6 +69,8 @@ class CrmWhatsappAiJobServiceTest {
 
         assertNull(service.enqueueAutomatic(message));
 
+        verify(handoff).requireAdvisor(10L, com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.AI_DISABLED,
+                "La IA automatica esta desactivada", null);
         verifyNoInteractions(runs);
     }
 
@@ -140,6 +143,8 @@ class CrmWhatsappAiJobServiceTest {
                 org.mockito.ArgumentMatchers.argThat((java.util.Map<String, Object> event) ->
                         "ai.limit.reached".equals(event.get("type"))),
                 org.mockito.ArgumentMatchers.anyMap(), eq(null), eq(true));
+        verify(handoff).requireAdvisorForFailure(10L,
+                "Se alcanzo el limite maximo de respuestas automaticas para este chat", null);
         verifyNoInteractions(jobs, runs);
     }
 

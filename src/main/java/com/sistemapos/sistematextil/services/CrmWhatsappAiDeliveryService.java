@@ -88,6 +88,7 @@ public class CrmWhatsappAiDeliveryService {
     private final CrmWhatsappMessageRepository messageRepository;
     private final CrmWhatsappChatService chatService;
     private final CrmWhatsappAiMemoryService memoryService;
+    private final CrmWhatsappAiHandoffService handoffService;
     private final CrmWhatsappAiSaleDraftService saleDraftService;
     private final CrmWhatsappAiCommercialQueryService commercialQueryService;
     private final CrmWhatsappEventService eventService;
@@ -434,6 +435,7 @@ public class CrmWhatsappAiDeliveryService {
             publishHumanDraft(delivery);
             return;
         }
+        boolean terminalFailure = false;
         delivery.setLockedAt(null);
         delivery.setFailureReason(limit(error == null ? "Error enviando respuesta automatica" : error.getMessage(), 1000));
         if (delivery.getAttempts() < 3) {
@@ -442,6 +444,7 @@ public class CrmWhatsappAiDeliveryService {
         } else {
             if (isMarketingNotice(delivery.getDeliveryType())) {
                 delivery.setStatus(CrmWhatsappAiDeliveryStatus.FAILED);
+                terminalFailure = true;
             } else if (isMediaDelivery(delivery.getDeliveryType())) {
                 try {
                     MessageResponse fallback = chatService.enviarMensajeAutomatico(
@@ -455,15 +458,21 @@ public class CrmWhatsappAiDeliveryService {
                     memoryService.markAutomaticSent(delivery.getConversation().getIdConversation(), fallback.id());
                 } catch (RuntimeException fallbackError) {
                     delivery.setStatus(CrmWhatsappAiDeliveryStatus.FAILED);
+                    terminalFailure = true;
                 }
             } else if (isBusinessNotice(delivery.getDeliveryType())) {
                 delivery.setStatus(CrmWhatsappAiDeliveryStatus.FAILED);
+                terminalFailure = true;
             } else {
                 delivery.setStatus(CrmWhatsappAiDeliveryStatus.FAILED);
-                publishHandoff(delivery.getRun(), "No se pudo enviar la respuesta automatica");
+                terminalFailure = true;
             }
         }
         deliveryRepository.save(delivery);
+        if (terminalFailure) {
+            handoffService.requireAdvisorForFailure(delivery.getConversation().getIdConversation(),
+                    delivery.getFailureReason(), delivery.getRun() == null ? null : delivery.getRun().getIdAiRun());
+        }
     }
 
     @Transactional
@@ -474,7 +483,18 @@ public class CrmWhatsappAiDeliveryService {
         delivery.setFailureReason(limit(reason, 1000));
         delivery.setLockedAt(null);
         deliveryRepository.save(delivery);
-        if (handoff && delivery.getRun() != null) publishHandoff(delivery.getRun(), reason);
+        if (handoff && delivery.getRun() != null && shouldEscalateCancellation(reason)) {
+            handoffService.requireAdvisorForFailure(delivery.getConversation().getIdConversation(),
+                    reason, delivery.getRun().getIdAiRun());
+        }
+    }
+
+    private boolean shouldEscalateCancellation(String reason) {
+        String value = clean(reason).toLowerCase(Locale.ROOT);
+        return !value.contains("mensaje mas reciente")
+                && !value.contains("mensaje más reciente")
+                && !value.contains("asesor ya atiende")
+                && !value.contains("ya no admite sugerencias automaticas");
     }
 
     private String validate(CrmWhatsappAiDelivery delivery, CrmWhatsappConversation conversation,
@@ -796,12 +816,6 @@ public class CrmWhatsappAiDeliveryService {
         if (!List.of(config.getDiasAtencion().split(",")).contains(day)) return false;
         LocalTime time = now.toLocalTime();
         return !time.isBefore(config.getHoraInicio()) && !time.isAfter(config.getHoraFin());
-    }
-
-    private void publishHandoff(CrmWhatsappAiRun run, String reason) {
-        Map<String, Object> event = Map.of("type", "ai.handoff.required", "conversationId",
-                run.getConversation().getIdConversation(), "runId", run.getIdAiRun(), "reason", clean(reason));
-        eventService.publishAfterCommit(event, event, null, true);
     }
 
     private DeliveryMedia deliveryMedia(CrmWhatsappAiRun run) {

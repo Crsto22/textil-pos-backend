@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -69,6 +70,7 @@ class CrmWhatsappAiEngineServiceTest {
     private final AiModelProvider provider = mock(AiModelProvider.class);
     private final CrmWhatsappEventService events = mock(CrmWhatsappEventService.class);
     private final CrmWhatsappAiMemoryService memory = mock(CrmWhatsappAiMemoryService.class);
+    private final CrmWhatsappAiHandoffService handoff = mock(CrmWhatsappAiHandoffService.class);
     private final CrmWhatsappAiDeliveryService delivery = mock(CrmWhatsappAiDeliveryService.class);
     private final CrmWhatsappAiSaleDraftService saleDrafts = mock(CrmWhatsappAiSaleDraftService.class);
     private final CrmWhatsappAiOperationsService operations = mock(CrmWhatsappAiOperationsService.class);
@@ -78,7 +80,7 @@ class CrmWhatsappAiEngineServiceTest {
     private final CrmWhatsappConversationRepository conversations = mock(CrmWhatsappConversationRepository.class);
     private final S3StorageService storage = mock(S3StorageService.class);
     private final CrmWhatsappAiEngineService service = new CrmWhatsappAiEngineService(
-            jobs, runs, configs, messages, paymentEvidences, ecommerceOrderParser, tools, provider, events, memory, delivery, saleDrafts,
+            jobs, runs, configs, messages, paymentEvidences, ecommerceOrderParser, tools, provider, events, memory, handoff, delivery, saleDrafts,
             operations, safety, productQueries, audit, conversations, storage);
 
     @BeforeEach
@@ -719,12 +721,8 @@ class CrmWhatsappAiEngineServiceTest {
         assertEquals("ASESOR_SOLICITADO", result.intent());
         service.complete(50L, result);
 
-        assertEquals(CrmWhatsappAiAttentionMode.HUMANA, job.getConversation().getAiAttentionMode());
-        assertTrue(job.getConversation().getAiAttentionModeExplicit());
-        assertEquals("ESPERA", job.getConversation().getStatus());
-        assertEquals(CrmWhatsappWaitingReason.ADVISOR_REQUIRED,
-                job.getConversation().getWaitingReason());
-        verify(memory).pauseForHuman(job.getConversation(), result.reason());
+        verify(handoff).requireAdvisor(10L, CrmWhatsappWaitingReason.ADVISOR_REQUIRED,
+                result.reason(), 62L);
         verify(delivery).enqueueHandoff(any());
     }
 
@@ -779,6 +777,22 @@ class CrmWhatsappAiEngineServiceTest {
         service.fail(999L, new IllegalStateException("Fallo tardio"), false);
 
         verifyNoInteractions(runs, delivery);
+    }
+
+    @Test
+    void falloDefinitivoDelProveedorPasaLaConversacionAUnaAsesora() {
+        CrmWhatsappAiJob job = job("Hola");
+        job.setTriggerType("AUTOMATIC");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(runs.save(any())).thenAnswer(invocation -> {
+            CrmWhatsappAiRun run = invocation.getArgument(0);
+            run.setIdAiRun(81L);
+            return run;
+        });
+
+        service.fail(50L, new AiProviderException("Gemini no disponible", false), false);
+
+        verify(handoff).requireAdvisorForFailure(eq(10L), any(), eq(81L));
     }
 
     @Test

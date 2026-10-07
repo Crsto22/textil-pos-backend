@@ -2496,6 +2496,7 @@ public class CrmWhatsappChatService {
                         : conversation.getAiAttentionMode().name(),
                 effectiveAttentionQueue(conversation).name(),
                 conversation.getWaitingReason() == null ? null : conversation.getWaitingReason().name(),
+                nullIfBlank(conversation.getWaitingDetail()),
                 tags);
     }
 
@@ -2510,6 +2511,7 @@ public class CrmWhatsappChatService {
         if (conversation.getWaitingReason() == CrmWhatsappWaitingReason.ADVISOR_REQUIRED
                 || conversation.getWaitingReason() == CrmWhatsappWaitingReason.AI_DISABLED
                 || conversation.getWaitingReason() == CrmWhatsappWaitingReason.IMAGE_RECEIVED
+                || conversation.getWaitingReason() == CrmWhatsappWaitingReason.AI_RESPONSE_FAILED
                 || conversation.getAiAttentionMode() == CrmWhatsappAiAttentionMode.HUMANA) {
             return CrmWhatsappAttentionQueue.ADVISOR_REQUIRED;
         }
@@ -3056,6 +3058,7 @@ public class CrmWhatsappChatService {
             String aiAttentionMode,
             String attentionQueue,
             String waitingReason,
+            String waitingDetail,
             List<CrmConversationTagResponse> tags) {
     }
 

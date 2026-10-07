@@ -100,6 +100,7 @@ public class CrmWhatsappAiEngineService {
     private final AiModelProvider modelProvider;
     private final CrmWhatsappEventService eventService;
     private final CrmWhatsappAiMemoryService memoryService;
+    private final CrmWhatsappAiHandoffService handoffService;
     private final CrmWhatsappAiDeliveryService deliveryService;
     private final CrmWhatsappAiSaleDraftService saleDraftService;
     private final CrmWhatsappAiOperationsService operationsService;
@@ -591,6 +592,29 @@ public class CrmWhatsappAiEngineService {
                     Usage.empty(), elapsedMs(started))
                     .withGenerationTrace(false, false, null, null, elapsedMs(toolStarted), null);
         }
+        if (asksForDeliverySchedule(prepared.latestMessage())) {
+            if (!prepared.allowedIntents().contains("ENVIOS")
+                    && !prepared.allowedIntents().contains("INFORMACION_NEGOCIO")) {
+                return ProcessingResult.human("ENVIOS", 100,
+                        "La consulta de envios no esta habilitada", List.of(), List.of(),
+                        Usage.empty(), elapsedMs(started));
+            }
+            long toolStarted = System.nanoTime();
+            Map<String, Object> productArguments = new LinkedHashMap<>();
+            productArguments.put("q", prepared.latestMessage());
+            productArguments.put("page", 0);
+            if (!clean(rememberedSelection.productName()).isBlank()) {
+                productArguments.put("fallbackProduct", clean(rememberedSelection.productName()));
+            }
+            ExecutionResult schedule = toolService.execute(prepared.job().getConversation(), List.of(
+                    new ToolCall("buscar_productos", productArguments),
+                    new ToolCall("consultar_programacion_entregas", Map.of())));
+            return ProcessingResult.draft("ENVIOS", 100,
+                    deliveryScheduleResponse(schedule.modelResults()),
+                    "Programacion de envios y recojos validada por el backend",
+                    schedule.auditTrace(), schedule.evidence(), List.of(), Usage.empty(), elapsedMs(started))
+                    .withGenerationTrace(false, false, null, null, elapsedMs(toolStarted), null);
+        }
         if (asksForProductMaterial(prepared.latestMessage())) {
             if (!prepared.allowedIntents().contains("PRODUCTOS")) {
                 return ProcessingResult.human("MATERIAL_PRODUCTO", 100,
@@ -1058,24 +1082,22 @@ public class CrmWhatsappAiEngineService {
         job.setLockedAt(null);
         job.setLastError(null);
         jobRepository.save(job);
+        if (automatic && result.outcome() == CrmWhatsappAiRunOutcome.SKIPPED
+                && !result.superseded() && shouldEscalateSkipped(result.reason())) {
+            handoffService.requireAdvisorForFailure(conversationId(job), result.reason(), run.getIdAiRun());
+        }
         if (result.outcome() == CrmWhatsappAiRunOutcome.DRAFT_READY) deliveryService.enqueue(run);
         if (result.outcome() == CrmWhatsappAiRunOutcome.HUMAN_REQUIRED) {
             if ("AUTOMATIC".equals(job.getTriggerType())) {
-                CrmWhatsappConversation conversation = job.getConversation();
-                conversation.setAiAttentionMode(CrmWhatsappAiAttentionMode.HUMANA);
-                conversation.setAiAttentionModeExplicit(true);
-                if (conversation.getAssignedUser() == null) {
-                    conversation.setStatus("ESPERA");
-                    conversation.setWaitingReason(CrmWhatsappWaitingReason.ADVISOR_REQUIRED);
-                }
-                conversationRepository.save(conversation);
-                memoryService.pauseForHuman(conversation, result.reason());
+                handoffService.requireAdvisor(job.getConversation().getIdConversation(),
+                        CrmWhatsappWaitingReason.ADVISOR_REQUIRED, result.reason(), run.getIdAiRun());
                 deliveryService.enqueueHandoff(run);
+            } else {
+                Map<String, Object> handoff = Map.of("type", "ai.handoff.required", "conversationId",
+                        job.getConversation().getIdConversation(), "runId", run.getIdAiRun(),
+                        "reason", clean(result.reason()));
+                eventService.publishAfterCommit(handoff, handoff, null, true);
             }
-            Map<String, Object> handoff = Map.of("type", "ai.handoff.required", "conversationId",
-                    job.getConversation().getIdConversation(), "runId", run.getIdAiRun(),
-                    "reason", clean(result.reason()));
-            eventService.publishAfterCommit(handoff, handoff, null, true);
         }
         publish(job, run, result.outcome() == CrmWhatsappAiRunOutcome.DRAFT_READY
                 ? "ai.draft.created" : "ai.processing.completed");
@@ -1114,7 +1136,25 @@ public class CrmWhatsappAiEngineService {
         }
         job.setLastError(detail);
         jobRepository.save(job);
+        if (!willRetry && "AUTOMATIC".equals(job.getTriggerType())) {
+            handoffService.requireAdvisorForFailure(job.getConversation().getIdConversation(),
+                    failureReason(error), run.getIdAiRun());
+        }
         publish(job, run, willRetry ? "ai.retry.scheduled" : "ai.failed");
+    }
+
+    private boolean shouldEscalateSkipped(String reason) {
+        String value = normalizedText(reason);
+        return !value.contains("mensaje entrante mas reciente")
+                && !value.contains("un asesor ya atiende")
+                && !value.contains("comprobante")
+                && !value.contains("flujo de pagos")
+                && !value.contains("imagen fue derivada")
+                && !value.contains("mensaje no es procesable");
+    }
+
+    private Long conversationId(CrmWhatsappAiJob job) {
+        return job == null || job.getConversation() == null ? null : job.getConversation().getIdConversation();
     }
 
     private CrmWhatsappAiRun createRun(CrmWhatsappAiJob job, ProcessingResult result) {
@@ -1285,7 +1325,10 @@ public class CrmWhatsappAiEngineService {
                 disponibles. Solicitudes desde 5 unidades requieren confirmacion de disponibilidad y precio mayorista
                 por un asesor.
                 Envios, tiendas, horarios, ubicacion, politicas, cuidados y preguntas frecuentes solo pueden
-                provenir de consultar_informacion_negocio. Nunca calcules ni prometas costos de envio; indica que
+                provenir de consultar_informacion_negocio. Las fechas de despacho por Shalom y recojo en La Victoria
+                deben provenir de consultar_programacion_entregas. Para una preventa prevalece fechaEnvioPreventa
+                del producto. Nunca presentes la fecha de despacho como fecha garantizada de llegada.
+                Nunca calcules ni prometas costos de envio; indica que
                 el personal encargado debe confirmarlos. No solicites ciudad, distrito, provincia, direccion ni
                 destino, porque este asistente no cotiza ni registra envios. Si el cliente menciona una ubicacion
                 despues de consultar por envios, conserva esa intencion y no la interpretes como un producto.
@@ -1354,7 +1397,12 @@ public class CrmWhatsappAiEngineService {
                     new ToolCall("consultar_promociones", Map.of("q", productQuery, "page", 0)),
                     new ToolCall("consultar_metodos_pago", Map.of()));
         }
-        if (Set.of("UBICACION_HORARIOS", "UBICACION", "HORARIOS", "ENVIOS", "TIENDAS", "POLITICAS",
+        if ("ENVIOS".equals(intent)) {
+            return List.of(
+                    new ToolCall("consultar_informacion_negocio", Map.of("q", latestMessage)),
+                    new ToolCall("consultar_programacion_entregas", Map.of()));
+        }
+        if (Set.of("UBICACION_HORARIOS", "UBICACION", "HORARIOS", "TIENDAS", "POLITICAS",
                 "CUIDADOS", "FAQ", "INSTITUCIONAL", "INFORMACION_NEGOCIO").contains(intent)) {
             return List.of(new ToolCall("consultar_informacion_negocio", Map.of("q", latestMessage)));
         }
@@ -1431,6 +1479,67 @@ public class CrmWhatsappAiEngineService {
         return value.matches("^(mandame |muestrame |enviame |dame )?(la |las |su |sus )?"
                 + "(guia|guias|tabla|tablas|cuadro|cuadros|medidas)"
                 + "( de tallas| de medidas)?( de ese producto| del producto)?( por favor)?$");
+    }
+
+    private boolean asksForDeliverySchedule(String message) {
+        String value = normalizedText(message).replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ").trim();
+        boolean timing = value.matches(".*\\b(que dia|cuando|fecha|a que hora|hoy|manana|demora|demorara)\\b.*");
+        boolean delivery = value.matches(".*\\b(envio|envios|enviar|envian|enviaran|mandar|mandan|mandaran|"
+                + "despacho|despachan|shalom|llega|llegara|entrega|entregan|entregaran|pedido)\\b.*");
+        boolean pickup = value.matches(".*\\b(recojo|recoger|recoge|recogen|retirar|retiro|tienda|almacen)\\b.*");
+        return timing && (delivery || pickup);
+    }
+
+    private String deliveryScheduleResponse(List<Map<String, Object>> results) {
+        Map<String, Object> schedule = results == null ? null : results.stream()
+                .filter(item -> "consultar_programacion_entregas".equals(text(item.get("tool"))))
+                .findFirst().orElse(null);
+        List<Map<String, Object>> matchedProducts = productMaps(results);
+        if (matchedProducts.size() == 1 && Boolean.TRUE.equals(matchedProducts.getFirst().get("preventa"))) {
+            Map<String, Object> product = matchedProducts.getFirst();
+            String name = text(product.get("name"));
+            String date = customerDate(text(product.get("fechaEnvioPreventa")));
+            if (!date.isBlank()) {
+                return "🌸 *" + name + "* está en preventa.\n\n"
+                        + "📦 Los envíos por Shalom comienzan el " + date
+                        + ", de acuerdo con el orden de compra.\n\n"
+                        + "🏬 El recojo en nuestra tienda de La Victoria se coordina tomando como referencia "
+                        + "esa fecha.";
+            }
+        }
+        if (schedule == null) {
+            return "La programación del próximo envío y recojo aún debe ser actualizada por nuestro equipo.";
+        }
+        String shippingDate = text(schedule.get("shippingDateText"));
+        String cutoff = text(schedule.get("sameDayCutoffText"));
+        String pickupDate = text(schedule.get("pickupDateText"));
+        String opens = text(schedule.get("pickupOpensAtText"));
+        String closes = text(schedule.get("pickupClosesAtText"));
+        String shipping = shippingDate.isBlank()
+                ? "📦 La próxima fecha de despacho por Shalom aún debe ser actualizada."
+                : "📦 Los productos listos para entrega se despachan por Shalom " + shippingDate
+                        + ", confirmando el pedido hasta las " + cutoff + ".";
+        String pickup = pickupDate.isBlank()
+                ? "🏬 La próxima fecha de recojo en tienda aún debe ser actualizada."
+                : "🏬 También puedes recoger en nuestra tienda de La Victoria " + pickupDate
+                        + ", de " + opens + " a " + closes + ".";
+        return shipping + "\n\n" + pickup
+                + "\n\nLos productos en preventa conservan la fecha indicada en cada modelo.";
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> productMaps(List<Map<String, Object>> results) {
+        if (results == null) return List.of();
+        return results.stream()
+                .map(item -> item.get("products"))
+                .filter(List.class::isInstance)
+                .map(List.class::cast)
+                .flatMap(List::stream)
+                .filter(Map.class::isInstance)
+                .map(Map.class::cast)
+                .map(item -> (Map<String, Object>) item)
+                .toList();
     }
 
     private boolean asksForEcommerceLink(String value) {
@@ -1746,6 +1855,7 @@ public class CrmWhatsappAiEngineService {
         if (value.contains("precio") || value.contains("cuanto cuesta") || value.contains("cuanto esta")) return "PRECIO";
         if (value.contains("stock") || value.contains("disponible") || value.contains("hay en")) return "STOCK";
         if (value.contains("color") || value.contains("talla")) return "COLORES_TALLAS";
+        if (asksForDeliverySchedule(value)) return "ENVIOS";
         if (value.contains("envio") || value.contains("delivery")) return "ENVIOS";
         if (value.contains("horario") || value.contains("hora atienden")) return "HORARIOS";
         if (value.contains("ubicacion") || value.contains("direccion") || value.contains("donde queda")) return "UBICACION";

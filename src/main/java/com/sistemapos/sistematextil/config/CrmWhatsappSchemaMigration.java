@@ -902,6 +902,20 @@ public class CrmWhatsappSchemaMigration implements ApplicationRunner {
                     "BOOLEAN NOT NULL DEFAULT FALSE");
             addColumnIfMissing(connection, statement, "crm_whatsapp_ai_config", "natural_response_rollout_percent",
                     "INT NOT NULL DEFAULT 0");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_ai_config", "shipping_date_mode",
+                    "VARCHAR(24) NOT NULL DEFAULT 'AUTOMATICA'");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_ai_config", "shipping_specific_date",
+                    "DATE NULL");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_ai_config", "same_day_shipping_cutoff",
+                    "TIME NOT NULL DEFAULT '15:00:00'");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_ai_config", "pickup_date_mode",
+                    "VARCHAR(24) NOT NULL DEFAULT 'AUTOMATICA'");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_ai_config", "pickup_specific_date",
+                    "DATE NULL");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_ai_config", "pickup_opens_at",
+                    "TIME NOT NULL DEFAULT '10:00:00'");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_ai_config", "pickup_closes_at",
+                    "TIME NOT NULL DEFAULT '18:00:00'");
             addColumnIfMissing(connection, statement, "crm_whatsapp_ai_config", "transferir_imagenes_asesora",
                     "BOOLEAN NOT NULL DEFAULT FALSE");
             addColumnIfMissing(connection, statement, "crm_whatsapp_ai_config", "mostrar_productos_nuevos",
@@ -1080,6 +1094,8 @@ public class CrmWhatsappSchemaMigration implements ApplicationRunner {
                     "VARCHAR(30) NOT NULL DEFAULT 'AI_ACTIVE'");
             addColumnIfMissing(connection, statement, "crm_whatsapp_conversation", "waiting_reason",
                     "VARCHAR(30) NULL");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_conversation", "waiting_detail",
+                    "VARCHAR(500) NULL");
             addColumnIfMissing(connection, statement, "crm_whatsapp_message", "related_sale_id", "INT NULL");
             addColumnIfMissing(connection, statement, "crm_whatsapp_message", "receipt_format", "VARCHAR(10) NULL");
             addColumnIfMissing(connection, statement, "crm_whatsapp_message", "media_duration_seconds", "INT NULL");

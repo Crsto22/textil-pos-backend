@@ -24,6 +24,7 @@ import com.sistemapos.sistematextil.model.CrmWhatsappAiRun;
 import com.sistemapos.sistematextil.model.CrmWhatsappAiFeedback;
 import com.sistemapos.sistematextil.model.CrmWhatsappConversation;
 import com.sistemapos.sistematextil.model.CrmWhatsappMessage;
+import com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason;
 import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappAiConfigRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappAiJobRepository;
@@ -49,6 +50,7 @@ public class CrmWhatsappAiJobService {
     private final CrmWhatsappMessageRepository messageRepository;
     private final UsuarioRepository usuarioRepository;
     private final CrmWhatsappAiSaleDraftService saleDraftService;
+    private final CrmWhatsappAiHandoffService handoffService;
     private final CrmWhatsappAiOperationsService operationsService;
     private final CrmWhatsappAiAuditService auditService;
     private final CrmWhatsappAiMemoryRepository memoryRepository;
@@ -61,13 +63,27 @@ public class CrmWhatsappAiJobService {
         if (!isIncomingActive(message)) return null;
         CrmWhatsappConversation conversation = message.getConversation();
         if (conversation == null || conversation.getConnection() == null || conversation.getAssignedUser() != null) return null;
-        if (!connectionStateService.isOperational(conversation.getConnection())) return null;
+        if (!connectionStateService.isOperational(conversation.getConnection())) {
+            handoffService.requireAdvisorForFailure(conversation.getIdConversation(),
+                    connectionStateService.toResponse(conversation.getConnection()).blockedReason(), null);
+            return null;
+        }
         if (conversation.getAiAttentionMode() == CrmWhatsappAiAttentionMode.HUMANA) return null;
-        if (saleDraftService.blocksAutomation(conversation.getIdConversation())) return null;
+        if (saleDraftService.blocksAutomation(conversation.getIdConversation())) {
+            handoffService.requireAdvisor(conversation.getIdConversation(),
+                    CrmWhatsappWaitingReason.ADVISOR_REQUIRED,
+                    "Existe un pedido que requiere atencion humana", null);
+            return null;
+        }
         CrmWhatsappAiConfig config = configRepository
                 .findByConnection_IdConnection(conversation.getConnection().getIdConnection())
                 .orElse(null);
-        if (config == null || config.getModo() != CrmWhatsappAiMode.AUTOMATICA) return null;
+        if (config == null || config.getModo() != CrmWhatsappAiMode.AUTOMATICA) {
+            handoffService.requireAdvisor(conversation.getIdConversation(),
+                    CrmWhatsappWaitingReason.AI_DISABLED,
+                    "La IA automatica esta desactivada", null);
+            return null;
+        }
         if (automaticResponseLimitReached(config, conversation)) {
             Map<String, Object> event = Map.of(
                     "type", "ai.limit.reached",
@@ -75,14 +91,22 @@ public class CrmWhatsappAiJobService {
                     "reason", AUTOMATIC_RESPONSE_LIMIT_REASON,
                     "maxResponses", config.getMaxRespuestasAutomaticas());
             eventService.publishAfterCommit(event, event, null, true);
+            handoffService.requireAdvisorForFailure(conversation.getIdConversation(),
+                    AUTOMATIC_RESPONSE_LIMIT_REASON, null);
             return null;
         }
         if (!operationsService.automaticAllowedForConversation(config, conversation)) {
             var snapshot = operationsService.snapshot(config);
+            String blockedReason = CrmWhatsappAiOperationsService.EMERGENCY_STOP.equals(snapshot.status())
+                    ? "La IA fue detenida por un administrador"
+                    : snapshot.limited()
+                            ? "La IA esta limitada por consumo o presupuesto"
+                            : "La automatizacion esta pausada por control operativo";
             if (snapshot.limited() || CrmWhatsappAiOperationsService.EMERGENCY_STOP.equals(snapshot.status())) {
                 auditService.record(conversation.getConnection(), conversation, null, null, "LIMIT_BLOCKED", "WARN",
                         "Procesamiento automatico bloqueado por control operativo", Map.of("status", snapshot.status()));
             }
+            handoffService.requireAdvisorForFailure(conversation.getIdConversation(), blockedReason, null);
             return null;
         }
         return enqueue(message, conversation, "AUTOMATIC", config.getEsperaRespuestaSegundos());

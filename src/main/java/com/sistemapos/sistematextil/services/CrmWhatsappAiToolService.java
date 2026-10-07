@@ -37,12 +37,14 @@ public class CrmWhatsappAiToolService {
             "consultar_promociones",
             "consultar_extremo_precio_producto",
             "consultar_informacion_negocio",
+            "consultar_programacion_entregas",
             "consultar_metodos_pago",
             "consultar_cliente_actual",
             "consultar_ventas_cliente");
 
     private final CrmWhatsappAiCommercialQueryService commercialQueryService;
     private final CrmWhatsappAiKnowledgeService knowledgeService;
+    private final CrmWhatsappDeliveryScheduleService deliveryScheduleService;
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
 
     @Transactional(readOnly = true)
@@ -118,6 +120,7 @@ public class CrmWhatsappAiToolService {
                             conversation, "MAX".equalsIgnoreCase(textArgument(arguments, "order"))));
             case "consultar_informacion_negocio" -> knowledgeResult(conversation,
                     textArgument(arguments, "q"));
+            case "consultar_programacion_entregas" -> deliveryScheduleResult(conversation);
             case "consultar_metodos_pago" -> paymentResult(
                     commercialQueryService.paymentMethods(conversation));
             case "consultar_cliente_actual" -> clientResult(
@@ -151,6 +154,19 @@ public class CrmWhatsappAiToolService {
                 .map(CrmWhatsappAiKnowledgeService.SourceResponse::category).distinct().toList());
         evidence.put("shippingPriceRequiresAdvisor", result.shippingPriceRequiresAdvisor());
         return new ToolResult(model, trace, evidence, List.of());
+    }
+
+    private ToolResult deliveryScheduleResult(CrmWhatsappConversation conversation) {
+        var schedule = deliveryScheduleService.resolve(conversation);
+        Map<String, Object> model = deliveryScheduleService.modelResult(schedule);
+        return new ToolResult(model,
+                audit("consultar_programacion_entregas", branchId(conversation), 1, "OK", List.of()),
+                Map.of(
+                        "tool", "consultar_programacion_entregas",
+                        "shippingDate", model.get("shippingDate"),
+                        "pickupDate", model.get("pickupDate"),
+                        "preorderUsesProductDate", true),
+                List.of());
     }
 
     private ToolResult productResult(CatalogResult result) {

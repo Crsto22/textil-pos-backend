@@ -50,6 +50,7 @@ class CrmWhatsappAiDeliveryServiceTest {
     private CrmWhatsappMessageRepository messageRepository;
     private CrmWhatsappChatService chatService;
     private CrmWhatsappAiMemoryService memoryService;
+    private CrmWhatsappAiHandoffService handoffService;
     private CrmWhatsappAiSaleDraftService saleDraftService;
     private CrmWhatsappAiCommercialQueryService commercialQueryService;
     private S3StorageService storageService;
@@ -62,6 +63,7 @@ class CrmWhatsappAiDeliveryServiceTest {
         messageRepository = mock(CrmWhatsappMessageRepository.class);
         chatService = mock(CrmWhatsappChatService.class);
         memoryService = mock(CrmWhatsappAiMemoryService.class);
+        handoffService = mock(CrmWhatsappAiHandoffService.class);
         saleDraftService = mock(CrmWhatsappAiSaleDraftService.class);
         commercialQueryService = mock(CrmWhatsappAiCommercialQueryService.class);
         storageService = mock(S3StorageService.class);
@@ -72,6 +74,7 @@ class CrmWhatsappAiDeliveryServiceTest {
                 messageRepository,
                 chatService,
                 memoryService,
+                handoffService,
                 saleDraftService,
                 commercialQueryService,
                 mock(CrmWhatsappEventService.class),
@@ -477,6 +480,27 @@ class CrmWhatsappAiDeliveryServiceTest {
                         && delivery.getDeliveryType() == CrmWhatsappAiDeliveryType.PAYMENT_REGISTERED
                         && "payment-registered:25".equals(delivery.getIdempotencyKey())
                         && "Comprobante registrado correctamente.".equals(delivery.getTextBody())));
+    }
+
+    @Test
+    void falloDefinitivoDeEntregaPasaLaConversacionAUnaAsesora() {
+        CrmWhatsappConversation conversation = new CrmWhatsappConversation();
+        conversation.setIdConversation(80L);
+        CrmWhatsappAiRun run = new CrmWhatsappAiRun();
+        run.setIdAiRun(59L);
+        CrmWhatsappAiDelivery delivery = new CrmWhatsappAiDelivery();
+        delivery.setIdAiDelivery(93L);
+        delivery.setConversation(conversation);
+        delivery.setRun(run);
+        delivery.setDeliveryType(CrmWhatsappAiDeliveryType.AUTOMATIC_RESPONSE);
+        delivery.setStatus(CrmWhatsappAiDeliveryStatus.SENDING);
+        delivery.setAttempts(3);
+        when(deliveryRepository.findById(93L)).thenReturn(Optional.of(delivery));
+
+        service.fail(93L, new IllegalStateException("WhatsApp desconectado"));
+
+        assertEquals(CrmWhatsappAiDeliveryStatus.FAILED, delivery.getStatus());
+        verify(handoffService).requireAdvisorForFailure(80L, "WhatsApp desconectado", 59L);
     }
 
     @Test

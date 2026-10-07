@@ -700,6 +700,14 @@ public class CrmWhatsappController {
         return ResponseEntity.ok(crmWhatsappChatService.eliminarMensaje(conversationId, messageId, currentUser(authentication)));
     }
 
+    @DeleteMapping("/conversations/{conversationId}")
+    public ResponseEntity<Void> eliminarConversacion(
+            @PathVariable("conversationId") Long conversationId,
+            Authentication authentication) {
+        crmWhatsappChatService.eliminarConversacion(conversationId, currentUser(authentication));
+        return ResponseEntity.noContent().build();
+    }
+
     @GetMapping(value = "/messages/{id}/media", produces = MediaType.ALL_VALUE)
     public ResponseEntity<byte[]> descargarMedia(@PathVariable("id") Long id, Authentication authentication) {
         MediaDownload media = crmWhatsappChatService.descargarMedia(id, currentUser(authentication));

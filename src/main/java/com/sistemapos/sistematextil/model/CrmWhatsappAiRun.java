@@ -99,6 +99,24 @@ public class CrmWhatsappAiRun {
     @Column(name = "latency_ms")
     private Long latencyMs;
 
+    @Column(name = "natural_response_used", nullable = false)
+    private Boolean naturalResponseUsed;
+
+    @Column(name = "fallback_used", nullable = false)
+    private Boolean fallbackUsed;
+
+    @Column(name = "fallback_reason", length = 500)
+    private String fallbackReason;
+
+    @Column(name = "classification_latency_ms")
+    private Long classificationLatencyMs;
+
+    @Column(name = "tool_latency_ms")
+    private Long toolLatencyMs;
+
+    @Column(name = "draft_latency_ms")
+    private Long draftLatencyMs;
+
     @Column(name = "input_cost_per_million_usd", precision = 12, scale = 6)
     private BigDecimal inputCostPerMillionUsd;
 
@@ -119,6 +137,8 @@ public class CrmWhatsappAiRun {
         if (requiresHuman == null) requiresHuman = false;
         if (provider == null || provider.isBlank()) provider = "GEMINI";
         if (promptVersion == null || promptVersion.isBlank()) promptVersion = "v1";
+        if (naturalResponseUsed == null) naturalResponseUsed = false;
+        if (fallbackUsed == null) fallbackUsed = false;
         if (promptVersion.length() > 100) promptVersion = promptVersion.substring(0, 100);
         createdAt = LocalDateTime.now();
     }

@@ -30,7 +30,8 @@ public class CrmWhatsappAiKnowledgeService {
     private static final int MAX_CONTEXT_CHARS = 3_500;
     private static final Set<String> STOP_WORDS = Set.of(
             "a", "al", "como", "con", "cual", "cuales", "de", "del", "el", "en", "es", "esta",
-            "hay", "la", "las", "lo", "los", "me", "para", "por", "que", "se", "su", "tienen", "tiene", "un", "una", "y");
+            "hay", "la", "las", "lo", "los", "me", "para", "por", "que", "se", "su", "tienen", "tiene", "un", "una", "y",
+            "producto", "productos", "prenda", "prendas", "ropa", "tienda", "kiments");
 
     private final CrmWhatsappAiKnowledgeArticleRepository articleRepository;
     private final CrmWhatsappAiKnowledgeChunkRepository chunkRepository;
@@ -98,10 +99,13 @@ public class CrmWhatsappAiKnowledgeService {
     @Transactional
     public void delete(Long articleId, Usuario sessionUser) {
         ActorContext context = requireAdminContext(sessionUser);
-        CrmWhatsappAiKnowledgeArticle article = requireArticle(articleId, context.connection().getIdConnection());
-        article.setDeletedAt(LocalDateTime.now());
-        article.setStatus(CrmWhatsappAiKnowledgeStatus.BORRADOR);
-        articleRepository.save(article);
+        requireArticle(articleId, context.connection().getIdConnection());
+        int deleted = articleRepository.softDelete(articleId, context.connection().getIdConnection(),
+                LocalDateTime.now(), CrmWhatsappAiKnowledgeStatus.BORRADOR);
+        if (deleted == 0) throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "El articulo ya fue eliminado o modificado");
+        chunkRepository.deleteAllByArticleId(articleId);
+        queryEmbeddingCache.clear();
         auditService.record(context.connection(), null, null, context.actor(), "KNOWLEDGE_DELETED", "WARN",
                 "Articulo de conocimiento eliminado", Map.of("articleId", articleId));
     }
@@ -166,9 +170,13 @@ public class CrmWhatsappAiKnowledgeService {
             try {
                 List<Float> queryEmbedding = cachedQueryEmbedding(connectionId, cleanQuery);
                 ranked = chunks.stream()
-                        .map(chunk -> new ScoredChunk(chunk,
-                                Math.max(keywordScore(cleanQuery, chunk), cosine(queryEmbedding, readEmbedding(chunk)))))
-                        .filter(item -> item.score() >= 0.35d)
+                        .map(chunk -> {
+                            double keyword = keywordScore(cleanQuery, chunk);
+                            double semantic = cosine(queryEmbedding, readEmbedding(chunk));
+                            double score = keyword >= 1.5d ? keyword : semantic;
+                            return new ScoredChunk(chunk, score);
+                        })
+                        .filter(item -> item.score() >= 0.60d)
                         .sorted(Comparator.comparingDouble(ScoredChunk::score).reversed())
                         .toList();
             } catch (RuntimeException error) {
@@ -179,8 +187,14 @@ public class CrmWhatsappAiKnowledgeService {
         int chars = 0;
         List<SourceResponse> sources = new ArrayList<>();
         Set<Long> seenChunks = new HashSet<>();
+        CrmWhatsappAiKnowledgeCategory bestCategory = ranked.isEmpty()
+                ? null : ranked.getFirst().chunk().getArticle().getCategory();
+        double minimumRelevantScore = ranked.isEmpty()
+                ? Double.MAX_VALUE : Math.max(0.60d, ranked.getFirst().score() * 0.80d);
         for (ScoredChunk item : ranked) {
             if (sources.size() == 3 || !seenChunks.add(item.chunk().getIdKnowledgeChunk())) break;
+            if (item.score() < minimumRelevantScore
+                    || item.chunk().getArticle().getCategory() != bestCategory) continue;
             String content = clean(item.chunk().getContent());
             if (content.isBlank()) continue;
             int remaining = MAX_CONTEXT_CHARS - chars;
@@ -243,16 +257,16 @@ public class CrmWhatsappAiKnowledgeService {
             }
             chunkRepository.deleteVersion(articleId, version);
             chunkRepository.saveAll(indexed);
-            article.setActiveVersion(version);
-            article.setStatus(CrmWhatsappAiKnowledgeStatus.ACTIVO);
-            article.setIndexedAt(LocalDateTime.now());
-            article.setLastError(null);
-            articleRepository.save(article);
+            int activated = articleRepository.activateIndexedVersion(articleId, version, LocalDateTime.now(),
+                    CrmWhatsappAiKnowledgeStatus.INDEXANDO, CrmWhatsappAiKnowledgeStatus.ACTIVO);
+            if (activated == 0) {
+                chunkRepository.deleteVersion(articleId, version);
+                return;
+            }
             chunkRepository.deleteOtherVersions(articleId, version);
         } catch (Exception error) {
-            article.setStatus(CrmWhatsappAiKnowledgeStatus.ERROR);
-            article.setLastError(truncate(error.getMessage(), 500));
-            articleRepository.save(article);
+            articleRepository.markIndexError(articleId, version, truncate(error.getMessage(), 500),
+                    CrmWhatsappAiKnowledgeStatus.INDEXANDO, CrmWhatsappAiKnowledgeStatus.ERROR);
         }
     }
 

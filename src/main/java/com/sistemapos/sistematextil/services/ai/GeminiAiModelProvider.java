@@ -135,6 +135,12 @@ public class GeminiAiModelProvider implements AiModelProvider, AiEmbeddingProvid
     public ClassificationResult classify(ClassificationRequest request) {
         String prompt = """
                 Clasifica el ultimo mensaje del cliente usando solo una de estas intenciones: %s.
+                El bloque MENSAJE ACTUAL DEL CLIENTE (PRIORIDAD) manda sobre toda la memoria y el historial.
+                Resuelve primero ese mensaje por si solo. Usa datos anteriores solamente cuando el mensaje actual
+                sea una continuacion dependiente, por ejemplo "en talla M", "ese producto" o "quiero dos".
+                Si el mensaje actual contiene una consulta completa o cambia de tema, no heredes el producto,
+                color, talla, cantidad ni pregunta pendiente de mensajes anteriores. Por ejemplo, "hay ofertas"
+                es OFERTAS o PROMOCIONES y nunca una continuacion de color o talla de un producto recordado.
                 Las solicitudes explicitas de asesor, reclamos, cambios o devoluciones posteriores a una compra,
                 problemas de facturacion y confirmaciones o disputas de pago deben marcar requiresHuman=true.
                 Una consulta comercial ambigua o incompleta NO requiere asesor: identifica la intencion mas probable
@@ -204,6 +210,10 @@ public class GeminiAiModelProvider implements AiModelProvider, AiEmbeddingProvid
                 negocies precios, no crees descuentos y no indiques que una venta fue emitida. Los horarios comerciales,
                 la ubicacion, las politicas y los envios deben provenir de consultar_informacion_negocio. Nunca calcules
                 costos de envio: cuando se consulte un monto, indica que lo confirma el personal encargado. Las
+                respuestas sobre envios no deben pedir ciudad, distrito, provincia, direccion ni destino: este flujo
+                no cotiza ni registra envios. No conviertas una ciudad mencionada como seguimiento en el nombre de un
+                producto. Haz una pregunta final solo si su respuesta es necesaria para una herramienta u operacion
+                disponible; en consultas informativas puedes cerrar ofreciendo consultar otro producto o tema.
                 condiciones mayoristas y cualquier pago deben confirmarse con un asesor cuando la herramienta
                 lo indique. Cuando respondas colores o tallas, enumera todos los valores de availableColors y
                 availableSizes sin resumirlos ni omitirlos. Solo incluye imagenes copiadas literalmente de los
@@ -223,7 +233,7 @@ public class GeminiAiModelProvider implements AiModelProvider, AiEmbeddingProvid
                 %s
                 """.formatted(request.intent(), request.conversationContext(), writeJson(request.toolResults()));
         ModelJson response = generateJson(
-                request.connectionId(), request.systemInstruction(), prompt, DRAFT_SCHEMA, 900);
+                request.connectionId(), request.systemInstruction(), prompt, DRAFT_SCHEMA, 900, 0.45f);
         try {
             Map<String, Object> json = readJsonObject(response.json());
             List<MediaSuggestion> media = new ArrayList<>();
@@ -407,6 +417,16 @@ public class GeminiAiModelProvider implements AiModelProvider, AiEmbeddingProvid
             String prompt,
             Map<String, Object> schema,
             int maxTokens) {
+        return generateJson(connectionId, systemInstruction, prompt, schema, maxTokens, 0.2f);
+    }
+
+    private ModelJson generateJson(
+            Long connectionId,
+            String systemInstruction,
+            String prompt,
+            Map<String, Object> schema,
+            int maxTokens,
+            float temperature) {
         CredentialMaterial credentials;
         try {
             credentials = credentialService.resolve(connectionId);
@@ -424,7 +444,7 @@ public class GeminiAiModelProvider implements AiModelProvider, AiEmbeddingProvid
                     .thinkingLevel("LOW")
                     .build());
         } else {
-            configBuilder.temperature(0.2f);
+            configBuilder.temperature(temperature);
         }
         GenerateContentConfig config = configBuilder.build();
         try {

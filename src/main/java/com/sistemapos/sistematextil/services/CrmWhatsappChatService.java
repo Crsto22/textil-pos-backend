@@ -53,6 +53,7 @@ import com.sistemapos.sistematextil.repositories.ComprobanteConfigRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappConversationRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappConversationTagRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappMessageRepository;
+import com.sistemapos.sistematextil.repositories.CrmWhatsappPaymentEvidenceRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappPaymentRequestRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappTagRepository;
 import com.sistemapos.sistematextil.repositories.EmpresaRepository;
@@ -89,6 +90,7 @@ public class CrmWhatsappChatService {
     private final CrmWhatsappConversationRepository conversationRepository;
     private final CrmWhatsappConversationTagRepository conversationTagRepository;
     private final CrmWhatsappMessageRepository messageRepository;
+    private final CrmWhatsappPaymentEvidenceRepository paymentEvidenceRepository;
     private final CrmWhatsappPaymentRequestRepository paymentRequestRepository;
     private final CrmWhatsappTagRepository tagRepository;
     private final UsuarioRepository usuarioRepository;
@@ -110,6 +112,7 @@ public class CrmWhatsappChatService {
     private final CrmWhatsappAiJobService aiJobService;
     private final CrmWhatsappAiMemoryService aiMemoryService;
     private final CrmWhatsappAiSaleDraftService aiSaleDraftService;
+    private final CrmWhatsappIncomingImageRoutingService incomingImageRoutingService;
     private final CrmWhatsappAiClientWriter aiClientWriter;
     private final CrmWhatsappPaymentReservationService paymentReservationService;
     private final S3StorageService storageService;
@@ -120,6 +123,7 @@ public class CrmWhatsappChatService {
             CrmWhatsappConversationRepository conversationRepository,
             CrmWhatsappConversationTagRepository conversationTagRepository,
             CrmWhatsappMessageRepository messageRepository,
+            CrmWhatsappPaymentEvidenceRepository paymentEvidenceRepository,
             CrmWhatsappPaymentRequestRepository paymentRequestRepository,
             CrmWhatsappTagRepository tagRepository,
             UsuarioRepository usuarioRepository,
@@ -141,6 +145,7 @@ public class CrmWhatsappChatService {
             CrmWhatsappAiJobService aiJobService,
             CrmWhatsappAiMemoryService aiMemoryService,
             CrmWhatsappAiSaleDraftService aiSaleDraftService,
+            CrmWhatsappIncomingImageRoutingService incomingImageRoutingService,
             CrmWhatsappAiClientWriter aiClientWriter,
             CrmWhatsappPaymentReservationService paymentReservationService,
             S3StorageService storageService,
@@ -148,6 +153,7 @@ public class CrmWhatsappChatService {
         this.conversationRepository = conversationRepository;
         this.conversationTagRepository = conversationTagRepository;
         this.messageRepository = messageRepository;
+        this.paymentEvidenceRepository = paymentEvidenceRepository;
         this.paymentRequestRepository = paymentRequestRepository;
         this.tagRepository = tagRepository;
         this.usuarioRepository = usuarioRepository;
@@ -169,6 +175,7 @@ public class CrmWhatsappChatService {
         this.aiJobService = aiJobService;
         this.aiMemoryService = aiMemoryService;
         this.aiSaleDraftService = aiSaleDraftService;
+        this.incomingImageRoutingService = incomingImageRoutingService;
         this.aiClientWriter = aiClientWriter;
         this.paymentReservationService = paymentReservationService;
         this.storageService = storageService;
@@ -645,8 +652,9 @@ public class CrmWhatsappChatService {
                     paymentReservationService.release(request, actor, "Historial de WhatsApp eliminado");
                     request.setStatus(CrmWhatsappPaymentRequestStatus.CANCELLED);
                     paymentRequestRepository.save(request);
-                });
+        });
         paymentRequestRepository.detachAllAiSaleDrafts();
+        aiMemoryService.deleteAllActiveMemories();
         int deletedMessages = messageRepository.deleteAllWhatsappMessages();
         int deletedTagAssignments = conversationTagRepository.deleteAllConversationTags();
         int deletedConversations = conversationRepository.deleteAllWhatsappConversations();
@@ -1142,7 +1150,7 @@ public class CrmWhatsappChatService {
                     ? ventaService.registrarVentaDesdeCrm(ventaRequest, actor)
                     : ventaService.registrarVentaReservadaDesdeCrm(ventaRequest, actor);
             aiSaleDraftService.markCompleted(request.aiSaleDraftId(), venta.idVenta());
-            if (request.aiSaleDraftId() != null) aiMemoryService.clearAfterSale(conversationId);
+            aiMemoryService.clearAfterSale(conversationId);
             registrarMensajeSistema(
                     conversation,
                     "El cliente realizo una compra por " + money(venta.total()) + ".",
@@ -1210,12 +1218,30 @@ public class CrmWhatsappChatService {
 
     @Transactional
     public MessageResponse enviarMensajeAutomatico(Long conversationId, String body) {
+        return enviarMensajeAutomaticoInterno(conversationId, body, false, "AI_AUTOMATIC");
+    }
+
+    @Transactional
+    public MessageResponse enviarAvisoSistemaAutomatico(Long conversationId, String body) {
+        return enviarMensajeAutomaticoInterno(conversationId, body, true, "CRM_SYSTEM");
+    }
+
+    private MessageResponse enviarMensajeAutomaticoInterno(
+            Long conversationId, String body, boolean permitirChatAsignado, String origin) {
         CrmWhatsappConversation conversation = conversationRepository.findForUpdateById(conversationId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Conversacion no encontrada"));
         String text = clean(body);
         if (text.isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Mensaje automatico vacio");
-        if (conversation.getAssignedUser() != null || !ESPERA.equals(conversation.getStatus())) {
+        if (!permitirChatAsignado
+                && (conversation.getAssignedUser() != null || !ESPERA.equals(conversation.getStatus()))) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "La conversacion ya no admite respuesta automatica");
+        }
+        if (!permitirChatAsignado) {
+            List<CrmWhatsappMessage> duplicates = messageRepository.findRecentIdenticalAutomaticTexts(
+                    conversationId, text, LocalDateTime.now().minusSeconds(90), PageRequest.of(0, 1));
+            if (!duplicates.isEmpty()) {
+                return toMessageResponse(duplicates.getFirst());
+            }
         }
         ResponseEntity<String> response = bridgeService.enviarTexto(conversation.getPhone(), text, null);
         if (!response.getStatusCode().is2xxSuccessful()) {
@@ -1224,7 +1250,7 @@ public class CrmWhatsappChatService {
         CrmWhatsappMessage message = new CrmWhatsappMessage();
         message.setConversation(conversation);
         message.setDirection("OUTGOING");
-        message.setOrigin("AI_AUTOMATIC");
+        message.setOrigin(origin);
         message.setMessageType("TEXT");
         message.setBody(text);
         message.setMessageStatus("sent");
@@ -1518,6 +1544,47 @@ public class CrmWhatsappChatService {
     }
 
     @Transactional
+    public void eliminarConversacion(Long conversationId, Usuario usuarioSesion) {
+        Usuario actor = requireCrmUser(usuarioSesion);
+        CrmWhatsappConversation conversation = requireConversation(conversationId);
+        requireCanOperateAssigned(conversation, actor);
+        ConversationResponse snapshot = toConversationResponse(conversation, false);
+        Integer assignedUserId = conversation.getAssignedUser() == null
+                ? null
+                : conversation.getAssignedUser().getIdUsuario();
+
+        paymentRequestRepository.findByConversation_IdConversationAndStatusInOrderByCreatedAtDesc(
+                conversationId, List.of(
+                        CrmWhatsappPaymentRequestStatus.PENDING_EVIDENCE,
+                        CrmWhatsappPaymentRequestStatus.UNDER_REVIEW,
+                        CrmWhatsappPaymentRequestStatus.READY_FOR_SALE)).forEach(request -> {
+                            paymentReservationService.release(request, actor, "Conversacion de WhatsApp eliminada");
+                            request.setStatus(CrmWhatsappPaymentRequestStatus.CANCELLED);
+                            paymentRequestRepository.save(request);
+                        });
+        paymentRequestRepository.detachAiSaleDraftsByConversationId(conversationId);
+
+        List<String> mediaPaths = messageRepository.findMediaStoragePathsByConversationId(conversationId);
+        paymentEvidenceRepository.deleteByConversationId(conversationId);
+        conversationTagRepository.deleteByConversationId(conversationId);
+        messageRepository.deleteByConversationId(conversationId);
+        if (conversationRepository.deleteWhatsappConversationById(conversationId) == 0) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Conversacion no encontrada");
+        }
+
+        CrmRealtimeEvent removed = new CrmRealtimeEvent(
+                "conversation.removed", conversationId, snapshot, null);
+        eventService.publishAfterCommit(removed, removed, assignedUserId, true);
+        for (String storagePath : mediaPaths) {
+            try {
+                storageService.deleteByKey(storagePath);
+            } catch (RuntimeException ignored) {
+                // El chat debe desaparecer aunque un archivo antiguo ya no exista en el almacenamiento.
+            }
+        }
+    }
+
+    @Transactional
     public ConversationResponse resolver(Long conversationId, Usuario usuarioSesion) {
         Usuario actor = requireCrmUser(usuarioSesion);
         CrmWhatsappConversation conversation = requireConversation(conversationId);
@@ -1636,8 +1703,16 @@ public class CrmWhatsappChatService {
         }
         String mediaFileName = request.media() == null ? "" : clean(readString(request.media(), "fileName"));
         String mediaMimeType = request.media() == null ? "" : clean(readString(request.media(), "mimeType"));
-        String messageType = request.hasMedia() ? messageTypeFor(mediaMimeType, mediaFileName) : "TEXT";
-        conversation.setLastMessage(mediaPreviewText(clean(request.body()), mediaFileName));
+        boolean viewOnce = Boolean.TRUE.equals(request.viewOnce());
+        boolean sticker = Boolean.TRUE.equals(request.sticker());
+        boolean hasMedia = Boolean.TRUE.equals(request.hasMedia()) || request.media() != null;
+        String messageType = viewOnce ? "VIEW_ONCE"
+                : sticker ? "STICKER"
+                : hasMedia ? messageTypeFor(mediaMimeType, mediaFileName) : "TEXT";
+        String body = viewOnce
+                ? "No se puede abrir este mensaje porque fue enviado para ver una sola vez."
+                : clean(request.body());
+        conversation.setLastMessage(viewOnce ? "[Mensaje para ver una vez]" : mediaPreviewText(body, mediaFileName));
         conversation.setLastMessageType(messageType);
         conversation.setLastMessageAt(parseDate(request.timestamp()));
         conversation = conversationRepository.save(conversation);
@@ -1647,7 +1722,7 @@ public class CrmWhatsappChatService {
         message.setDirection(outgoing ? "OUTGOING" : "INCOMING");
         message.setOrigin("EXTERNAL");
         message.setMessageType(messageType);
-        message.setBody(clean(request.body()));
+        message.setBody(body);
         message.setWhatsappMessageId(request.messageId());
         message.setMessageStatus(outgoing ? "sent" : "received");
         message.setCreatedAt(conversation.getLastMessageAt());
@@ -1663,19 +1738,23 @@ public class CrmWhatsappChatService {
         }
 
         message = messageRepository.save(message);
+        boolean routedByImage = false;
         if (!outgoing) {
+            routedByImage = incomingImageRoutingService.routeIfEnabled(conversation, message);
+            if (!routedByImage) {
+                aiMemoryService.registerIncoming(conversation, message);
+                aiJobService.enqueueAutomatic(message);
+            }
             if (reopenedForAi && !hasCommercialBlock
-                    && !aiJobService.isAutomaticModeDisabled(conversation)) {
+                    && !routedByImage && !aiJobService.isAutomaticModeDisabled(conversation)) {
                 aiMemoryService.resumeAutomatic(conversation);
             }
-            aiMemoryService.registerIncoming(conversation, message);
-            aiJobService.enqueueAutomatic(message);
             if (message.getMediaStoragePath() != null && !message.getMediaStoragePath().isBlank()) {
                 applicationEventPublisher.publishEvent(new CrmWhatsappIncomingMediaEvent(message.getIdMessage()));
             }
         }
         publishRealtimeEvent("message.created", conversation, toMessageResponse(message));
-        if (reopenedForAi) publishRealtimeEvent("conversation.updated", conversation, null);
+        if (reopenedForAi || routedByImage) publishRealtimeEvent("conversation.updated", conversation, null);
     }
 
     public MediaDownload descargarMedia(Long messageId, Usuario usuarioSesion) {
@@ -2430,6 +2509,7 @@ public class CrmWhatsappChatService {
         }
         if (conversation.getWaitingReason() == CrmWhatsappWaitingReason.ADVISOR_REQUIRED
                 || conversation.getWaitingReason() == CrmWhatsappWaitingReason.AI_DISABLED
+                || conversation.getWaitingReason() == CrmWhatsappWaitingReason.IMAGE_RECEIVED
                 || conversation.getAiAttentionMode() == CrmWhatsappAiAttentionMode.HUMANA) {
             return CrmWhatsappAttentionQueue.ADVISOR_REQUIRED;
         }
@@ -2856,7 +2936,9 @@ public class CrmWhatsappChatService {
 
     private void markDeleted(CrmWhatsappMessage message) {
         String storagePath = clean(message.getMediaStoragePath());
-        if (!storagePath.isBlank()) {
+        boolean isPaymentEvidence = message.getIdMessage() != null
+                && paymentEvidenceRepository.findByMessage_IdMessage(message.getIdMessage()).isPresent();
+        if (!isPaymentEvidence && !storagePath.isBlank()) {
             try {
                 storageService.deleteByKey(storagePath);
             } catch (RuntimeException ignored) {
@@ -3277,7 +3359,9 @@ public class CrmWhatsappChatService {
             String timestamp,
             String status,
             String quotedMessageId,
-            boolean hasMedia,
+            Boolean viewOnce,
+            Boolean sticker,
+            Boolean hasMedia,
             Map<String, Object> media,
             Map<String, Object> messageKey,
             Map<String, Object> baileysMessage) {

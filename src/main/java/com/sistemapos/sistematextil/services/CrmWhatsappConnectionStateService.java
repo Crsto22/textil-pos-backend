@@ -189,6 +189,10 @@ public class CrmWhatsappConnectionStateService {
                 List.of(CrmWhatsappAiDeliveryType.AUTOMATIC_RESPONSE,
                         CrmWhatsappAiDeliveryType.PRODUCT_IMAGE,
                         CrmWhatsappAiDeliveryType.SIZE_GUIDE_IMAGE,
+                        CrmWhatsappAiDeliveryType.NEW_PRODUCT_ANNOUNCEMENT,
+                        CrmWhatsappAiDeliveryType.CATALOG_PRODUCT_CARD,
+                        CrmWhatsappAiDeliveryType.PRODUCT_PROMOTION_SUGGESTION,
+                        CrmWhatsappAiDeliveryType.CART_PROMOTION_SUGGESTION,
                         CrmWhatsappAiDeliveryType.HANDOFF_NOTICE),
                 CrmWhatsappAiDeliveryStatus.CANCELLED,
                 cancellationReason);

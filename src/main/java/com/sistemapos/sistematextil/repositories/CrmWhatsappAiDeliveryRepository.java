@@ -16,10 +16,15 @@ import com.sistemapos.sistematextil.model.CrmWhatsappAiDeliveryType;
 public interface CrmWhatsappAiDeliveryRepository extends JpaRepository<CrmWhatsappAiDelivery, Long> {
     Optional<CrmWhatsappAiDelivery> findByRun_IdAiRun(Long runId);
     Optional<CrmWhatsappAiDelivery> findByIdempotencyKey(String idempotencyKey);
+    boolean existsByOutgoingMessage_IdMessage(Long messageId);
     Optional<CrmWhatsappAiDelivery> findFirstByConversation_IdConversationAndStatusOrderByCreatedAtAsc(
             Long conversationId, CrmWhatsappAiDeliveryStatus status);
 
-    @EntityGraph(attributePaths = {"run", "run.job", "run.message", "conversation", "conversation.connection", "conversation.assignedUser"})
+    @EntityGraph(attributePaths = {
+            "run", "run.job", "run.message", "conversation", "conversation.connection",
+            "conversation.connection.empresa", "conversation.connection.sucursal",
+            "conversation.connection.sucursal.empresa", "conversation.cliente",
+            "conversation.cliente.empresa", "conversation.assignedUser"})
     @Query("SELECT d FROM CrmWhatsappAiDelivery d WHERE d.idAiDelivery = :id")
     Optional<CrmWhatsappAiDelivery> findDetailedById(@Param("id") Long id);
 
@@ -53,6 +58,33 @@ public interface CrmWhatsappAiDeliveryRepository extends JpaRepository<CrmWhatsa
             @Param("reason") String reason);
 
     long countByConversation_IdConversationAndStatus(Long conversationId, CrmWhatsappAiDeliveryStatus status);
+
+    @Query(value = """
+            SELECT ignored.id_message
+            FROM (
+                SELECT d.prelude_outgoing_message_id AS id_message
+                FROM crm_whatsapp_ai_delivery d
+                WHERE d.id_conversation = :conversationId
+                  AND d.prelude_outgoing_message_id IS NOT NULL
+                UNION
+                SELECT d.guide_outgoing_message_id AS id_message
+                FROM crm_whatsapp_ai_delivery d
+                WHERE d.id_conversation = :conversationId
+                  AND d.guide_outgoing_message_id IS NOT NULL
+                UNION
+                SELECT d.id_outgoing_message AS id_message
+                FROM crm_whatsapp_ai_delivery d
+                WHERE d.id_conversation = :conversationId
+                  AND d.id_outgoing_message IS NOT NULL
+                  AND d.delivery_type IN (
+                      'NEW_PRODUCT_ANNOUNCEMENT', 'CATALOG_PRODUCT_CARD',
+                      'PRODUCT_PROMOTION_SUGGESTION', 'CART_PROMOTION_SUGGESTION',
+                      'HANDOFF_NOTICE', 'PAYMENT_REGISTERED', 'PAYMENT_RETRY',
+                      'PAYMENT_REJECTED', 'SALE_COMPLETED'
+                  )
+            ) ignored
+            """, nativeQuery = true)
+    List<Long> findMessageIdsExcludedFromAiContext(@Param("conversationId") Long conversationId);
 
     @Modifying
     @Query("""

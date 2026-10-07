@@ -33,6 +33,12 @@ import lombok.RequiredArgsConstructor;
 public class CrmWhatsappAiMemoryService {
     private static final int TTL_HOURS = 24;
     private static final Pattern QUANTITY = Pattern.compile("(?<!\\d)(\\d{1,2})(?!\\d)");
+    private static final Pattern EXPLICIT_COLOR = Pattern.compile(
+            "\\bcolor\\s+(.+?)(?=\\s+\\b(?:talla|cantidad|unidades?)\\b|$)");
+    private static final Pattern EXPLICIT_SIZE = Pattern.compile(
+            "\\btalla\\s+(xxl|xl|xs|s|m|l)\\b");
+    private static final Pattern EXPLICIT_QUANTITY = Pattern.compile(
+            "\\b(?:cantidad|unidades?)\\s+(\\d{1,2})\\b");
 
     private final CrmWhatsappAiMemoryRepository memoryRepository;
     private final CrmWhatsappConversationRepository conversationRepository;
@@ -64,6 +70,12 @@ public class CrmWhatsappAiMemoryService {
 
     @Transactional
     public void updateFromRun(CrmWhatsappAiRun run, ProcessingResult result) {
+        updateFromRun(run, result, null);
+    }
+
+    @Transactional
+    public void updateFromRun(CrmWhatsappAiRun run, ProcessingResult result, String customerInput) {
+        if (result == null || result.outcome() == CrmWhatsappAiRunOutcome.SKIPPED || result.superseded()) return;
         CrmWhatsappAiMemory memory = getOrCreate(run.getConversation());
         expireIfNeeded(memory);
         Long messageId = run.getMessage().getIdMessage();
@@ -79,7 +91,8 @@ public class CrmWhatsappAiMemoryService {
         }
         memory.setLastIncomingMessageId(messageId);
         memory.setExpiresAt(LocalDateTime.now().plusHours(TTL_HOURS));
-        extractCommercialContext(memory, run.getMessage().getBody(), result.evidence());
+        String effectiveInput = clean(customerInput).isBlank() ? run.getMessage().getBody() : customerInput;
+        extractCommercialContext(memory, effectiveInput, result.evidence());
         CrmWhatsappAiPendingQuestion previousPending = pendingQuestion(memory);
         CrmWhatsappAiPendingQuestion inferredPending = inferPendingQuestion(result.draft(), result.intent());
         memory.setPendingQuestion(shouldPreservePending(previousPending, result.intent())
@@ -112,6 +125,10 @@ public class CrmWhatsappAiMemoryService {
                 List.of(CrmWhatsappAiDeliveryType.AUTOMATIC_RESPONSE,
                         CrmWhatsappAiDeliveryType.PRODUCT_IMAGE,
                         CrmWhatsappAiDeliveryType.SIZE_GUIDE_IMAGE,
+                        CrmWhatsappAiDeliveryType.NEW_PRODUCT_ANNOUNCEMENT,
+                        CrmWhatsappAiDeliveryType.CATALOG_PRODUCT_CARD,
+                        CrmWhatsappAiDeliveryType.PRODUCT_PROMOTION_SUGGESTION,
+                        CrmWhatsappAiDeliveryType.CART_PROMOTION_SUGGESTION,
                         CrmWhatsappAiDeliveryType.HANDOFF_NOTICE),
                 CrmWhatsappAiDeliveryStatus.CANCELLED, clean(reason));
         publish(memory);
@@ -140,6 +157,10 @@ public class CrmWhatsappAiMemoryService {
                 List.of(CrmWhatsappAiDeliveryType.AUTOMATIC_RESPONSE,
                         CrmWhatsappAiDeliveryType.PRODUCT_IMAGE,
                         CrmWhatsappAiDeliveryType.SIZE_GUIDE_IMAGE,
+                        CrmWhatsappAiDeliveryType.NEW_PRODUCT_ANNOUNCEMENT,
+                        CrmWhatsappAiDeliveryType.CATALOG_PRODUCT_CARD,
+                        CrmWhatsappAiDeliveryType.PRODUCT_PROMOTION_SUGGESTION,
+                        CrmWhatsappAiDeliveryType.CART_PROMOTION_SUGGESTION,
                         CrmWhatsappAiDeliveryType.HANDOFF_NOTICE),
                 CrmWhatsappAiDeliveryStatus.CANCELLED, "Conversacion resuelta");
         publish(memory);
@@ -253,7 +274,14 @@ public class CrmWhatsappAiMemoryService {
                     "¿Qué información deseas consultar: colores, tallas o precio?");
         } else if (pending == CrmWhatsappAiPendingQuestion.CATALOG_PRODUCT && !normalized.isBlank()
                 && saleDraftService.matchesCatalogProduct(conversation, customerMessage)) {
+            if ("INTENCION_COMPRA".equalsIgnoreCase(clean(memory.getCurrentIntent()))) {
+                intent = "INTENCION_COMPRA";
+                memory.setProductName(clean(customerMessage));
+                outcome = saleDraftService.applyAiAction(conversation, saleAction(
+                        "ADD", customerMessage, memory.getColor(), memory.getSize(), memory.getQuantity()));
+            } else {
             return new PendingReplyResolution("PRODUCTOS", "", false, customerMessage);
+            }
         } else if (pending == CrmWhatsappAiPendingQuestion.CATALOG_CONFIRMATION
                 && isAffirmative(normalized)) {
             return new PendingReplyResolution("PRODUCTOS", "", true, "");
@@ -305,6 +333,11 @@ public class CrmWhatsappAiMemoryService {
     }
 
     @Transactional
+    public int deleteAllActiveMemories() {
+        return memoryRepository.deleteAllAiMemories();
+    }
+
+    @Transactional
     public void clearAfterSale(Long conversationId) {
         memoryRepository.findForUpdate(conversationId).ifPresent(memory -> {
             clearContext(memory);
@@ -320,7 +353,10 @@ public class CrmWhatsappAiMemoryService {
                 .filter(node -> "buscar_productos".equals(node.path("tool").asText()))
                 .filter(node -> node.path("products").isArray() && node.path("products").size() == 1)
                 .findFirst().orElse(null);
-        if (productEvidence == null) return;
+        if (productEvidence == null) {
+            rememberAmbiguousPurchaseAttributes(memory, body, evidence);
+            return;
+        }
         JsonNode product = productEvidence.path("products").get(0);
         Integer productId = nullableInt(product, "productId");
         String productName = product.path("name").asText("");
@@ -390,13 +426,47 @@ public class CrmWhatsappAiMemoryService {
         if (containsCartIntent(normalize(body).toUpperCase(Locale.ROOT)) && memory.getVariantId() != null) upsertItem(memory);
     }
 
+    private void rememberAmbiguousPurchaseAttributes(
+            CrmWhatsappAiMemory memory,
+            String body,
+            List<Map<String, Object>> evidence) {
+        if (!"INTENCION_COMPRA".equalsIgnoreCase(clean(memory.getCurrentIntent()))) return;
+        boolean ambiguous = evidence.stream()
+                .filter(item -> "buscar_productos".equals(clean(String.valueOf(item.get("tool")))))
+                .anyMatch(item -> "AMBIGUOUS".equalsIgnoreCase(clean(String.valueOf(item.get("resolution")))));
+        if (!ambiguous) return;
+        String normalized = normalize(body).replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ").trim();
+        Matcher color = EXPLICIT_COLOR.matcher(normalized);
+        Matcher size = EXPLICIT_SIZE.matcher(normalized);
+        Matcher quantity = EXPLICIT_QUANTITY.matcher(normalized);
+        memory.setProductId(null);
+        memory.setVariantId(null);
+        memory.setProductName(null);
+        memory.setColor(color.find() ? clean(color.group(1)) : null);
+        memory.setSize(size.find() ? clean(size.group(1)).toUpperCase(Locale.ROOT) : null);
+        memory.setQuantity(quantity.find()
+                ? Math.max(1, Math.min(99, Integer.parseInt(quantity.group(1))))
+                : null);
+    }
+
     private String matchingCatalogValue(String body, Map<String, String> values) {
         String normalizedBody = " " + normalize(body).replaceAll("[^a-z0-9]+", " ").trim() + " ";
-        return values.entrySet().stream()
+        String exact = values.entrySet().stream()
                 .filter(entry -> normalizedBody.contains(" " + entry.getKey() + " "))
                 .sorted(Comparator.comparingInt((Map.Entry<String, String> entry) -> entry.getKey().length()).reversed())
                 .map(Map.Entry::getValue)
                 .findFirst().orElse("");
+        if (!exact.isBlank()) return exact;
+        List<String> bodyTokens = List.of(normalizedBody.trim().split("\\s+"));
+        List<String> matches = values.entrySet().stream()
+                .filter(entry -> List.of(entry.getKey().split("\\s+")).stream()
+                        .filter(token -> token.length() >= 3)
+                        .anyMatch(bodyTokens::contains))
+                .map(Map.Entry::getValue)
+                .distinct()
+                .toList();
+        return matches.size() == 1 ? matches.getFirst() : "";
     }
 
     private String normalize(String value) {
@@ -524,11 +594,13 @@ public class CrmWhatsappAiMemoryService {
                 && (value.contains("guia de tallas") || value.contains("tabla de medidas"))) {
             return CrmWhatsappAiPendingQuestion.SIZE_GUIDE_PRODUCT;
         }
+        boolean asksWhichModel = value.contains("cual deseas")
+                || value.matches(".*\\bcual\\b.*\\bmodelos?\\b.*\\bdeseas\\b.*");
         if ("GUIA_TALLAS".equals(clean(intent).toUpperCase(Locale.ROOT))
-                && value.contains("varios modelos") && value.contains("cual deseas")) {
+                && value.contains("varios modelos") && asksWhichModel) {
             return CrmWhatsappAiPendingQuestion.SIZE_GUIDE_PRODUCT;
         }
-        if (value.contains("varios modelos") && value.contains("cual deseas")) {
+        if (value.contains("varios modelos") && asksWhichModel) {
             return CrmWhatsappAiPendingQuestion.CATALOG_PRODUCT;
         }
         if (value.contains("deseas que te muestre el catalogo")) {
@@ -545,8 +617,11 @@ public class CrmWhatsappAiMemoryService {
         }
         if (value.contains("para completar el combo") || value.contains("completar la promocion")) return CrmWhatsappAiPendingQuestion.COMBO_ITEM;
         if (value.contains("cuantas unidades") || value.contains("cantidad deseas")) return CrmWhatsappAiPendingQuestion.QUANTITY;
-        if (value.contains("que color")) return CrmWhatsappAiPendingQuestion.COLOR;
-        if (value.contains("que talla")) return CrmWhatsappAiPendingQuestion.SIZE;
+        if (value.contains("que color") || value.contains("cual color")) return CrmWhatsappAiPendingQuestion.COLOR;
+        if (value.contains("que talla") || value.contains("cual talla")
+                || value.contains("deseas llevarlo en talla")) {
+            return CrmWhatsappAiPendingQuestion.SIZE;
+        }
         if (value.contains("que modelo deseas")) return CrmWhatsappAiPendingQuestion.CATALOG_PRODUCT;
         if (value.contains("colores tallas o precio")
                 || value.contains("deseas conocer sus colores")) return CrmWhatsappAiPendingQuestion.PRODUCT;

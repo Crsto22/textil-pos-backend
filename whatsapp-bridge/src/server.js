@@ -16,6 +16,7 @@ import qrcode from "qrcode";
 import { prepareVoiceNote } from "./audio.js";
 import { isAuthorized, isIndividualChatId, mediaDurationSeconds, mediaExtension, normalizeChatId, normalizePhone } from "./helpers.js";
 import { prepareImageForWhatsApp } from "./image.js";
+import { SendDeduplicator } from "./send-deduplicator.js";
 
 const bridgeRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = path.resolve(bridgeRoot, "..");
@@ -50,7 +51,7 @@ let reconnectTimer;
 let sessionReset;
 let connectionGeneration = 0;
 let credentialWrite = Promise.resolve();
-const sentFromBridgeMessageIds = new Set();
+const sendDeduplicator = new SendDeduplicator();
 const lidToPhoneNumber = new Map();
 
 const state = {
@@ -89,6 +90,15 @@ async function ensureDirs() {
 function getContent(message) {
   const content = message.message || {};
   return content.ephemeralMessage?.message || content.viewOnceMessage?.message || content.viewOnceMessageV2?.message || content;
+}
+
+function isViewOnceMessage(message) {
+  const content = message?.message || {};
+  return Boolean(content.viewOnceMessage || content.viewOnceMessageV2 || content.viewOnceMessageV2Extension);
+}
+
+function isStickerMessage(message) {
+  return Boolean(getContent(message)?.stickerMessage);
 }
 
 function getMessageText(message) {
@@ -161,6 +171,26 @@ function getMediaContent(content) {
     content.stickerMessage ||
     null
   );
+}
+
+function bridgeSendSignature(to, type, text) {
+  return `${normalizeChatId(to)}|${type}|${String(text || "").trim()}`;
+}
+
+function registerPendingBridgeSend(signature) {
+  return sendDeduplicator.register(signature);
+}
+
+function unregisterPendingBridgeSend(signature, token) {
+  sendDeduplicator.unregister(signature, token);
+}
+
+function consumePendingBridgeSend(signature) {
+  return sendDeduplicator.consumePending(signature);
+}
+
+function rememberSentFromBridge(messageId) {
+  sendDeduplicator.rememberSent(messageId);
 }
 
 async function saveIncomingMedia(message) {
@@ -317,11 +347,22 @@ async function handleIncomingMessage(message) {
   }
 
   const isOutgoing = Boolean(message.key.fromMe);
-  if (isOutgoing && sentFromBridgeMessageIds.delete(message.key.id)) {
+  if (isOutgoing && sendDeduplicator.consumeSent(message.key.id)) {
     return;
   }
+  if (isOutgoing) {
+    const content = getContent(message);
+    const type = getMediaContent(content) ? "MEDIA" : "TEXT";
+    const signature = bridgeSendSignature(from, type, getMessageText(message));
+    if (consumePendingBridgeSend(signature)) {
+      rememberSentFromBridge(message.key.id);
+      return;
+    }
+  }
 
-  const mediaPayload = await saveIncomingMedia(message);
+  const viewOnce = isViewOnceMessage(message);
+  const sticker = isStickerMessage(message);
+  const mediaPayload = viewOnce ? null : await saveIncomingMedia(message);
   const timestamp = Number(message.messageTimestamp || Math.floor(Date.now() / 1000));
   const payload = {
     event: isOutgoing ? "message.sent" : "message.received",
@@ -333,6 +374,8 @@ async function handleIncomingMessage(message) {
     body: getMessageText(message),
     timestamp: new Date(timestamp * 1000).toISOString(),
     quotedMessageId: getQuotedMessageId(message),
+    viewOnce,
+    sticker,
     hasMedia: Boolean(mediaPayload),
     messageKey: message.key,
     baileysMessage: getBaileysMessageForQuote(message),
@@ -404,7 +447,7 @@ function restartWithQr(unlink = false) {
     }
     await credentialWrite;
     await resetSessionDir();
-    sentFromBridgeMessageIds.clear();
+    sendDeduplicator.clear();
     lidToPhoneNumber.clear();
     loggedOut = false;
     await connectToWhatsApp();
@@ -568,11 +611,13 @@ app.post("/send-text", requireBridgeToken, async (req, res) => {
     return res.status(409).json({ message: "WhatsApp no esta conectado", ...publicStatus() });
   }
 
+  const signature = bridgeSendSignature(to, "TEXT", message);
+  const pendingToken = registerPendingBridgeSend(signature);
   try {
     const quoted = parseQuotedMessage(req.body?.quoted);
     const sent = await sock.sendMessage(to, { text: message }, quoted ? { quoted } : undefined);
     if (sent?.key?.id) {
-      sentFromBridgeMessageIds.add(sent.key.id);
+      rememberSentFromBridge(sent.key.id);
     }
     state.lastActivityAt = new Date().toISOString();
     return res.json({
@@ -584,6 +629,8 @@ app.post("/send-text", requireBridgeToken, async (req, res) => {
   } catch (error) {
     state.lastError = error.message;
     return res.status(500).json({ message: "No se pudo enviar el mensaje", detail: error.message });
+  } finally {
+    unregisterPendingBridgeSend(signature, pendingToken);
   }
 });
 
@@ -603,6 +650,8 @@ app.post("/send-media", requireBridgeToken, upload.single("file"), async (req, r
     return res.status(409).json({ message: "WhatsApp no esta conectado", ...publicStatus() });
   }
 
+  const signature = bridgeSendSignature(to, "MEDIA", caption);
+  const pendingToken = registerPendingBridgeSend(signature);
   try {
     const payload = await buildMediaPayload(req.file, caption);
     const quoted = parseQuotedMessage(req.body?.quoted);
@@ -610,7 +659,7 @@ app.post("/send-media", requireBridgeToken, upload.single("file"), async (req, r
     if (!sent?.key?.id) {
       throw new Error("WhatsApp no devolvio un identificador para el archivo enviado");
     }
-    sentFromBridgeMessageIds.add(sent.key.id);
+    rememberSentFromBridge(sent.key.id);
     state.lastActivityAt = new Date().toISOString();
     return res.json({
       messageId: sent?.key?.id,
@@ -621,6 +670,8 @@ app.post("/send-media", requireBridgeToken, upload.single("file"), async (req, r
   } catch (error) {
     state.lastError = error.message;
     return res.status(500).json({ message: "No se pudo enviar el archivo", detail: error.message });
+  } finally {
+    unregisterPendingBridgeSend(signature, pendingToken);
   }
 });
 

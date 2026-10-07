@@ -1,6 +1,7 @@
 package com.sistemapos.sistematextil.services;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -69,6 +70,9 @@ class CrmWhatsappAiConfigServiceTest {
         assertTrue(response.intencionesPermitidas().contains("GUIA_TALLAS"));
         assertTrue(response.transferirSolicitudHumana());
         assertTrue(response.transferirAsuntoSensible());
+        assertFalse(response.transferirImagenesAsesora());
+        assertFalse(response.naturalResponseEnabled());
+        assertEquals(0, response.naturalResponseRolloutPercent());
     }
 
     @Test
@@ -94,6 +98,7 @@ class CrmWhatsappAiConfigServiceTest {
         assertEquals("SUGERENCIAS", response.modo());
         assertTrue(response.transferirSolicitudHumana());
         assertTrue(response.transferirAsuntoSensible());
+        assertFalse(response.transferirImagenesAsesora());
     }
 
     @Test
@@ -108,6 +113,34 @@ class CrmWhatsappAiConfigServiceTest {
 
         assertEquals(12, response.esperaRespuestaSegundos());
         assertEquals(20, response.maxRespuestasAutomaticas());
+        assertTrue(response.naturalResponseEnabled());
+        assertEquals(35, response.naturalResponseRolloutPercent());
+    }
+
+    @Test
+    void activarRedaccionNaturalConCeroLaHabilitaParaTodasLasConversaciones() {
+        CrmWhatsappConnection connection = connection();
+        when(connectionService.requireConexionConfigurada(actor)).thenReturn(connection);
+        when(credentialService.hasUsableCredential(10L)).thenReturn(true);
+        when(repository.findByConnection_IdConnection(10L)).thenReturn(Optional.empty());
+        when(repository.save(any(CrmWhatsappAiConfig.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        AiConfigRequest base = request(5, 5, 75);
+        AiConfigRequest request = new AiConfigRequest(
+                base.modo(), base.zonaHoraria(), base.diasAtencion(), base.horaInicio(), base.horaFin(),
+                base.esperaRespuestaSegundos(), base.tono(), base.instruccionesPersonalizadas(),
+                base.intencionesPermitidas(), base.maxRespuestasAutomaticas(), base.confianzaMinima(),
+                base.transferirBajaConfianza(), base.transferirImagenesAsesora(),
+                base.mostrarProductosNuevos(), base.mandarCatalogoImagenes(),
+                base.sugerirPromocionesCarrito(), base.dailyTokenLimit(),
+                base.monthlyTokenLimit(), base.monthlyBudgetUsd(), base.inputCostPerMillionUsd(),
+                base.outputCostPerMillionUsd(), base.automaticRolloutPercent(), true, 0,
+                base.horariosComerciales());
+
+        var response = service.guardar(request, actor);
+
+        assertTrue(response.naturalResponseEnabled());
+        assertEquals(100, response.naturalResponseRolloutPercent());
     }
 
     @Test
@@ -157,7 +190,11 @@ class CrmWhatsappAiConfigServiceTest {
                 maxRespuestas,
                 confianza,
                 true,
-                null, null, null, null, null, 0,
+                false,
+                false,
+                false,
+                false,
+                null, null, null, null, null, 0, true, 35,
                 List.of(
                         new BusinessHoursRequest("LUNES", false, "09:00", "19:00"),
                         new BusinessHoursRequest("MARTES", false, "09:00", "19:00"),

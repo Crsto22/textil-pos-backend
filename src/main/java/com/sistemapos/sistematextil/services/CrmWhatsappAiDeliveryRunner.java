@@ -21,7 +21,7 @@ public class CrmWhatsappAiDeliveryRunner {
                 if (!deliveryService.claim(id)) continue;
                 try { deliveryService.send(deliveryService.prepare(id)); }
                 catch (RuntimeException error) {
-                    log.error("Error enviando entrega IA {}: {}", id, error.getMessage());
+                    log.error("Error enviando entrega IA {}: {}", id, error.getMessage(), error);
                     deliveryService.fail(id, error);
                 }
             }

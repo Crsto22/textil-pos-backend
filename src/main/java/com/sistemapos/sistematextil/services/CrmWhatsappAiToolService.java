@@ -20,6 +20,7 @@ import com.sistemapos.sistematextil.services.CrmWhatsappAiCommercialQueryService
 import com.sistemapos.sistematextil.services.CrmWhatsappAiCommercialQueryService.PromotionCatalogResult;
 import com.sistemapos.sistematextil.services.CrmWhatsappAiCommercialQueryService.OfferCatalogResult;
 import com.sistemapos.sistematextil.services.CrmWhatsappAiCommercialQueryService.ProductResult;
+import com.sistemapos.sistematextil.services.CrmWhatsappAiCommercialQueryService.ProductPriceExtremeResult;
 import com.sistemapos.sistematextil.services.CrmWhatsappAiCommercialQueryService.SalesResult;
 import com.sistemapos.sistematextil.services.CrmWhatsappAiCommercialQueryService.VariantResult;
 import com.sistemapos.sistematextil.services.ai.AiModelProvider.ToolCall;
@@ -34,6 +35,7 @@ public class CrmWhatsappAiToolService {
             "buscar_productos",
             "consultar_ofertas",
             "consultar_promociones",
+            "consultar_extremo_precio_producto",
             "consultar_informacion_negocio",
             "consultar_metodos_pago",
             "consultar_cliente_actual",
@@ -92,7 +94,14 @@ public class CrmWhatsappAiToolService {
                 int page = integerArgument(arguments, "page");
                 String query = textArgument(arguments, "q");
                 String fallback = textArgument(arguments, "fallbackProduct");
-                yield productResult(!fallback.isBlank()
+                boolean readyStockOnly = booleanArgument(arguments, "readyStockOnly");
+                boolean preorderOnly = booleanArgument(arguments, "preorderOnly");
+                String size = textArgument(arguments, "size");
+                yield productResult(preorderOnly
+                        ? commercialQueryService.searchPreorderProducts(conversation, page)
+                        : readyStockOnly
+                        ? commercialQueryService.searchReadyStockProducts(conversation, size, page)
+                        : !fallback.isBlank()
                         ? commercialQueryService.searchProducts(conversation, query, page, fallback)
                         : page == 0
                                 ? commercialQueryService.searchProducts(conversation, query)
@@ -101,7 +110,12 @@ public class CrmWhatsappAiToolService {
             case "consultar_ofertas" -> offerResult(commercialQueryService.offers(
                     conversation, textArgument(arguments, "q"), integerArgument(arguments, "page")));
             case "consultar_promociones" -> promotionResult(commercialQueryService.promotions(
-                    conversation, textArgument(arguments, "q"), integerArgument(arguments, "page")));
+                    conversation, textArgument(arguments, "q"), integerArgument(arguments, "page"),
+                    nullableIntegerArgument(arguments, "sameProductQuantity"),
+                    nullableIntegerArgument(arguments, "promotionNumber")));
+            case "consultar_extremo_precio_producto" -> productPriceExtremeResult(
+                    commercialQueryService.productPriceExtreme(
+                            conversation, "MAX".equalsIgnoreCase(textArgument(arguments, "order"))));
             case "consultar_informacion_negocio" -> knowledgeResult(conversation,
                     textArgument(arguments, "q"));
             case "consultar_metodos_pago" -> paymentResult(
@@ -213,6 +227,28 @@ public class CrmWhatsappAiToolService {
                 audit("consultar_promociones", result.branchId(), result.promotions().size(), "OK", ids),
                 Map.of("tool", "consultar_promociones", "promotions", result.promotions()),
                 List.of());
+    }
+
+    private ToolResult productPriceExtremeResult(ProductPriceExtremeResult result) {
+        Map<String, Object> model = toMap(result);
+        model.remove("branchId");
+        model.put("tool", "consultar_extremo_precio_producto");
+        Integer productId = result.product() == null ? null : result.product().productId();
+        List<Integer> ids = productId == null ? List.of() : List.of(productId);
+        Map<String, Object> evidence = new LinkedHashMap<>();
+        evidence.put("tool", "consultar_extremo_precio_producto");
+        evidence.put("order", result.order());
+        evidence.put("product", result.product());
+        List<MediaReference> media = result.product() == null
+                        || clean(result.product().imageUrl()).isBlank()
+                ? List.of()
+                : List.of(new MediaReference("PRODUCT_GLOBAL_IMAGE", productId, null,
+                        result.product().name(), "", result.product().imageUrl(),
+                        result.product().thumbnailUrl()));
+        return new ToolResult(model,
+                audit("consultar_extremo_precio_producto", result.branchId(), ids.size(),
+                        result.product() == null ? "EMPTY" : "OK", ids),
+                evidence, media);
     }
 
     private ToolResult branchResult(BranchResult result, CrmWhatsappConversation conversation) {
@@ -331,6 +367,17 @@ public class CrmWhatsappAiToolService {
     private int integerArgument(Map<String, Object> arguments, String key) {
         if (arguments == null || !(arguments.get(key) instanceof Number number)) return 0;
         return Math.max(0, Math.min(number.intValue(), 10));
+    }
+
+    private Integer nullableIntegerArgument(Map<String, Object> arguments, String key) {
+        if (arguments == null || !(arguments.get(key) instanceof Number number)) return null;
+        return number.intValue() > 0 ? number.intValue() : null;
+    }
+
+    private boolean booleanArgument(Map<String, Object> arguments, String key) {
+        if (arguments == null || arguments.get(key) == null) return false;
+        Object value = arguments.get(key);
+        return value instanceof Boolean bool ? bool : Boolean.parseBoolean(String.valueOf(value));
     }
 
     private String safeMessage(Throwable error) {

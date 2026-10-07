@@ -7,6 +7,7 @@ import java.util.Optional;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -23,6 +24,11 @@ public interface CrmWhatsappPaymentEvidenceRepository extends JpaRepository<CrmW
     Optional<CrmWhatsappPaymentEvidence> findFirstByPaymentRequest_IdPaymentRequestAndValidationStatusOrderByCreatedAtDesc(
             Long paymentRequestId, CrmWhatsappPaymentEvidenceStatus status);
     List<CrmWhatsappPaymentEvidence> findByConversation_IdConversationOrderByCreatedAtDesc(Long conversationId);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = "DELETE FROM crm_whatsapp_payment_evidence WHERE id_conversation = :conversationId", nativeQuery = true)
+    int deleteByConversationId(@Param("conversationId") Long conversationId);
+
     @Query("select e from CrmWhatsappPaymentEvidence e where e.sha256 = :sha and e.conversation.connection.empresa.idEmpresa = :companyId order by e.createdAt")
     List<CrmWhatsappPaymentEvidence> findDuplicatesByHash(
             @Param("sha") String sha, @Param("companyId") Integer companyId, Pageable pageable);

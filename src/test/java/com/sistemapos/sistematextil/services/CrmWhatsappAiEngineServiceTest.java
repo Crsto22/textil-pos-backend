@@ -1,6 +1,8 @@
 package com.sistemapos.sistematextil.services;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
@@ -10,8 +12,10 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.time.LocalTime;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
@@ -21,6 +25,7 @@ import com.sistemapos.sistematextil.model.CrmWhatsappAiAttentionMode;
 import com.sistemapos.sistematextil.model.CrmWhatsappAiJob;
 import com.sistemapos.sistematextil.model.CrmWhatsappAiJobStatus;
 import com.sistemapos.sistematextil.model.CrmWhatsappAiMode;
+import com.sistemapos.sistematextil.model.CrmWhatsappAiPendingQuestion;
 import com.sistemapos.sistematextil.model.CrmWhatsappAiRun;
 import com.sistemapos.sistematextil.model.CrmWhatsappAiRunOutcome;
 import com.sistemapos.sistematextil.model.CrmWhatsappAiTone;
@@ -46,6 +51,7 @@ import com.sistemapos.sistematextil.services.ai.AiModelProvider.MediaSuggestion;
 import com.sistemapos.sistematextil.services.ai.AiModelProvider.SaleActionResult;
 import com.sistemapos.sistematextil.services.ai.AiModelProvider.ToolCall;
 import com.sistemapos.sistematextil.services.ai.AiModelProvider.Usage;
+import com.sistemapos.sistematextil.services.ai.AiProviderException;
 import com.sistemapos.sistematextil.services.CrmWhatsappAiToolService.ExecutionResult;
 import com.sistemapos.sistematextil.services.CrmWhatsappAiToolService.MediaReference;
 import com.sistemapos.sistematextil.services.CrmWhatsappAiMemoryService.MemorySelection;
@@ -77,6 +83,182 @@ class CrmWhatsappAiEngineServiceTest {
 
     @BeforeEach
     void setupOperations() { when(operations.automaticAllowedForConversation(any(), any())).thenReturn(true); }
+
+    @Test
+    void agrupaMensajesEntrantesConsecutivosEnOrdenCronologico() {
+        CrmWhatsappAiJob job = job("talla M");
+        LocalDateTime now = LocalDateTime.of(2026, 10, 5, 12, 0, 6);
+        job.getMessage().setCreatedAt(now);
+        CrmWhatsappMessage color = incomingMessage(job.getConversation(), 19L, "en color negro", now.minusSeconds(2));
+        CrmWhatsappMessage product = incomingMessage(job.getConversation(), 18L, "Quiero el vestido Alice", now.minusSeconds(4));
+        CrmWhatsappMessage greeting = incomingMessage(job.getConversation(), 17L, "Hola bella", now.minusSeconds(6));
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findActiveMessagesEndingAt(any(), any(), any()))
+                .thenReturn(List.of(job.getMessage(), color, product, greeting));
+
+        var prepared = service.prepare(50L);
+
+        assertEquals("Hola bella\nQuiero el vestido Alice\nen color negro\ntalla M", prepared.latestMessage());
+    }
+
+    @Test
+    void nuevaCompraNoRecibeElContextoAnteriorALaVentaCompletada() {
+        CrmWhatsappAiJob job = job("Quiero Emma");
+        LocalDateTime now = LocalDateTime.of(2026, 10, 6, 15, 0);
+        job.getMessage().setCreatedAt(now);
+        CrmWhatsappMessage saleBoundary = incomingMessage(job.getConversation(), 29L,
+                "El cliente realizo una compra por S/75.00.", now.minusMinutes(1));
+        saleBoundary.setDirection("SYSTEM");
+        saleBoundary.setOrigin("CRM_SYSTEM");
+        saleBoundary.setRelatedSaleId(501);
+        CrmWhatsappMessage oldReply = incomingMessage(job.getConversation(), 28L,
+                "Tu pedido de ALESSIA ENTERO quedó registrado.", now.minusMinutes(2));
+        oldReply.setDirection("OUTGOING");
+        CrmWhatsappMessage oldRequest = incomingMessage(job.getConversation(), 27L,
+                "Quiero Alessia marron talla M", now.minusMinutes(3));
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any()))
+                .thenReturn(List.of(job.getMessage(), saleBoundary, oldReply, oldRequest));
+
+        var prepared = service.prepare(50L);
+
+        assertTrue(prepared.conversationContext().contains("Quiero Emma"));
+        assertFalse(prepared.conversationContext().contains("ALESSIA"), prepared.conversationContext());
+        assertFalse(prepared.conversationContext().contains("marron"), prepared.conversationContext());
+        assertFalse(prepared.conversationContext().contains("S/75.00"), prepared.conversationContext());
+    }
+
+    @Test
+    void contextoOmiteAvisosYSugerenciasAutomaticasPeroConservaClienteYRespuestaIa() {
+        CrmWhatsappAiJob job = job("Que tal");
+        CrmWhatsappMessage welcome = incomingMessage(job.getConversation(), 19L,
+                "Antes de comprar en Kiments enviamos por Shalom", LocalDateTime.now().minusSeconds(4));
+        welcome.setDirection("OUTGOING");
+        welcome.setOrigin("AI_AUTOMATIC");
+        CrmWhatsappMessage suggestion = incomingMessage(job.getConversation(), 18L,
+                "Aprovecha nuestro nuevo conjunto", LocalDateTime.now().minusSeconds(8));
+        suggestion.setDirection("OUTGOING");
+        suggestion.setOrigin("AI_AUTOMATIC");
+        CrmWhatsappMessage aiReply = incomingMessage(job.getConversation(), 17L,
+                "Hola, bella. En que puedo ayudarte?", LocalDateTime.now().minusSeconds(12));
+        aiReply.setDirection("OUTGOING");
+        aiReply.setOrigin("AI_AUTOMATIC");
+        CrmWhatsappMessage humanReply = incomingMessage(job.getConversation(), 16L,
+                "Mensaje escrito por una asesora", LocalDateTime.now().minusSeconds(16));
+        humanReply.setDirection("OUTGOING");
+        humanReply.setOrigin("HUMAN");
+        CrmWhatsappMessage customer = incomingMessage(job.getConversation(), 15L,
+                "Hola", LocalDateTime.now().minusSeconds(20));
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(
+                List.of(job.getMessage(), welcome, suggestion, aiReply, humanReply, customer));
+        when(delivery.messageIdsExcludedFromAiContext(10L)).thenReturn(Set.of(18L, 19L));
+
+        var prepared = service.prepare(50L);
+
+        assertTrue(prepared.conversationContext().contains("Que tal"));
+        assertTrue(prepared.conversationContext().contains("Hola"));
+        assertTrue(prepared.conversationContext().contains("En que puedo ayudarte"));
+        assertFalse(prepared.conversationContext().contains("Antes de comprar"));
+        assertFalse(prepared.conversationContext().contains("Shalom"));
+        assertFalse(prepared.conversationContext().contains("nuevo conjunto"));
+        assertFalse(prepared.conversationContext().contains("escrito por una asesora"));
+    }
+
+    @Test
+    void unMensajeNuevoConElMismoTextoSeProcesaNuevamente() {
+        CrmWhatsappAiJob job = job("Buenas noches de casualidad tendrá shorts?");
+        job.setTriggerType("AUTOMATIC");
+        job.getConversation().setStatus("ESPERA");
+        job.getMessage().setCreatedAt(LocalDateTime.of(2026, 10, 5, 20, 28, 30));
+        CrmWhatsappAiConfig config = config();
+        config.setModo(CrmWhatsappAiMode.AUTOMATICA);
+        CrmWhatsappMessage first = incomingMessage(job.getConversation(), 17L,
+                "Buenas noches de casualidad tendrá shorts?",
+                job.getMessage().getCreatedAt().minusMinutes(1));
+        CrmWhatsappMessage automaticReply = incomingMessage(job.getConversation(), 18L,
+                "No encontré ese producto.", job.getMessage().getCreatedAt().minusSeconds(50));
+        automaticReply.setDirection("OUTGOING");
+        automaticReply.setOrigin("AI_AUTOMATIC");
+        CrmWhatsappMessage repeated = incomingMessage(job.getConversation(), 19L,
+                "Buenas noches de casualidad tendrá shorts?",
+                job.getMessage().getCreatedAt().minusSeconds(2));
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findActiveMessagesEndingAt(any(), any(), any()))
+                .thenReturn(List.of(job.getMessage(), automaticReply, first));
+        when(messages.findRecentActiveMessages(any(), any()))
+                .thenReturn(List.of(job.getMessage(), automaticReply, first));
+
+        var prepared = service.prepare(50L);
+
+        assertNull(prepared.precomputedResult());
+        assertTrue(prepared.latestMessage().contains("shorts"));
+    }
+
+    @Test
+    void mensajeSalienteRompeLaAgrupacion() {
+        CrmWhatsappAiJob job = job("talla M");
+        LocalDateTime now = LocalDateTime.of(2026, 10, 5, 12, 0, 6);
+        job.getMessage().setCreatedAt(now);
+        CrmWhatsappMessage outgoing = incomingMessage(job.getConversation(), 19L, "¿Qué talla deseas?", now.minusSeconds(2));
+        outgoing.setDirection("OUTGOING");
+        CrmWhatsappMessage oldIncoming = incomingMessage(job.getConversation(), 18L, "Quiero Alice", now.minusSeconds(4));
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findActiveMessagesEndingAt(any(), any(), any()))
+                .thenReturn(List.of(job.getMessage(), outgoing, oldIncoming));
+
+        var prepared = service.prepare(50L);
+
+        assertEquals("talla M", prepared.latestMessage());
+    }
+
+    @Test
+    void pausaMayorALaEsperaIniciaUnLoteNuevo() {
+        CrmWhatsappAiJob job = job("talla M");
+        LocalDateTime now = LocalDateTime.of(2026, 10, 5, 12, 0, 10);
+        job.getMessage().setCreatedAt(now);
+        CrmWhatsappMessage oldIncoming = incomingMessage(
+                job.getConversation(), 19L, "Quiero Alice", now.minusSeconds(6));
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findActiveMessagesEndingAt(any(), any(), any()))
+                .thenReturn(List.of(job.getMessage(), oldIncoming));
+
+        var prepared = service.prepare(50L);
+
+        assertEquals("talla M", prepared.latestMessage());
+    }
+
+    @Test
+    void imagenEnElLoteConTransferenciaDeshabilitadaGeneraUnSoloAviso() {
+        CrmWhatsappAiJob job = job("¿Tienen este modelo?");
+        LocalDateTime now = LocalDateTime.of(2026, 10, 5, 12, 0, 4);
+        job.getMessage().setCreatedAt(now);
+        CrmWhatsappMessage image = incomingMessage(job.getConversation(), 19L, "", now.minusSeconds(2));
+        image.setMessageType("IMAGE");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findActiveMessagesEndingAt(any(), any(), any()))
+                .thenReturn(List.of(job.getMessage(), image));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("ADJUNTO_NO_COMPATIBLE", result.intent());
+        assertTrue(result.draft().contains("interpretar"));
+        verifyNoInteractions(provider, tools);
+    }
 
     @Test
     void ofreceAsesorParaCapturaSinTransferirNiConsumirGemini() {
@@ -121,6 +303,39 @@ class CrmWhatsappAiEngineServiceTest {
 
         assertEquals("PRODUCTOS", result.intent());
         assertEquals("Claro 💛 ¿Qué producto deseas consultar?", result.draft());
+        verifyNoInteractions(provider, tools);
+    }
+
+    @Test
+    void noPermiteSepararElConjuntoNiCombinarTallasDistintas() {
+        CrmWhatsappAiJob job = job("Puede elegir chaleco M y pantalón L?");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("POLITICAS", result.intent());
+        assertTrue(result.draft().contains("conjunto completo"));
+        assertTrue(result.draft().contains("una sola talla"));
+        assertTrue(result.draft().contains("chaleco M con pantalón L"));
+        assertTrue(result.draft().contains("guía de medidas"));
+        verifyNoInteractions(provider, tools);
+    }
+
+    @Test
+    void noPermiteComprarSoloUnaPiezaDelConjunto() {
+        CrmWhatsappAiJob job = job("Puedo comprar solo el chaleco por separado?");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("POLITICAS", result.intent());
+        assertTrue(result.draft().contains("No vendemos el chaleco"));
         verifyNoInteractions(provider, tools);
     }
 
@@ -341,8 +556,116 @@ class CrmWhatsappAiEngineServiceTest {
     }
 
     @Test
+    void pedidoConNombreParcialPreguntaElModeloAntesDeCrearElPedido() {
+        CrmWhatsappAiJob job = job("Buenas tardes quiero hacer pedido de Alessia color morocho talla m");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L))
+                .thenReturn(Optional.of(configWithIntent("INTENCION_COMPRA")));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(provider.classify(any())).thenReturn(new ClassificationResult(
+                "INTENCION_COMPRA", 100, false, "solicitud de pedido", List.of(), new Usage(10, 5, 15)));
+        when(tools.execute(any(), any())).thenReturn(new ExecutionResult(
+                List.of(java.util.Map.of(
+                        "tool", "buscar_productos",
+                        "resolution", "AMBIGUOUS",
+                        "candidates", List.of(
+                                java.util.Map.of("productId", 30, "name", "ALESSIA ENTERO"),
+                                java.util.Map.of("productId", 31, "name", "ALESSIA RAYAS")),
+                        "products", List.of())),
+                List.of(), List.of(), List.of()));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("INTENCION_COMPRA", result.intent());
+        assertTrue(result.draft().contains("ALESSIA ENTERO"));
+        assertTrue(result.draft().contains("ALESSIA RAYAS"));
+        assertTrue(result.draft().contains("Cuál de estos modelos"));
+        verify(provider, org.mockito.Mockito.never()).interpretSaleAction(any());
+        verify(saleDrafts, org.mockito.Mockito.never()).applyAiAction(any(), any());
+    }
+
+    @Test
+    void conservaElColorEscritoPorLaClientaSinInventarUnAlias() {
+        CrmWhatsappAiJob job = job("Quiero Alessia entero color morocho talla m");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L))
+                .thenReturn(Optional.of(configWithIntent("INTENCION_COMPRA")));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(provider.classify(any())).thenReturn(new ClassificationResult(
+                "INTENCION_COMPRA", 100, false, "solicitud de pedido", List.of(), new Usage(10, 5, 15)));
+        when(tools.execute(any(), any())).thenReturn(new ExecutionResult(
+                List.of(java.util.Map.of("tool", "buscar_productos", "resolution", "EXACT",
+                        "products", List.of(java.util.Map.of(
+                                "name", "ALESSIA ENTERO",
+                                "availableColors", List.of("MARRON", "NEGRO"),
+                                "availableSizes", List.of("M"))))),
+                List.of(), List.of(), List.of()));
+        when(provider.interpretSaleAction(any())).thenReturn(new SaleActionResult(
+                "ADD", "ALESSIA ENTERO", null, "MARRON", "M", 1,
+                "", 100, "pedido", Usage.empty()));
+        when(saleDrafts.applyAiAction(any(), argThat(action -> "morocho".equals(action.color()))))
+                .thenReturn(new CrmWhatsappAiSaleDraftService.ActionOutcome(
+                        "El color morocho no está disponible. Colores disponibles: MARRON, NEGRO.", false, null));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertTrue(result.draft().contains("morocho no está disponible"));
+        verify(saleDrafts).applyAiAction(any(), argThat(action -> "morocho".equals(action.color())));
+    }
+
+    @Test
+    void agregaDosTallasDelMismoProductoEnUnaSolaOperacion() {
+        CrmWhatsappAiJob job = job("Agrega EMMA chocolate talla S y talla XS");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L))
+                .thenReturn(Optional.of(configWithIntent("INTENCION_COMPRA")));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(saleDrafts.applyEcommerceOrder(any(), any(), argThat(order ->
+                order.items().size() == 2
+                        && "S".equalsIgnoreCase(order.items().getFirst().size())
+                        && "XS".equalsIgnoreCase(order.items().get(1).size()))))
+                .thenReturn(new CrmWhatsappAiSaleDraftService.ActionOutcome(
+                        "Pedido con EMMA CHOCOLATE talla S y XS", false, null));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertTrue(result.draft().contains("talla S y XS"));
+        verifyNoInteractions(provider, tools);
+    }
+
+    @Test
+    void losDosReutilizaLasTallasOfrecidasSinConvertirlasEnCantidadDos() {
+        CrmWhatsappAiJob job = job("Los dos");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L))
+                .thenReturn(Optional.of(configWithIntent("INTENCION_COMPRA")));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(memory.pendingQuestionFor(10L)).thenReturn(CrmWhatsappAiPendingQuestion.SIZE);
+        when(memory.selectionFor(10L)).thenReturn(new MemorySelection(11, "EMMA", "CHOCOLATE", "", null));
+        CrmWhatsappMessage previousReply = incomingMessage(job.getConversation(), 19L,
+                "¿Deseas llevarlo en talla S o XS?", LocalDateTime.of(2026, 10, 5, 22, 1));
+        previousReply.setDirection("OUTGOING");
+        previousReply.setOrigin("AI_AUTOMATIC");
+        when(messages.findRecentActiveMessages(any(), any()))
+                .thenReturn(List.of(job.getMessage(), previousReply));
+        when(saleDrafts.applyEcommerceOrder(any(), any(), argThat(order ->
+                order.items().size() == 2
+                        && Integer.valueOf(1).equals(order.items().getFirst().quantity())
+                        && Integer.valueOf(1).equals(order.items().get(1).quantity()))))
+                .thenReturn(new CrmWhatsappAiSaleDraftService.ActionOutcome(
+                        "Pedido con una EMMA talla S y una EMMA talla XS", false, null));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertTrue(result.draft().contains("una EMMA talla S"));
+        verifyNoInteractions(provider, tools);
+    }
+
+    @Test
     void transfiereCuandoElClienteSolicitaExpresamenteUnAsesor() {
-        CrmWhatsappAiJob job = job("Deseo hablar con un asesor");
+        CrmWhatsappAiJob job = job("Deseo hablar con una asesora");
         when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
         when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
         when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
@@ -375,6 +698,37 @@ class CrmWhatsappAiEngineServiceTest {
     }
 
     @Test
+    void transferenciaAutomaticaPasaElChatAEsperaYDesactivaLaIa() {
+        CrmWhatsappAiJob job = job("Deseo hablar con una asesora");
+        job.setTriggerType("AUTOMATIC");
+        job.getConversation().setStatus("ESPERA");
+        job.getConversation().setAiAttentionMode(CrmWhatsappAiAttentionMode.AUTOMATICA);
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        CrmWhatsappAiConfig config = config();
+        config.setModo(CrmWhatsappAiMode.AUTOMATICA);
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(runs.save(any())).thenAnswer(invocation -> {
+            CrmWhatsappAiRun run = invocation.getArgument(0);
+            run.setIdAiRun(62L);
+            return run;
+        });
+
+        var result = service.execute(service.prepare(50L));
+        assertTrue(result.requiresHuman(), result.intent() + ": " + result.reason());
+        assertEquals("ASESOR_SOLICITADO", result.intent());
+        service.complete(50L, result);
+
+        assertEquals(CrmWhatsappAiAttentionMode.HUMANA, job.getConversation().getAiAttentionMode());
+        assertTrue(job.getConversation().getAiAttentionModeExplicit());
+        assertEquals("ESPERA", job.getConversation().getStatus());
+        assertEquals(CrmWhatsappWaitingReason.ADVISOR_REQUIRED,
+                job.getConversation().getWaitingReason());
+        verify(memory).pauseForHuman(job.getConversation(), result.reason());
+        verify(delivery).enqueueHandoff(any());
+    }
+
+    @Test
     void saludoActualNoHeredaLaIntencionFinancieraAnterior() {
         CrmWhatsappAiJob job = job("Hola");
         when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
@@ -392,6 +746,29 @@ class CrmWhatsappAiEngineServiceTest {
         assertEquals("👋 ¡Hola, bella! 😊\n\n"
                 + "Qué gusto tenerte por aquí. Cuéntame, ¿en qué puedo ayudarte?", result.draft());
         verify(tools).execute(any(), any());
+    }
+
+    @Test
+    void queTalNoSeConfundeConEnviosAunqueElAvisoInicialMencioneShalom() {
+        CrmWhatsappAiJob job = job("Que tal");
+        CrmWhatsappMessage welcome = new CrmWhatsappMessage();
+        welcome.setIdMessage(19L);
+        welcome.setDirection("OUTGOING");
+        welcome.setBody("Realizamos envios a provincia mediante la agencia Shalom.");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(welcome, job.getMessage()));
+        when(provider.classify(any())).thenReturn(new ClassificationResult(
+                "SALUDO", 100, false, "saludo social", List.of(), new Usage(10, 5, 15)));
+        when(tools.execute(any(), any())).thenReturn(new ExecutionResult(
+                List.of(), List.of(), List.of(), List.of()));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("SALUDO", result.intent());
+        assertFalse(result.draft().contains("envio"));
+        assertFalse(result.draft().contains("Shalom"));
     }
 
     @Test
@@ -441,6 +818,28 @@ class CrmWhatsappAiEngineServiceTest {
 
         assertEquals("METODOS_PAGO", result.intent());
         assertTrue(result.draft().contains("Envia la captura"));
+        verifyNoInteractions(provider, tools);
+    }
+
+    @Test
+    void respuestaYapeAPreguntaPendienteSeleccionaPagoSinListarMetodos() {
+        CrmWhatsappAiJob job = job("Yape");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(memory.pendingQuestionFor(10L)).thenReturn(CrmWhatsappAiPendingQuestion.PAYMENT_METHOD);
+        when(saleDrafts.selectConfirmedPaymentMethod(job.getConversation(), "Yape", true))
+                .thenReturn(new CrmWhatsappAiSaleDraftService.ActionOutcome(
+                        "Paga por YAPE a la cuenta configurada y envía la captura del comprobante.",
+                        false, null));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("METODOS_PAGO", result.intent());
+        assertTrue(result.draft().contains("Paga por YAPE"));
+        assertTrue(!result.draft().contains("PLIN"));
+        assertTrue(!result.draft().contains("TRANSFERENCIA"));
         verifyNoInteractions(provider, tools);
     }
 
@@ -557,7 +956,10 @@ class CrmWhatsappAiEngineServiceTest {
             List<ToolCall> calls = invocation.getArgument(1);
             assertEquals(1, calls.size());
             assertEquals("Julieta dame colores", calls.getFirst().arguments().get("q"));
-            return new ExecutionResult(List.of(), List.of(), List.of(), List.of());
+            return new ExecutionResult(List.of(java.util.Map.of(
+                    "tool", "buscar_productos",
+                    "productName", "JULIETA")),
+                    List.of(), List.of(), List.of());
         });
         when(provider.generateDraft(any())).thenReturn(new DraftResult(
                 "JULIETA esta disponible.", false, "", List.of(), new Usage(12, 8, 20)));
@@ -574,22 +976,64 @@ class CrmWhatsappAiEngineServiceTest {
         when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
         when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
         when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
-        when(provider.classify(any())).thenReturn(new ClassificationResult(
-                "PRODUCTOS", 98, false, "catalogo general",
-                List.of(new ToolCall("buscar_productos", java.util.Map.of("q", "Que prenda tienes ?"))),
-                new Usage(10, 5, 15)));
         when(tools.execute(any(), any())).thenAnswer(invocation -> {
             List<ToolCall> calls = invocation.getArgument(1);
             assertEquals("", calls.getFirst().arguments().get("q"));
             assertEquals(0, calls.getFirst().arguments().get("page"));
-            return new ExecutionResult(List.of(), List.of(), List.of(), List.of());
+            return new ExecutionResult(
+                    List.of(java.util.Map.of("tool", "buscar_productos", "query", "", "products",
+                            List.of(java.util.Map.of("name", "BELEN")))),
+                    List.of(), List.of(), List.of());
         });
-        when(provider.generateDraft(any())).thenReturn(new DraftResult(
-                "Catalogo disponible.", false, "", List.of(), new Usage(12, 8, 20)));
 
         var result = service.execute(service.prepare(50L));
 
-        assertEquals("Catalogo disponible.", result.draft());
+        assertTrue(result.draft().contains("BELEN"));
+        assertTrue(result.draft().contains("sus fotos, precio, colores, tallas disponibles y su guía de medidas"));
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void quieroComprarProductosMuestraCatalogoEnLugarDeBuscarLaFraseComoModelo() {
+        CrmWhatsappAiJob job = job("Quiero comprar productos");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(tools.execute(any(), any())).thenAnswer(invocation -> {
+            List<ToolCall> calls = invocation.getArgument(1);
+            assertEquals("", calls.getFirst().arguments().get("q"));
+            return new ExecutionResult(List.of(java.util.Map.of(
+                    "tool", "buscar_productos", "products", List.of(
+                            java.util.Map.of("name", "ALESSIA ENTERO"),
+                            java.util.Map.of("name", "EMMA")))),
+                    List.of(), List.of(), List.of());
+        });
+
+        var result = service.execute(service.prepare(50L));
+
+        assertTrue(result.draft().contains("ALESSIA ENTERO"));
+        assertTrue(result.draft().contains("EMMA"));
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void siPorfaDespuesDeOfrecerCatalogoMuestraProductosSinConsultarRag() {
+        CrmWhatsappAiJob job = job("Si porfa");
+        CrmWhatsappAiConfig config = config();
+        var prepared = new CrmWhatsappAiEngineService.PreparedJob(
+                job, config,
+                "Asesor: Si deseas, puedo mostrarte los productos disponibles.\nCliente: Si porfa\n",
+                "Si porfa", List.of("PRODUCTOS"), "Instruccion segura", Usage.empty(), null);
+        when(tools.execute(any(), any())).thenReturn(new ExecutionResult(
+                List.of(java.util.Map.of("tool", "buscar_productos", "products",
+                        List.of(java.util.Map.of("name", "BELEN")))),
+                List.of(), List.of(), List.of()));
+
+        var result = service.execute(prepared);
+
+        assertTrue(result.draft().contains("BELEN"));
+        verifyNoInteractions(provider);
     }
 
     @Test
@@ -681,7 +1125,289 @@ class CrmWhatsappAiEngineServiceTest {
     }
 
     @Test
-    void modeloElegidoAdjuntaUnaSolaImagenGlobalValidada() {
+    void quieroModeloMuestraFichaCompletaYAdjuntaGuiaAntesDeImagenGlobal() {
+        CrmWhatsappAiJob job = job("Quiero Alessia entero");
+        CrmWhatsappAiConfig config = config();
+        config.setNaturalResponseEnabled(true);
+        config.setNaturalResponseRolloutPercent(100);
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        MediaReference guide = new MediaReference("SIZE_GUIDE", 30, null,
+                "ALESSIA ENTERO", "", "/storage/productos/alessia-guia.webp", "");
+        MediaReference global = new MediaReference("PRODUCT_GLOBAL_IMAGE", 30, null,
+                "ALESSIA ENTERO", "", "/storage/productos/alessia.webp", "");
+        java.util.Map<String, Object> alessia = java.util.Map.of(
+                "productId", 30,
+                "name", "ALESSIA ENTERO",
+                "description", "Tela Aruba con diseño de pierna amplia",
+                "availableColors", List.of("Negro", "MARRON", "GRIS OSCURO"),
+                "availableSizes", List.of("XS", "S", "M", "L"),
+                "variants", List.of(java.util.Map.of(
+                        "currentPrice", "89.00", "offerPrice", "", "stock", 4)));
+        when(tools.execute(any(), any())).thenAnswer(invocation -> {
+            List<ToolCall> calls = invocation.getArgument(1);
+            assertEquals("Quiero Alessia entero", calls.getFirst().arguments().get("q"));
+            return new ExecutionResult(
+                    List.of(java.util.Map.of("tool", "buscar_productos", "products", List.of(alessia))),
+                    List.of(), List.of(), List.of(guide, global));
+        });
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("PRODUCTOS", result.intent());
+        assertTrue(result.draft().contains("ALESSIA ENTERO"));
+        assertTrue(result.draft().contains("📝 *Descripción:* Tela Aruba con diseño de pierna amplia"));
+        assertTrue(result.draft().contains("S/89.00"));
+        assertTrue(result.draft().contains("Negro, MARRON, GRIS OSCURO"));
+        assertTrue(result.draft().contains("XS, S, M, L"));
+        assertTrue(result.draft().contains("talla y color deseas"));
+        assertEquals(List.of(guide, global), result.suggestedMedia());
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void consultaDeMaterialSoloRespondeDescripcionSinPreventaNiAdjuntos() {
+        CrmWhatsappAiJob job = job("Sabes de que tela es Alessia entero");
+        CrmWhatsappAiConfig config = config();
+        config.setNaturalResponseEnabled(true);
+        config.setNaturalResponseRolloutPercent(100);
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        MediaReference guide = new MediaReference("SIZE_GUIDE", 30, null,
+                "ALESSIA ENTERO", "", "/storage/productos/alessia-guia.webp", "");
+        MediaReference global = new MediaReference("PRODUCT_GLOBAL_IMAGE", 30, null,
+                "ALESSIA ENTERO", "", "/storage/productos/alessia.webp", "");
+        java.util.Map<String, Object> alessia = java.util.Map.of(
+                "productId", 30,
+                "name", "ALESSIA ENTERO",
+                "description", "ARUBA",
+                "preventa", true,
+                "fechaEnvioPreventa", "2026-10-14",
+                "availableColors", List.of("Negro", "MARRON"),
+                "availableSizes", List.of("S", "M", "L"));
+        when(tools.execute(any(), any())).thenReturn(new ExecutionResult(
+                List.of(java.util.Map.of("tool", "buscar_productos", "products", List.of(alessia))),
+                List.of(), List.of(), List.of(guide, global)));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("MATERIAL_PRODUCTO", result.intent());
+        assertTrue(result.draft().contains("ALESSIA ENTERO"));
+        assertTrue(result.draft().contains("ARUBA"));
+        assertFalse(result.draft().contains("Preventa"), result.draft());
+        assertFalse(result.draft().contains("14 de octubre"), result.draft());
+        assertFalse(result.draft().contains("Colores"), result.draft());
+        assertFalse(result.draft().contains("Tallas"), result.draft());
+        assertFalse(result.draft().contains("¿"), result.draft());
+        assertTrue(result.suggestedMedia().isEmpty());
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void fichaDeProductoOmiteDescripcionCuandoEstaVacia() {
+        CrmWhatsappAiJob job = job("Quiero Julieta");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        java.util.Map<String, Object> julieta = java.util.Map.of(
+                "name", "JULIETA", "description", "",
+                "availableColors", List.of("Negro"), "availableSizes", List.of("M"),
+                "variants", List.of(java.util.Map.of("currentPrice", "75.00", "stock", 2)));
+        when(tools.execute(any(), any())).thenReturn(new ExecutionResult(
+                List.of(java.util.Map.of("tool", "buscar_productos", "products", List.of(julieta))),
+                List.of(), List.of(), List.of()));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertFalse(result.draft().contains("Descripción:"), result.draft());
+    }
+
+    @Test
+    void conjuntoConNombreMuestraFichaCompletaAntesDeInterpretarloComoEnvio() {
+        CrmWhatsappAiJob job = job("Conjunto aria tienes disponible?");
+        job.getMessage().setCreatedAt(LocalDateTime.of(2026, 10, 6, 16, 9));
+        CrmWhatsappMessage previous = incomingMessage(job.getConversation(), 19L,
+                "Realizamos envios a nivel nacional mediante la agencia Shalom.",
+                job.getMessage().getCreatedAt().minusMinutes(1));
+        previous.setDirection("OUTGOING");
+        previous.setOrigin("AI_AUTOMATIC");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage(), previous));
+        MediaReference guide = new MediaReference("SIZE_GUIDE", 90, null,
+                "ARIA", "", "/storage/productos/aria-guia.webp", "");
+        MediaReference global = new MediaReference("PRODUCT_GLOBAL_IMAGE", 90, null,
+                "ARIA", "", "/storage/productos/aria.webp", "");
+        java.util.Map<String, Object> aria = java.util.Map.of(
+                "productId", 90,
+                "name", "ARIA",
+                "description", "Tela Catania",
+                "preventa", true,
+                "fechaEnvioPreventa", "2026-10-16",
+                "availableColors", List.of("NEGRO", "BEIGE"),
+                "availableSizes", List.of("S", "M", "L"),
+                "variants", List.of(java.util.Map.of("currentPrice", "70.00", "stock", 2)));
+        when(tools.execute(any(), any())).thenReturn(new ExecutionResult(
+                List.of(java.util.Map.of("tool", "buscar_productos", "products", List.of(aria))),
+                List.of(), List.of(), List.of(guide, global)));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("PRODUCTOS", result.intent());
+        assertTrue(result.draft().contains("ARIA"), result.draft());
+        assertTrue(result.draft().contains("Tela Catania"), result.draft());
+        assertTrue(result.draft().contains("S/70.00"), result.draft());
+        assertTrue(result.draft().contains("NEGRO, BEIGE"), result.draft());
+        assertTrue(result.draft().contains("S, M, L"), result.draft());
+        assertTrue(result.draft().contains("Preventa"), result.draft());
+        assertTrue(result.draft().contains("16 de octubre de 2026"), result.draft());
+        assertEquals(List.of(guide, global), result.suggestedMedia());
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void modeloPendienteSeResuelveAntesDeUnSeguimientoDeEnvio() {
+        CrmWhatsappAiJob job = job("Nhara liso");
+        job.getMessage().setCreatedAt(LocalDateTime.of(2026, 10, 6, 16, 26));
+        CrmWhatsappMessage previous = incomingMessage(job.getConversation(), 19L,
+                "Realizamos envios a provincia mediante Shalom.",
+                job.getMessage().getCreatedAt().minusMinutes(1));
+        previous.setDirection("OUTGOING");
+        previous.setOrigin("AI_AUTOMATIC");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage(), previous));
+        when(memory.pendingQuestionFor(10L)).thenReturn(CrmWhatsappAiPendingQuestion.CATALOG_PRODUCT);
+        when(memory.resolvePendingReply(any(), any(), any())).thenReturn(
+                new PendingReplyResolution("PRODUCTOS", "", false, "Nhara liso"));
+        java.util.Map<String, Object> nhara = java.util.Map.of(
+                "productId", 91,
+                "name", "Conjunto NHARA _ LISO",
+                "availableColors", List.of("NEGRO", "BEIGE"),
+                "availableSizes", List.of("S", "M", "L"),
+                "variants", List.of(java.util.Map.of("currentPrice", "70.00", "stock", 3)));
+        when(tools.execute(any(), any())).thenReturn(new ExecutionResult(
+                List.of(java.util.Map.of("tool", "buscar_productos", "resolution", "EXACT",
+                        "products", List.of(nhara))),
+                List.of(), List.of(), List.of()));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("PRODUCTOS", result.intent());
+        assertTrue(result.draft().contains("NHARA _ LISO"), result.draft());
+        assertTrue(result.draft().contains("NEGRO, BEIGE"), result.draft());
+        assertFalse(result.draft().contains("costo exacto del envío"), result.draft());
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void productoInexistenteSinParecidosListaModelosDisponibles() {
+        CrmWhatsappAiJob job = job("Conjunto inexistente tienes disponible?");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(tools.execute(any(), any())).thenAnswer(invocation -> {
+            List<ToolCall> calls = invocation.getArgument(1);
+            String query = String.valueOf(calls.getFirst().arguments().get("q"));
+            if (!query.isBlank()) {
+                return new ExecutionResult(
+                        List.of(java.util.Map.of("tool", "buscar_productos", "query", query,
+                                "resolution", "NONE", "products", List.of(), "candidates", List.of())),
+                        List.of(), List.of(), List.of());
+            }
+            return new ExecutionResult(
+                    List.of(java.util.Map.of("tool", "buscar_productos", "query", "",
+                            "products", List.of(
+                                    java.util.Map.of("name", "ALESSIA ENTERO"),
+                                    java.util.Map.of("name", "Conjunto NHARA _ LISO")))),
+                    List.of(), List.of(), List.of());
+        });
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("PRODUCTOS", result.intent());
+        assertTrue(result.draft().contains("No encontré ese modelo exacto"), result.draft());
+        assertTrue(result.draft().contains("ALESSIA ENTERO"), result.draft());
+        assertTrue(result.draft().contains("NHARA _ LISO"), result.draft());
+        assertFalse(result.draft().contains("http"), result.draft());
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void palabraDeColorNoDespliegaTodoElCatalogo() {
+        CrmWhatsappAiJob job = job("Oscuro");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L))
+                .thenReturn(Optional.of(configWithIntent("COLORES_TALLAS")));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(provider.classify(any())).thenReturn(new ClassificationResult(
+                "COLORES_TALLAS", 100, false, "color aislado", List.of(), new Usage(10, 5, 15)));
+        when(tools.execute(any(), any())).thenReturn(new ExecutionResult(
+                List.of(java.util.Map.of("tool", "buscar_productos", "products", List.of(
+                        java.util.Map.of("name", "ALESSIA ENTERO",
+                                "availableColors", List.of("GRIS OSCURO"),
+                                "availableSizes", List.of("L")),
+                        java.util.Map.of("name", "ALICE LISO",
+                                "availableColors", List.of("GRIS OSCURO"),
+                                "availableSizes", List.of("L"))))),
+                List.of(), List.of(), List.of()));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("COLORES_TALLAS", result.intent());
+        assertTrue(result.draft().contains("nombre exacto del modelo"));
+        assertTrue(!result.draft().contains("ALESSIA ENTERO"));
+        assertTrue(!result.draft().contains("ALICE LISO"));
+    }
+
+    @Test
+    void colorAbreviadoSeResuelveYConLaTallaPreguntaSoloLaCantidad() {
+        CrmWhatsappAiJob job = job("Deseo el beige en modelo Lyana en talla S");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        CrmWhatsappAiConfig config = configWithIntent("COLORES_TALLAS");
+        config.setNaturalResponseEnabled(true);
+        config.setNaturalResponseRolloutPercent(100);
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(provider.classify(any())).thenReturn(new ClassificationResult(
+                "COLORES_TALLAS", 100, false, "variante solicitada", List.of(), new Usage(10, 5, 15)));
+        java.util.Map<String, Object> lyana = java.util.Map.of(
+                "productId", 31,
+                "name", "LYANA",
+                "availableColors", List.of("BEIGE CLARO", "NEGRO"),
+                "availableSizes", List.of("S", "M"),
+                "variants", List.of(
+                        java.util.Map.of("variantId", 301, "color", "BEIGE CLARO", "size", "S", "stock", 4),
+                        java.util.Map.of("variantId", 302, "color", "NEGRO", "size", "S", "stock", 2)));
+        when(tools.execute(any(), any())).thenReturn(new ExecutionResult(
+                List.of(java.util.Map.of("tool", "buscar_productos", "products", List.of(lyana))),
+                List.of(), List.of(), List.of()));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("COLORES_TALLAS", result.intent());
+        assertTrue(result.draft().contains("LYANA"));
+        assertTrue(result.draft().contains("BEIGE CLARO"));
+        assertTrue(result.draft().contains("talla S"));
+        assertTrue(result.draft().contains("¿Cuántas unidades deseas?"));
+        assertTrue(!result.draft().contains("¿Qué color"));
+        assertTrue(!result.draft().contains("¿Qué talla"));
+        assertTrue(!result.draft().contains("otro producto o tema"));
+        verify(provider, org.mockito.Mockito.never()).generateDraft(any());
+    }
+
+    @Test
+    void modeloElegidoAdjuntaPrimeroGuiaYLuegoImagenGlobalDelMismoProducto() {
         CrmWhatsappAiJob job = job("Annie entero");
         when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
         when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
@@ -691,6 +1417,8 @@ class CrmWhatsappAiEngineServiceTest {
                 .thenReturn(new PendingReplyResolution("PRODUCTOS", "", false, "Annie entero"));
         MediaReference global = new MediaReference("PRODUCT_GLOBAL_IMAGE", 25, null,
                 "ANNIE ENTERO", "", "/storage/productos/annie.webp", "/storage/productos/annie-thumb.webp");
+        MediaReference guide = new MediaReference("SIZE_GUIDE", 25, null,
+                "ANNIE ENTERO", "", "/storage/productos/annie-guia.webp", "/storage/productos/annie-guia-thumb.webp");
         java.util.Map<String, Object> product = java.util.Map.of(
                 "productId", 25,
                 "name", "ANNIE ENTERO",
@@ -699,12 +1427,463 @@ class CrmWhatsappAiEngineServiceTest {
                 "variants", List.of(java.util.Map.of("currentPrice", "75.00", "stock", 3)));
         when(tools.execute(any(), any())).thenReturn(new ExecutionResult(
                 List.of(java.util.Map.of("tool", "buscar_productos", "products", List.of(product))),
-                List.of(), List.of(), List.of(global)));
+                List.of(), List.of(), List.of(global, guide)));
 
         var result = service.execute(service.prepare(50L));
 
-        assertEquals(List.of(global), result.suggestedMedia());
+        assertEquals(List.of(guide, global), result.suggestedMedia());
+        assertTrue(result.draft().contains("talla y color deseas"));
         verifyNoInteractions(provider);
+    }
+
+    @Test
+    void quieroUnoResuelveLaCantidadPendienteAntesDeBuscarProductos() {
+        CrmWhatsappAiJob job = job("Quiero uno");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(memory.resolvePendingReply(any(), any(), any()))
+                .thenReturn(new PendingReplyResolution("MODIFICAR_CARRITO",
+                        "🛒 Así quedaría tu pedido con 1 unidad de ALESSIA ENTERO.", false));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("MODIFICAR_CARRITO", result.intent());
+        assertTrue(result.draft().contains("1 unidad de ALESSIA ENTERO"));
+        verifyNoInteractions(provider, tools);
+    }
+
+    @Test
+    void catalogoVirtualEnviaLaWebCuandoLaIntencionEstaHabilitada() {
+        CrmWhatsappAiJob job = job("Deseo ver el catálogo virtual");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L))
+                .thenReturn(Optional.of(configWithIntent("ENLACE_ECOMMERCE")));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(tools.execute(any(), any())).thenReturn(new ExecutionResult(
+                List.of(java.util.Map.of(
+                        "tool", "buscar_productos",
+                        "query", "",
+                        "hasMore", true,
+                        "products", List.of(
+                                java.util.Map.of("name", "ALESSIA ENTERO"),
+                                java.util.Map.of("name", "ANNIE ENTERO")))),
+                List.of(), List.of(), List.of()));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("ENLACE_ECOMMERCE", result.intent());
+        assertTrue(result.draft().contains("https://kiments.com.pe"));
+        assertTrue(result.draft().contains("ALESSIA ENTERO"));
+        assertTrue(result.draft().contains("ANNIE ENTERO"));
+        assertTrue(result.draft().contains("ver más productos"));
+        assertTrue(result.draft().contains("sus fotos, precio, colores, tallas disponibles y su guía de medidas"));
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void catalogoVirtualNoExponeElEnlaceCuandoLaIntencionEstaDeshabilitada() {
+        CrmWhatsappAiJob job = job("Quiero ver el catálogo");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(tools.execute(any(), any())).thenReturn(new ExecutionResult(
+                List.of(java.util.Map.of(
+                        "tool", "buscar_productos",
+                        "query", "",
+                        "hasMore", false,
+                        "products", List.of(java.util.Map.of("name", "BELEN")))),
+                List.of(), List.of(), List.of()));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("PRODUCTOS", result.intent());
+        assertTrue(!result.draft().contains("https://kiments.com.pe"));
+        assertTrue(result.draft().contains("BELEN"));
+        assertTrue(result.draft().contains("sus fotos, precio, colores, tallas disponibles y su guía de medidas"));
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void listadoGeneralSiempreMuestraElCatalogoValidadoSinRedaccionLibre() {
+        CrmWhatsappAiJob job = job("Que productos tienes?");
+        CrmWhatsappAiConfig config = config();
+        config.setNaturalResponseEnabled(true);
+        config.setNaturalResponseRolloutPercent(100);
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(tools.execute(any(), any())).thenReturn(new ExecutionResult(
+                List.of(java.util.Map.of("tool", "buscar_productos", "hasMore", false,
+                        "products", List.of(
+                                java.util.Map.of("name", "BELEN"),
+                                java.util.Map.of("name", "EMMA")))),
+                List.of(), List.of(), List.of()));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertTrue(result.draft().contains("BELEN"));
+        assertTrue(result.draft().contains("EMMA"));
+        assertTrue(result.draft().contains("Modelos disponibles"));
+        assertFalse(result.naturalResponseUsed());
+        assertFalse(result.fallbackUsed());
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void consultaAjenaAlNegocioNoConsumeGeminiNiMezclaElContextoAnterior() {
+        CrmWhatsappAiJob job = job("Cuanto es 2+2");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("FUERA_DE_ALCANCE", result.intent());
+        assertEquals("Lo siento, no tengo información sobre ese tema. ¡Pero puedo ayudarte con nuestros productos o pedidos!",
+                result.draft());
+        verifyNoInteractions(provider, tools);
+    }
+
+    @Test
+    void productosEnPreventaSeConsultanDesdeElCatalogoReal() {
+        CrmWhatsappAiJob job = job("Productos en preventa tienes");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(tools.execute(any(), any())).thenAnswer(invocation -> {
+            List<ToolCall> calls = invocation.getArgument(1);
+            assertEquals(true, calls.getFirst().arguments().get("preorderOnly"));
+            return new ExecutionResult(List.of(java.util.Map.of(
+                    "tool", "buscar_productos",
+                    "products", List.of(java.util.Map.of(
+                            "name", "LYANA", "preventa", true,
+                            "fechaEnvioPreventa", "2026-10-14")))),
+                    List.of(), List.of(), List.of());
+        });
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("PRODUCTOS", result.intent());
+        assertTrue(result.draft().contains("LYANA"));
+        assertTrue(result.draft().contains("14 de octubre de 2026"));
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void catalogoGeneralNoDependeDeGeminiAunqueLaRedaccionNaturalEsteHabilitada() {
+        CrmWhatsappAiJob job = job("Que productos tienes?");
+        CrmWhatsappAiConfig config = config();
+        config.setNaturalResponseEnabled(true);
+        config.setNaturalResponseRolloutPercent(100);
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(tools.execute(any(), any())).thenReturn(new ExecutionResult(
+                List.of(java.util.Map.of("tool", "buscar_productos", "hasMore", false,
+                        "products", List.of(java.util.Map.of("name", "EMMA")))),
+                List.of(), List.of(), List.of()));
+        var result = service.execute(service.prepare(50L));
+
+        assertTrue(result.draft().contains("EMMA"));
+        assertFalse(result.naturalResponseUsed());
+        assertFalse(result.fallbackUsed());
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void falloDeRedaccionNaturalSobreConocimientoTambienRespondeConRespaldo() {
+        CrmWhatsappAiJob job = job("Cual es la politica de cambios?");
+        CrmWhatsappAiConfig config = configWithIntent("POLITICAS");
+        config.setNaturalResponseEnabled(true);
+        config.setNaturalResponseRolloutPercent(100);
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(provider.classify(any())).thenReturn(new ClassificationResult(
+                "POLITICAS", 100, false, "consulta de politica", List.of(), new Usage(10, 5, 15)));
+        when(tools.execute(any(), any())).thenReturn(new ExecutionResult(
+                List.of(java.util.Map.of("tool", "consultar_informacion_negocio", "sources", List.of(
+                        java.util.Map.of("title", "Cambios", "category", "POLITICAS",
+                                "content", "No realizamos cambios de talla, modelo ni color.")))),
+                List.of(), List.of(), List.of()));
+        when(provider.generateDraft(any())).thenThrow(new AiProviderException("Gemini no disponible", false));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("POLITICAS", result.intent());
+        assertTrue(result.draft().contains("No realizamos cambios"));
+        assertTrue(result.fallbackUsed());
+        assertFalse(result.naturalResponseUsed());
+        verify(safety).recordFallback(any(), any());
+    }
+
+    @Test
+    void falloDeClasificacionConsultaHerramientasYRespondeConRespaldo() {
+        CrmWhatsappAiJob job = job("Cuanto cuesta BELEN?");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(provider.classify(any())).thenThrow(new AiProviderException("Respuesta JSON incompleta", false));
+        when(tools.execute(any(), any())).thenReturn(new ExecutionResult(
+                List.of(java.util.Map.of("tool", "buscar_productos", "products", List.of(
+                        java.util.Map.of("name", "BELEN",
+                                "availableColors", List.of("NEGRO"), "availableSizes", List.of("S", "M"),
+                                "variants", List.of(java.util.Map.of("currentPrice", 75.00)))))),
+                List.of(), List.of(), List.of()));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("PRECIO", result.intent());
+        assertTrue(result.draft().contains("BELEN"));
+        assertTrue(result.draft().contains("75.00"));
+        assertTrue(result.fallbackUsed());
+        assertTrue(result.fallbackReason().contains("JSON incompleta"));
+        verify(safety).recordFallback(any(), any());
+    }
+
+    @Test
+    void verMasProductosConsultaLaSegundaPaginaSinRepetirLaWeb() {
+        CrmWhatsappAiJob job = job("Ver más productos");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L))
+                .thenReturn(Optional.of(configWithIntent("ENLACE_ECOMMERCE")));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(tools.execute(any(), any())).thenAnswer(invocation -> {
+            List<ToolCall> calls = invocation.getArgument(1);
+            assertEquals(1, calls.getFirst().arguments().get("page"));
+            return new ExecutionResult(
+                    List.of(java.util.Map.of(
+                            "tool", "buscar_productos",
+                            "query", "",
+                            "hasMore", false,
+                            "products", List.of(java.util.Map.of("name", "LYANA")))),
+                    List.of(), List.of(), List.of());
+        });
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("ENLACE_ECOMMERCE", result.intent());
+        assertTrue(result.draft().contains("LYANA"));
+        assertTrue(!result.draft().contains("https://kiments.com.pe"));
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void entregaProntaExcluyePreventaYFiltraLaTallaSolicitadaSinGemini() {
+        CrmWhatsappAiJob job = job("Hola me puedes mostrar lo que tienes disponible para entrega pronta\n"
+                + "No lo que es preventa porque tengo un compromiso\n"
+                + "Entonces necesito lo que tienes en stock\n"
+                + "En talla M");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(tools.execute(any(), any())).thenAnswer(invocation -> {
+            List<ToolCall> calls = invocation.getArgument(1);
+            assertEquals(true, calls.getFirst().arguments().get("readyStockOnly"));
+            assertEquals("M", calls.getFirst().arguments().get("size"));
+            assertEquals("", calls.getFirst().arguments().get("q"));
+            return new ExecutionResult(
+                    List.of(java.util.Map.of(
+                            "tool", "buscar_productos",
+                            "hasMore", false,
+                            "products", List.of(
+                                    java.util.Map.of("name", "BELEN", "preventa", false,
+                                            "availableSizes", List.of("M")),
+                                    java.util.Map.of("name", "EMMA", "preventa", false,
+                                            "availableSizes", List.of("M"))))),
+                    List.of(), List.of(), List.of());
+        });
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("PRODUCTOS", result.intent());
+        assertTrue(result.draft().contains("entrega inmediata en talla M"));
+        assertTrue(result.draft().contains("BELEN"));
+        assertTrue(result.draft().contains("EMMA"));
+        assertTrue(result.draft().contains("no son preventa"));
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void productoParaMandarHoyListaNombresSinEnlaces() {
+        CrmWhatsappAiJob job = job("Producto para mandar hoy");
+        CrmWhatsappAiConfig config = configWithIntent("ENLACE_ECOMMERCE");
+        config.setNaturalResponseEnabled(true);
+        config.setNaturalResponseRolloutPercent(100);
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(tools.execute(any(), any())).thenAnswer(invocation -> {
+            List<ToolCall> calls = invocation.getArgument(1);
+            assertEquals(true, calls.getFirst().arguments().get("readyStockOnly"));
+            return new ExecutionResult(
+                    List.of(java.util.Map.of("tool", "buscar_productos", "products", List.of(
+                            java.util.Map.of("name", "BELEN", "ecommerceUrl",
+                                    "https://kiments.com.pe/productos/belen"),
+                            java.util.Map.of("name", "EMMA", "ecommerceUrl",
+                                    "https://kiments.com.pe/productos/emma")))),
+                    List.of(), List.of(), List.of());
+        });
+
+        var result = service.execute(service.prepare(50L));
+
+        assertTrue(result.draft().contains("BELEN"));
+        assertTrue(result.draft().contains("EMMA"));
+        assertFalse(result.draft().contains("http"), result.draft());
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void productosParaEnvioHoyListaNombresSinEnlaces() {
+        CrmWhatsappAiJob job = job("Que productos tienes para envios el dia hoy");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L))
+                .thenReturn(Optional.of(configWithIntent("ENLACE_ECOMMERCE")));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(tools.execute(any(), any())).thenReturn(new ExecutionResult(
+                List.of(java.util.Map.of("tool", "buscar_productos", "products", List.of(
+                        java.util.Map.of("name", "MARIA ENTERO", "ecommerceUrl",
+                                "https://kiments.com.pe/productos/maria-entero"),
+                        java.util.Map.of("name", "FATIMA", "ecommerceUrl",
+                                "https://kiments.com.pe/productos/fatima")))),
+                List.of(), List.of(), List.of()));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertTrue(result.draft().contains("MARIA ENTERO"));
+        assertTrue(result.draft().contains("FATIMA"));
+        assertFalse(result.draft().contains("http"), result.draft());
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void listadoGeneralConEnlacesHabilitadosMuestraNombresSinUrl() {
+        CrmWhatsappAiJob job = job("Que productos tienes");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L))
+                .thenReturn(Optional.of(configWithIntent("ENLACE_ECOMMERCE")));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(tools.execute(any(), any())).thenReturn(new ExecutionResult(
+                List.of(java.util.Map.of("tool", "buscar_productos", "products", List.of(
+                        java.util.Map.of("name", "BELEN", "ecommerceUrl",
+                                "https://kiments.com.pe/productos/belen"),
+                        java.util.Map.of("name", "EMMA", "ecommerceUrl",
+                                "https://kiments.com.pe/productos/emma")))),
+                List.of(), List.of(), List.of()));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertTrue(result.draft().contains("BELEN"));
+        assertTrue(result.draft().contains("EMMA"));
+        assertFalse(result.draft().contains("http"), result.draft());
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void productosQueNoSonPreventaConsultaStockRealSinBuscarLaFraseComoProducto() {
+        CrmWhatsappAiJob job = job("Quiero productos que no son preventa por favor");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(tools.execute(any(), any())).thenAnswer(invocation -> {
+            List<ToolCall> calls = invocation.getArgument(1);
+            assertEquals("", calls.getFirst().arguments().get("q"));
+            assertEquals(true, calls.getFirst().arguments().get("readyStockOnly"));
+            return new ExecutionResult(
+                    List.of(java.util.Map.of(
+                            "tool", "buscar_productos",
+                            "hasMore", false,
+                            "products", List.of(
+                                    java.util.Map.of("name", "BELEN", "preventa", false),
+                                    java.util.Map.of("name", "EMMA", "preventa", false)))),
+                    List.of(), List.of(), List.of());
+        });
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("PRODUCTOS", result.intent());
+        assertTrue(result.draft().contains("BELEN"));
+        assertTrue(result.draft().contains("EMMA"));
+        assertTrue(result.draft().contains("no son preventa"));
+        assertTrue(!result.draft().contains("No encontré ese producto"));
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void tallaEnMensajePosteriorConservaElFiltroDeEntregaInmediata() {
+        CrmWhatsappAiJob job = job("En talla M");
+        LocalDateTime currentTime = LocalDateTime.of(2026, 10, 5, 9, 41, 20);
+        job.getMessage().setCreatedAt(currentTime);
+        CrmWhatsappMessage previousReply = incomingMessage(job.getConversation(), 19L,
+                "✨ Disponibles para entrega inmediata. Estos modelos tienen stock actual y no son preventa.",
+                currentTime.minusSeconds(8));
+        previousReply.setDirection("OUTGOING");
+        previousReply.setOrigin("AI_AUTOMATIC");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any()))
+                .thenReturn(List.of(job.getMessage(), previousReply));
+        when(tools.execute(any(), any())).thenAnswer(invocation -> {
+            List<ToolCall> calls = invocation.getArgument(1);
+            assertEquals(true, calls.getFirst().arguments().get("readyStockOnly"));
+            assertEquals("M", calls.getFirst().arguments().get("size"));
+            return new ExecutionResult(
+                    List.of(java.util.Map.of("tool", "buscar_productos", "hasMore", false,
+                            "products", List.of(java.util.Map.of("name", "BELEN")))),
+                    List.of(), List.of(), List.of());
+        });
+
+        var result = service.execute(service.prepare(50L));
+
+        assertTrue(result.draft().contains("entrega inmediata en talla M"));
+        assertTrue(result.draft().contains("BELEN"));
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void tallaNumericaReutilizaElProductoRecordadoYEnviaSuGuia() {
+        CrmWhatsappAiJob job = job("Yo soy talla 30 cuál debería usar?");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L))
+                .thenReturn(Optional.of(configWithIntent("GUIA_TALLAS")));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(memory.rememberedProductName(10L)).thenReturn("BELEN");
+        when(provider.classify(any())).thenReturn(new ClassificationResult(
+                "PRODUCTOS", 98, false, "consulta de talla", List.of(), new Usage(10, 5, 15)));
+        MediaReference guide = new MediaReference("SIZE_GUIDE", 45, null,
+                "BELEN", "", "/storage/productos/belen-guia.webp", "/storage/productos/belen-guia-thumb.webp");
+        when(tools.execute(any(), any())).thenAnswer(invocation -> {
+            List<ToolCall> calls = invocation.getArgument(1);
+            assertEquals("BELEN", calls.getFirst().arguments().get("q"));
+            return new ExecutionResult(
+                    List.of(java.util.Map.of("tool", "buscar_productos", "products", List.of(java.util.Map.of(
+                            "productId", 45, "name", "BELEN", "sizeGuideUrl", guide.url())))),
+                    List.of(), List.of(), List.of(guide));
+        });
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("GUIA_TALLAS", result.intent());
+        assertEquals(List.of(guide), result.suggestedMedia());
+        assertTrue(result.draft().contains("BELEN"));
     }
 
     @Test
@@ -780,6 +1959,479 @@ class CrmWhatsappAiEngineServiceTest {
     }
 
     @Test
+    void listaSoloDiezPromocionesYOfreceContinuar() {
+        CrmWhatsappAiJob job = job("Tienes promociones disponibles?");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(configWithIntent("PROMOCIONES")));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        List<java.util.Map<String, Object>> promotions = java.util.stream.IntStream.rangeClosed(1, 10)
+                .mapToObj(index -> java.util.Map.<String, Object>of(
+                        "promotionId", index,
+                        "name", "Combo " + index,
+                        "comboPrice", 140,
+                        "products", List.of(java.util.Map.of(
+                                "name", "EMMA", "quantity", 2))))
+                .toList();
+        when(tools.execute(any(), any())).thenReturn(new ExecutionResult(
+                List.of(new java.util.LinkedHashMap<>(java.util.Map.of(
+                        "tool", "consultar_promociones",
+                        "page", 0,
+                        "pageSize", 10,
+                        "total", 54,
+                        "hasMore", true,
+                        "promotions", promotions))),
+                List.of(), List.of(), List.of()));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertTrue(result.draft().contains("Promociones disponibles (1-10 de 54)"), result.draft());
+        assertTrue(result.draft().contains("2 x EMMA"), result.draft());
+        assertTrue(result.draft().contains("ver más promociones"), result.draft());
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void ofertaGenericaPriorizaElMensajeActualSobreProductoYPreguntaPendiente() {
+        CrmWhatsappAiJob job = job("Hay ofertas?");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L))
+                .thenReturn(Optional.of(configWithIntent("PROMOCIONES")));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        CrmWhatsappMessage previous = incomingMessage(job.getConversation(), 19L,
+                "El producto EMMA esta disponible. Que color deseas?", LocalDateTime.now().minusMinutes(1));
+        previous.setDirection("OUTGOING");
+        previous.setOrigin("AI_AUTOMATIC");
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage(), previous));
+        when(memory.pendingQuestionFor(10L)).thenReturn(CrmWhatsappAiPendingQuestion.COLOR);
+        when(memory.selectionFor(10L)).thenReturn(new MemorySelection(30, "EMMA", "", "", null));
+        when(tools.execute(any(), any())).thenAnswer(invocation -> {
+            List<ToolCall> calls = invocation.getArgument(1);
+            assertEquals("consultar_promociones", calls.getFirst().name());
+            assertEquals("", calls.getFirst().arguments().get("q"));
+            return promotionExecution("", List.of(promotionMap(29, "combo 29", 125, 130, 5,
+                    List.of(java.util.Map.of("name", "EMMA", "quantity", 2)))));
+        });
+
+        var prepared = service.prepare(50L);
+        var result = service.execute(prepared);
+
+        assertTrue(prepared.conversationContext().contains("MENSAJE ACTUAL DEL CLIENTE (PRIORIDAD):\nHay ofertas?"));
+        assertEquals("PROMOCIONES", result.intent());
+        assertTrue(result.draft().contains("combo 29"), result.draft());
+        assertFalse(result.draft().contains("QuÃ© color"), result.draft());
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void promocionesDeEseProductoUsanElModeloRecordado() {
+        CrmWhatsappAiJob job = job("Tienes promociones con ese producto?");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L))
+                .thenReturn(Optional.of(configWithIntent("PROMOCIONES")));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(memory.selectionFor(10L)).thenReturn(
+                new MemorySelection(31, "ALESSIA RAYAS", "", "", null));
+        when(tools.execute(any(), any())).thenAnswer(invocation -> {
+            List<ToolCall> calls = invocation.getArgument(1);
+            assertEquals("ALESSIA RAYAS", calls.getFirst().arguments().get("q"));
+            return promotionExecutionForAlessia();
+        });
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("PROMOCIONES", result.intent());
+        assertTrue(result.draft().contains("Promociones que incluyen ALESSIA RAYAS"), result.draft());
+        assertTrue(result.draft().contains("combo 46"), result.draft());
+        assertFalse(result.draft().contains("combo 54"), result.draft());
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void promocionesConProductoExplicitoFiltranPorSuNombre() {
+        CrmWhatsappAiJob job = job("Con Alessia rayas tienes promociones?");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L))
+                .thenReturn(Optional.of(configWithIntent("PROMOCIONES")));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(tools.execute(any(), any())).thenAnswer(invocation -> {
+            List<ToolCall> calls = invocation.getArgument(1);
+            assertEquals("alessia rayas", calls.getFirst().arguments().get("q"));
+            return promotionExecutionForAlessia();
+        });
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("PROMOCIONES", result.intent());
+        assertTrue(result.draft().contains("combo 46"), result.draft());
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void descuentoPorDosUnidadesUsaElProductoYPreciosDeLaPromocionReal() {
+        CrmWhatsappAiJob job = job("Si llevo 2 Emma hay descuento?");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L))
+                .thenReturn(Optional.of(configWithIntent("PROMOCIONES")));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(tools.execute(any(), any())).thenAnswer(invocation -> {
+            List<ToolCall> calls = invocation.getArgument(1);
+            assertEquals("emma", calls.getFirst().arguments().get("q"));
+            java.util.Map<String, Object> promotion = new java.util.LinkedHashMap<>();
+            promotion.put("promotionId", 60);
+            promotion.put("name", "2 EMMA");
+            promotion.put("regularPrice", 130);
+            promotion.put("savings", 10);
+            promotion.put("comboPrice", 120);
+            promotion.put("products", List.of(java.util.Map.of("name", "EMMA", "quantity", 2)));
+            java.util.Map<String, Object> toolResult = new java.util.LinkedHashMap<>();
+            toolResult.put("tool", "consultar_promociones");
+            toolResult.put("query", "emma");
+            toolResult.put("page", 0);
+            toolResult.put("pageSize", 10);
+            toolResult.put("total", 1);
+            toolResult.put("hasMore", false);
+            toolResult.put("promotions", List.of(promotion));
+            return new ExecutionResult(
+                    List.of(toolResult),
+                    List.of(), List.of(), List.of());
+        });
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("PROMOCIONES", result.intent());
+        assertTrue(result.draft().contains("2 unidades de *EMMA*"), result.draft());
+        assertTrue(result.draft().contains("Precio normal: S/130.00"), result.draft());
+        assertTrue(result.draft().contains("Descuento: -S/10.00"), result.draft());
+        assertTrue(result.draft().contains("Precio final: S/120.00"), result.draft());
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void descuentoGenericoPorDosListaProductosSinConfundirHayDescuentoConUnModelo() {
+        CrmWhatsappAiJob job = job("Quiero llevar 2 hay descuento?");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L))
+                .thenReturn(Optional.of(configWithIntent("PROMOCIONES")));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(tools.execute(any(), any())).thenAnswer(invocation -> {
+            List<ToolCall> calls = invocation.getArgument(1);
+            assertEquals("", calls.getFirst().arguments().get("q"));
+            assertEquals(2, calls.getFirst().arguments().get("sameProductQuantity"));
+            return promotionExecution("", List.of(promotionMap(28, "combo 28", 120, 130, 10,
+                    List.of(java.util.Map.of("name", "EMMA", "quantity", 2)))));
+        });
+
+        var result = service.execute(service.prepare(50L));
+
+        assertTrue(result.draft().contains("2 unidades del mismo producto"), result.draft());
+        assertTrue(result.draft().contains("EMMA"), result.draft());
+        assertFalse(result.draft().contains("HAY DESCUENTO"), result.draft());
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void correccionAliceRayasConDosUnidadesConsultaEseProducto() {
+        CrmWhatsappAiJob job = job("Me refiero Alice rayas si llevo 2");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L))
+                .thenReturn(Optional.of(configWithIntent("PROMOCIONES")));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(tools.execute(any(), any())).thenAnswer(invocation -> {
+            List<ToolCall> calls = invocation.getArgument(1);
+            assertEquals("alice rayas", calls.getFirst().arguments().get("q"));
+            assertEquals(2, calls.getFirst().arguments().get("sameProductQuantity"));
+            return promotionExecution("alice rayas", List.of());
+        });
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("PROMOCIONES", result.intent());
+        assertTrue(result.draft().contains("ALICE RAYAS"), result.draft());
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void promocionesHayEnAliceRayasFiltraEseModelo() {
+        CrmWhatsappAiJob job = job("Que promociones hay en Alice rayas");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L))
+                .thenReturn(Optional.of(configWithIntent("PROMOCIONES")));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(tools.execute(any(), any())).thenAnswer(invocation -> {
+            List<ToolCall> calls = invocation.getArgument(1);
+            assertEquals("alice rayas", calls.getFirst().arguments().get("q"));
+            return promotionExecution("alice rayas", List.of(
+                    promotionMap(49, "combo 49", 145, 150, 5,
+                            List.of(java.util.Map.of("name", "ALICE RAYAS", "quantity", 1),
+                                    java.util.Map.of("name", "EMMA", "quantity", 1)))));
+        });
+
+        var result = service.execute(service.prepare(50L));
+
+        assertTrue(result.draft().contains("Promociones que incluyen ALICE RAYAS (1-1 de 1)"), result.draft());
+        assertFalse(result.draft().contains("combo 54"), result.draft());
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void comboPorNumeroConsultaLaPromocionExacta() {
+        CrmWhatsappAiJob job = job("El combo 28");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L))
+                .thenReturn(Optional.of(configWithIntent("PROMOCIONES")));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(tools.execute(any(), any())).thenAnswer(invocation -> {
+            List<ToolCall> calls = invocation.getArgument(1);
+            assertEquals(28, calls.getFirst().arguments().get("promotionNumber"));
+            return promotionExecution("", List.of(promotionMap(28, "combo 28", 120, 130, 10,
+                    List.of(java.util.Map.of("name", "EMMA", "quantity", 2)))));
+        });
+
+        var result = service.execute(service.prepare(50L));
+
+        assertTrue(result.draft().contains("combo 28"), result.draft());
+        assertTrue(result.draft().contains("2 x EMMA"), result.draft());
+        assertTrue(result.draft().contains("Descuento: -S/10.00"), result.draft());
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void anademeloRecuperaElUltimoComboMostradoEIniciaSuSeleccion() {
+        CrmWhatsappAiJob job = job("añádemelo");
+        CrmWhatsappAiConfig config = configWithIntent("PROMOCIONES");
+        config.setIntencionesPermitidas(config.getIntencionesPermitidas() + ",INTENCION_COMPRA");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        CrmWhatsappMessage previous = incomingMessage(job.getConversation(), 19L,
+                "🎁 *combo 42*\n\n👗 Incluye: ALICE RAYAS + LIA RAYAS\n💰 Precio: S/155.00",
+                LocalDateTime.now().minusSeconds(30));
+        previous.setDirection("OUTGOING");
+        previous.setOrigin("AI_AUTOMATIC");
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage(), previous));
+        when(tools.execute(any(), any())).thenAnswer(invocation -> {
+            List<ToolCall> calls = invocation.getArgument(1);
+            assertEquals("consultar_promociones", calls.getFirst().name());
+            assertEquals(42, calls.getFirst().arguments().get("promotionNumber"));
+            return promotionExecution("", List.of(promotionMap(42, "combo 42", 155, 170, 15,
+                    List.of(java.util.Map.of("name", "ALICE RAYAS", "quantity", 1),
+                            java.util.Map.of("name", "LIA RAYAS", "quantity", 1)))));
+        });
+        when(saleDrafts.applyAiAction(any(), any())).thenReturn(
+                new CrmWhatsappAiSaleDraftService.ActionOutcome(
+                        "Para completar el combo 42, elige color y talla de ALICE RAYAS.", false, null));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("INTENCION_COMPRA", result.intent());
+        assertTrue(result.draft().contains("ALICE RAYAS"), result.draft());
+        verify(saleDrafts).applyAiAction(any(), argThat(action ->
+                "ADD_COMBO".equals(action.action())
+                        && Integer.valueOf(42).equals(action.promotionId())));
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void compraExplicitaDeComboNoSeConfundeConConsultaDePromociones() {
+        CrmWhatsappAiJob job = job("El combo 42 quiero comprar");
+        CrmWhatsappAiConfig config = configWithIntent("PROMOCIONES");
+        config.setIntencionesPermitidas(config.getIntencionesPermitidas() + ",INTENCION_COMPRA");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(tools.execute(any(), any())).thenReturn(promotionExecution("", List.of(
+                promotionMap(142, "combo 42", 155, 170, 15,
+                        List.of(java.util.Map.of("name", "ALICE RAYAS", "quantity", 1),
+                                java.util.Map.of("name", "LIA RAYAS", "quantity", 1))))));
+        when(saleDrafts.applyAiAction(any(), any())).thenReturn(
+                new CrmWhatsappAiSaleDraftService.ActionOutcome(
+                        "Elige color y talla de ALICE RAYAS.", false, null));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("INTENCION_COMPRA", result.intent());
+        verify(saleDrafts).applyAiAction(any(), argThat(action ->
+                "ADD_COMBO".equals(action.action())
+                        && Integer.valueOf(142).equals(action.promotionId())));
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void respondeProductoMasEconomicoConPrecioEImagen() {
+        CrmWhatsappAiJob job = job("Cual es el producto más barato que tienes");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(configWithIntent("PRECIO")));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        MediaReference image = new MediaReference("PRODUCT_GLOBAL_IMAGE", 59, null,
+                "EMMA", "", "/storage/productos/emma.webp", "");
+        when(tools.execute(any(), any())).thenReturn(new ExecutionResult(
+                List.of(java.util.Map.of(
+                        "tool", "consultar_extremo_precio_producto",
+                        "order", "MIN",
+                        "product", java.util.Map.of(
+                                "productId", 59, "name", "EMMA", "price", 65))),
+                List.of(), List.of(), List.of(image)));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertTrue(result.draft().contains("producto más económico"), result.draft());
+        assertTrue(result.draft().contains("EMMA"), result.draft());
+        assertTrue(result.draft().contains("S/65.00"), result.draft());
+        assertEquals(List.of(image), result.suggestedMedia());
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    void preguntaGeneralDeModelosNoUsaElProductoRecordadoComoConsultaDeStock() {
+        CrmWhatsappAiJob job = job("Una consulta que modelos tienes disponible bella");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(memory.selectionFor(10L)).thenReturn(new MemorySelection(30, "EMMA", "LACRE", "L", 1));
+        when(memory.rememberedProductName(10L)).thenReturn("EMMA");
+        when(provider.classify(any())).thenReturn(new ClassificationResult(
+                "STOCK", 100, false, "consulta general", List.of(), new Usage(10, 5, 15)));
+        when(tools.execute(any(), any())).thenAnswer(invocation -> {
+            List<ToolCall> calls = invocation.getArgument(1);
+            assertEquals("", calls.getFirst().arguments().get("q"));
+            return new ExecutionResult(
+                    List.of(java.util.Map.of("tool", "buscar_productos", "products",
+                            List.of(java.util.Map.of("name", "ALESSIA"), java.util.Map.of("name", "EMMA")))),
+                    List.of(), List.of(), List.of());
+        });
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("PRODUCTOS", result.intent());
+        assertTrue(result.draft().contains("ALESSIA"));
+        assertTrue(result.draft().contains("EMMA"));
+    }
+
+    @Test
+    void respuestaDeEnviosNoSolicitaDatosQueElBackendNoProcesa() {
+        CrmWhatsappAiJob job = job("Y que metodo de envio tienes");
+        CrmWhatsappAiConfig config = configWithIntent("ENVIOS");
+        config.setNaturalResponseEnabled(true);
+        config.setNaturalResponseRolloutPercent(100);
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(provider.classify(any())).thenReturn(new ClassificationResult(
+                "ENVIOS", 100, false, "consulta de envio", List.of(), new Usage(10, 5, 15)));
+        when(tools.execute(any(), any())).thenReturn(shippingKnowledge());
+        when(provider.generateDraft(any())).thenReturn(new DraftResult(
+                "Realizamos envios por Shalom y ofrecemos recojo en almacen.\n\n"
+                        + "¿A que ciudad o distrito deseas el envio?",
+                false, "respuesta fundamentada", List.of(), new Usage(12, 8, 20)));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("ENVIOS", result.intent());
+        assertFalse(result.draft().toLowerCase().contains("ciudad o distrito"), result.draft());
+        assertTrue(result.draft().contains("¿Qué otro producto o consulta deseas realizar?"));
+    }
+
+    @Test
+    void respuestaNaturalQueYaTieneCierreGenericoNoAgregaOtraPregunta() {
+        CrmWhatsappAiJob job = job("Como debo cuidar el Alessia Entero");
+        CrmWhatsappAiConfig config = configWithIntent("CUIDADOS");
+        config.setNaturalResponseEnabled(true);
+        config.setNaturalResponseRolloutPercent(100);
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(provider.classify(any())).thenReturn(new ClassificationResult(
+                "CUIDADOS", 100, false, "consulta de cuidados", List.of(), new Usage(10, 5, 15)));
+        when(tools.execute(any(), any())).thenReturn(shippingKnowledge());
+        when(provider.generateDraft(any())).thenReturn(new DraftResult(
+                "Para cuidarlo, lavalo a mano con agua fria y secalo a la sombra.\n\n"
+                        + "¿Te gustaria consultar algun otro tema o producto? ✨",
+                false, "respuesta fundamentada", List.of(), new Usage(12, 8, 20)));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals(1, result.draft().chars().filter(character -> character == '?').count(), result.draft());
+        assertFalse(result.draft().contains("¿Qué otro producto o consulta deseas realizar?"), result.draft());
+    }
+
+    @Test
+    void ubicacionCortaDespuesDeEnviosNoSeInterpretaComoProducto() {
+        CrmWhatsappAiJob job = job("Arequipa");
+        job.getMessage().setCreatedAt(LocalDateTime.of(2026, 10, 6, 10, 9));
+        CrmWhatsappMessage previous = incomingMessage(job.getConversation(), 19L,
+                "Realizamos envios a nivel nacional mediante la agencia Shalom. "
+                        + "¿A que ciudad o distrito deseas que enviemos tu pedido?",
+                job.getMessage().getCreatedAt().minusMinutes(1));
+        previous.setDirection("OUTGOING");
+        previous.setOrigin("AI_AUTOMATIC");
+        CrmWhatsappAiConfig config = configWithIntent("ENVIOS");
+        config.setNaturalResponseEnabled(true);
+        config.setNaturalResponseRolloutPercent(100);
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage(), previous));
+        when(tools.execute(any(), any())).thenReturn(shippingKnowledge());
+        when(provider.generateDraft(any())).thenReturn(new DraftResult(
+                "Realizamos envios a provincia mediante Shalom.",
+                false, "respuesta fundamentada", List.of(), new Usage(12, 8, 20)));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("ENVIOS", result.intent());
+        assertFalse(result.draft().contains("modelo no está disponible"));
+        assertTrue(result.draft().contains("¿Qué otro producto o consulta deseas realizar?"));
+        verify(provider, org.mockito.Mockito.never()).classify(any());
+    }
+
+    @Test
+    void productoNoEncontradoConsultaLaBaseDeConocimientoAntesDeResponder() {
+        CrmWhatsappAiJob job = job("Buenas noches de casualidad tendrá shorts?");
+        CrmWhatsappAiConfig config = config();
+        config.setNaturalResponseEnabled(true);
+        config.setNaturalResponseRolloutPercent(100);
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(provider.classify(any())).thenReturn(new ClassificationResult(
+                "PRODUCTOS", 100, false, "consulta de producto", List.of(), new Usage(10, 5, 15)));
+        ExecutionResult emptyCatalog = new ExecutionResult(
+                List.of(java.util.Map.of("tool", "buscar_productos", "query", "shorts", "products", List.of())),
+                List.of(), List.of(), List.of());
+        ExecutionResult knowledge = new ExecutionResult(
+                List.of(java.util.Map.of("tool", "consultar_informacion_negocio", "sources", List.of(
+                        java.util.Map.of("title", "Productos disponibles", "category", "FAQ",
+                                "content", "Actualmente trabajamos enterizos y conjuntos; no ofrecemos shorts.")))),
+                List.of(java.util.Map.of("tool", "consultar_informacion_negocio", "status", "OK")),
+                List.of(java.util.Map.of("tool", "consultar_informacion_negocio")), List.of());
+        when(tools.execute(any(), any())).thenReturn(emptyCatalog, knowledge);
+        when(provider.generateDraft(any())).thenReturn(new DraftResult(
+                "Buenas noches 💛 Por el momento no contamos con shorts; trabajamos enterizos y conjuntos.",
+                false, "base de conocimiento", List.of(), new Usage(12, 9, 21)));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("INFORMACION_NEGOCIO", result.intent());
+        assertTrue(result.draft().contains("no contamos con shorts"));
+        assertEquals(36, result.usage().totalTokens());
+        verify(tools, org.mockito.Mockito.times(2)).execute(any(), any());
+    }
+
+    @Test
     void ignoraTransferenciaDelModeloEnConsultaComercialSegura() {
         CrmWhatsappAiJob job = job("Que productos tienes ?");
         when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
@@ -831,7 +2483,10 @@ class CrmWhatsappAiEngineServiceTest {
         when(tools.execute(any(), any())).thenAnswer(invocation -> {
             List<ToolCall> calls = invocation.getArgument(1);
             assertEquals("JULIETA", calls.getFirst().arguments().get("q"));
-            return new ExecutionResult(List.of(), List.of(), List.of(), List.of());
+            return new ExecutionResult(List.of(java.util.Map.of(
+                    "tool", "buscar_productos",
+                    "productName", "JULIETA", "availableColors", List.of("NEGRO", "BEIGE"))),
+                    List.of(), List.of(), List.of());
         });
         when(provider.generateDraft(any())).thenReturn(new DraftResult(
                 "Colores de JULIETA.", false, "", List.of(), new Usage(12, 8, 20)));
@@ -895,6 +2550,78 @@ class CrmWhatsappAiEngineServiceTest {
         assertTrue(result.draft().contains("Sí, hay stock disponible"));
         assertTrue(!result.draft().contains("3 unidades"));
         verify(provider, org.mockito.Mockito.never()).generateDraft(any());
+    }
+
+    @Test
+    void consultaTallasDeUnColorListaTodasLasDisponiblesAntesDeElegir() {
+        CrmWhatsappAiJob job = job("Que tallas tienes en chocolate");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(configWithIntent("COLORES_TALLAS")));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(memory.selectionFor(10L)).thenReturn(new MemorySelection(30, "EMMA", "", "", null));
+        when(provider.classify(any())).thenReturn(new ClassificationResult(
+                "COLORES_TALLAS", 100, false, "consulta de tallas por color", List.of(), new Usage(10, 5, 15)));
+        java.util.Map<String, Object> product = java.util.Map.of(
+                "productId", 30, "name", "EMMA",
+                "variants", List.of(
+                        java.util.Map.of("color", "CHOCOLATE", "size", "L", "stock", 2),
+                        java.util.Map.of("color", "CHOCOLATE", "size", "M", "stock", 1),
+                        java.util.Map.of("color", "CHOCOLATE", "size", "S", "stock", 3),
+                        java.util.Map.of("color", "CHOCOLATE", "size", "XS", "stock", 4),
+                        java.util.Map.of("color", "CHOCOLATE", "size", "XL", "stock", 0),
+                        java.util.Map.of("color", "TOPO", "size", "XS", "stock", 5)));
+        when(tools.execute(any(), any())).thenReturn(new ExecutionResult(
+                List.of(java.util.Map.of("tool", "buscar_productos", "products", List.of(product))),
+                List.of(), List.of(), List.of()));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertTrue(result.draft().contains("Tallas disponibles"), result.draft());
+        assertTrue(result.draft().contains("L, M, S, XS"), result.draft());
+        assertTrue(!result.draft().contains("XL"), result.draft());
+        assertTrue(result.draft().contains("Puedes elegir una o más"), result.draft());
+        verify(provider, org.mockito.Mockito.never()).generateDraft(any());
+    }
+
+    @Test
+    void quieroColorYQueTallasUsaElProductoRecordadoSinVolverAPreguntarlo() {
+        CrmWhatsappAiJob job = job("Quiero marrón por favor que tallas tienes disponible");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L))
+                .thenReturn(Optional.of(configWithIntent("COLORES_TALLAS")));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+        when(memory.selectionFor(10L)).thenReturn(
+                new MemorySelection(44, "Conjunto NHARA _ LISO", "", "", null));
+        when(provider.classify(any())).thenReturn(new ClassificationResult(
+                "INTENCION_COMPRA", 100, false, "consulta de tallas de un color",
+                List.of(), new Usage(10, 5, 15)));
+        java.util.Map<String, Object> product = java.util.Map.of(
+                "productId", 44, "name", "Conjunto NHARA _ LISO",
+                "variants", List.of(
+                        java.util.Map.of("color", "MARRON", "size", "XS", "stock", 2),
+                        java.util.Map.of("color", "MARRON", "size", "S", "stock", 3),
+                        java.util.Map.of("color", "MARRON", "size", "M", "stock", 1),
+                        java.util.Map.of("color", "MARRON", "size", "L", "stock", 0),
+                        java.util.Map.of("color", "PLATA", "size", "L", "stock", 4)));
+        when(tools.execute(any(), any())).thenAnswer(invocation -> {
+            List<ToolCall> calls = invocation.getArgument(1);
+            assertEquals("Conjunto NHARA _ LISO",
+                    calls.getFirst().arguments().get("fallbackProduct"));
+            return new ExecutionResult(
+                    List.of(java.util.Map.of("tool", "buscar_productos", "products", List.of(product))),
+                    List.of(), List.of(), List.of());
+        });
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("COLORES_TALLAS", result.intent());
+        assertTrue(result.draft().contains("Conjunto NHARA _ LISO"), result.draft());
+        assertTrue(result.draft().contains("MARRON"), result.draft());
+        assertTrue(result.draft().contains("XS, S, M"), result.draft());
+        assertFalse(result.draft().contains("¿Qué producto deseas"), result.draft());
+        verify(provider, org.mockito.Mockito.never()).interpretSaleAction(any());
     }
 
     @Test
@@ -1173,6 +2900,21 @@ class CrmWhatsappAiEngineServiceTest {
         return job;
     }
 
+    private CrmWhatsappMessage incomingMessage(
+            CrmWhatsappConversation conversation,
+            Long id,
+            String body,
+            LocalDateTime createdAt) {
+        CrmWhatsappMessage message = new CrmWhatsappMessage();
+        message.setIdMessage(id);
+        message.setConversation(conversation);
+        message.setDirection("INCOMING");
+        message.setMessageType("TEXT");
+        message.setBody(body);
+        message.setCreatedAt(createdAt);
+        return message;
+    }
+
     private CrmWhatsappAiConfig config() {
         CrmWhatsappAiConfig config = new CrmWhatsappAiConfig();
         config.setModo(CrmWhatsappAiMode.SUGERENCIAS);
@@ -1191,5 +2933,57 @@ class CrmWhatsappAiEngineServiceTest {
         CrmWhatsappAiConfig config = config();
         config.setIntencionesPermitidas(config.getIntencionesPermitidas() + "," + intent);
         return config;
+    }
+
+    private ExecutionResult shippingKnowledge() {
+        return new ExecutionResult(
+                List.of(java.util.Map.of("tool", "consultar_informacion_negocio", "sources", List.of(
+                        java.util.Map.of("title", "Envios", "category", "ENVIOS",
+                                "content", "Realizamos envios a provincia mediante Shalom y recojo en almacen.")))),
+                List.of(java.util.Map.of("tool", "consultar_informacion_negocio", "status", "OK")),
+                List.of(java.util.Map.of("tool", "consultar_informacion_negocio")), List.of());
+    }
+
+    private ExecutionResult promotionExecutionForAlessia() {
+        return new ExecutionResult(
+                List.of(java.util.Map.of(
+                        "tool", "consultar_promociones",
+                        "query", "ALESSIA RAYAS",
+                        "page", 0,
+                        "pageSize", 10,
+                        "total", 1,
+                        "hasMore", false,
+                        "promotions", List.of(java.util.Map.of(
+                                "promotionId", 46,
+                                "name", "combo 46",
+                                "comboPrice", 155,
+                                "products", List.of(
+                                        java.util.Map.of("name", "ALICE RAYAS", "quantity", 1),
+                                        java.util.Map.of("name", "ALESSIA RAYAS", "quantity", 1)))))),
+                List.of(), List.of(), List.of());
+    }
+
+    private ExecutionResult promotionExecution(String query, List<java.util.Map<String, Object>> promotions) {
+        java.util.Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("tool", "consultar_promociones");
+        result.put("query", query);
+        result.put("page", 0);
+        result.put("pageSize", 10);
+        result.put("total", promotions.size());
+        result.put("hasMore", false);
+        result.put("promotions", promotions);
+        return new ExecutionResult(List.of(result), List.of(), List.of(), List.of());
+    }
+
+    private java.util.Map<String, Object> promotionMap(int id, String name, int comboPrice,
+            int regularPrice, int savings, List<java.util.Map<String, Object>> products) {
+        java.util.Map<String, Object> promotion = new java.util.LinkedHashMap<>();
+        promotion.put("promotionId", id);
+        promotion.put("name", name);
+        promotion.put("comboPrice", comboPrice);
+        promotion.put("regularPrice", regularPrice);
+        promotion.put("savings", savings);
+        promotion.put("products", products);
+        return promotion;
     }
 }

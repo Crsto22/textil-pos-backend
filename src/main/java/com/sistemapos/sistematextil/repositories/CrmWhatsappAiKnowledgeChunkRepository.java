@@ -33,4 +33,8 @@ public interface CrmWhatsappAiKnowledgeChunkRepository extends JpaRepository<Crm
     @Modifying
     @Query("delete from CrmWhatsappAiKnowledgeChunk c where c.article.idKnowledgeArticle = :articleId and c.articleVersion = :version")
     void deleteVersion(@Param("articleId") Long articleId, @Param("version") Integer version);
+
+    @Modifying
+    @Query("delete from CrmWhatsappAiKnowledgeChunk c where c.article.idKnowledgeArticle = :articleId")
+    void deleteAllByArticleId(@Param("articleId") Long articleId);
 }

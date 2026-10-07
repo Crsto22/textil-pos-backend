@@ -81,6 +81,19 @@ class CrmWhatsappEcommerceOrderParserTest {
     }
 
     @Test
+    void parsesOneProductWithTwoSizesAsTwoCartLines() {
+        var order = parser.parse("Agrega EMMA chocolate talla S y talla XS");
+
+        assertTrue(order.recognized());
+        assertEquals(2, order.items().size());
+        assertEquals("EMMA chocolate", order.items().getFirst().productName());
+        assertEquals("S", order.items().getFirst().size());
+        assertEquals("XS", order.items().get(1).size());
+        assertEquals(1, order.items().getFirst().quantity());
+        assertEquals(1, order.items().get(1).quantity());
+    }
+
+    @Test
     void ignoresOrdinaryWhatsappMessages() {
         assertFalse(parser.parse("Hola, tienes vestidos disponibles?").recognized());
     }

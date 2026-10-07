@@ -36,6 +36,12 @@ public class CrmWhatsappEcommerceOrderParser {
             "(?iu)^\\s*" + COMPACT_PREFIX
                     + "(.+?)\\s+(?:\\|\\s*)?talla\\s*:?\\s*([^\\s|]+)"
                     + "\\s+(?:\\|\\s*)?cantidad\\s*:?\\s*(\\d+)\\s*$");
+    private static final Pattern COMPACT_MULTIPLE_SIZES = Pattern.compile(
+            "(?iu)^\\s*(?:hola\\s*[,!]\\s*)?"
+                    + "(?:quiero|deseo|quisiera|dame|agrega|anade|añade|llevo)\\s+"
+                    + "(?:comprar\\s+)?(.+?)\\s+talla\\s*:?\\s*(xxl|xl|xs|s|m|l)"
+                    + "\\s*(?:,|y)\\s*(?:talla\\s*:?\\s*)?(xxl|xl|xs|s|m|l)"
+                    + "(?:\\s+cantidad\\s*:?\\s*(\\d+))?\\s*$");
 
     public EcommerceWhatsappOrder parse(String body) {
         String text = body == null ? "" : body.replace("\r\n", "\n").replace('\r', '\n').trim();
@@ -52,6 +58,16 @@ public class CrmWhatsappEcommerceOrderParser {
 
     private EcommerceWhatsappOrder parseCompact(String text) {
         String singleLine = text.replaceAll("\\s+", " ").trim();
+        Matcher multipleSizes = COMPACT_MULTIPLE_SIZES.matcher(singleLine);
+        if (multipleSizes.matches()) {
+            int quantity = integer(multipleSizes.group(4)) == null ? 1 : integer(multipleSizes.group(4));
+            return new EcommerceWhatsappOrder(true, List.of(
+                    new EcommerceWhatsappOrderItem(clean(multipleSizes.group(1)), "",
+                            clean(multipleSizes.group(2)), quantity, null, null),
+                    new EcommerceWhatsappOrderItem(clean(multipleSizes.group(1)), "",
+                            clean(multipleSizes.group(3)), quantity, null, null)),
+                    null, null, null, List.of());
+        }
         Matcher explicit = COMPACT_WITH_COLOR.matcher(singleLine);
         if (explicit.matches()) {
             return compactOrder(explicit.group(1), explicit.group(2), explicit.group(3), explicit.group(4));

@@ -80,6 +80,18 @@ public class CrmWhatsappAiConfig {
     @Column(name = "transferir_asunto_sensible", nullable = false)
     private Boolean transferirAsuntoSensible;
 
+    @Column(name = "transferir_imagenes_asesora", nullable = false)
+    private Boolean transferirImagenesAsesora;
+
+    @Column(name = "mostrar_productos_nuevos", nullable = false)
+    private Boolean mostrarProductosNuevos;
+
+    @Column(name = "mandar_catalogo_imagenes", nullable = false)
+    private Boolean mandarCatalogoImagenes;
+
+    @Column(name = "sugerir_promociones_carrito", nullable = false)
+    private Boolean sugerirPromocionesCarrito;
+
     @Column(name = "gemini_api_key_ciphertext", columnDefinition = "TEXT")
     private String geminiApiKeyCiphertext;
 
@@ -114,6 +126,12 @@ public class CrmWhatsappAiConfig {
     @Column(name = "automatic_rollout_percent", nullable = false)
     private Integer automaticRolloutPercent;
 
+    @Column(name = "natural_response_enabled", nullable = false)
+    private Boolean naturalResponseEnabled;
+
+    @Column(name = "natural_response_rollout_percent", nullable = false)
+    private Integer naturalResponseRolloutPercent;
+
     @Column(name = "operational_status", nullable = false, length = 30)
     private String operationalStatus;
 
@@ -138,7 +156,13 @@ public class CrmWhatsappAiConfig {
         LocalDateTime now = LocalDateTime.now();
         createdAt = now;
         updatedAt = now;
+        if (transferirImagenesAsesora == null) transferirImagenesAsesora = false;
+        if (mostrarProductosNuevos == null) mostrarProductosNuevos = false;
+        if (mandarCatalogoImagenes == null) mandarCatalogoImagenes = false;
+        if (sugerirPromocionesCarrito == null) sugerirPromocionesCarrito = false;
         if (automaticRolloutPercent == null) automaticRolloutPercent = 0;
+        if (naturalResponseEnabled == null) naturalResponseEnabled = false;
+        if (naturalResponseRolloutPercent == null) naturalResponseRolloutPercent = 0;
         if (operationalStatus == null || operationalStatus.isBlank()) operationalStatus = "ACTIVE";
     }
 

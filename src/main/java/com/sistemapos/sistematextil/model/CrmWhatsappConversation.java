@@ -130,6 +130,7 @@ public class CrmWhatsappConversation {
             attentionQueue = CrmWhatsappAttentionQueue.PAYMENT_VERIFICATION;
         } else if (waitingReason == CrmWhatsappWaitingReason.AI_DISABLED
                 || waitingReason == CrmWhatsappWaitingReason.ADVISOR_REQUIRED
+                || waitingReason == CrmWhatsappWaitingReason.IMAGE_RECEIVED
                 || aiAttentionMode == CrmWhatsappAiAttentionMode.HUMANA) {
             attentionQueue = CrmWhatsappAttentionQueue.ADVISOR_REQUIRED;
             if (waitingReason == null) {

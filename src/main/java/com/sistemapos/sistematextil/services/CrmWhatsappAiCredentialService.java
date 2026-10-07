@@ -195,7 +195,12 @@ public class CrmWhatsappAiCredentialService {
         config.setTransferirBajaConfianza(true);
         config.setTransferirSolicitudHumana(true);
         config.setTransferirAsuntoSensible(true);
+        config.setTransferirImagenesAsesora(false);
+        config.setMostrarProductosNuevos(false);
+        config.setSugerirPromocionesCarrito(false);
         config.setAutomaticRolloutPercent(0);
+        config.setNaturalResponseEnabled(true);
+        config.setNaturalResponseRolloutPercent(0);
         config.setOperationalStatus(CrmWhatsappAiOperationsService.ACTIVE);
         return config;
     }

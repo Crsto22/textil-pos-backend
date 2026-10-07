@@ -15,10 +15,30 @@ import com.sistemapos.sistematextil.model.CrmWhatsappMessage;
 import jakarta.persistence.LockModeType;
 
 public interface CrmWhatsappMessageRepository extends JpaRepository<CrmWhatsappMessage, Long> {
+    boolean existsByConversation_IdConversationAndDirection(Long conversationId, String direction);
+
     Optional<CrmWhatsappMessage> findFirstByConversation_IdConversationAndRelatedSaleIdAndReceiptFormatAndDeletedAtIsNull(
             Long conversationId, Integer relatedSaleId, String receiptFormat);
     List<CrmWhatsappMessage> findByConversation_IdConversationOrderByCreatedAtAsc(Long idConversation);
     Optional<CrmWhatsappMessage> findFirstByWhatsappMessageId(String whatsappMessageId);
+
+    @Query("""
+            SELECT m
+            FROM CrmWhatsappMessage m
+            WHERE m.conversation.idConversation = :conversationId
+              AND m.direction = 'OUTGOING'
+              AND m.origin = 'AI_AUTOMATIC'
+              AND m.messageType = 'TEXT'
+              AND m.body = :body
+              AND m.deletedAt IS NULL
+              AND m.createdAt >= :createdAfter
+            ORDER BY m.createdAt DESC, m.idMessage DESC
+            """)
+    List<CrmWhatsappMessage> findRecentIdenticalAutomaticTexts(
+            @Param("conversationId") Long conversationId,
+            @Param("body") String body,
+            @Param("createdAfter") java.time.LocalDateTime createdAfter,
+            Pageable pageable);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT m FROM CrmWhatsappMessage m WHERE m.idMessage = :id")
@@ -33,6 +53,19 @@ public interface CrmWhatsappMessageRepository extends JpaRepository<CrmWhatsappM
             """)
     List<CrmWhatsappMessage> findRecentActiveMessages(
             @Param("conversationId") Long conversationId,
+            Pageable pageable);
+
+    @Query("""
+            SELECT m
+            FROM CrmWhatsappMessage m
+            WHERE m.conversation.idConversation = :conversationId
+              AND m.idMessage <= :anchorMessageId
+              AND m.deletedAt IS NULL
+            ORDER BY m.idMessage DESC
+            """)
+    List<CrmWhatsappMessage> findActiveMessagesEndingAt(
+            @Param("conversationId") Long conversationId,
+            @Param("anchorMessageId") Long anchorMessageId,
             Pageable pageable);
 
     @Query("""
@@ -115,6 +148,19 @@ public interface CrmWhatsappMessageRepository extends JpaRepository<CrmWhatsappM
             WHERE m.mediaStoragePath IS NOT NULL AND m.mediaStoragePath <> ''
             """)
     List<String> findAllMediaStoragePaths();
+
+    @Query("""
+            SELECT m.mediaStoragePath
+            FROM CrmWhatsappMessage m
+            WHERE m.conversation.idConversation = :conversationId
+              AND m.mediaStoragePath IS NOT NULL
+              AND m.mediaStoragePath <> ''
+            """)
+    List<String> findMediaStoragePathsByConversationId(@Param("conversationId") Long conversationId);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = "DELETE FROM crm_whatsapp_message WHERE id_conversation = :conversationId", nativeQuery = true)
+    int deleteByConversationId(@Param("conversationId") Long conversationId);
 
     @Modifying
     @Query(value = "DELETE FROM crm_whatsapp_message", nativeQuery = true)

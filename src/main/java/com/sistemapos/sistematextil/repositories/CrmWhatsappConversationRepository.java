@@ -52,6 +52,10 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
     @Query(value = "DELETE FROM crm_whatsapp_conversation", nativeQuery = true)
     int deleteAllWhatsappConversations();
 
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = "DELETE FROM crm_whatsapp_conversation WHERE id_conversation = :conversationId", nativeQuery = true)
+    int deleteWhatsappConversationById(@Param("conversationId") Long conversationId);
+
     @Query(value = """
             SELECT c
             FROM CrmWhatsappConversation c
@@ -74,6 +78,7 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
                     AND (c.waitingReason IN (
                           com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.ADVISOR_REQUIRED,
                           com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.AI_DISABLED,
+                          com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.IMAGE_RECEIVED,
                           com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.PAYMENT_VERIFICATION)
                          OR c.aiAttentionMode = com.sistemapos.sistematextil.model.CrmWhatsappAiAttentionMode.HUMANA)))
               AND (:isAdmin = true
@@ -117,6 +122,7 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
                     AND (c.waitingReason IN (
                           com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.ADVISOR_REQUIRED,
                           com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.AI_DISABLED,
+                          com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.IMAGE_RECEIVED,
                           com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.PAYMENT_VERIFICATION)
                          OR c.aiAttentionMode = com.sistemapos.sistematextil.model.CrmWhatsappAiAttentionMode.HUMANA)))
               AND (:isAdmin = true
@@ -191,6 +197,7 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
                                      AND (c.waitingReason IN (
                                           com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.ADVISOR_REQUIRED,
                                           com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.AI_DISABLED,
+                                          com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.IMAGE_RECEIVED,
                                           com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.PAYMENT_VERIFICATION)
                                           OR c.aiAttentionMode = com.sistemapos.sistematextil.model.CrmWhatsappAiAttentionMode.HUMANA)
                                 THEN 1 ELSE 0 END), 0),

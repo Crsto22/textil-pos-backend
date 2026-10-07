@@ -169,6 +169,10 @@ public class CrmWhatsappSchemaMigration implements ApplicationRunner {
                       transferir_baja_confianza BOOLEAN NOT NULL DEFAULT TRUE,
                       transferir_solicitud_humana BOOLEAN NOT NULL DEFAULT TRUE,
                       transferir_asunto_sensible BOOLEAN NOT NULL DEFAULT TRUE,
+                      transferir_imagenes_asesora BOOLEAN NOT NULL DEFAULT FALSE,
+                      mostrar_productos_nuevos BOOLEAN NOT NULL DEFAULT FALSE,
+                      mandar_catalogo_imagenes BOOLEAN NOT NULL DEFAULT FALSE,
+                      sugerir_promociones_carrito BOOLEAN NOT NULL DEFAULT FALSE,
                       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       PRIMARY KEY (id_ai_config),
@@ -370,6 +374,12 @@ public class CrmWhatsappSchemaMigration implements ApplicationRunner {
                       media_mime_type VARCHAR(120) NULL,
                       media_file_name VARCHAR(255) NULL,
                       media_caption VARCHAR(1000) NULL,
+                      secondary_media_reference VARCHAR(1000) NULL,
+                      secondary_media_mime_type VARCHAR(120) NULL,
+                      secondary_media_file_name VARCHAR(255) NULL,
+                      guide_outgoing_message_id BIGINT NULL,
+                      prelude_outgoing_message_id BIGINT NULL,
+                      initial_conversation_response BOOLEAN NOT NULL DEFAULT FALSE,
                       delivery_type VARCHAR(30) NOT NULL DEFAULT 'AUTOMATIC_RESPONSE',
                       status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
                       attempts INT NOT NULL DEFAULT 0,
@@ -401,6 +411,13 @@ public class CrmWhatsappSchemaMigration implements ApplicationRunner {
             addColumnIfMissing(connection, statement, "crm_whatsapp_ai_delivery", "media_mime_type", "VARCHAR(120) NULL");
             addColumnIfMissing(connection, statement, "crm_whatsapp_ai_delivery", "media_file_name", "VARCHAR(255) NULL");
             addColumnIfMissing(connection, statement, "crm_whatsapp_ai_delivery", "media_caption", "VARCHAR(1000) NULL");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_ai_delivery", "secondary_media_reference", "VARCHAR(1000) NULL");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_ai_delivery", "secondary_media_mime_type", "VARCHAR(120) NULL");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_ai_delivery", "secondary_media_file_name", "VARCHAR(255) NULL");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_ai_delivery", "guide_outgoing_message_id", "BIGINT NULL");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_ai_delivery", "prelude_outgoing_message_id", "BIGINT NULL");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_ai_delivery", "initial_conversation_response",
+                    "BOOLEAN NOT NULL DEFAULT FALSE");
             addColumnIfMissing(connection, statement, "crm_whatsapp_ai_delivery", "text_body", "VARCHAR(2000) NULL");
             addColumnIfMissing(connection, statement, "crm_whatsapp_ai_delivery", "idempotency_key", "VARCHAR(160) NULL");
             statement.execute("ALTER TABLE crm_whatsapp_ai_delivery MODIFY id_ai_run BIGINT NULL");
@@ -881,6 +898,18 @@ public class CrmWhatsappSchemaMigration implements ApplicationRunner {
                     "DECIMAL(12,6) NULL");
             addColumnIfMissing(connection, statement, "crm_whatsapp_ai_config", "automatic_rollout_percent",
                     "INT NOT NULL DEFAULT 0");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_ai_config", "natural_response_enabled",
+                    "BOOLEAN NOT NULL DEFAULT FALSE");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_ai_config", "natural_response_rollout_percent",
+                    "INT NOT NULL DEFAULT 0");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_ai_config", "transferir_imagenes_asesora",
+                    "BOOLEAN NOT NULL DEFAULT FALSE");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_ai_config", "mostrar_productos_nuevos",
+                    "BOOLEAN NOT NULL DEFAULT FALSE");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_ai_config", "mandar_catalogo_imagenes",
+                    "BOOLEAN NOT NULL DEFAULT FALSE");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_ai_config", "sugerir_promociones_carrito",
+                    "BOOLEAN NOT NULL DEFAULT FALSE");
             addColumnIfMissing(connection, statement, "crm_whatsapp_ai_config", "operational_status",
                     "VARCHAR(30) NOT NULL DEFAULT 'ACTIVE'");
             addColumnIfMissing(connection, statement, "crm_whatsapp_ai_config", "operational_reason",
@@ -895,6 +924,18 @@ public class CrmWhatsappSchemaMigration implements ApplicationRunner {
                     "DECIMAL(12,6) NULL");
             addColumnIfMissing(connection, statement, "crm_whatsapp_ai_run", "estimated_cost_usd",
                     "DECIMAL(14,8) NULL");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_ai_run", "natural_response_used",
+                    "BOOLEAN NOT NULL DEFAULT FALSE");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_ai_run", "fallback_used",
+                    "BOOLEAN NOT NULL DEFAULT FALSE");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_ai_run", "fallback_reason",
+                    "VARCHAR(500) NULL");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_ai_run", "classification_latency_ms",
+                    "BIGINT NULL");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_ai_run", "tool_latency_ms",
+                    "BIGINT NULL");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_ai_run", "draft_latency_ms",
+                    "BIGINT NULL");
             statement.execute("""
                     CREATE TABLE IF NOT EXISTS crm_whatsapp_ai_audit_event (
                       id_audit_event BIGINT NOT NULL AUTO_INCREMENT,
@@ -1005,6 +1046,17 @@ public class CrmWhatsappSchemaMigration implements ApplicationRunner {
                     FROM crm_whatsapp_connection c
                     JOIN crm_whatsapp_business_hours h ON h.id_connection = c.id_connection
                     GROUP BY c.id_connection
+                    """);
+            statement.execute("""
+                    INSERT IGNORE INTO crm_whatsapp_ai_knowledge_article
+                      (id_connection, title, category, content, keywords, status, active_version, pending_version, source_key)
+                    SELECT c.id_connection,
+                           'Venta y tallas de conjuntos',
+                           'POLITICAS',
+                           'Cada producto registrado en Kiments representa un conjunto completo. Las piezas del conjunto no se venden por separado y todas corresponden a una misma talla. No es posible combinar tallas diferentes entre sus piezas; por ejemplo, no se puede elegir un chaleco talla M con un pantalon talla L. Se puede consultar la guia de medidas del modelo para elegir la talla adecuada.',
+                           'conjunto, piezas, separado, chaleco, pantalon, combinar tallas, talla diferente, guia de medidas',
+                           'INDEXANDO', 0, 1, 'POLITICA_CONJUNTOS_TALLA_UNICA'
+                    FROM crm_whatsapp_connection c
                     """);
             for (String intent : new String[] {
                     "ENVIOS", "TIENDAS", "POLITICAS", "CUIDADOS", "FAQ", "INSTITUCIONAL", "INFORMACION_NEGOCIO"

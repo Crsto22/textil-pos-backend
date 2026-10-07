@@ -148,6 +148,89 @@ public interface SucursalStockRepository extends JpaRepository<SucursalStock, In
             Pageable pageable);
 
     @Query("""
+            SELECT p.idProducto
+            FROM SucursalStock ss
+            JOIN ss.productoVariante v
+            JOIN v.producto p
+            JOIN v.talla t
+            WHERE ss.sucursal.idSucursal = :idSucursal
+              AND ss.cantidad > 0
+              AND v.deletedAt IS NULL
+              AND p.deletedAt IS NULL
+              AND v.estado = 'ACTIVO'
+              AND p.estado = 'ACTIVO'
+              AND p.publicarEcommerce = true
+              AND (p.preventa = false OR p.preventa IS NULL)
+              AND (:talla = '' OR UPPER(TRIM(t.nombre)) = UPPER(:talla))
+            GROUP BY p.idProducto, p.nombre
+            ORDER BY p.nombre ASC
+            """)
+    List<Integer> listarIdsProductosEcommerceEntregaInmediataParaIa(
+            @Param("idSucursal") Integer idSucursal,
+            @Param("talla") String talla,
+            Pageable pageable);
+
+    @Query("""
+            SELECT p.idProducto
+            FROM SucursalStock ss
+            JOIN ss.productoVariante v
+            JOIN v.producto p
+            WHERE ss.sucursal.idSucursal = :idSucursal
+              AND ss.cantidad > 0
+              AND v.deletedAt IS NULL
+              AND p.deletedAt IS NULL
+              AND v.estado = 'ACTIVO'
+              AND p.estado = 'ACTIVO'
+              AND p.publicarEcommerce = true
+              AND p.preventa = true
+              AND p.fechaEnvioPreventa IS NOT NULL
+            GROUP BY p.idProducto, p.nombre
+            ORDER BY p.nombre ASC
+            """)
+    List<Integer> listarIdsProductosEcommercePreventaParaIa(
+            @Param("idSucursal") Integer idSucursal,
+            Pageable pageable);
+
+    @Query("""
+            SELECT p.idProducto AS productId,
+                   p.nombre AS productName,
+                   p.imagenGlobalUrl AS globalImageUrl,
+                   p.imagenGlobalThumbUrl AS globalThumbnailUrl,
+                   p.preventa AS preorder,
+                   p.fechaEnvioPreventa AS preorderShippingDate,
+                   p.fechaCreacion AS createdAt
+            FROM SucursalStock ss
+            JOIN ss.productoVariante v
+            JOIN v.producto p
+            WHERE ss.sucursal.idSucursal = :idSucursal
+              AND ss.cantidad > 0
+              AND v.deletedAt IS NULL
+              AND p.deletedAt IS NULL
+              AND v.estado = 'ACTIVO'
+              AND p.estado = 'ACTIVO'
+              AND p.publicarEcommerce = true
+              AND p.fechaCreacion >= :createdAfter
+              AND p.imagenGlobalUrl IS NOT NULL
+              AND TRIM(p.imagenGlobalUrl) <> ''
+            GROUP BY p.idProducto, p.nombre, p.imagenGlobalUrl, p.imagenGlobalThumbUrl,
+                     p.preventa, p.fechaEnvioPreventa, p.fechaCreacion
+            ORDER BY p.fechaCreacion DESC, p.idProducto DESC
+            """)
+    List<NewEcommerceProductView> listarProductosEcommerceNuevosParaIa(
+            @Param("idSucursal") Integer idSucursal,
+            @Param("createdAfter") java.time.LocalDateTime createdAfter);
+
+    interface NewEcommerceProductView {
+        Integer getProductId();
+        String getProductName();
+        String getGlobalImageUrl();
+        String getGlobalThumbnailUrl();
+        Boolean getPreorder();
+        java.time.LocalDate getPreorderShippingDate();
+        java.time.LocalDateTime getCreatedAt();
+    }
+
+    @Query("""
             SELECT p.idProducto AS productId, p.nombre AS productName
             FROM SucursalStock ss
             JOIN ss.productoVariante v

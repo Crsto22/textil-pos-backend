@@ -3,6 +3,7 @@ package com.sistemapos.sistematextil.services;
 import java.math.BigDecimal;
 import java.text.Normalizer;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -37,6 +38,7 @@ import com.sistemapos.sistematextil.repositories.SucursalStockRepository;
 import com.sistemapos.sistematextil.repositories.SucursalStockRepository.EcommerceProductNameView;
 import com.sistemapos.sistematextil.repositories.VentaRepository;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceInicioComboResponse;
+import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
 
 import lombok.RequiredArgsConstructor;
 
@@ -46,6 +48,8 @@ public class CrmWhatsappAiCommercialQueryService {
 
     private static final int MAX_PRODUCTS = 10;
     private static final int MAX_VARIANTS = 20;
+    private static final int MAX_PROMOTIONS = 10;
+    private static final int PROMOTION_FETCH_SIZE = 24;
 
     private final SucursalStockRepository stockRepository;
     private final ProductoColorImagenRepository imageRepository;
@@ -72,6 +76,50 @@ public class CrmWhatsappAiCommercialQueryService {
     @Transactional(readOnly = true)
     public CatalogResult searchProducts(
             CrmWhatsappConversation conversation, String query, int page, String fallbackProduct) {
+        return searchProducts(conversation, query, page, fallbackProduct, false, false, "");
+    }
+
+    @Transactional(readOnly = true)
+    public List<NewProductResult> newProducts(CrmWhatsappConversation conversation, LocalDateTime createdAfter) {
+        CommercialContext context = requireContext(conversation);
+        LocalDateTime safeCreatedAfter = createdAfter == null
+                ? LocalDateTime.now().minusDays(3) : createdAfter;
+        return stockRepository.listarProductosEcommerceNuevosParaIa(
+                        context.branch().getIdSucursal(), safeCreatedAfter).stream()
+                .map(product -> new NewProductResult(
+                        product.getProductId(), clean(product.getProductName()),
+                        publicUrl(product.getGlobalImageUrl()), publicUrl(product.getGlobalThumbnailUrl()),
+                        Boolean.TRUE.equals(product.getPreorder()), product.getPreorderShippingDate(),
+                        product.getCreatedAt()))
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<ProductResult> latestCatalogProducts(CrmWhatsappConversation conversation, int limit) {
+        int safeLimit = Math.max(1, Math.min(limit, 3));
+        return newProducts(conversation, LocalDateTime.of(1970, 1, 1, 0, 0)).stream()
+                .limit(safeLimit)
+                .map(item -> searchProducts(conversation, item.name()).products().stream()
+                        .filter(product -> item.productId().equals(product.productId()))
+                        .findFirst().orElse(null))
+                .filter(java.util.Objects::nonNull)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public CatalogResult searchReadyStockProducts(
+            CrmWhatsappConversation conversation, String size, int page) {
+        return searchProducts(conversation, "", page, "", true, false, clean(size).toUpperCase(Locale.ROOT));
+    }
+
+    @Transactional(readOnly = true)
+    public CatalogResult searchPreorderProducts(CrmWhatsappConversation conversation, int page) {
+        return searchProducts(conversation, "", page, "", false, true, "");
+    }
+
+    private CatalogResult searchProducts(
+            CrmWhatsappConversation conversation, String query, int page, String fallbackProduct,
+            boolean readyStockOnly, boolean preorderOnly, String requiredSize) {
         CommercialContext context = requireContext(conversation);
         String term = limit(query, 80);
         int safePage = Math.max(0, Math.min(page, 10));
@@ -79,8 +127,15 @@ public class CrmWhatsappAiCommercialQueryService {
         List<Integer> productIds;
         boolean hasMore = false;
         if (term.isBlank()) {
-            productIds = stockRepository.listarIdsProductosEcommerceDisponiblesParaIa(
-                    context.branch().getIdSucursal(), PageRequest.of(safePage, MAX_PRODUCTS + 1));
+            productIds = preorderOnly
+                    ? stockRepository.listarIdsProductosEcommercePreventaParaIa(
+                            context.branch().getIdSucursal(), PageRequest.of(safePage, MAX_PRODUCTS + 1))
+                    : readyStockOnly
+                    ? stockRepository.listarIdsProductosEcommerceEntregaInmediataParaIa(
+                            context.branch().getIdSucursal(), requiredSize,
+                            PageRequest.of(safePage, MAX_PRODUCTS + 1))
+                    : stockRepository.listarIdsProductosEcommerceDisponiblesParaIa(
+                            context.branch().getIdSucursal(), PageRequest.of(safePage, MAX_PRODUCTS + 1));
             hasMore = productIds.size() > MAX_PRODUCTS;
             productIds = productIds.stream().limit(MAX_PRODUCTS).toList();
         } else {
@@ -113,6 +168,20 @@ public class CrmWhatsappAiCommercialQueryService {
                 ? List.of()
                 : stockRepository.listarVariantesEcommerceDisponiblesParaIa(
                         context.branch().getIdSucursal(), productIds);
+        if (readyStockOnly) {
+            stocks = stocks.stream()
+                    .filter(stock -> !preventaActiva(stock.getProductoVariante().getProducto()))
+                    .filter(stock -> requiredSize.isBlank()
+                            || (stock.getProductoVariante().getTalla() != null
+                                    && requiredSize.equalsIgnoreCase(clean(
+                                            stock.getProductoVariante().getTalla().getNombre()))))
+                    .toList();
+        }
+        if (preorderOnly) {
+            stocks = stocks.stream()
+                    .filter(stock -> preventaActiva(stock.getProductoVariante().getProducto()))
+                    .toList();
+        }
         Map<Integer, AvailabilitySummary> availability = summarizeAvailability(stocks);
 
         // A product detail query needs every color/size combination. The compact
@@ -133,6 +202,7 @@ public class CrmWhatsappAiCommercialQueryService {
             ProductBuilder builder = grouped.computeIfAbsent(product.getIdProducto(), ignored -> new ProductBuilder(
                     product.getIdProducto(), clean(product.getNombre()),
                     product.getCategoria() == null ? "" : clean(product.getCategoria().getNombreCategoria()),
+                    clean(product.getDescripcion()),
                     clean(product.getSlug()), ecommerceUrl(product.getSlug()),
                     preventaActiva(product), preventaActiva(product) ? product.getFechaEnvioPreventa() : null,
                     publicUrl(product.getImagenGlobalUrl()), publicUrl(product.getImagenGlobalThumbUrl()),
@@ -221,24 +291,166 @@ public class CrmWhatsappAiCommercialQueryService {
 
     @Transactional(readOnly = true)
     public PromotionCatalogResult promotions(CrmWhatsappConversation conversation, String productQuery, int page) {
+        return promotions(conversation, productQuery, page, null, null);
+    }
+
+    @Transactional(readOnly = true)
+    public PromotionCatalogResult promotions(CrmWhatsappConversation conversation, String productQuery, int page,
+            Integer sameProductQuantity, Integer promotionNumber) {
         CommercialContext context = requireContext(conversation);
         Set<Integer> requestedProducts = Set.of();
         String query = limit(productQuery, 80);
         if (!query.isBlank()) {
             requestedProducts = searchProducts(conversation, query).products().stream()
                     .map(ProductResult::productId).collect(java.util.stream.Collectors.toSet());
+            if (requestedProducts.isEmpty()) {
+                return new PromotionCatalogResult(context.branch().getIdSucursal(), query,
+                        Math.max(0, page), MAX_PROMOTIONS, 0, false,
+                        List.of(), null, null);
+            }
         }
         Set<Integer> availableProducts = new LinkedHashSet<>(
                 stockRepository.listarIdsProductosEcommerceDisponiblesParaIa(
                         context.branch().getIdSucursal(), PageRequest.of(0, 1000)));
         final Set<Integer> productFilter = requestedProducts;
-        List<PromotionResult> promotions = promotionService.listarPublicas(Math.max(0, page), 24).content().stream()
+        List<PromotionResult> availablePromotions = allPublicPromotions().stream()
                 .filter(combo -> combo.items().stream().allMatch(item -> availableProducts.contains(item.idProducto())))
                 .filter(combo -> productFilter.isEmpty()
                         || combo.items().stream().anyMatch(item -> productFilter.contains(item.idProducto())))
                 .map(this::promotionResult)
+                .filter(promotion -> promotionNumber == null
+                        || promotion.promotionId().equals(promotionNumber)
+                        || normalizeForMatch(promotion.name()).equals("combo " + promotionNumber))
+                .filter(promotion -> sameProductQuantity == null || sameProductQuantity < 2
+                        || promotion.products().stream()
+                                .anyMatch(product -> product.quantity() >= sameProductQuantity))
                 .toList();
-        return new PromotionCatalogResult(context.branch().getIdSucursal(), query, promotions);
+        int safePage = Math.max(0, page);
+        int from = Math.min(safePage * MAX_PROMOTIONS, availablePromotions.size());
+        int to = Math.min(from + MAX_PROMOTIONS, availablePromotions.size());
+        List<PromotionResult> selected = availablePromotions.subList(from, to);
+        PromotionResult cheapest = availablePromotions.stream()
+                .min(Comparator.comparing(PromotionResult::comboPrice)
+                        .thenComparing(PromotionResult::promotionId))
+                .orElse(null);
+        PromotionResult mostExpensive = availablePromotions.stream()
+                .max(Comparator.comparing(PromotionResult::comboPrice)
+                        .thenComparing(PromotionResult::promotionId))
+                .orElse(null);
+        return new PromotionCatalogResult(context.branch().getIdSucursal(), query, safePage,
+                MAX_PROMOTIONS, availablePromotions.size(), to < availablePromotions.size(),
+                selected, cheapest, mostExpensive);
+    }
+
+    @Transactional(readOnly = true)
+    public PromotionResult sameProductPromotion(
+            CrmWhatsappConversation conversation, Integer productId, int quantity) {
+        if (productId == null || quantity < 2) return null;
+        CommercialContext context = requireContext(conversation);
+        Set<Integer> availableProducts = new LinkedHashSet<>(
+                stockRepository.listarIdsProductosEcommerceDisponiblesParaIa(
+                        context.branch().getIdSucursal(), PageRequest.of(0, 1000)));
+        if (!availableProducts.contains(productId)) return null;
+        return allPublicPromotions().stream()
+                .filter(combo -> combo.items().stream()
+                        .allMatch(item -> availableProducts.contains(item.idProducto())))
+                .map(this::promotionResult)
+                .filter(promotion -> !promotion.products().isEmpty())
+                .filter(promotion -> promotion.products().stream()
+                        .allMatch(product -> productId.equals(product.productId())))
+                .filter(promotion -> promotion.products().stream()
+                        .mapToInt(product -> product.quantity() == null ? 0 : product.quantity())
+                        .sum() == quantity)
+                .min(Comparator.comparing(PromotionResult::comboPrice)
+                        .thenComparing(PromotionResult::promotionId))
+                .orElse(null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<PromotionSuggestionResult> suggestedPromotions(
+            CrmWhatsappConversation conversation, Map<Integer, Integer> cartQuantities, int limit) {
+        CommercialContext context = requireContext(conversation);
+        Map<Integer, Integer> quantities = cartQuantities == null ? Map.of() : cartQuantities;
+        if (quantities.isEmpty()) return List.of();
+        Set<Integer> availableProducts = new LinkedHashSet<>(
+                stockRepository.listarIdsProductosEcommerceDisponiblesParaIa(
+                        context.branch().getIdSucursal(), PageRequest.of(0, 1000)));
+        return allPublicPromotions().stream()
+                .filter(combo -> combo.items().stream().allMatch(item -> availableProducts.contains(item.idProducto())))
+                .map(this::promotionResult)
+                .filter(promotion -> promotion.savings() != null && promotion.savings().signum() > 0)
+                .filter(promotion -> promotion.products().stream()
+                        .anyMatch(product -> quantities.containsKey(product.productId())))
+                .map(promotion -> {
+                    List<PromotionMissingProduct> missing = promotion.products().stream()
+                            .map(product -> new PromotionMissingProduct(product.productId(), product.name(),
+                                    Math.max(0, product.quantity()
+                                            - quantities.getOrDefault(product.productId(), 0))))
+                            .filter(product -> product.quantity() > 0)
+                            .toList();
+                    int missingUnits = missing.stream().mapToInt(PromotionMissingProduct::quantity).sum();
+                    return new PromotionSuggestionResult(promotion, missing, missingUnits);
+                })
+                .filter(suggestion -> suggestion.missingUnits() > 0)
+                .sorted(Comparator.comparingInt(PromotionSuggestionResult::missingUnits)
+                        .thenComparing((PromotionSuggestionResult value) -> value.promotion().savings(),
+                                Comparator.reverseOrder())
+                        .thenComparing(value -> value.promotion().promotionId()))
+                .limit(Math.max(1, Math.min(limit, 3)))
+                .toList();
+    }
+
+    private List<EcommerceInicioComboResponse> allPublicPromotions() {
+        List<EcommerceInicioComboResponse> result = new ArrayList<>();
+        for (int page = 0; page < 100; page++) {
+            PagedResponse<EcommerceInicioComboResponse> current =
+                    promotionService.listarPublicas(page, PROMOTION_FETCH_SIZE);
+            result.addAll(current.content());
+            if (current.last() || current.content().isEmpty()) break;
+        }
+        return result;
+    }
+
+    @Transactional(readOnly = true)
+    public ProductPriceExtremeResult productPriceExtreme(
+            CrmWhatsappConversation conversation, boolean highest) {
+        CommercialContext context = requireContext(conversation);
+        List<Integer> productIds = stockRepository.listarIdsProductosEcommerceDisponiblesParaIa(
+                context.branch().getIdSucursal(), PageRequest.of(0, 1000));
+        List<SucursalStock> stocks = productIds.isEmpty()
+                ? List.of()
+                : stockRepository.listarVariantesEcommerceDisponiblesParaIa(
+                        context.branch().getIdSucursal(), productIds).stream()
+                        .filter(stock -> stock.getCantidad() != null && stock.getCantidad() > 0)
+                        .toList();
+        List<Integer> variantIds = stocks.stream()
+                .map(stock -> stock.getProductoVariante().getIdProductoVariante())
+                .distinct()
+                .toList();
+        Map<Integer, ProductoVarianteOfertaSucursal> offers = precioOfertaService
+                .obtenerOfertasSucursalPorVariantes(variantIds, context.branch().getIdSucursal());
+        Map<Integer, PricedProductResult> prices = new LinkedHashMap<>();
+        for (SucursalStock stock : stocks) {
+            ProductoVariante variant = stock.getProductoVariante();
+            Producto product = variant.getProducto();
+            PrecioOfertaService.ResultadoPrecioOferta resolved = precioOfertaService.resolver(
+                    variant, offers.get(variant.getIdProductoVariante()));
+            BigDecimal currentPrice = money(resolved.precioVigente());
+            if (currentPrice == null || currentPrice.signum() <= 0) continue;
+            PricedProductResult candidate = new PricedProductResult(
+                    product.getIdProducto(), clean(product.getNombre()), currentPrice,
+                    publicUrl(product.getImagenGlobalUrl()), publicUrl(product.getImagenGlobalThumbUrl()));
+            prices.merge(product.getIdProducto(), candidate,
+                    (left, right) -> left.price().compareTo(right.price()) <= 0 ? left : right);
+        }
+        Comparator<PricedProductResult> comparator = Comparator.comparing(PricedProductResult::price)
+                .thenComparing(PricedProductResult::name)
+                .thenComparing(PricedProductResult::productId);
+        Optional<PricedProductResult> selected = highest
+                ? prices.values().stream().max(comparator)
+                : prices.values().stream().min(comparator);
+        return new ProductPriceExtremeResult(context.branch().getIdSucursal(), highest ? "MAX" : "MIN",
+                selected.orElse(null));
     }
 
     @Transactional(readOnly = true)
@@ -475,6 +687,29 @@ public class CrmWhatsappAiCommercialQueryService {
                     : ProductResolution.ambiguous(mostSpecific);
         }
 
+        Set<String> queryTokens = new java.util.HashSet<>(List.of(normalizedQuery.split(" ")));
+        List<ProductNameMatch> unorderedExact = new ArrayList<>();
+        for (EcommerceProductNameView candidate : candidates) {
+            String productName = candidate == null ? "" : cleanStatic(candidate.getProductName());
+            String normalizedName = normalizeForMatch(productName);
+            if (normalizedName.isBlank()) continue;
+            boolean allNameTokensPresent = List.of(normalizedName.split(" ")).stream()
+                    .allMatch(queryTokens::contains);
+            if (allNameTokensPresent) {
+                unorderedExact.add(new ProductNameMatch(candidate.getProductId(), productName, 0));
+            }
+        }
+        if (!unorderedExact.isEmpty()) {
+            int longest = unorderedExact.stream()
+                    .mapToInt(match -> normalizeForMatch(match.productName()).length()).max().orElse(0);
+            List<ProductNameMatch> mostSpecific = unorderedExact.stream()
+                    .filter(match -> normalizeForMatch(match.productName()).length() == longest)
+                    .toList();
+            return mostSpecific.size() == 1
+                    ? ProductResolution.unique("EXACT", false, mostSpecific.getFirst())
+                    : ProductResolution.ambiguous(mostSpecific);
+        }
+
         String[] queryWords = normalizedQuery.split(" ");
         List<ProductNameMatch> matches = new ArrayList<>();
         for (EcommerceProductNameView candidate : candidates) {
@@ -557,6 +792,7 @@ public class CrmWhatsappAiCommercialQueryService {
         return Normalizer.normalize(cleanStatic(value).toLowerCase(Locale.ROOT), Normalizer.Form.NFD)
                 .replaceAll("\\p{M}+", "")
                 .replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\benterizos?\\b", "entero")
                 .replaceAll("\\s+", " ")
                 .trim();
     }
@@ -597,6 +833,9 @@ public class CrmWhatsappAiCommercialQueryService {
         }
     }
     public record ProductCandidate(Integer productId, String name) {}
+    public record NewProductResult(Integer productId, String name, String globalImageUrl,
+            String globalThumbnailUrl, boolean preorder, LocalDate preorderShippingDate,
+            LocalDateTime createdAt) {}
     record ProductNameMatch(Integer productId, String productName, int distance) {}
     record ProductResolution(String status, boolean corrected, List<ProductNameMatch> matches) {
         static ProductResolution none() { return new ProductResolution("NONE", false, List.of()); }
@@ -612,20 +851,30 @@ public class CrmWhatsappAiCommercialQueryService {
     public record ProductResult(Integer productId, String name, String category, String slug, String ecommerceUrl,
             boolean preventa, LocalDate fechaEnvioPreventa, String globalImageUrl, String globalThumbnailUrl,
             String sizeGuideUrl, String sizeGuideThumbnailUrl,
-            List<String> availableColors, List<String> availableSizes, List<VariantResult> variants) {
+            List<String> availableColors, List<String> availableSizes, List<VariantResult> variants,
+            String description) {
+        public ProductResult(Integer productId, String name, String category, String slug, String ecommerceUrl,
+                boolean preventa, LocalDate fechaEnvioPreventa, String globalImageUrl, String globalThumbnailUrl,
+                String sizeGuideUrl, String sizeGuideThumbnailUrl,
+                List<String> availableColors, List<String> availableSizes, List<VariantResult> variants) {
+            this(productId, name, category, slug, ecommerceUrl, preventa, fechaEnvioPreventa,
+                    globalImageUrl, globalThumbnailUrl, sizeGuideUrl, sizeGuideThumbnailUrl,
+                    availableColors, availableSizes, variants, "");
+        }
+
         public ProductResult(Integer productId, String name, String category, String slug, String ecommerceUrl,
                 boolean preventa, LocalDate fechaEnvioPreventa,
                 String sizeGuideUrl, String sizeGuideThumbnailUrl,
                 List<String> availableColors, List<String> availableSizes, List<VariantResult> variants) {
             this(productId, name, category, slug, ecommerceUrl, preventa, fechaEnvioPreventa, "", "",
-                    sizeGuideUrl, sizeGuideThumbnailUrl, availableColors, availableSizes, variants);
+                    sizeGuideUrl, sizeGuideThumbnailUrl, availableColors, availableSizes, variants, "");
         }
 
         public ProductResult(Integer productId, String name, String category,
                 String sizeGuideUrl, String sizeGuideThumbnailUrl,
                 List<String> availableColors, List<String> availableSizes, List<VariantResult> variants) {
             this(productId, name, category, "", "", false, null, "", "", sizeGuideUrl, sizeGuideThumbnailUrl,
-                    availableColors, availableSizes, variants);
+                    availableColors, availableSizes, variants, "");
         }
     }
     public record VariantResult(Integer variantId, String sku, String barcode, String color, String size,
@@ -649,10 +898,18 @@ public class CrmWhatsappAiCommercialQueryService {
     public record PaymentMethodItem(Integer paymentMethodId, String name, String description,
             boolean requiresOperationCode, boolean requiresPaymentDate, boolean requiresPaymentTime,
             List<String> accounts) {}
-    public record PromotionCatalogResult(Integer branchId, String query, List<PromotionResult> promotions) {}
+    public record PromotionCatalogResult(Integer branchId, String query, int page, int pageSize,
+            int total, boolean hasMore, List<PromotionResult> promotions,
+            PromotionResult cheapest, PromotionResult mostExpensive) {}
     public record PromotionResult(Integer promotionId, String name, String rule, BigDecimal comboPrice,
             BigDecimal regularPrice, BigDecimal savings, List<PromotionProductResult> products) {}
     public record PromotionProductResult(Integer productId, String name, Integer quantity,
+            String imageUrl, String thumbnailUrl) {}
+    public record PromotionMissingProduct(Integer productId, String name, Integer quantity) {}
+    public record PromotionSuggestionResult(PromotionResult promotion,
+            List<PromotionMissingProduct> missingProducts, int missingUnits) {}
+    public record ProductPriceExtremeResult(Integer branchId, String order, PricedProductResult product) {}
+    public record PricedProductResult(Integer productId, String name, BigDecimal price,
             String imageUrl, String thumbnailUrl) {}
     public record OfferCatalogResult(Integer branchId, String query, List<OfferProductResult> products) {}
     public record OfferProductResult(Integer productId, String name, List<OfferVariantResult> variants) {}
@@ -664,17 +921,19 @@ public class CrmWhatsappAiCommercialQueryService {
             String currency, BigDecimal total, String status) {}
     public record ProductImage(String url, String thumbnailUrl) {}
 
-    private record ProductBuilder(Integer productId, String name, String category, String slug, String ecommerceUrl,
+    private record ProductBuilder(Integer productId, String name, String category, String description,
+            String slug, String ecommerceUrl,
             boolean preventa, LocalDate fechaEnvioPreventa,
             String globalImageUrl, String globalThumbUrl, String sizeGuideUrl, String sizeGuideThumbnailUrl,
             List<String> availableColors,
             List<String> availableSizes, List<VariantResult> variants) {
-        ProductBuilder(Integer productId, String name, String category, String slug, String ecommerceUrl,
+        ProductBuilder(Integer productId, String name, String category, String description,
+                String slug, String ecommerceUrl,
                 boolean preventa, LocalDate fechaEnvioPreventa,
                 String globalImageUrl, String globalThumbUrl,
                 String sizeGuideUrl, String sizeGuideThumbnailUrl,
                 List<String> availableColors, List<String> availableSizes) {
-            this(productId, name, category, slug, ecommerceUrl, preventa, fechaEnvioPreventa,
+            this(productId, name, category, description, slug, ecommerceUrl, preventa, fechaEnvioPreventa,
                     globalImageUrl, globalThumbUrl, sizeGuideUrl, sizeGuideThumbnailUrl,
                     availableColors, availableSizes, new ArrayList<>());
         }
@@ -682,7 +941,7 @@ public class CrmWhatsappAiCommercialQueryService {
         ProductResult build() {
             return new ProductResult(productId, name, category, slug, ecommerceUrl, preventa, fechaEnvioPreventa,
                     globalImageUrl, globalThumbUrl, sizeGuideUrl, sizeGuideThumbnailUrl,
-                    List.copyOf(availableColors), List.copyOf(availableSizes), List.copyOf(variants));
+                    List.copyOf(availableColors), List.copyOf(availableSizes), List.copyOf(variants), description);
         }
     }
 

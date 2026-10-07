@@ -26,6 +26,13 @@ public class CrmWhatsappAiDelivery {
     @Column(name = "media_mime_type", length = 120) private String mediaMimeType;
     @Column(name = "media_file_name", length = 255) private String mediaFileName;
     @Column(name = "media_caption", length = 1000) private String mediaCaption;
+    @Column(name = "secondary_media_reference", length = 1000) private String secondaryMediaReference;
+    @Column(name = "secondary_media_mime_type", length = 120) private String secondaryMediaMimeType;
+    @Column(name = "secondary_media_file_name", length = 255) private String secondaryMediaFileName;
+    @Column(name = "guide_outgoing_message_id") private Long guideOutgoingMessageId;
+    @Column(name = "prelude_outgoing_message_id") private Long preludeOutgoingMessageId;
+    @Column(name = "initial_conversation_response", nullable = false)
+    private Boolean initialConversationResponse;
     @Enumerated(EnumType.STRING)
     @Column(name = "delivery_type", nullable = false, length = 30) private CrmWhatsappAiDeliveryType deliveryType;
     @Enumerated(EnumType.STRING)
@@ -37,6 +44,6 @@ public class CrmWhatsappAiDelivery {
     @Column(name = "failure_reason", length = 1000) private String failureReason;
     @Column(name = "created_at", nullable = false, updatable = false) private LocalDateTime createdAt;
     @Column(name = "updated_at", nullable = false) private LocalDateTime updatedAt;
-    @PrePersist void onCreate() { LocalDateTime now = LocalDateTime.now(); createdAt = now; updatedAt = now; if (deliveryType == null) deliveryType = CrmWhatsappAiDeliveryType.AUTOMATIC_RESPONSE; if (status == null) status = CrmWhatsappAiDeliveryStatus.PENDING; if (attempts == null) attempts = 0; if (availableAt == null) availableAt = now; }
+    @PrePersist void onCreate() { LocalDateTime now = LocalDateTime.now(); createdAt = now; updatedAt = now; if (deliveryType == null) deliveryType = CrmWhatsappAiDeliveryType.AUTOMATIC_RESPONSE; if (status == null) status = CrmWhatsappAiDeliveryStatus.PENDING; if (attempts == null) attempts = 0; if (availableAt == null) availableAt = now; if (initialConversationResponse == null) initialConversationResponse = false; }
     @PreUpdate void onUpdate() { updatedAt = LocalDateTime.now(); }
 }

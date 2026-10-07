@@ -135,6 +135,15 @@ public class CrmWhatsappAiConfigService {
         int confianza = requireRange(request.confianzaMinima(), 50, 95, "La confianza debe estar entre 50% y 95%");
         int rollout = request.automaticRolloutPercent() == null ? 0
                 : requireRange(request.automaticRolloutPercent(), 0, 100, "El despliegue debe estar entre 0% y 100%");
+        boolean naturalResponseEnabled = Boolean.TRUE.equals(request.naturalResponseEnabled());
+        int naturalRollout = request.naturalResponseRolloutPercent() == null ? 0
+                : requireRange(request.naturalResponseRolloutPercent(), 0, 100,
+                        "El despliegue de redaccion natural debe estar entre 0% y 100%");
+        // Un interruptor activo con 0% se mostraba como habilitado, pero nunca
+        // seleccionaba ninguna conversacion. Al activarlo, el comportamiento debe
+        // tener efecto inmediatamente; el porcentaje sigue permitiendo un rollout
+        // parcial entre 1% y 100%.
+        if (naturalResponseEnabled && naturalRollout == 0) naturalRollout = 100;
         String instrucciones = clean(request.instruccionesPersonalizadas());
         if (instrucciones.length() > 1000) {
             throw badRequest("Las instrucciones no deben superar 1000 caracteres");
@@ -164,17 +173,27 @@ public class CrmWhatsappAiConfigService {
         config.setTransferirBajaConfianza(request.transferirBajaConfianza() == null || request.transferirBajaConfianza());
         config.setTransferirSolicitudHumana(true);
         config.setTransferirAsuntoSensible(true);
+        config.setTransferirImagenesAsesora(Boolean.TRUE.equals(request.transferirImagenesAsesora()));
+        config.setMostrarProductosNuevos(Boolean.TRUE.equals(request.mostrarProductosNuevos()));
+        config.setMandarCatalogoImagenes(Boolean.TRUE.equals(request.mandarCatalogoImagenes()));
+        config.setSugerirPromocionesCarrito(Boolean.TRUE.equals(request.sugerirPromocionesCarrito()));
         config.setDailyTokenLimit(positiveLong(request.dailyTokenLimit(), "El limite diario debe ser positivo"));
         config.setMonthlyTokenLimit(positiveLong(request.monthlyTokenLimit(), "El limite mensual debe ser positivo"));
         config.setMonthlyBudgetUsd(positiveDecimal(request.monthlyBudgetUsd(), "El presupuesto debe ser positivo"));
         config.setInputCostPerMillionUsd(nonNegativeDecimal(request.inputCostPerMillionUsd(), "La tarifa de entrada no puede ser negativa"));
         config.setOutputCostPerMillionUsd(nonNegativeDecimal(request.outputCostPerMillionUsd(), "La tarifa de salida no puede ser negativa"));
         config.setAutomaticRolloutPercent(rollout);
+        config.setNaturalResponseEnabled(naturalResponseEnabled);
+        config.setNaturalResponseRolloutPercent(naturalRollout);
         if (config.getOperationalStatus() == null) config.setOperationalStatus(CrmWhatsappAiOperationsService.ACTIVE);
         saveBusinessHours(connection, request.horariosComerciales());
         CrmWhatsappAiConfig saved = configRepository.save(config);
         auditService.record(connection, null, null, actor, "CONFIG_UPDATED", "INFO",
-                "Configuracion de IA actualizada", java.util.Map.of("mode", modo.name(), "rollout", rollout));
+                "Configuracion de IA actualizada", java.util.Map.of(
+                        "mode", modo.name(),
+                        "rollout", rollout,
+                        "naturalResponse", Boolean.TRUE.equals(config.getNaturalResponseEnabled()),
+                        "naturalResponseRollout", naturalRollout));
         return toResponse(saved);
     }
 
@@ -196,7 +215,11 @@ public class CrmWhatsappAiConfigService {
                 true,
                 true,
                 true,
-                null, null, null, null, null, 0,
+                false,
+                false,
+                false,
+                false,
+                null, null, null, null, null, 0, false, 0,
                 new CrmWhatsappAiOperationsService.OperationalSnapshot("ACTIVE", false, 0, 0,
                         BigDecimal.ZERO, null, null, null, 0, null),
                 defaultBusinessHours(),
@@ -221,12 +244,18 @@ public class CrmWhatsappAiConfigService {
                 Boolean.TRUE.equals(config.getTransferirBajaConfianza()),
                 true,
                 true,
+                Boolean.TRUE.equals(config.getTransferirImagenesAsesora()),
+                Boolean.TRUE.equals(config.getMostrarProductosNuevos()),
+                Boolean.TRUE.equals(config.getMandarCatalogoImagenes()),
+                Boolean.TRUE.equals(config.getSugerirPromocionesCarrito()),
                 config.getDailyTokenLimit(),
                 config.getMonthlyTokenLimit(),
                 config.getMonthlyBudgetUsd(),
                 config.getInputCostPerMillionUsd(),
                 config.getOutputCostPerMillionUsd(),
                 config.getAutomaticRolloutPercent(),
+                Boolean.TRUE.equals(config.getNaturalResponseEnabled()),
+                config.getNaturalResponseRolloutPercent() == null ? 0 : config.getNaturalResponseRolloutPercent(),
                 operationsService.snapshot(config),
                 businessHours(config.getConnection()),
                 REGLAS_SEGURIDAD);
@@ -368,12 +397,18 @@ public class CrmWhatsappAiConfigService {
             Integer maxRespuestasAutomaticas,
             Integer confianzaMinima,
             Boolean transferirBajaConfianza,
+            Boolean transferirImagenesAsesora,
+            Boolean mostrarProductosNuevos,
+            Boolean mandarCatalogoImagenes,
+            Boolean sugerirPromocionesCarrito,
             Long dailyTokenLimit,
             Long monthlyTokenLimit,
             BigDecimal monthlyBudgetUsd,
             BigDecimal inputCostPerMillionUsd,
             BigDecimal outputCostPerMillionUsd,
             Integer automaticRolloutPercent,
+            Boolean naturalResponseEnabled,
+            Integer naturalResponseRolloutPercent,
             List<BusinessHoursRequest> horariosComerciales) {}
 
     public record AiConfigResponse(
@@ -393,12 +428,18 @@ public class CrmWhatsappAiConfigService {
             boolean transferirBajaConfianza,
             boolean transferirSolicitudHumana,
             boolean transferirAsuntoSensible,
+            boolean transferirImagenesAsesora,
+            boolean mostrarProductosNuevos,
+            boolean mandarCatalogoImagenes,
+            boolean sugerirPromocionesCarrito,
             Long dailyTokenLimit,
             Long monthlyTokenLimit,
             BigDecimal monthlyBudgetUsd,
             BigDecimal inputCostPerMillionUsd,
             BigDecimal outputCostPerMillionUsd,
             Integer automaticRolloutPercent,
+            boolean naturalResponseEnabled,
+            Integer naturalResponseRolloutPercent,
             CrmWhatsappAiOperationsService.OperationalSnapshot operational,
             List<BusinessHoursResponse> horariosComerciales,
             List<String> reglasSeguridad) {}

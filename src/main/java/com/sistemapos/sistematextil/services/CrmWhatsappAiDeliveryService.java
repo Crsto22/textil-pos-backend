@@ -1,16 +1,23 @@
 package com.sistemapos.sistematextil.services;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.text.Normalizer;
 import java.time.*;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.HashSet;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import org.springframework.data.domain.PageRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
@@ -25,7 +32,56 @@ import lombok.RequiredArgsConstructor;
 @Service
 @RequiredArgsConstructor
 public class CrmWhatsappAiDeliveryService {
+    private static final Logger log = LoggerFactory.getLogger(CrmWhatsappAiDeliveryService.class);
     private static final String HANDOFF_MESSAGE = "Claro, bella. En un momentito una asesora continuará contigo 💛";
+    private static final DateTimeFormatter CUSTOMER_DATE_FORMAT = DateTimeFormatter
+            .ofPattern("d 'de' MMMM 'de' yyyy", Locale.forLanguageTag("es-PE"));
+    private static final List<String> NEW_CHAT_NOTICES = List.of(
+            """
+            💕 Bienvenida a Kiments
+
+            Antes de realizar tu compra, ten en cuenta lo siguiente:
+
+            📵 Desactiva los mensajes temporales para que podamos atenderte correctamente.
+            🚚 Realizamos envíos a provincia mediante la agencia Shalom.
+            🏬 También puedes recoger tu pedido en nuestro almacén de Gamarra, La Victoria.
+
+            🔄 No realizamos cambios de talla, modelo o color.
+            💳 No realizamos devoluciones de dinero, excepto cuando el inconveniente sea responsabilidad nuestra.
+            ⚠️ Las prendas de liquidación no pueden combinarse con productos del catálogo regular.
+
+            Gracias por comprender 💛
+            """,
+            """
+            💕 Antes de comprar en Kiments
+
+            Queremos compartirte algunas indicaciones importantes:
+
+            📵 Recuerda desactivar los mensajes temporales para que podamos seguir correctamente tu atención.
+            🚚 Enviamos pedidos a provincia por la agencia Shalom.
+            🏬 Si prefieres, puedes recogerlos en nuestro almacén de Gamarra, La Victoria.
+
+            🔄 No aceptamos cambios de talla, modelo ni color.
+            💳 Las devoluciones de dinero aplican únicamente cuando el error sea responsabilidad nuestra.
+            ⚠️ Los artículos de liquidación se procesan por separado del catálogo regular.
+
+            Gracias por tenerlo en cuenta 💛
+            """,
+            """
+            💕 Información importante para tu compra
+
+            Para brindarte una mejor atención en Kiments:
+
+            📵 Mantén desactivados los mensajes temporales durante la conversación.
+            🚚 Los envíos a provincia se realizan mediante Shalom.
+            🏬 El recojo también está disponible en nuestro almacén de Gamarra, La Victoria.
+
+            🔄 No se realizan cambios de talla, modelo o color.
+            💳 No efectuamos devoluciones de dinero, salvo que exista una equivocación de nuestra parte.
+            ⚠️ Las prendas de liquidación no se juntan con productos del catálogo regular.
+
+            Agradecemos tu comprensión 💛
+            """);
     private final CrmWhatsappAiDeliveryRepository deliveryRepository;
     private final CrmWhatsappAiConfigRepository configRepository;
     private final CrmWhatsappAiMemoryRepository memoryRepository;
@@ -33,32 +89,62 @@ public class CrmWhatsappAiDeliveryService {
     private final CrmWhatsappChatService chatService;
     private final CrmWhatsappAiMemoryService memoryService;
     private final CrmWhatsappAiSaleDraftService saleDraftService;
+    private final CrmWhatsappAiCommercialQueryService commercialQueryService;
     private final CrmWhatsappEventService eventService;
     private final CrmWhatsappAiOperationsService operationsService;
     private final S3StorageService storageService;
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
 
+    @Transactional(readOnly = true)
+    public Set<Long> messageIdsExcludedFromAiContext(Long conversationId) {
+        if (conversationId == null) return Set.of();
+        return new HashSet<>(deliveryRepository.findMessageIdsExcludedFromAiContext(conversationId));
+    }
+
     @Transactional
     public void enqueue(CrmWhatsappAiRun run) {
         if (run == null || run.getJob() == null || !"AUTOMATIC".equals(run.getJob().getTriggerType())) return;
         if (run.getOutcome() != CrmWhatsappAiRunOutcome.DRAFT_READY || run.getRequiresHuman()) return;
-        if (deliveryRepository.findByRun_IdAiRun(run.getIdAiRun()).isPresent()) return;
+        String idempotencyKey = "AI_RESPONSE:" + run.getMessage().getIdMessage();
+        if (deliveryRepository.findByRun_IdAiRun(run.getIdAiRun()).isPresent()
+                || deliveryRepository.findByIdempotencyKey(idempotencyKey).isPresent()) return;
         CrmWhatsappAiDelivery delivery = new CrmWhatsappAiDelivery();
         delivery.setRun(run);
         delivery.setConversation(run.getConversation());
         delivery.setSourceMessageId(run.getMessage().getIdMessage());
-        MediaPayload media = deliveryMedia(run);
+        delivery.setIdempotencyKey(idempotencyKey);
+        boolean firstConversationResponse = !messageRepository
+                .existsByConversation_IdConversationAndDirection(
+                        run.getConversation().getIdConversation(), "OUTGOING");
+        delivery.setInitialConversationResponse(firstConversationResponse);
+        String preorderNotice = preorderNotice(run);
+        if (!preorderNotice.isBlank()) {
+            delivery.setTextBody(preorderNotice);
+        } else if (firstConversationResponse) {
+            delivery.setTextBody(newChatNotice(run.getConversation().getIdConversation()));
+        }
+        DeliveryMedia media = deliveryMedia(run);
         delivery.setDeliveryType(media == null
                 ? CrmWhatsappAiDeliveryType.AUTOMATIC_RESPONSE
-                : media.deliveryType());
+                : media.secondary() == null ? media.primary().deliveryType()
+                        : CrmWhatsappAiDeliveryType.PRODUCT_IMAGE);
         if (media != null) {
-            delivery.setMediaReference(media.reference());
-            delivery.setMediaMimeType(media.mimeType());
-            delivery.setMediaFileName(media.fileName());
-            delivery.setMediaCaption(clean(run.getDraftResponse()));
+            delivery.setMediaReference(media.primary().reference());
+            delivery.setMediaMimeType(media.primary().mimeType());
+            delivery.setMediaFileName(media.primary().fileName());
+            delivery.setMediaCaption("PRODUCTOS".equals(clean(run.getIntent()))
+                    && "SIZE_GUIDE".equals(media.primary().sourceType())
+                    ? "Guía de tallas de " + media.primary().productName()
+                    : clean(run.getDraftResponse()));
+            if (media.secondary() != null) {
+                delivery.setSecondaryMediaReference(media.secondary().reference());
+                delivery.setSecondaryMediaMimeType(media.secondary().mimeType());
+                delivery.setSecondaryMediaFileName(media.secondary().fileName());
+            }
         }
         delivery.setStatus(CrmWhatsappAiDeliveryStatus.PENDING);
-        delivery.setAvailableAt(LocalDateTime.now());
+        int catalogCards = enqueueCatalogProductCards(run);
+        delivery.setAvailableAt(LocalDateTime.now().plusSeconds(catalogCards > 0 ? catalogCards + 1L : 0L));
         deliveryRepository.save(delivery);
     }
 
@@ -96,6 +182,27 @@ public class CrmWhatsappAiDeliveryService {
         if (delivery.getStatus() == CrmWhatsappAiDeliveryStatus.AWAITING_HUMAN) {
             publishHumanDraft(delivery);
         }
+    }
+
+    @Transactional
+    public void enqueueMediaNotice(CrmWhatsappConversation conversation, CrmWhatsappAiDeliveryType type,
+            String idempotencyKey, String text, String mediaReference) {
+        if (conversation == null || (type != CrmWhatsappAiDeliveryType.NEW_PRODUCT_ANNOUNCEMENT
+                && type != CrmWhatsappAiDeliveryType.CATALOG_PRODUCT_CARD)
+                || clean(idempotencyKey).isBlank() || clean(text).isBlank()
+                || clean(mediaReference).isBlank()) return;
+        if (deliveryRepository.findByIdempotencyKey(clean(idempotencyKey)).isPresent()) return;
+        CrmWhatsappAiDelivery delivery = new CrmWhatsappAiDelivery();
+        delivery.setConversation(conversation);
+        delivery.setDeliveryType(type);
+        delivery.setTextBody(clean(text));
+        delivery.setIdempotencyKey(clean(idempotencyKey));
+        delivery.setMediaReference(clean(mediaReference));
+        delivery.setMediaMimeType(mimeType(mediaReference));
+        delivery.setMediaFileName(fileName(mediaReference));
+        delivery.setStatus(CrmWhatsappAiDeliveryStatus.PENDING);
+        delivery.setAvailableAt(LocalDateTime.now());
+        deliveryRepository.save(delivery);
     }
 
     @Transactional(readOnly = true)
@@ -157,22 +264,31 @@ public class CrmWhatsappAiDeliveryService {
         CrmWhatsappConversation conversation = delivery.getConversation();
         CrmWhatsappAiRun run = delivery.getRun();
         boolean businessNotice = isBusinessNotice(delivery.getDeliveryType());
+        boolean marketingNotice = isMarketingNotice(delivery.getDeliveryType());
         boolean humanDraft = requiresHumanSend(delivery.getDeliveryType())
                 || (businessNotice && (conversation.getAssignedUser() != null
-                        || !"ESPERA".equals(conversation.getStatus())));
+                        || !"ESPERA".equals(conversation.getStatus())) && !marketingNotice);
         CrmWhatsappAiConfig config = businessNotice || conversation.getConnection() == null ? null
                 : configRepository.findByConnection_IdConnection(conversation.getConnection().getIdConnection()).orElse(null);
         boolean handoff = delivery.getDeliveryType() == CrmWhatsappAiDeliveryType.HANDOFF_NOTICE;
         boolean media = isMediaDelivery(delivery.getDeliveryType());
-        String invalid = businessNotice
-                ? (clean(delivery.getTextBody()).isBlank() ? "Aviso comercial vacio" : "")
+        String invalid = marketingNotice && (conversation.getAssignedUser() != null
+                || !"ESPERA".equals(conversation.getStatus()))
+                ? "La conversacion ya no admite sugerencias automaticas"
+                : businessNotice
+                ? (clean(delivery.getTextBody()).isBlank() ? "Aviso comercial vacio"
+                        : media && clean(delivery.getMediaReference()).isBlank() ? "Imagen sin archivo" : "")
                 : handoff ? validateHandoff(delivery, conversation) : validate(delivery, conversation, run, config);
         return new PreparedDelivery(delivery.getIdAiDelivery(), conversation.getIdConversation(),
                 businessNotice ? clean(delivery.getTextBody())
                         : handoff ? handoffMessage(run) : clean(run.getDraftResponse()),
                 invalid, handoff, media, businessNotice, humanDraft,
                 clean(delivery.getMediaReference()), clean(delivery.getMediaMimeType()),
-                clean(delivery.getMediaFileName()));
+                clean(delivery.getMediaFileName()),
+                clean(delivery.getSecondaryMediaReference()), clean(delivery.getSecondaryMediaMimeType()),
+                clean(delivery.getSecondaryMediaFileName()), delivery.getGuideOutgoingMessageId(),
+                delivery.getPreludeOutgoingMessageId(), businessNotice ? "" : clean(delivery.getTextBody()),
+                clean(delivery.getMediaCaption()));
     }
 
     public void send(PreparedDelivery prepared) {
@@ -184,12 +300,52 @@ public class CrmWhatsappAiDeliveryService {
             cancel(prepared.deliveryId(), prepared.invalidReason(), !prepared.handoff());
             return;
         }
-        MessageResponse sent = prepared.media()
-                ? chatService.enviarMediaAutomatico(prepared.conversationId(),
+        MessageResponse sent;
+        if (!prepared.welcomeNotice().isBlank() && prepared.preludeOutgoingMessageId() == null) {
+            MessageResponse notice = chatService.enviarMensajeAutomatico(
+                    prepared.conversationId(), prepared.welcomeNotice());
+            markPreludeSent(prepared.deliveryId(), notice.id());
+        }
+        if (prepared.dualProductMedia()) {
+            if (prepared.guideOutgoingMessageId() == null) {
+                MessageResponse guide = chatService.enviarMediaAutomatico(prepared.conversationId(),
                         readMedia(prepared.mediaReference()), prepared.mediaFileName(),
-                        prepared.mediaMimeType(), prepared.text())
-                : chatService.enviarMensajeAutomatico(prepared.conversationId(), prepared.text());
+                        prepared.mediaMimeType(), prepared.guideCaption());
+                markGuideSent(prepared.deliveryId(), guide.id());
+            }
+            sent = chatService.enviarMediaAutomatico(prepared.conversationId(),
+                    readMedia(prepared.secondaryMediaReference()), prepared.secondaryMediaFileName(),
+                    prepared.secondaryMediaMimeType(), prepared.text());
+        } else if (prepared.productGuideWithSeparateDetails()) {
+            if (prepared.guideOutgoingMessageId() == null) {
+                MessageResponse guide = chatService.enviarMediaAutomatico(prepared.conversationId(),
+                        readMedia(prepared.mediaReference()), prepared.mediaFileName(),
+                        prepared.mediaMimeType(), prepared.guideCaption());
+                markGuideSent(prepared.deliveryId(), guide.id());
+            }
+            sent = chatService.enviarMensajeAutomatico(prepared.conversationId(), prepared.text());
+        } else {
+            sent = prepared.media()
+                    ? chatService.enviarMediaAutomatico(prepared.conversationId(),
+                            readMedia(prepared.mediaReference()), prepared.mediaFileName(),
+                            prepared.mediaMimeType(), prepared.text())
+                    : chatService.enviarMensajeAutomatico(prepared.conversationId(), prepared.text());
+        }
         complete(prepared.deliveryId(), sent.id());
+    }
+
+    private void markGuideSent(Long deliveryId, Long messageId) {
+        CrmWhatsappAiDelivery delivery = deliveryRepository.findById(deliveryId)
+                .orElseThrow(() -> new IllegalStateException("Entrega IA no encontrada"));
+        delivery.setGuideOutgoingMessageId(messageId);
+        deliveryRepository.save(delivery);
+    }
+
+    private void markPreludeSent(Long deliveryId, Long messageId) {
+        CrmWhatsappAiDelivery delivery = deliveryRepository.findById(deliveryId)
+                .orElseThrow(() -> new IllegalStateException("Entrega IA no encontrada"));
+        delivery.setPreludeOutgoingMessageId(messageId);
+        deliveryRepository.save(delivery);
     }
 
     @Transactional
@@ -209,6 +365,13 @@ public class CrmWhatsappAiDeliveryService {
         CrmWhatsappAiDelivery delivery = deliveryRepository.findDetailedById(id)
                 .orElseThrow(() -> new IllegalStateException("Entrega IA no encontrada"));
         if (delivery.getStatus() != CrmWhatsappAiDeliveryStatus.SENDING) return;
+        if (messageId != null && deliveryRepository.existsByOutgoingMessage_IdMessage(messageId)) {
+            delivery.setStatus(CrmWhatsappAiDeliveryStatus.CANCELLED);
+            delivery.setFailureReason("Respuesta automatica identica ya enviada recientemente");
+            delivery.setLockedAt(null);
+            deliveryRepository.save(delivery);
+            return;
+        }
         delivery.setOutgoingMessage(messageRepository.findById(messageId).orElse(null));
         delivery.setStatus(CrmWhatsappAiDeliveryStatus.SENT);
         delivery.setSentAt(LocalDateTime.now());
@@ -223,6 +386,20 @@ public class CrmWhatsappAiDeliveryService {
                 memoryService.pauseForHuman(delivery.getConversation(), "Pedido confirmado, requiere revision del asesor");
             }
         }
+        if (!handoff && !businessNotice && Boolean.TRUE.equals(delivery.getInitialConversationResponse())) {
+            runOptionalFollowUp(delivery, "productos nuevos",
+                    () -> enqueueNewProducts(delivery.getConversation()));
+        }
+        if (!handoff && !businessNotice) {
+            runOptionalFollowUp(delivery, "promocion del producto",
+                    () -> enqueueSameProductPromotion(delivery));
+        }
+        if (!handoff && !businessNotice && delivery.getRun() != null
+                && Set.of("INTENCION_COMPRA", "MODIFICAR_CARRITO")
+                        .contains(clean(delivery.getRun().getIntent()))) {
+            runOptionalFollowUp(delivery, "promocion del carrito",
+                    () -> enqueueCartPromotionSuggestion(delivery.getConversation()));
+        }
         Map<String, Object> event = new LinkedHashMap<>();
         event.put("type", businessNotice ? "crm.notice.sent"
                 : handoff ? "ai.handoff.notice.sent" : "ai.auto_reply.sent");
@@ -231,6 +408,15 @@ public class CrmWhatsappAiDeliveryService {
         if (delivery.getRun() != null) event.put("runId", delivery.getRun().getIdAiRun());
         event.put("deliveryType", delivery.getDeliveryType().name());
         eventService.publishAfterCommit(event, event, null, true);
+    }
+
+    private void runOptionalFollowUp(CrmWhatsappAiDelivery delivery, String label, Runnable action) {
+        try {
+            action.run();
+        } catch (RuntimeException error) {
+            log.warn("La entrega IA {} ya fue enviada; se omitio {} para evitar reintentos: {}",
+                    delivery == null ? null : delivery.getIdAiDelivery(), label, error.getMessage());
+        }
     }
 
     @Transactional
@@ -254,7 +440,9 @@ public class CrmWhatsappAiDeliveryService {
             delivery.setStatus(CrmWhatsappAiDeliveryStatus.PENDING);
             delivery.setAvailableAt(LocalDateTime.now().plusSeconds((long) delivery.getAttempts() * 10));
         } else {
-            if (isMediaDelivery(delivery.getDeliveryType())) {
+            if (isMarketingNotice(delivery.getDeliveryType())) {
+                delivery.setStatus(CrmWhatsappAiDeliveryStatus.FAILED);
+            } else if (isMediaDelivery(delivery.getDeliveryType())) {
                 try {
                     MessageResponse fallback = chatService.enviarMensajeAutomatico(
                             delivery.getConversation().getIdConversation(),
@@ -299,6 +487,11 @@ public class CrmWhatsappAiDeliveryService {
         if (clean(run.getDraftResponse()).isBlank()) return "Respuesta automatica vacia";
         if (isMediaDelivery(delivery.getDeliveryType())
                 && clean(delivery.getMediaReference()).isBlank()) return "Imagen sin archivo";
+        if (!clean(delivery.getSecondaryMediaReference()).isBlank()
+                && (clean(delivery.getSecondaryMediaMimeType()).isBlank()
+                        || clean(delivery.getSecondaryMediaFileName()).isBlank())) {
+            return "Imagen global del producto incompleta";
+        }
         var latest = messageRepository.findRecentIncomingMessages(conversation.getIdConversation(), PageRequest.of(0, 1));
         if (latest.isEmpty() || !latest.get(0).getIdMessage().equals(delivery.getSourceMessageId())) return "Existe un mensaje mas reciente";
         var memory = memoryRepository.findByConversation_IdConversation(conversation.getIdConversation()).orElse(null);
@@ -323,11 +516,232 @@ public class CrmWhatsappAiDeliveryService {
         return HANDOFF_MESSAGE;
     }
 
+    private String newChatNotice(Long conversationId) {
+        int index = Math.floorMod(conversationId == null ? 0 : conversationId.hashCode(), NEW_CHAT_NOTICES.size());
+        return NEW_CHAT_NOTICES.get(index).strip();
+    }
+
+    private String preorderNotice(CrmWhatsappAiRun run) {
+        if (run == null || !"PRODUCTOS".equals(clean(run.getIntent()))
+                || clean(run.getEvidenceJson()).isBlank()) return "";
+        try {
+            List<Map<String, Object>> evidence = objectMapper.readValue(
+                    run.getEvidenceJson(), new TypeReference<>() {});
+            var products = evidence.stream()
+                    .filter(item -> "buscar_productos".equals(clean(String.valueOf(item.get("tool")))))
+                    .filter(item -> item.get("products") instanceof List<?>)
+                    .flatMap(item -> ((List<?>) item.get("products")).stream())
+                    .filter(Map.class::isInstance)
+                    .map(value -> (Map<?, ?>) value)
+                    .filter(product -> Boolean.TRUE.equals(product.get("preventa")))
+                    .toList();
+            if (products.size() != 1) return "";
+            Map<?, ?> product = products.getFirst();
+            String name = clean(String.valueOf(product.get("name")));
+            String rawDate = product.get("fechaEnvioPreventa") == null
+                    ? "" : clean(String.valueOf(product.get("fechaEnvioPreventa")));
+            if (name.isBlank() || rawDate.isBlank()) return "";
+            LocalDate shippingDate = LocalDate.parse(rawDate);
+            return preorderNoticeVariant(run.getConversation().getIdConversation(), name,
+                    CUSTOMER_DATE_FORMAT.format(shippingDate),
+                    CUSTOMER_DATE_FORMAT.format(shippingDate.plusDays(1)));
+        } catch (RuntimeException ignored) {
+            return "";
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    private String preorderNoticeVariant(Long conversationId, String product, String shippingDate, String pickupDate) {
+        int index = Math.floorMod(conversationId == null ? 0 : conversationId.hashCode(), 3);
+        return switch (index) {
+            case 0 -> "Bonita 💝🌸, te contamos que el conjunto *" + product
+                    + "* está en lanzamiento de *PREVENTA*.\n\n"
+                    + "📦 Los envíos se realizarán a partir del " + shippingDate
+                    + ", respetando el orden de compra.\n"
+                    + "🏬 El recojo en almacén o envío por Shalom estará disponible desde el "
+                    + pickupDate + ", previa coordinación.\n\n"
+                    + "Gracias por tu atención y comprensión 🥰";
+            case 1 -> "Bella 💕, el conjunto *" + product
+                    + "* forma parte de nuestro lanzamiento en *PREVENTA*.\n\n"
+                    + "📦 Empezaremos los envíos desde el " + shippingDate
+                    + " según el orden en que se registren las compras.\n"
+                    + "🏬 Para recojo en almacén o despacho por Shalom, podrá coordinarse desde el "
+                    + pickupDate + ".\n\n"
+                    + "Muchas gracias por esperar este modelito con nosotras 🌸🥰";
+            default -> "Hermosa 🌸, queremos avisarte que *" + product
+                    + "* se encuentra actualmente en *PREVENTA*.\n\n"
+                    + "📦 La fecha de inicio de envíos es el " + shippingDate
+                    + " y se atenderá de acuerdo con el orden de compra.\n"
+                    + "🏬 Los recojos en almacén y envíos por Shalom podrán coordinarse a partir del "
+                    + pickupDate + ".\n\n"
+                    + "Agradecemos mucho tu paciencia y comprensión 💝";
+        };
+    }
+
     private boolean isBusinessNotice(CrmWhatsappAiDeliveryType type) {
         return type == CrmWhatsappAiDeliveryType.PAYMENT_REGISTERED
                 || type == CrmWhatsappAiDeliveryType.PAYMENT_RETRY
                 || type == CrmWhatsappAiDeliveryType.PAYMENT_REJECTED
-                || type == CrmWhatsappAiDeliveryType.SALE_COMPLETED;
+                || type == CrmWhatsappAiDeliveryType.SALE_COMPLETED
+                || isMarketingNotice(type);
+    }
+
+    private boolean isMarketingNotice(CrmWhatsappAiDeliveryType type) {
+        return type == CrmWhatsappAiDeliveryType.NEW_PRODUCT_ANNOUNCEMENT
+                || type == CrmWhatsappAiDeliveryType.CATALOG_PRODUCT_CARD
+                || type == CrmWhatsappAiDeliveryType.PRODUCT_PROMOTION_SUGGESTION
+                || type == CrmWhatsappAiDeliveryType.CART_PROMOTION_SUGGESTION;
+    }
+
+    private int enqueueCatalogProductCards(CrmWhatsappAiRun run) {
+        if (run == null || run.getConversation() == null || run.getConversation().getConnection() == null
+                || run.getMessage() == null || !isGenericCatalogRequest(run.getMessage().getBody())
+                || !Set.of("PRODUCTOS", "ENLACE_ECOMMERCE").contains(clean(run.getIntent()))) return 0;
+        CrmWhatsappAiConfig config = configRepository
+                .findByConnection_IdConnection(run.getConversation().getConnection().getIdConnection()).orElse(null);
+        if (config == null || !Boolean.TRUE.equals(config.getMandarCatalogoImagenes())) return 0;
+        List<CrmWhatsappAiCommercialQueryService.ProductResult> products = commercialQueryService
+                .latestCatalogProducts(run.getConversation(), 3);
+        int queued = 0;
+        LocalDateTime baseTime = LocalDateTime.now();
+        for (var product : products) {
+            if (clean(product.globalImageUrl()).isBlank()) continue;
+            String idempotencyKey = "CATALOG_PRODUCT:" + run.getMessage().getIdMessage()
+                    + ":" + product.productId();
+            if (deliveryRepository.findByIdempotencyKey(idempotencyKey).isPresent()) continue;
+            CrmWhatsappAiDelivery card = new CrmWhatsappAiDelivery();
+            card.setConversation(run.getConversation());
+            card.setSourceMessageId(run.getMessage().getIdMessage());
+            card.setDeliveryType(CrmWhatsappAiDeliveryType.CATALOG_PRODUCT_CARD);
+            card.setTextBody(catalogProductCaption(product));
+            card.setIdempotencyKey(idempotencyKey);
+            card.setMediaReference(product.globalImageUrl());
+            card.setMediaMimeType(mimeType(product.globalImageUrl()));
+            card.setMediaFileName(fileName(product.globalImageUrl()));
+            card.setStatus(CrmWhatsappAiDeliveryStatus.PENDING);
+            card.setAvailableAt(baseTime.plusNanos(queued * 200_000_000L));
+            deliveryRepository.save(card);
+            queued++;
+        }
+        return queued;
+    }
+
+    private String catalogProductCaption(CrmWhatsappAiCommercialQueryService.ProductResult product) {
+        StringBuilder caption = new StringBuilder("👗 *").append(product.name()).append("*");
+        if (!clean(product.description()).isBlank()) {
+            caption.append("\n📝 ").append(clean(product.description()));
+        }
+        BigDecimal price = product.variants().stream()
+                .map(CrmWhatsappAiCommercialQueryService.VariantResult::currentPrice)
+                .filter(value -> value != null && value.signum() > 0)
+                .min(BigDecimal::compareTo).orElse(null);
+        if (price != null) {
+            caption.append("\n💰 *Precio desde:* S/")
+                    .append(price.setScale(2, RoundingMode.HALF_UP).toPlainString());
+        }
+        if (product.preventa()) {
+            caption.append("\n📦 *Preventa*");
+            if (product.fechaEnvioPreventa() != null) {
+                caption.append("\n📅 *Envíos desde:* ")
+                        .append(CUSTOMER_DATE_FORMAT.format(product.fechaEnvioPreventa()));
+            }
+        }
+        caption.append("\n\nSi quieres conocer sus colores, tallas y más detalles, escribe *")
+                .append(product.name()).append("*.");
+        return caption.toString();
+    }
+
+    private boolean isGenericCatalogRequest(String message) {
+        String value = Normalizer.normalize(clean(message), Normalizer.Form.NFD)
+                .replaceAll("\\p{M}+", "").toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9\\s]", " ").replaceAll("\\s+", " ").trim();
+        return value.contains("catalogo")
+                || value.matches(".*\\b(que|cuales|dime que) (productos|modelos|prendas|ropa) "
+                        + "(tienes|tienen|vendes|venden|ofreces|ofrecen|hay)\\b.*")
+                || value.matches(".*\\b(muestra|muestrame|ensena|mandame|enviame|ver) "
+                        + "(tus |los |el )?(productos|modelos|prendas|catalogo)\\b.*")
+                || value.matches(".*\\bque vendes\\b.*");
+    }
+
+    private void enqueueNewProducts(CrmWhatsappConversation conversation) {
+        if (conversation == null || conversation.getConnection() == null) return;
+        CrmWhatsappAiConfig config = configRepository
+                .findByConnection_IdConnection(conversation.getConnection().getIdConnection()).orElse(null);
+        if (config == null || !Boolean.TRUE.equals(config.getMostrarProductosNuevos())) return;
+        for (var product : commercialQueryService.newProducts(conversation, LocalDateTime.now().minusDays(3))) {
+            StringBuilder caption = new StringBuilder("✨ *Nuevo modelo: ")
+                    .append(product.name()).append("*\n\n")
+                    .append("Aprovecha nuestro nuevo conjunto.");
+            if (product.preorder()) {
+                caption.append("\n\n📦 *Preventa*");
+                if (product.preorderShippingDate() != null) {
+                    caption.append("\n📅 Envíos estimados desde el ")
+                            .append(CUSTOMER_DATE_FORMAT.format(product.preorderShippingDate())).append('.');
+                }
+            }
+            caption.append("\n\nSi deseas conocer precio, colores, tallas y guía de medidas, escribe *")
+                    .append(product.name()).append("*.");
+            enqueueMediaNotice(conversation, CrmWhatsappAiDeliveryType.NEW_PRODUCT_ANNOUNCEMENT,
+                    "NEW_PRODUCT:" + conversation.getIdConversation() + ":" + product.productId(),
+                    caption.toString(), product.globalImageUrl());
+        }
+    }
+
+    private void enqueueCartPromotionSuggestion(CrmWhatsappConversation conversation) {
+        if (conversation == null || conversation.getConnection() == null) return;
+        CrmWhatsappAiConfig config = configRepository
+                .findByConnection_IdConnection(conversation.getConnection().getIdConnection()).orElse(null);
+        if (config == null || !Boolean.TRUE.equals(config.getSugerirPromocionesCarrito())) return;
+        var suggestion = saleDraftService.promotionSuggestion(conversation.getIdConversation());
+        if (suggestion == null) return;
+        enqueueNotice(conversation, CrmWhatsappAiDeliveryType.CART_PROMOTION_SUGGESTION,
+                suggestion.idempotencyKey(), suggestion.text());
+    }
+
+    private void enqueueSameProductPromotion(CrmWhatsappAiDelivery delivery) {
+        if (delivery == null || delivery.getRun() == null
+                || delivery.getDeliveryType() != CrmWhatsappAiDeliveryType.PRODUCT_IMAGE
+                || !"PRODUCTOS".equals(clean(delivery.getRun().getIntent()))) return;
+        DisplayedProduct product = displayedProduct(delivery.getRun());
+        if (product == null || product.productId() == null || product.name().isBlank()) return;
+        var promotion = commercialQueryService.sameProductPromotion(
+                delivery.getConversation(), product.productId(), 2);
+        if (promotion == null || promotion.comboPrice() == null
+                || promotion.comboPrice().signum() <= 0) return;
+        StringBuilder message = new StringBuilder("🎁 *Promoción especial*\n\n")
+                .append("Lleva 2 de *").append(product.name()).append("* por tan solo *S/")
+                .append(promotion.comboPrice().setScale(2, RoundingMode.HALF_UP).toPlainString())
+                .append("*.");
+        if (promotion.savings() != null && promotion.savings().signum() > 0) {
+            message.append("\n💰 Ahorras S/")
+                    .append(promotion.savings().setScale(2, RoundingMode.HALF_UP).toPlainString()).append('.');
+        }
+        message.append("\n\n🛍️ Lleva 2 ahora y aprovecha este precio especial.");
+        enqueueNotice(delivery.getConversation(),
+                CrmWhatsappAiDeliveryType.PRODUCT_PROMOTION_SUGGESTION,
+                "PRODUCT_PROMOTION:" + delivery.getSourceMessageId() + ":" + promotion.promotionId(),
+                message.toString());
+    }
+
+    private DisplayedProduct displayedProduct(CrmWhatsappAiRun run) {
+        if (run == null || clean(run.getSuggestedMediaJson()).isBlank()) return null;
+        try {
+            List<Map<String, Object>> values = objectMapper.readValue(
+                    run.getSuggestedMediaJson(), new TypeReference<>() {});
+            for (String preferredType : List.of("PRODUCT_GLOBAL_IMAGE", "SIZE_GUIDE")) {
+                for (Map<String, Object> value : values) {
+                    if (!preferredType.equals(clean(String.valueOf(value.get("type"))))) continue;
+                    Integer productId = integer(value.get("productId"));
+                    String name = value.get("product") == null
+                            ? "" : clean(String.valueOf(value.get("product")));
+                    if (productId != null && !name.isBlank()) return new DisplayedProduct(productId, name);
+                }
+            }
+        } catch (Exception ignored) {
+            return null;
+        }
+        return null;
     }
 
     private boolean requiresHumanSend(CrmWhatsappAiDeliveryType type) {
@@ -390,15 +804,28 @@ public class CrmWhatsappAiDeliveryService {
         eventService.publishAfterCommit(event, event, null, true);
     }
 
-    private MediaPayload deliveryMedia(CrmWhatsappAiRun run) {
+    private DeliveryMedia deliveryMedia(CrmWhatsappAiRun run) {
         if (clean(run.getSuggestedMediaJson()).isBlank()) return null;
         try {
             List<Map<String, Object>> values = objectMapper.readValue(run.getSuggestedMediaJson(), new TypeReference<>() {});
-            return values.stream()
+            List<MediaPayload> payloads = values.stream()
                     .map(item -> mediaPayload(run, item))
                     .filter(java.util.Objects::nonNull)
-                    .findFirst()
-                    .orElse(null);
+                    .toList();
+            if (payloads.isEmpty()) return null;
+            MediaPayload global = payloads.stream()
+                    .filter(payload -> "PRODUCT_GLOBAL_IMAGE".equals(payload.sourceType()))
+                    .findFirst().orElse(null);
+            if (global != null) {
+                MediaPayload guide = payloads.stream()
+                        .filter(payload -> "SIZE_GUIDE".equals(payload.sourceType()))
+                        .filter(payload -> global.productId() != null
+                                && global.productId().equals(payload.productId()))
+                        .findFirst().orElse(null);
+                if (guide != null) return new DeliveryMedia(guide, global);
+                return new DeliveryMedia(global, null);
+            }
+            return new DeliveryMedia(payloads.getFirst(), null);
         } catch (Exception ignored) {
             return null;
         }
@@ -407,23 +834,37 @@ public class CrmWhatsappAiDeliveryService {
     private MediaPayload mediaPayload(CrmWhatsappAiRun run, Map<String, Object> item) {
         String type = clean(String.valueOf(item.get("type")));
         String reference = item.get("url") == null ? "" : clean(String.valueOf(item.get("url")));
+        String product = item.get("product") == null ? "" : clean(String.valueOf(item.get("product")));
         if (reference.isBlank()) return null;
-        if ("SIZE_GUIDE".equals(type) && "GUIA_TALLAS".equals(clean(run.getIntent()))) {
+        Integer productId = integer(item.get("productId"));
+        if ("SIZE_GUIDE".equals(type)
+                && ("GUIA_TALLAS".equals(clean(run.getIntent())) || isProductIntent(run.getIntent()))) {
             return new MediaPayload(CrmWhatsappAiDeliveryType.SIZE_GUIDE_IMAGE,
-                    reference, mimeType(reference), fileName(reference));
+                    type, productId, product, reference, mimeType(reference), fileName(reference));
         }
         if (Set.of("PRODUCT_GLOBAL_IMAGE", "PRODUCT_COLOR_IMAGE").contains(type)
-                && Set.of("PRODUCTOS", "PRECIO", "STOCK", "COLORES_TALLAS")
-                        .contains(clean(run.getIntent()))) {
+                && isProductIntent(run.getIntent())) {
             return new MediaPayload(CrmWhatsappAiDeliveryType.PRODUCT_IMAGE,
-                    reference, mimeType(reference), fileName(reference));
+                    type, productId, product, reference, mimeType(reference), fileName(reference));
         }
         return null;
     }
 
+    private boolean isProductIntent(String intent) {
+        return Set.of("PRODUCTOS", "PRECIO", "STOCK", "COLORES_TALLAS").contains(clean(intent));
+    }
+
+    private Integer integer(Object value) {
+        if (value instanceof Number number) return number.intValue();
+        try { return Integer.valueOf(clean(String.valueOf(value))); }
+        catch (NumberFormatException ignored) { return null; }
+    }
+
     private boolean isMediaDelivery(CrmWhatsappAiDeliveryType type) {
         return type == CrmWhatsappAiDeliveryType.SIZE_GUIDE_IMAGE
-                || type == CrmWhatsappAiDeliveryType.PRODUCT_IMAGE;
+                || type == CrmWhatsappAiDeliveryType.PRODUCT_IMAGE
+                || type == CrmWhatsappAiDeliveryType.NEW_PRODUCT_ANNOUNCEMENT
+                || type == CrmWhatsappAiDeliveryType.CATALOG_PRODUCT_CARD;
     }
 
     private byte[] readMedia(String reference) {
@@ -452,8 +893,20 @@ public class CrmWhatsappAiDeliveryService {
     private String limit(String value, int max) { String text = clean(value); return text.length() <= max ? text : text.substring(0, max); }
     public record PreparedDelivery(Long deliveryId, Long conversationId, String text, String invalidReason,
             boolean handoff, boolean media, boolean businessNotice, boolean humanDraft,
-            String mediaReference, String mediaMimeType, String mediaFileName) {}
+            String mediaReference, String mediaMimeType, String mediaFileName,
+            String secondaryMediaReference, String secondaryMediaMimeType, String secondaryMediaFileName,
+            Long guideOutgoingMessageId, Long preludeOutgoingMessageId, String welcomeNotice,
+            String guideCaption) {
+        boolean dualProductMedia() { return !secondaryMediaReference.isBlank(); }
+        boolean productGuideWithSeparateDetails() {
+            return media && secondaryMediaReference.isBlank() && !guideCaption.isBlank()
+                    && !text.trim().equalsIgnoreCase(guideCaption.trim());
+        }
+    }
     public record HumanDraftResponse(Long id, String text, String type, LocalDateTime createdAt) {}
     private record MediaPayload(
-            CrmWhatsappAiDeliveryType deliveryType, String reference, String mimeType, String fileName) {}
+            CrmWhatsappAiDeliveryType deliveryType, String sourceType, Integer productId, String productName,
+            String reference, String mimeType, String fileName) {}
+    private record DeliveryMedia(MediaPayload primary, MediaPayload secondary) {}
+    private record DisplayedProduct(Integer productId, String name) {}
 }

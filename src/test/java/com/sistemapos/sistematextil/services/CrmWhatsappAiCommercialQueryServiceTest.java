@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.PageImpl;
@@ -20,7 +21,11 @@ import com.sistemapos.sistematextil.model.Cliente;
 import com.sistemapos.sistematextil.model.CrmWhatsappConnection;
 import com.sistemapos.sistematextil.model.CrmWhatsappConversation;
 import com.sistemapos.sistematextil.model.Empresa;
+import com.sistemapos.sistematextil.model.Producto;
+import com.sistemapos.sistematextil.model.ProductoVariante;
+import com.sistemapos.sistematextil.model.ProductoVarianteOfertaSucursal;
 import com.sistemapos.sistematextil.model.Sucursal;
+import com.sistemapos.sistematextil.model.SucursalStock;
 import com.sistemapos.sistematextil.model.Venta;
 import com.sistemapos.sistematextil.repositories.ProductoColorImagenRepository;
 import com.sistemapos.sistematextil.repositories.SucursalMetodoPagoConfigRepository;
@@ -30,6 +35,7 @@ import com.sistemapos.sistematextil.repositories.VentaRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappBusinessHoursRepository;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceInicioComboResponse;
 import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
+import com.sistemapos.sistematextil.util.producto.TipoOfertaAplicada;
 
 class CrmWhatsappAiCommercialQueryServiceTest {
 
@@ -113,6 +119,16 @@ class CrmWhatsappAiCommercialQueryServiceTest {
     }
 
     @Test
+    void resuelveEnterizoAlessiaComoAlessiaEnteroAunqueCambieElOrden() {
+        var result = CrmWhatsappAiCommercialQueryService.resolveProductName(
+                "Enterizo Alessia",
+                List.of(productName(30, "ALESSIA ENTERO"), productName(31, "ALESSIA RAYAS")));
+
+        assertEquals("EXACT", result.status());
+        assertEquals(30, result.matches().getFirst().productId());
+    }
+
+    @Test
     void reconoceErrorDeEscrituraEnNombreCompuesto() {
         var result = CrmWhatsappAiCommercialQueryService.resolveProductName(
                 "Guia de tallas de Alissia entero",
@@ -168,11 +184,148 @@ class CrmWhatsappAiCommercialQueryServiceTest {
         assertEquals("Combo disponible", result.promotions().getFirst().name());
     }
 
+    @Test
+    void promocionesSePaginanDeDiezYCalculanSusExtremos() {
+        when(stocks.listarIdsProductosEcommerceDisponiblesParaIa(eq(3), any()))
+                .thenReturn(List.of(10, 11));
+        List<EcommerceInicioComboResponse> values = java.util.stream.IntStream.rangeClosed(1, 12)
+                .mapToObj(index -> combo(index, "Combo " + index, 100 + index, 10, 11))
+                .toList();
+        when(promotions.listarPublicas(0, 24)).thenReturn(new PagedResponse<>(
+                values, 0, 24, 1, 12, 12, true, true, false));
+
+        var first = service.promotions(conversation(1, 3, null), "", 0);
+        var second = service.promotions(conversation(1, 3, null), "", 1);
+
+        assertEquals(10, first.promotions().size());
+        assertEquals(true, first.hasMore());
+        assertEquals(2, second.promotions().size());
+        assertEquals(false, second.hasMore());
+        assertEquals("Combo 1", first.cheapest().name());
+        assertEquals("Combo 12", first.mostExpensive().name());
+    }
+
+    @Test
+    void filtraComboPorNumeroAunqueNoEsteEntreLosPrimerosDiez() {
+        when(stocks.listarIdsProductosEcommerceDisponiblesParaIa(eq(3), any()))
+                .thenReturn(List.of(10, 11));
+        List<EcommerceInicioComboResponse> values = java.util.stream.IntStream.rangeClosed(1, 30)
+                .mapToObj(index -> combo(index, "combo " + index, 100 + index, 10, 11))
+                .toList();
+        when(promotions.listarPublicas(0, 24)).thenReturn(new PagedResponse<>(
+                values.subList(0, 24), 0, 24, 2, 30, 24, true, false, false));
+        when(promotions.listarPublicas(1, 24)).thenReturn(new PagedResponse<>(
+                values.subList(24, 30), 1, 24, 2, 30, 6, false, true, false));
+
+        var result = service.promotions(conversation(1, 3, null), "", 0, null, 28);
+
+        assertEquals(1, result.promotions().size());
+        assertEquals("combo 28", result.promotions().getFirst().name());
+    }
+
+    @Test
+    void filtraPromocionesDeDosUnidadesDelMismoProductoAntesDePaginar() {
+        when(stocks.listarIdsProductosEcommerceDisponiblesParaIa(eq(3), any()))
+                .thenReturn(List.of(10, 11));
+        EcommerceInicioComboResponse mixed = combo(1, "Combo mixto", 10, 11);
+        EcommerceInicioComboResponse sameProduct = new EcommerceInicioComboResponse(
+                28, "combo 28", "2 iguales", BigDecimal.valueOf(120),
+                BigDecimal.valueOf(130), BigDecimal.valueOf(10), List.of(
+                        new EcommerceInicioComboResponse.Item(10, "EMMA", "emma", 2, null, null)));
+        when(promotions.listarPublicas(0, 24)).thenReturn(new PagedResponse<>(
+                List.of(mixed, sameProduct), 0, 24, 1, 2, 2, true, true, false));
+
+        var result = service.promotions(conversation(1, 3, null), "", 0, 2, null);
+
+        assertEquals(1, result.promotions().size());
+        assertEquals("combo 28", result.promotions().getFirst().name());
+        assertEquals(2, result.promotions().getFirst().products().getFirst().quantity());
+    }
+
+    @Test
+    void encuentraPromocionExactaDeDosUnidadesDelProducto() {
+        when(stocks.listarIdsProductosEcommerceDisponiblesParaIa(eq(3), any()))
+                .thenReturn(List.of(10, 11));
+        EcommerceInicioComboResponse mixed = combo(1, "Combo mixto", 10, 11);
+        EcommerceInicioComboResponse twoEmma = new EcommerceInicioComboResponse(
+                28, "combo 28", "2 iguales", BigDecimal.valueOf(120),
+                BigDecimal.valueOf(130), BigDecimal.valueOf(10), List.of(
+                        new EcommerceInicioComboResponse.Item(10, "EMMA", "emma", 2, null, null)));
+        when(promotions.listarPublicas(0, 24)).thenReturn(new PagedResponse<>(
+                List.of(mixed, twoEmma), 0, 24, 1, 2, 2, true, true, false));
+
+        var result = service.sameProductPromotion(conversation(1, 3, null), 10, 2);
+
+        assertEquals(28, result.promotionId());
+        assertEquals(new BigDecimal("120"), result.comboPrice());
+    }
+
+    @Test
+    void obtieneProductoMasEconomicoYMasCaroConPrecioVigente() {
+        CrmWhatsappConversation conversation = conversation(1, 3, null);
+        SucursalStock economical = stock(10, 100, "EMMA", 65d);
+        SucursalStock expensive = stock(11, 101, "ALESSIA", 75d);
+        when(stocks.listarIdsProductosEcommerceDisponiblesParaIa(eq(3), any()))
+                .thenReturn(List.of(100, 101));
+        when(stocks.listarVariantesEcommerceDisponiblesParaIa(eq(3), eq(List.of(100, 101))))
+                .thenReturn(List.of(economical, expensive));
+        when(prices.obtenerOfertasSucursalPorVariantes(any(), eq(3))).thenReturn(Map.of());
+        when(prices.resolver(eq(economical.getProductoVariante()),
+                org.mockito.ArgumentMatchers.<ProductoVarianteOfertaSucursal>isNull()))
+                .thenReturn(price(65d));
+        when(prices.resolver(eq(expensive.getProductoVariante()),
+                org.mockito.ArgumentMatchers.<ProductoVarianteOfertaSucursal>isNull()))
+                .thenReturn(price(75d));
+
+        var cheapest = service.productPriceExtreme(conversation, false);
+        var highest = service.productPriceExtreme(conversation, true);
+
+        assertEquals("EMMA", cheapest.product().name());
+        assertEquals(new BigDecimal("65.0"), cheapest.product().price());
+        assertEquals("ALESSIA", highest.product().name());
+        assertEquals(new BigDecimal("75.0"), highest.product().price());
+    }
+
+    @Test
+    void entregaInmediataConsultaSoloNoPreventaConLaTallaSolicitada() {
+        when(stocks.listarIdsProductosEcommerceEntregaInmediataParaIa(eq(3), eq("M"), any()))
+                .thenReturn(List.of());
+
+        var result = service.searchReadyStockProducts(conversation(1, 3, null), "m", 0);
+
+        assertEquals(0, result.products().size());
+        verify(stocks).listarIdsProductosEcommerceEntregaInmediataParaIa(eq(3), eq("M"), any());
+    }
+
     private EcommerceInicioComboResponse combo(int id, String name, int firstProduct, int secondProduct) {
-        return new EcommerceInicioComboResponse(id, name, "1 + 1", BigDecimal.valueOf(120),
+        return combo(id, name, 120, firstProduct, secondProduct);
+    }
+
+    private EcommerceInicioComboResponse combo(
+            int id, String name, int price, int firstProduct, int secondProduct) {
+        return new EcommerceInicioComboResponse(id, name, "1 + 1", BigDecimal.valueOf(price),
                 BigDecimal.valueOf(140), BigDecimal.valueOf(20), List.of(
                         new EcommerceInicioComboResponse.Item(firstProduct, "Producto A", "a", 1, null, null),
                         new EcommerceInicioComboResponse.Item(secondProduct, "Producto B", "b", 1, null, null)));
+    }
+
+    private SucursalStock stock(int variantId, int productId, String name, double price) {
+        Producto product = new Producto();
+        product.setIdProducto(productId);
+        product.setNombre(name);
+        ProductoVariante variant = new ProductoVariante();
+        variant.setIdProductoVariante(variantId);
+        variant.setProducto(product);
+        SucursalStock stock = new SucursalStock();
+        stock.setProductoVariante(variant);
+        stock.setCantidad(1);
+        return stock;
+    }
+
+    private PrecioOfertaService.ResultadoPrecioOferta price(double value) {
+        return new PrecioOfertaService.ResultadoPrecioOferta(
+                value, value, TipoOfertaAplicada.NINGUNA,
+                null, null, null, null);
     }
 
     private CrmWhatsappConversation conversation(int companyId, int branchId, Integer clientId) {

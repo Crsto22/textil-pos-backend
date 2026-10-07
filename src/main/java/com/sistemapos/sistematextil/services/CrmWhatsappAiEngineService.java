@@ -10,6 +10,7 @@ import java.time.ZonedDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -66,7 +67,10 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class CrmWhatsappAiEngineService {
 
-    private static final String PROMPT_VERSION = "crm-wa-v7-smart-greeting";
+    private static final String PROMPT_VERSION = "crm-wa-v8-natural-grounded";
+    private static final String ECOMMERCE_CATALOG_URL = "https://kiments.com.pe";
+    private static final String OUT_OF_SCOPE_RESPONSE =
+            "Lo siento, no tengo información sobre ese tema. ¡Pero puedo ayudarte con nuestros productos o pedidos!";
     private static final String GREETING_RESPONSE = "👋 ¡Hola, bella! 😊\n\n"
             + "Qué gusto tenerte por aquí. Cuéntame, ¿en qué puedo ayudarte?";
     private static final DateTimeFormatter CUSTOMER_DATE_FORMAT = DateTimeFormatter
@@ -141,6 +145,20 @@ public class CrmWhatsappAiEngineService {
         if (message.getDeletedAt() != null || !"INCOMING".equals(message.getDirection())) {
             return PreparedJob.skip(job, "El mensaje no es procesable", false);
         }
+        IncomingBatch incomingBatch = incomingBatch(conversation, message, config.getEsperaRespuestaSegundos());
+        boolean paymentFlowActive = saleDraftService.hasActivePaymentFlow(conversation.getIdConversation())
+                || conversation.getWaitingReason() == CrmWhatsappWaitingReason.PAYMENT_VERIFICATION;
+        boolean hasUnsupportedImage = incomingBatch.messages().stream()
+                .filter(item -> "IMAGE".equalsIgnoreCase(clean(item.getMessageType())))
+                .anyMatch(item -> paymentEvidenceRepository.findByMessage_IdMessage(item.getIdMessage()).isEmpty());
+        if (hasUnsupportedImage && !paymentFlowActive) {
+            if (Boolean.TRUE.equals(config.getTransferirImagenesAsesora())) {
+                return PreparedJob.skip(job, "La imagen fue derivada silenciosamente a una asesora", false);
+            }
+            return PreparedJob.draft(job, config, "ADJUNTO_NO_COMPATIBLE",
+                    unsupportedAttachmentResponse("IMAGE"),
+                    "IA Kiments no interpreta imagenes fuera del flujo de comprobantes");
+        }
         String messageType = clean(message.getMessageType()).toUpperCase(Locale.ROOT);
         String body;
         Usage initialUsage = Usage.empty();
@@ -148,8 +166,6 @@ public class CrmWhatsappAiEngineService {
             if (paymentEvidenceRepository.findByMessage_IdMessage(message.getIdMessage()).isPresent()) {
                 return PreparedJob.skip(job, "El comprobante ya fue registrado por el flujo de pagos", false);
             }
-            boolean paymentFlowActive = saleDraftService.hasActivePaymentFlow(conversation.getIdConversation())
-                    || conversation.getWaitingReason() == CrmWhatsappWaitingReason.PAYMENT_VERIFICATION;
             if (paymentFlowActive && !isAudioMessage(messageType)) {
                 return PreparedJob.skip(job, "El adjunto pertenece al flujo activo de pagos", false);
             }
@@ -174,7 +190,7 @@ public class CrmWhatsappAiEngineService {
                         "IA Kiments solo procesa texto y audios fuera del flujo de comprobantes");
             }
         } else {
-            body = clean(message.getBody());
+            body = clean(incomingBatch.combinedText());
         }
         if (body.isBlank()) {
             return PreparedJob.draft(job, config, "MENSAJE_SIN_TEXTO",
@@ -191,6 +207,7 @@ public class CrmWhatsappAiEngineService {
         List<CrmWhatsappMessage> recent = new ArrayList<>(messageRepository.findRecentActiveMessages(
                 conversation.getIdConversation(), PageRequest.of(0, 15)));
         Collections.reverse(recent);
+        recent = messagesAfterLastCompletedSale(recent);
         boolean advisorOfferPending = hasPendingAdvisorOffer(recent, message.getIdMessage());
         if (isExplicitAdvisorRequest(body) || (advisorOfferPending && isAffirmative(body))) {
             return PreparedJob.handoff(job, config,
@@ -221,12 +238,25 @@ public class CrmWhatsappAiEngineService {
                     .withInitialUsage(initialUsage);
         }
 
-        String context = conversationContext(conversation, recent);
+        boolean hasAutomaticOutgoing = recent.stream().anyMatch(item -> item != null
+                && "OUTGOING".equalsIgnoreCase(clean(item.getDirection()))
+                && "AI_AUTOMATIC".equalsIgnoreCase(clean(item.getOrigin())));
+        Set<Long> excludedContextMessageIds = hasAutomaticOutgoing
+                ? deliveryService.messageIdsExcludedFromAiContext(conversation.getIdConversation())
+                : Set.of();
+        if (excludedContextMessageIds == null) excludedContextMessageIds = Set.of();
+        Set<Long> ignoredIds = excludedContextMessageIds;
+        List<CrmWhatsappMessage> contextualMessages = recent.stream()
+                .filter(item -> isCustomerMessage(item)
+                        || isAiContextResponse(item, ignoredIds))
+                .toList();
+        String context = conversationContext(conversation, contextualMessages);
         if (isAudioMessage(messageType)) {
             context = context + "\nCliente (audio transcrito): " + body;
         }
         String remembered = clean(memoryService.contextFor(conversation.getIdConversation()));
         if (!remembered.isBlank()) context = remembered + "\n" + context;
+        context = context + "\nMENSAJE ACTUAL DEL CLIENTE (PRIORIDAD):\n" + body;
         return PreparedJob.ready(
                 job,
                 config,
@@ -235,6 +265,54 @@ public class CrmWhatsappAiEngineService {
                 split(config.getIntencionesPermitidas()),
                 systemInstruction(config, conversation),
                 initialUsage);
+    }
+
+    private IncomingBatch incomingBatch(
+            CrmWhatsappConversation conversation,
+            CrmWhatsappMessage anchor,
+            Integer waitSeconds) {
+        if (conversation == null || conversation.getIdConversation() == null
+                || anchor == null || anchor.getIdMessage() == null) {
+            return IncomingBatch.single(anchor, clean(anchor == null ? null : anchor.getBody()));
+        }
+        String anchorType = clean(anchor.getMessageType()).toUpperCase(Locale.ROOT);
+        if (!"TEXT".equals(anchorType) && !"IMAGE".equals(anchorType)) {
+            return IncomingBatch.single(anchor, clean(anchor.getBody()));
+        }
+        List<CrmWhatsappMessage> candidates = messageRepository.findActiveMessagesEndingAt(
+                conversation.getIdConversation(), anchor.getIdMessage(), PageRequest.of(0, 15));
+        if (candidates.isEmpty()) {
+            return IncomingBatch.single(anchor, clean(anchor.getBody()));
+        }
+        int windowSeconds = Math.max(3, Math.min(60, waitSeconds == null ? 5 : waitSeconds));
+        List<CrmWhatsappMessage> selected = new ArrayList<>();
+        CrmWhatsappMessage newer = null;
+        for (CrmWhatsappMessage candidate : candidates) {
+            if (!"INCOMING".equals(candidate.getDirection())) break;
+            String candidateType = clean(candidate.getMessageType()).toUpperCase(Locale.ROOT);
+            if (!"TEXT".equals(candidateType) && !"IMAGE".equals(candidateType)) break;
+            if (newer != null && outsideBatchWindow(candidate, newer, windowSeconds)) break;
+            selected.add(candidate);
+            newer = candidate;
+        }
+        if (selected.isEmpty()) selected.add(anchor);
+        Collections.reverse(selected);
+        String combinedText = selected.stream()
+                .filter(item -> "TEXT".equalsIgnoreCase(clean(item.getMessageType())))
+                .map(item -> truncate(clean(item.getBody()), 800))
+                .filter(value -> !value.isBlank())
+                .reduce((left, right) -> left + "\n" + right)
+                .orElse("");
+        return new IncomingBatch(selected, combinedText);
+    }
+
+    private boolean outsideBatchWindow(
+            CrmWhatsappMessage older,
+            CrmWhatsappMessage newer,
+            int windowSeconds) {
+        if (older.getCreatedAt() == null || newer.getCreatedAt() == null) return false;
+        Duration gap = Duration.between(older.getCreatedAt(), newer.getCreatedAt());
+        return !gap.isNegative() && gap.compareTo(Duration.ofSeconds(windowSeconds)) > 0;
     }
 
     private AudioPreparation prepareAudio(CrmWhatsappAiJob job) {
@@ -373,7 +451,9 @@ public class CrmWhatsappAiEngineService {
         }
         return new ProcessingResult(result.outcome(), result.intent(), result.confidence(), result.requiresHuman(),
                 result.reason(), result.draft(), result.toolTrace(), result.evidence(), result.suggestedMedia(),
-                addUsage(initialUsage, result.usage()), result.latencyMs(), result.superseded());
+                addUsage(initialUsage, result.usage()), result.latencyMs(), result.superseded(),
+                result.naturalResponseUsed(), result.fallbackUsed(), result.fallbackReason(),
+                result.classificationLatencyMs(), result.toolLatencyMs(), result.draftLatencyMs());
     }
 
     private ProcessingResult executePrepared(PreparedJob prepared) {
@@ -381,7 +461,67 @@ public class CrmWhatsappAiEngineService {
         long started = System.nanoTime();
         Long conversationId = prepared.job().getConversation().getIdConversation();
         CrmWhatsappAiPendingQuestion pendingQuestion = memoryService.pendingQuestionFor(conversationId);
+        MemorySelection rememberedSelection = memoryService.selectionFor(conversationId);
+        Integer selectedPromotionNumber = referencedPromotionToAdd(
+                prepared.latestMessage(), prepared.conversationContext());
+        if (selectedPromotionNumber != null) {
+            if (!prepared.allowedIntents().contains("INTENCION_COMPRA")) {
+                return ProcessingResult.human("INTENCION_COMPRA", 100,
+                        "La preparacion de pedidos no esta habilitada", List.of(), List.of(),
+                        Usage.empty(), elapsedMs(started));
+            }
+            Map<String, Object> arguments = new LinkedHashMap<>();
+            arguments.put("q", "");
+            arguments.put("page", 0);
+            arguments.put("promotionNumber", selectedPromotionNumber);
+            long toolStarted = System.nanoTime();
+            ExecutionResult result = toolService.execute(prepared.job().getConversation(),
+                    List.of(new ToolCall("consultar_promociones", arguments)));
+            Map<?, ?> promotion = firstPromotion(result.modelResults());
+            if (promotion == null) {
+                return ProcessingResult.draft("PROMOCIONES", 100,
+                        "🎁 La promoción seleccionada ya no está vigente.",
+                        "No se encontró la promoción referenciada entre las promociones vigentes",
+                        result.auditTrace(), result.evidence(), List.of(), Usage.empty(), elapsedMs(started))
+                        .withGenerationTrace(false, false, null, null, elapsedMs(toolStarted), null);
+            }
+            Integer promotionId = integerValue(promotion.get("promotionId"));
+            SaleActionResult action = new SaleActionResult(
+                    "ADD_COMBO", text(promotion.get("name")), promotionId,
+                    "", "", null, "", 100,
+                    "La clienta eligió la última promoción mostrada", Usage.empty());
+            var outcome = saleDraftService.applyAiAction(prepared.job().getConversation(), action);
+            return ProcessingResult.draft("INTENCION_COMPRA", 100, outcome.response(), action.reason(),
+                    result.auditTrace(), result.evidence(), List.of(), Usage.empty(), elapsedMs(started))
+                    .withGenerationTrace(false, false, null, null, elapsedMs(toolStarted), null);
+        }
+        if (asksForQuantityPromotion(prepared.latestMessage(), prepared.conversationContext())) {
+            if (!prepared.allowedIntents().contains("PROMOCIONES")) {
+                return ProcessingResult.human("PROMOCIONES", 100,
+                        "La consulta de promociones no esta habilitada", List.of(), List.of(),
+                        Usage.empty(), elapsedMs(started));
+            }
+            int quantity = requestedQuantity(normalizedText(prepared.latestMessage()));
+            String promotionQuery = quantityPromotionProductQuery(prepared.latestMessage(), rememberedSelection);
+            Map<String, Object> arguments = new LinkedHashMap<>();
+            arguments.put("q", promotionQuery);
+            arguments.put("page", 0);
+            arguments.put("sameProductQuantity", Math.max(2, quantity));
+            long toolStarted = System.nanoTime();
+            ExecutionResult result = toolService.execute(prepared.job().getConversation(),
+                    List.of(new ToolCall("consultar_promociones", arguments)));
+            return ProcessingResult.draft("PROMOCIONES", 100,
+                    quantityPromotionResponse(result.modelResults(), promotionQuery, quantity),
+                    "Descuento por cantidad validado contra promociones vigentes",
+                    result.auditTrace(), result.evidence(), List.of(),
+                    Usage.empty(), elapsedMs(started))
+                    .withGenerationTrace(false, false, null, null, elapsedMs(toolStarted), null);
+        }
         var ecommerceOrder = ecommerceOrderParser.parse(prepared.latestMessage());
+        if (!ecommerceOrder.recognized()) {
+            ecommerceOrder = contextualMultipleSizeOrder(
+                    prepared.latestMessage(), prepared.conversationContext(), pendingQuestion, rememberedSelection);
+        }
         if (ecommerceOrder.recognized()) {
             if (!prepared.allowedIntents().contains("INTENCION_COMPRA")) {
                 return ProcessingResult.human("INTENCION_COMPRA", 100,
@@ -403,25 +543,252 @@ public class CrmWhatsappAiEngineService {
                         Usage.empty(), elapsedMs(started));
             }
         }
-        if (asksForAnotherProductChoice(prepared.latestMessage())) {
-            return ProcessingResult.draft("PRODUCTOS", 100,
-                    "Claro 💛 ¿Qué producto deseas consultar?",
-                    "El cliente desea continuar consultando el catálogo",
+        if (isClearlyOutOfScope(prepared.latestMessage())) {
+            return ProcessingResult.draft("FUERA_DE_ALCANCE", 100, OUT_OF_SCOPE_RESPONSE,
+                    "Consulta ajena a la informacion y operaciones autorizadas del negocio",
                     List.of(), List.of(), List.of(), Usage.empty(), elapsedMs(started));
         }
-        if (pendingQuestion == CrmWhatsappAiPendingQuestion.ORDER_CONFIRMATION
-                && isBareProductInterest(prepared.latestMessage())) {
+        if (asksForProductPriceExtreme(prepared.latestMessage())) {
+            if (!prepared.allowedIntents().contains("PRODUCTOS")
+                    && !prepared.allowedIntents().contains("PRECIO")) {
+                return ProcessingResult.human("PRECIO", 100,
+                        "La consulta de precios no esta habilitada", List.of(), List.of(),
+                        Usage.empty(), elapsedMs(started));
+            }
+            boolean highest = asksForHighestPrice(prepared.latestMessage());
+            long toolStarted = System.nanoTime();
+            ExecutionResult result = toolService.execute(prepared.job().getConversation(),
+                    List.of(new ToolCall("consultar_extremo_precio_producto",
+                            Map.of("order", highest ? "MAX" : "MIN"))));
+            return ProcessingResult.draft("PRECIO", 100,
+                    productPriceExtremeResponse(result.modelResults(), highest),
+                    "Precio extremo de productos validado por el backend",
+                    result.auditTrace(), result.evidence(), result.mediaCandidates(),
+                    Usage.empty(), elapsedMs(started))
+                    .withGenerationTrace(false, false, null, null, elapsedMs(toolStarted), null);
+        }
+        if (asksForPromotionOverview(prepared.latestMessage(), prepared.conversationContext())) {
+            if (!prepared.allowedIntents().contains("PROMOCIONES")) {
+                return ProcessingResult.human("PROMOCIONES", 100,
+                        "La consulta de promociones no esta habilitada", List.of(), List.of(),
+                        Usage.empty(), elapsedMs(started));
+            }
+            int page = asksForMorePromotions(prepared.latestMessage(), prepared.conversationContext())
+                    ? nextPromotionPage(prepared.conversationContext()) : 0;
+            String promotionQuery = promotionProductQuery(prepared.latestMessage(), rememberedSelection);
+            Integer promotionNumber = requestedPromotionNumber(prepared.latestMessage());
+            Map<String, Object> arguments = new LinkedHashMap<>();
+            arguments.put("q", promotionQuery);
+            arguments.put("page", page);
+            if (promotionNumber != null) arguments.put("promotionNumber", promotionNumber);
+            long toolStarted = System.nanoTime();
+            ExecutionResult result = toolService.execute(prepared.job().getConversation(),
+                    List.of(new ToolCall("consultar_promociones", arguments)));
+            return ProcessingResult.draft("PROMOCIONES", 100,
+                    promotionOverviewResponse(result.modelResults(), prepared.latestMessage()),
+                    "Promociones vigentes validadas por el backend",
+                    result.auditTrace(), result.evidence(), List.of(),
+                    Usage.empty(), elapsedMs(started))
+                    .withGenerationTrace(false, false, null, null, elapsedMs(toolStarted), null);
+        }
+        if (asksForProductMaterial(prepared.latestMessage())) {
+            if (!prepared.allowedIntents().contains("PRODUCTOS")) {
+                return ProcessingResult.human("MATERIAL_PRODUCTO", 100,
+                        "La consulta de productos no esta habilitada", List.of(), List.of(),
+                        Usage.empty(), elapsedMs(started));
+            }
+            long toolStarted = System.nanoTime();
             ExecutionResult product = toolService.execute(prepared.job().getConversation(),
                     List.of(new ToolCall("buscar_productos", Map.of(
                             "q", prepared.latestMessage(), "page", 0))));
+            long toolLatency = elapsedMs(toolStarted);
+            String response = productMaterialResponse(product.modelResults());
+            return ProcessingResult.draft("MATERIAL_PRODUCTO", 100, response,
+                    "Material o descripcion del producto validado por el backend",
+                    product.auditTrace(), product.evidence(), List.of(), Usage.empty(), elapsedMs(started))
+                    .withGenerationTrace(false, false, null, null, toolLatency, null);
+        }
+        if (isNamedProductInquiry(prepared.latestMessage())) {
+            long toolStarted = System.nanoTime();
+            ExecutionResult product = toolService.execute(prepared.job().getConversation(),
+                    List.of(new ToolCall("buscar_productos", Map.of(
+                            "q", prepared.latestMessage(), "page", 0))));
+            if (!hasProductMatchesOrCandidates(product.modelResults())) {
+                ExecutionResult catalog = toolService.execute(prepared.job().getConversation(),
+                        List.of(new ToolCall("buscar_productos", Map.of("q", "", "page", 0))));
+                return ProcessingResult.draft("PRODUCTOS", 100,
+                        unavailableProductCatalogResponse(catalog.modelResults()),
+                        "El modelo no existe; se muestran productos disponibles",
+                        catalog.auditTrace(), catalog.evidence(), List.of(),
+                        Usage.empty(), elapsedMs(started))
+                        .withGenerationTrace(false, false, null, null, elapsedMs(toolStarted), null);
+            }
+            long toolLatency = elapsedMs(toolStarted);
             String response = deterministicResponse("PRODUCTOS", product.modelResults(),
                     prepared.allowedIntents().contains("ENLACE_ECOMMERCE"));
             if (!clean(response).isBlank()) {
                 return ProcessingResult.draft("PRODUCTOS", 100, response,
-                        "Se atendió una nueva consulta de producto sin modificar el carrito pendiente",
+                        "Ficha del producto validada por el backend",
                         product.auditTrace(), product.evidence(),
                         productDetailMedia(product.modelResults(), product.mediaCandidates()),
+                        Usage.empty(), elapsedMs(started))
+                        .withGenerationTrace(false, false, null, null, toolLatency, null);
+            }
+        }
+        if ((prepared.allowedIntents().contains("ENVIOS")
+                || prepared.allowedIntents().contains("INFORMACION_NEGOCIO"))
+                && pendingQuestion != CrmWhatsappAiPendingQuestion.CATALOG_PRODUCT
+                && pendingQuestion != CrmWhatsappAiPendingQuestion.SIZE_GUIDE_PRODUCT
+                && isShippingDestinationFollowUp(prepared.latestMessage(), prepared.conversationContext())) {
+            long toolStarted = System.nanoTime();
+            ExecutionResult shipping = toolService.execute(prepared.job().getConversation(),
+                    List.of(new ToolCall("consultar_informacion_negocio", Map.of(
+                            "q", "envios a provincia agencia y recojo en almacen"))));
+            String fallback = knowledgeFallbackResponse(shipping.modelResults());
+            if (clean(fallback).isBlank()) fallback = OUT_OF_SCOPE_RESPONSE;
+            fallback = normalizeInformationalClosing(fallback, "ENVIOS");
+            return informationalResponse(prepared, "ENVIOS", 100, shipping, fallback,
+                    List.of(), Usage.empty(), started, null, elapsedMs(toolStarted));
+        }
+        if (isAffirmativeCatalogReply(prepared.latestMessage(), prepared.conversationContext())) {
+            long toolStarted = System.nanoTime();
+            ExecutionResult catalog = toolService.execute(prepared.job().getConversation(),
+                    List.of(new ToolCall("buscar_productos", Map.of("q", "", "page", 0))));
+            boolean includeCatalogLink = prepared.allowedIntents().contains("ENLACE_ECOMMERCE");
+            return ProcessingResult.draft(includeCatalogLink ? "ENLACE_ECOMMERCE" : "PRODUCTOS", 100,
+                    catalogListingResponse(catalog.modelResults(), includeCatalogLink),
+                    "Catalogo validado por el backend", catalog.auditTrace(), catalog.evidence(),
+                    List.of(), Usage.empty(), elapsedMs(started))
+                    .withGenerationTrace(false, false, null, null, elapsedMs(toolStarted), null);
+        }
+        if (asksToSeparateSetOrMixSizes(prepared.latestMessage())) {
+            String fallback = "Bella 💛, cada producto registrado corresponde al conjunto completo y todas sus piezas "
+                            + "se entregan en una sola talla.\n\n"
+                            + "No vendemos el chaleco, pantalón u otras piezas por separado y tampoco podemos "
+                            + "combinar tallas diferentes, como chaleco M con pantalón L.\n\n"
+                            + "Si deseas, puedo mostrarte la guía de medidas del modelo para ayudarte a elegir "
+                            + "la talla más adecuada.";
+            ExecutionResult policy = new ExecutionResult(
+                    List.of(Map.of("tool", "regla_comercial", "policy", fallback)),
+                    List.of(), List.of(), List.of());
+            return informationalResponse(prepared, "POLITICAS", 100, policy, fallback, List.of(),
+                    Usage.empty(), started, null, 0L);
+        }
+        if (asksForAnotherProductChoice(prepared.latestMessage())) {
+            String fallback = "Claro 💛 ¿Qué producto deseas consultar?";
+            ExecutionResult prompt = new ExecutionResult(
+                    List.of(Map.of("tool", "contexto_conversacional", "nextQuestion", fallback)),
+                    List.of(), List.of(), List.of());
+            return informationalResponse(prepared, "PRODUCTOS", 100, prompt, fallback, List.of(),
+                    Usage.empty(), started, null, 0L);
+        }
+        boolean readyStockRequest = asksForReadyStock(prepared.latestMessage())
+                || (isSizeOnlyResponse(prepared.latestMessage())
+                        && hasReadyStockContext(prepared.conversationContext()));
+        if (!readyStockRequest && asksForPreorderProducts(prepared.latestMessage())) {
+            long toolStarted = System.nanoTime();
+            ExecutionResult catalog = toolService.execute(prepared.job().getConversation(),
+                    List.of(new ToolCall("buscar_productos", Map.of(
+                            "q", "", "page", 0, "preorderOnly", true))));
+            return informationalResponse(prepared, "PRODUCTOS", 100, catalog,
+                    preorderProductsResponse(catalog.modelResults()), List.of(), Usage.empty(), started,
+                    null, elapsedMs(toolStarted));
+        }
+        if (!readyStockRequest && (asksForVirtualCatalog(prepared.latestMessage())
+                || isGenericProductListing(prepared.latestMessage()))) {
+            boolean explicitCatalogRequest = asksForVirtualCatalog(prepared.latestMessage());
+            boolean catalogContext = explicitCatalogRequest || asksForAnotherProduct(prepared.latestMessage());
+            boolean linksEnabled = catalogContext
+                    && prepared.allowedIntents().contains("ENLACE_ECOMMERCE");
+            int page = asksForAnotherProduct(prepared.latestMessage()) ? 1 : 0;
+            long toolStarted = System.nanoTime();
+            ExecutionResult catalog = toolService.execute(prepared.job().getConversation(),
+                    List.of(new ToolCall("buscar_productos", Map.of("q", "", "page", page))));
+            long toolLatency = elapsedMs(toolStarted);
+            String response = catalogListingResponse(catalog.modelResults(), linksEnabled && page == 0);
+            if (catalogContext) {
+                return ProcessingResult.draft(linksEnabled ? "ENLACE_ECOMMERCE" : "PRODUCTOS", 100, response,
+                        "Listado de productos validado por el backend",
+                        catalog.auditTrace(), catalog.evidence(), List.of(), Usage.empty(), elapsedMs(started))
+                        .withGenerationTrace(false, false, null, null, toolLatency, null);
+            }
+            return ProcessingResult.draft("PRODUCTOS", 100, response,
+                    "Listado de productos validado por el backend",
+                    catalog.auditTrace(), catalog.evidence(), List.of(), Usage.empty(), elapsedMs(started))
+                    .withGenerationTrace(false, false, null, null, toolLatency, null);
+        }
+        if (readyStockRequest) {
+            if (!prepared.allowedIntents().contains("PRODUCTOS")) {
+                return ProcessingResult.human("PRODUCTOS", 100,
+                        "La consulta de productos no está habilitada", List.of(), List.of(),
                         Usage.empty(), elapsedMs(started));
+            }
+            String size = requestedSize(prepared.latestMessage());
+            long toolStarted = System.nanoTime();
+            ExecutionResult catalog = toolService.execute(prepared.job().getConversation(),
+                    List.of(new ToolCall("buscar_productos", Map.of(
+                            "q", "", "page", 0, "readyStockOnly", true, "size", size))));
+            long toolLatency = elapsedMs(toolStarted);
+            String response = readyStockResponse(catalog.modelResults(), size);
+            return ProcessingResult.draft("PRODUCTOS", 100, response,
+                    "Stock para entrega inmediata validado por el backend",
+                    catalog.auditTrace(), catalog.evidence(), List.of(), Usage.empty(), elapsedMs(started))
+                    .withGenerationTrace(false, false, null, null, toolLatency, null);
+        }
+        var pendingReply = memoryService.resolvePendingReply(
+                prepared.job().getConversation(), prepared.job().getMessage().getIdMessage(), prepared.latestMessage());
+        if (pendingReply != null) {
+            if (pendingReply.requestsCatalog()) {
+                long toolStarted = System.nanoTime();
+                ExecutionResult catalog = toolService.execute(prepared.job().getConversation(),
+                        List.of(new ToolCall("buscar_productos", Map.of(
+                                "q", clean(pendingReply.catalogQuery()), "page", 0))));
+                long toolLatency = elapsedMs(toolStarted);
+                if (!clean(pendingReply.catalogQuery()).isBlank()
+                        && !hasProductMatchesOrCandidates(catalog.modelResults())) {
+                    ExecutionResult available = toolService.execute(prepared.job().getConversation(),
+                            List.of(new ToolCall("buscar_productos", Map.of("q", "", "page", 0))));
+                    return ProcessingResult.draft("PRODUCTOS", 100,
+                            unavailableProductCatalogResponse(available.modelResults()),
+                            "El modelo elegido no existe; se muestran productos disponibles",
+                            available.auditTrace(), available.evidence(), List.of(),
+                            Usage.empty(), elapsedMs(started))
+                            .withGenerationTrace(false, false, null, null, elapsedMs(toolStarted), null);
+                }
+                String response = clean(pendingReply.catalogQuery()).isBlank()
+                        ? catalogListingResponse(catalog.modelResults(),
+                                prepared.allowedIntents().contains("ENLACE_ECOMMERCE"))
+                        : deterministicResponse("PRODUCTOS", catalog.modelResults(),
+                                prepared.allowedIntents().contains("ENLACE_ECOMMERCE"));
+                if (clean(response).isBlank()) {
+                    response = "👗 En este momento no encuentro productos disponibles en el catálogo.\n\n"
+                            + "Puedes volver a consultarme en unos minutos.";
+                }
+                return informationalResponse(prepared, "PRODUCTOS", 100, catalog, response,
+                        productDetailMedia(catalog.modelResults(), catalog.mediaCandidates()),
+                        Usage.empty(), started, null, toolLatency);
+            }
+            if (!clean(pendingReply.response()).isBlank()) {
+                return ProcessingResult.draft(pendingReply.intent(), 100, pendingReply.response(),
+                        "Respuesta resuelta desde el contexto pendiente",
+                        List.of(), List.of(), List.of(), Usage.empty(), elapsedMs(started));
+            }
+        }
+        if (isBareProductInterest(prepared.latestMessage())) {
+            long toolStarted = System.nanoTime();
+            ExecutionResult product = toolService.execute(prepared.job().getConversation(),
+                    List.of(new ToolCall("buscar_productos", Map.of(
+                            "q", prepared.latestMessage(), "page", 0))));
+            long toolLatency = elapsedMs(toolStarted);
+            String response = deterministicResponse("PRODUCTOS", product.modelResults(),
+                    prepared.allowedIntents().contains("ENLACE_ECOMMERCE"));
+            if (!clean(response).isBlank()) {
+                return ProcessingResult.draft("PRODUCTOS", 100, response,
+                        "Ficha del producto validada por el backend",
+                        product.auditTrace(), product.evidence(),
+                        productDetailMedia(product.modelResults(), product.mediaCandidates()),
+                        Usage.empty(), elapsedMs(started))
+                        .withGenerationTrace(false, false, null, null, toolLatency, null);
             }
         }
         var customerData = saleDraftService.captureConfirmedCustomerData(
@@ -431,37 +798,15 @@ public class CrmWhatsappAiEngineService {
                     "Datos requeridos para registrar el pedido", List.of(), List.of(), List.of(),
                     Usage.empty(), elapsedMs(started));
         }
-        var paymentSelection = saleDraftService.selectConfirmedPaymentMethod(
-                prepared.job().getConversation(), prepared.latestMessage());
+        var paymentSelection = pendingQuestion == CrmWhatsappAiPendingQuestion.PAYMENT_METHOD
+                ? saleDraftService.selectConfirmedPaymentMethod(
+                        prepared.job().getConversation(), prepared.latestMessage(), true)
+                : saleDraftService.selectConfirmedPaymentMethod(
+                        prepared.job().getConversation(), prepared.latestMessage());
         if (paymentSelection != null && !clean(paymentSelection.response()).isBlank()) {
             return ProcessingResult.draft("METODOS_PAGO", 100, paymentSelection.response(),
                     "Metodo de pago seleccionado para el pedido confirmado",
                     List.of(), List.of(), List.of(), Usage.empty(), elapsedMs(started));
-        }
-        var pendingReply = memoryService.resolvePendingReply(
-                prepared.job().getConversation(), prepared.job().getMessage().getIdMessage(), prepared.latestMessage());
-        if (pendingReply != null) {
-            if (pendingReply.requestsCatalog()) {
-                ExecutionResult catalog = toolService.execute(prepared.job().getConversation(),
-                        List.of(new ToolCall("buscar_productos", Map.of(
-                                "q", clean(pendingReply.catalogQuery()), "page", 0))));
-                String response = deterministicResponse("PRODUCTOS", catalog.modelResults(),
-                        prepared.allowedIntents().contains("ENLACE_ECOMMERCE"));
-                if (clean(response).isBlank()) {
-                    response = "👗 En este momento no encuentro productos disponibles en el catálogo.\n\n"
-                            + "Puedes volver a consultarme en unos minutos.";
-                }
-                return ProcessingResult.draft("PRODUCTOS", 100, response,
-                        "Catálogo solicitado desde la respuesta pendiente",
-                        catalog.auditTrace(), catalog.evidence(),
-                        productDetailMedia(catalog.modelResults(), catalog.mediaCandidates()),
-                        Usage.empty(), elapsedMs(started));
-            }
-            if (!clean(pendingReply.response()).isBlank()) {
-                return ProcessingResult.draft(pendingReply.intent(), 100, pendingReply.response(),
-                        "Respuesta resuelta desde el contexto pendiente",
-                        List.of(), List.of(), List.of(), Usage.empty(), elapsedMs(started));
-            }
         }
         if (prepared.allowedIntents().contains("ENLACE_ECOMMERCE")
                 && asksForEcommerceLink(normalizedText(prepared.latestMessage()))) {
@@ -469,21 +814,30 @@ public class CrmWhatsappAiEngineService {
                     prepared.job().getConversation().getIdConversation());
             String query = asksGenericEcommerceLink(prepared.latestMessage()) && !clean(rememberedProduct).isBlank()
                     ? rememberedProduct : prepared.latestMessage();
+            long toolStarted = System.nanoTime();
             ExecutionResult product = toolService.execute(prepared.job().getConversation(),
                     List.of(new ToolCall("buscar_productos", Map.of("q", query, "page", 0))));
+            long toolLatency = elapsedMs(toolStarted);
             String response = deterministicResponse("ENLACE_ECOMMERCE", product.modelResults(), true);
-            return ProcessingResult.draft("ENLACE_ECOMMERCE", 100, response,
-                    "Enlace ecommerce validado desde el producto",
-                    product.auditTrace(), product.evidence(), List.of(), Usage.empty(), elapsedMs(started));
+            return informationalResponse(prepared, "ENLACE_ECOMMERCE", 100, product, response,
+                    List.of(), Usage.empty(), started, null, toolLatency);
         }
         Long connectionId = prepared.job().getConversation().getConnection().getIdConnection();
-        ClassificationResult classification = modelProvider.classify(new ClassificationRequest(
-                connectionId, prepared.systemInstruction(), prepared.conversationContext(), prepared.allowedIntents()));
-        Usage usage = classification.usage();
-        MemorySelection rememberedSelection = memoryService.selectionFor(conversationId);
         String rememberedProduct = rememberedSelection == null || clean(rememberedSelection.productName()).isBlank()
                 ? memoryService.rememberedProductName(conversationId)
                 : rememberedSelection.productName();
+        long classificationStarted = System.nanoTime();
+        ClassificationResult classification;
+        try {
+            classification = modelProvider.classify(new ClassificationRequest(
+                    connectionId, prepared.systemInstruction(), prepared.conversationContext(),
+                    prepared.allowedIntents()));
+        } catch (RuntimeException error) {
+            return classificationFailureFallback(prepared, rememberedProduct, pendingQuestion,
+                    started, elapsedMs(classificationStarted), error);
+        }
+        long classificationLatency = elapsedMs(classificationStarted);
+        Usage usage = classification.usage();
         String intent = refineIntent(
                 clean(classification.intent()).toUpperCase(Locale.ROOT), prepared.latestMessage(), rememberedProduct);
         if (pendingQuestion == CrmWhatsappAiPendingQuestion.SIZE_GUIDE_PRODUCT) {
@@ -513,16 +867,26 @@ public class CrmWhatsappAiEngineService {
         List<ToolCall> tools = normalizeTools(
                 classification.tools(), intent, prepared.latestMessage(), rememberedProduct,
                 pendingQuestion == CrmWhatsappAiPendingQuestion.SIZE_GUIDE_PRODUCT);
+        long toolStarted = System.nanoTime();
         ExecutionResult toolExecution = toolService.execute(prepared.job().getConversation(), tools);
+        long toolLatency = elapsedMs(toolStarted);
         if (toolExecution.requiresHuman()) {
             return ProcessingResult.human(intent, classification.confidence(),
                     "La consulta comercial requiere intervencion humana",
                     toolExecution.auditTrace(), toolExecution.evidence(), usage, elapsedMs(started));
         }
         if (Set.of("INTENCION_COMPRA", "MODIFICAR_CARRITO", "CONFIRMAR_PEDIDO", "CANCELAR_PEDIDO").contains(intent)) {
+            String ambiguousProduct = ambiguousProductResponse(toolExecution.modelResults());
+            if (!ambiguousProduct.isBlank()) {
+                return ProcessingResult.draft(intent, classification.confidence(), ambiguousProduct,
+                        "El nombre del producto coincide con varios modelos",
+                        toolExecution.auditTrace(), toolExecution.evidence(), List.of(), usage, elapsedMs(started))
+                        .withGenerationTrace(false, false, null, classificationLatency, toolLatency, null);
+            }
             SaleActionResult action = modelProvider.interpretSaleAction(new SaleActionRequest(
                     connectionId, prepared.systemInstruction(), prepared.conversationContext(), intent,
                     toolExecution.modelResults()));
+            action = preserveExplicitPurchaseAttributes(action, prepared.latestMessage());
             action = completeSaleAction(action, rememberedSelection, toolExecution.modelResults());
             Usage totalUsage = addUsage(usage, action.usage());
             if (action.confidence() < prepared.config().getConfianzaMinima() || "NONE".equals(action.action())) {
@@ -551,26 +915,80 @@ public class CrmWhatsappAiEngineService {
         }
         if (!stockReply.text().isBlank()) {
             return ProcessingResult.draft(intent, classification.confidence(), stockReply.text(),
-                    "Disponibilidad validada en tiempo real", toolExecution.auditTrace(),
-                    toolExecution.evidence(), stockColorMedia(stockReply, toolExecution.mediaCandidates()),
-                    usage, elapsedMs(started));
-        }
-        String deterministic = deterministicResponse(intent, toolExecution.modelResults(),
-                prepared.allowedIntents().contains("ENLACE_ECOMMERCE"));
-        if (!deterministic.isBlank()) {
-            return ProcessingResult.draft(intent, classification.confidence(), deterministic, "Respuesta segura estructurada",
+                    "Disponibilidad y siguiente paso de venta validados por el backend",
                     toolExecution.auditTrace(), toolExecution.evidence(),
+                    stockColorMedia(stockReply, toolExecution.mediaCandidates()),
+                    usage, elapsedMs(started))
+                    .withGenerationTrace(false, false, null, classificationLatency, toolLatency, null);
+        }
+        boolean includeEcommerceLink = prepared.allowedIntents().contains("ENLACE_ECOMMERCE")
+                && ("ENLACE_ECOMMERCE".equals(intent)
+                        || ("PRODUCTOS".equals(intent)
+                                && !isGenericProductListing(prepared.latestMessage())
+                                && !asksForReadyStock(prepared.latestMessage())
+                                && productCount(toolExecution.modelResults()) == 1));
+        String deterministic = deterministicResponse(intent, toolExecution.modelResults(), includeEcommerceLink);
+        if ("PRODUCTOS".equals(intent) && !isGenericProductListing(prepared.latestMessage())
+                && productResultsEmpty(toolExecution.modelResults())) {
+            ExecutionResult knowledge = toolService.execute(prepared.job().getConversation(),
+                    List.of(new ToolCall("consultar_informacion_negocio", Map.of(
+                            "q", prepared.latestMessage()))));
+            if (hasKnowledgeSources(knowledge.modelResults())) {
+                String fallback = knowledgeFallbackResponse(knowledge.modelResults());
+                return informationalResponse(prepared, "INFORMACION_NEGOCIO", classification.confidence(),
+                        knowledge, fallback, List.of(), usage, started, classificationLatency, toolLatency);
+            }
+            if (isExplicitProductMiss(toolExecution.modelResults())) {
+                ExecutionResult catalog = toolService.execute(prepared.job().getConversation(),
+                        List.of(new ToolCall("buscar_productos", Map.of("q", "", "page", 0))));
+                return ProcessingResult.draft("PRODUCTOS", classification.confidence(),
+                        unavailableProductCatalogResponse(catalog.modelResults()),
+                        "El modelo no existe; se muestran productos disponibles",
+                        catalog.auditTrace(), catalog.evidence(), List.of(), usage, elapsedMs(started))
+                        .withGenerationTrace(false, false, null, classificationLatency,
+                                elapsedMs(toolStarted), null);
+            }
+        }
+        if (!deterministic.isBlank()) {
+            return informationalResponse(prepared, intent, classification.confidence(), toolExecution,
+                    deterministic,
                     "PRODUCTOS".equals(intent)
                             ? productDetailMedia(toolExecution.modelResults(), toolExecution.mediaCandidates())
                             : List.of(),
-                    usage, elapsedMs(started));
+                    usage, started, classificationLatency, toolLatency);
         }
-        DraftResult draft = modelProvider.generateDraft(new DraftRequest(
-                connectionId, prepared.systemInstruction(), prepared.conversationContext(), intent,
-                toolExecution.modelResults()));
+        if (!hasUsableToolGrounding(toolExecution.modelResults())
+                && toolExecution.mediaCandidates().isEmpty() && !"SALUDO".equals(intent)) {
+            String reason = "No existen resultados internos suficientes para fundamentar la respuesta";
+            safetyService.recordFallback(prepared.job().getConversation(), reason);
+            return ProcessingResult.draft(intent, classification.confidence(), OUT_OF_SCOPE_RESPONSE,
+                    "Respuesta limitada al alcance comercial", toolExecution.auditTrace(),
+                    toolExecution.evidence(), List.of(), usage, elapsedMs(started))
+                    .withGenerationTrace(false, true, reason, classificationLatency, toolLatency, null);
+        }
+        long draftStarted = System.nanoTime();
+        DraftResult draft;
+        try {
+            draft = modelProvider.generateDraft(new DraftRequest(
+                    connectionId, prepared.systemInstruction(), prepared.conversationContext(), intent,
+                    toolExecution.modelResults()));
+        } catch (RuntimeException error) {
+            long draftLatency = elapsedMs(draftStarted);
+            String reason = "Fallo de redaccion natural: " + safeMessage(error);
+            safetyService.recordFallback(prepared.job().getConversation(), reason);
+            String fallback = knowledgeFallbackResponse(toolExecution.modelResults());
+            if (clean(fallback).isBlank()) fallback = clarificationResponse(intent);
+            if (clean(fallback).isBlank()) fallback = OUT_OF_SCOPE_RESPONSE;
+            fallback = normalizeInformationalClosing(fallback, intent);
+            return ProcessingResult.draft(intent, classification.confidence(), fallback,
+                    "Respuesta segura de respaldo", toolExecution.auditTrace(), toolExecution.evidence(),
+                    List.of(), usage, elapsedMs(started))
+                    .withGenerationTrace(false, true, reason, classificationLatency, toolLatency, draftLatency);
+        }
+        long draftLatency = elapsedMs(draftStarted);
         Usage totalUsage = addUsage(usage, draft.usage());
         if (draft.requiresHuman() || clean(draft.response()).isBlank()) {
-            String clarification = clarificationResponse(intent);
+            String clarification = normalizeInformationalClosing(clarificationResponse(intent), intent);
             if (!clarification.isBlank()) {
                 return ProcessingResult.draft(intent, classification.confidence(), clarification,
                         defaultReason(draft.reason(), "Se solicitan datos adicionales"),
@@ -581,16 +999,36 @@ public class CrmWhatsappAiEngineService {
                     toolExecution.auditTrace(), toolExecution.evidence(), totalUsage, elapsedMs(started));
         }
         List<MediaReference> suggestedMedia = validateMedia(draft.media(), toolExecution.mediaCandidates());
-        return ProcessingResult.draft(intent, classification.confidence(), draft.response(), draft.reason(),
-                toolExecution.auditTrace(), toolExecution.evidence(), suggestedMedia, totalUsage, elapsedMs(started));
+        String generatedResponse = normalizeInformationalClosing(clean(draft.response()), intent);
+        String grounded = safetyService.validateGroundedOutput(
+                prepared.job().getConversation(), generatedResponse, toolExecution.modelResults());
+        if (grounded != null) {
+            return ProcessingResult.draft(intent, classification.confidence(), clarificationResponse(intent),
+                    "Respuesta generada bloqueada por validacion", toolExecution.auditTrace(),
+                    toolExecution.evidence(), List.of(), totalUsage, elapsedMs(started))
+                    .withGenerationTrace(false, true, grounded, classificationLatency, toolLatency, draftLatency);
+        }
+        return ProcessingResult.draft(intent, classification.confidence(), generatedResponse, draft.reason(),
+                toolExecution.auditTrace(), toolExecution.evidence(), suggestedMedia, totalUsage, elapsedMs(started))
+                .withGenerationTrace(true, false, null, classificationLatency, toolLatency, draftLatency);
     }
 
     @Transactional
     public void complete(Long jobId, ProcessingResult result) {
+        complete(jobId, result, null);
+    }
+
+    @Transactional
+    public void complete(Long jobId, ProcessingResult result, String customerInput) {
         CrmWhatsappAiJob job = jobRepository.findDetailedById(jobId).orElse(null);
         // The message/conversation may be deleted while the provider is still
         // processing. Its job is removed by FK cascade, so the result is obsolete.
         if (job == null) return;
+        if (result.outcome() != CrmWhatsappAiRunOutcome.SKIPPED
+                && jobRepository.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(
+                        job.getConversation().getIdConversation(), job.getMessage().getIdMessage())) {
+            result = ProcessingResult.skip("Existe un mensaje entrante mas reciente", true);
+        }
         if (result.outcome() == CrmWhatsappAiRunOutcome.DRAFT_READY) {
             boolean greeted = memoryService.greetingSentInCurrentSession(
                     job.getConversation().getIdConversation());
@@ -611,7 +1049,7 @@ public class CrmWhatsappAiEngineService {
         CrmWhatsappAiRun run = createRun(job, result);
         run = runRepository.save(run);
         saveProductQueries(run, result.toolTrace());
-        memoryService.updateFromRun(run, result);
+        memoryService.updateFromRun(run, result, customerInput);
         job.setStatus(result.superseded() ? CrmWhatsappAiJobStatus.SUPERSEDED
                 : result.outcome() == CrmWhatsappAiRunOutcome.SKIPPED
                         ? CrmWhatsappAiJobStatus.SKIPPED
@@ -626,6 +1064,10 @@ public class CrmWhatsappAiEngineService {
                 CrmWhatsappConversation conversation = job.getConversation();
                 conversation.setAiAttentionMode(CrmWhatsappAiAttentionMode.HUMANA);
                 conversation.setAiAttentionModeExplicit(true);
+                if (conversation.getAssignedUser() == null) {
+                    conversation.setStatus("ESPERA");
+                    conversation.setWaitingReason(CrmWhatsappWaitingReason.ADVISOR_REQUIRED);
+                }
                 conversationRepository.save(conversation);
                 memoryService.pauseForHuman(conversation, result.reason());
                 deliveryService.enqueueHandoff(run);
@@ -697,6 +1139,12 @@ public class CrmWhatsappAiEngineService {
         run.setOutputTokens(result.usage().outputTokens());
         run.setTotalTokens(result.usage().totalTokens());
         run.setLatencyMs(result.latencyMs());
+        run.setNaturalResponseUsed(result.naturalResponseUsed());
+        run.setFallbackUsed(result.fallbackUsed());
+        run.setFallbackReason(truncate(result.fallbackReason(), 500));
+        run.setClassificationLatencyMs(result.classificationLatencyMs());
+        run.setToolLatencyMs(result.toolLatencyMs());
+        run.setDraftLatencyMs(result.draftLatencyMs());
         BigDecimal inputRate = job.getConversation().getConnection() == null ? null
                 : configRepository.findByConnection_IdConnection(job.getConversation().getConnection().getIdConnection())
                         .map(CrmWhatsappAiConfig::getInputCostPerMillionUsd).orElse(null);
@@ -785,6 +1233,31 @@ public class CrmWhatsappAiEngineService {
         return context.toString();
     }
 
+    private boolean isCustomerMessage(CrmWhatsappMessage message) {
+        return message != null && "INCOMING".equalsIgnoreCase(clean(message.getDirection()));
+    }
+
+    private boolean isAiContextResponse(CrmWhatsappMessage message, Set<Long> excludedMessageIds) {
+        if (message == null || !"OUTGOING".equalsIgnoreCase(clean(message.getDirection()))) return false;
+        if (!"AI_AUTOMATIC".equalsIgnoreCase(clean(message.getOrigin()))) return false;
+        return message.getIdMessage() == null || excludedMessageIds == null
+                || !excludedMessageIds.contains(message.getIdMessage());
+    }
+
+    private List<CrmWhatsappMessage> messagesAfterLastCompletedSale(List<CrmWhatsappMessage> messages) {
+        if (messages == null || messages.isEmpty()) return List.of();
+        int boundary = -1;
+        for (int index = 0; index < messages.size(); index++) {
+            CrmWhatsappMessage message = messages.get(index);
+            if (message.getRelatedSaleId() != null
+                    && "SYSTEM".equalsIgnoreCase(clean(message.getDirection()))
+                    && "CRM_SYSTEM".equalsIgnoreCase(clean(message.getOrigin()))) {
+                boundary = index;
+            }
+        }
+        return boundary < 0 ? messages : new ArrayList<>(messages.subList(boundary + 1, messages.size()));
+    }
+
     private String systemInstruction(CrmWhatsappAiConfig config, CrmWhatsappConversation conversation) {
         String custom = clean(config.getInstruccionesPersonalizadas());
         return """
@@ -805,13 +1278,23 @@ public class CrmWhatsappAiEngineService {
                 para ecommerce que devuelva buscar_productos y nunca menciones categorias. No inventes productos,
                 precios, stock, horarios o metodos de pago. No confirmes pagos,
                 no reserves productos, no negocies descuentos, no emitas ventas y no modifiques clientes.
+                Cada producto representa un conjunto completo: sus piezas no se venden por separado y todas deben
+                conservar una misma talla. Nunca combines tallas distintas entre chaleco, pantalon u otras piezas.
                 En consultas normales de stock indica solamente si existe disponibilidad, sin revelar el inventario
                 total. Si el cliente solicita entre 1 y 4 unidades y no alcanzan, puedes indicar las pocas unidades
                 disponibles. Solicitudes desde 5 unidades requieren confirmacion de disponibilidad y precio mayorista
                 por un asesor.
                 Envios, tiendas, horarios, ubicacion, politicas, cuidados y preguntas frecuentes solo pueden
                 provenir de consultar_informacion_negocio. Nunca calcules ni prometas costos de envio; indica que
-                el personal encargado debe confirmarlos. El precio mayorista
+                el personal encargado debe confirmarlos. No solicites ciudad, distrito, provincia, direccion ni
+                destino, porque este asistente no cotiza ni registra envios. Si el cliente menciona una ubicacion
+                despues de consultar por envios, conserva esa intencion y no la interpretes como un producto.
+                La descripcion de cada producto es texto comercial libre y puede contener tela, material, detalles
+                u otra informacion. Interpreta su contenido segun la pregunta, sin asumir que toda descripcion es
+                una tela y sin agregar propiedades que no esten escritas explicitamente.
+                Formula una pregunta final solo cuando el backend realmente utilice la respuesta para continuar una
+                operacion. En consultas informativas, cierra preguntando si desea consultar otro producto o tema,
+                sin pedir datos operativos que no vas a procesar. El precio mayorista
                 es referencial y sus condiciones deben confirmarse con un asesor. Solo puedes consultar el cliente
                 vinculado y sus ventas en esta sucursal. No reveles documento, correo, direccion ni codigos de pago.
                 Toda afirmacion comercial debe estar respaldada por el resultado de una herramienta autorizada.
@@ -841,7 +1324,8 @@ public class CrmWhatsappAiEngineService {
             }
             boolean bodyMeasurement = asksBodyMeasurement(latestMessage);
             boolean referentialSizeGuide = "GUIA_TALLAS".equals(intent)
-                    && referencesRememberedSizeGuide(latestMessage);
+                    && (referencesRememberedSizeGuide(latestMessage)
+                            || asksForSizeRecommendation(latestMessage));
             boolean bareFollowUp = isBareProductDetailFollowUp(latestMessage);
             String query = !clean(rememberedProduct).isBlank()
                     && (("ENLACE_ECOMMERCE".equals(intent) && asksGenericEcommerceLink(latestMessage))
@@ -903,17 +1387,20 @@ public class CrmWhatsappAiEngineService {
         if (isGreeting(value)) return "SALUDO";
         if (asksForSizeGuide(value)) return "GUIA_TALLAS";
         if (asksForEcommerceLink(value)) return "ENLACE_ECOMMERCE";
+        if (isGenericProductListing(latestMessage)) return "PRODUCTOS";
+        boolean asksAttributeList = value.matches(".*\\b(colores|tallas|medidas)\\b.*");
         boolean purchaseRequest = value.matches("^(quiero|dame|agrega|anade|llevo|voy a llevar|deseo comprar)\\b.*")
-                && !value.matches("^quiero (saber|conocer|ver)\\b.*");
+                && !value.matches("^quiero (saber|conocer|ver)\\b.*")
+                && !asksAttributeList;
         if (purchaseRequest && ("PRODUCTOS".equals(intent)
                 || isVariantPurchaseFollowUp(latestMessage, rememberedProduct))) {
             return "INTENCION_COMPRA";
         }
-        boolean asksAttributeList = value.matches(".*\\b(colores|tallas|medidas)\\b.*");
         if (!clean(rememberedProduct).isBlank() && asksAvailability(value) && !asksAttributeList) {
             return "STOCK";
         }
-        if (!"STOCK".equals(intent) && !clean(rememberedProduct).isBlank() && asksColorsOrSizes(value)) {
+        if (!"STOCK".equals(intent) && !clean(rememberedProduct).isBlank()
+                && (asksColorsOrSizes(value) || asksAttributeList)) {
             return "COLORES_TALLAS";
         }
         return intent;
@@ -926,7 +1413,16 @@ public class CrmWhatsappAiEngineService {
     private boolean asksForSizeGuide(String value) {
         return value.matches(".*\\b(guias?|tablas?|cuadros?) (de )?(tallas|medidas)\\b.*")
                 || value.matches(".*\\b(medidas?|mediciones)\\b.*")
-                || value.matches(".*\\b(mandame|muestrame|envia|enviame) (la |el |las )?(guia|tabla|cuadro|medidas)\\b.*");
+                || value.matches(".*\\b(mandame|muestrame|envia|enviame) (la |el |las )?(guia|tabla|cuadro|medidas)\\b.*")
+                || asksForSizeRecommendation(value);
+    }
+
+    private boolean asksForSizeRecommendation(String message) {
+        String value = normalizedText(message).replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ").trim();
+        return value.matches(".*\\b(soy|uso|tengo|normalmente uso) talla \\d{1,3}\\b.*")
+                || value.matches(".*\\b(que|cual) talla (deberia usar|me corresponde|seria|soy)\\b.*")
+                || value.matches(".*\\bque talla me recomiendas\\b.*");
     }
 
     private boolean referencesRememberedSizeGuide(String message) {
@@ -1011,6 +1507,43 @@ public class CrmWhatsappAiEngineService {
                 execution.auditTrace(), execution.evidence(), List.of(guide), usage, latency);
     }
 
+    private String ambiguousProductResponse(List<Map<String, Object>> results) {
+        if (results == null) return "";
+        List<String> names = new ArrayList<>();
+        for (Map<String, Object> result : results) {
+            if (!"AMBIGUOUS".equals(text(result.get("resolution")))) continue;
+            if (!(result.get("candidates") instanceof List<?> candidates)) continue;
+            for (Object value : candidates) {
+                if (!(value instanceof Map<?, ?> candidate)) continue;
+                String name = text(candidate.get("name"));
+                if (!name.isBlank() && !names.contains(name)) names.add(name);
+            }
+        }
+        if (names.isEmpty()) return "";
+        return "Encontré varios modelos con ese nombre:\n"
+                + names.stream().map(name -> "• " + name)
+                        .collect(java.util.stream.Collectors.joining("\n"))
+                + "\n\n¿Cuál de estos modelos deseas pedir?";
+    }
+
+    private SaleActionResult preserveExplicitPurchaseAttributes(SaleActionResult action, String message) {
+        if (action == null) return null;
+        String explicitColor = explicitAttribute(message, "color", "talla|cantidad|unidades?");
+        if (explicitColor.isBlank()) return action;
+        return new SaleActionResult(action.action(), action.productQuery(), action.promotionId(), explicitColor,
+                action.size(), action.quantity(), action.paymentMethod(), action.confidence(), action.reason(),
+                action.usage());
+    }
+
+    private String explicitAttribute(String message, String attribute, String followingAttributes) {
+        String value = normalizedText(message).replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ").trim();
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
+                "\\b" + attribute + "\\s+(.+?)(?=\\s+\\b(?:" + followingAttributes + ")\\b|$)")
+                .matcher(value);
+        return matcher.find() ? clean(matcher.group(1)) : "";
+    }
+
     private boolean containsInternalFinancialRequest(String message) {
         String value = normalizedText(message)
                 .replaceAll("[^a-z0-9\\s]", " ")
@@ -1038,11 +1571,11 @@ public class CrmWhatsappAiEngineService {
     private boolean isExplicitAdvisorRequest(String message) {
         String value = normalizedText(message).replaceAll("[^a-z0-9\\s]", " ")
                 .replaceAll("\\s+", " ").trim();
-        if (value.matches(".*\\b(no|sin) (quiero|deseo|necesito|asesor|humano|persona)\\b.*")) return false;
-        if (value.matches("^(asesor|humano|humana|una persona|asesor por favor)$")) return true;
+        if (value.matches(".*\\b(no|sin) (quiero|deseo|necesito|asesor|asesora|humano|persona)\\b.*")) return false;
+        if (value.matches("^(asesor|asesora|humano|humana|una persona|asesor por favor|asesora por favor)$")) return true;
         return value.matches(".*\\b(quiero|deseo|necesito|puedo|podria|pasame|comunica|comunicarme|hablar)\\b.*"
-                + "\\b(asesor|humano|humana|persona|alguien)\\b.*")
-                || value.matches(".*\\b(asesor|atencion humana) por favor\\b.*");
+                + "\\b(asesor|asesora|humano|humana|persona|alguien)\\b.*")
+                || value.matches(".*\\b(asesor|asesora|atencion humana) por favor\\b.*");
     }
 
     private boolean isAffirmative(String message) {
@@ -1087,6 +1620,290 @@ public class CrmWhatsappAiEngineService {
         return selectsPurchase;
     }
 
+    private ProcessingResult informationalResponse(
+            PreparedJob prepared,
+            String intent,
+            int confidence,
+            ExecutionResult execution,
+            String fallback,
+            List<MediaReference> fallbackMedia,
+            Usage usage,
+            long started,
+            Long classificationLatencyMs,
+            Long toolLatencyMs) {
+        fallback = normalizeInformationalClosing(fallback, intent);
+        if (!usesNaturalResponse(prepared.config(), prepared.job().getConversation())) {
+            return ProcessingResult.draft(intent, confidence, fallback, "Respuesta segura estructurada",
+                    execution.auditTrace(), execution.evidence(), fallbackMedia, usage, elapsedMs(started))
+                    .withGenerationTrace(false, false, null, classificationLatencyMs, toolLatencyMs, null);
+        }
+        if (!"SALUDO".equals(intent) && !hasUsableToolGrounding(execution.modelResults())) {
+            String reason = "No existen resultados internos suficientes para redactar una respuesta natural";
+            safetyService.recordFallback(prepared.job().getConversation(), reason);
+            return ProcessingResult.draft(intent, confidence, fallback, "Respuesta segura de respaldo",
+                    execution.auditTrace(), execution.evidence(), fallbackMedia, usage, elapsedMs(started))
+                    .withGenerationTrace(false, true, reason, classificationLatencyMs, toolLatencyMs, null);
+        }
+        long draftStarted = System.nanoTime();
+        try {
+            DraftResult draft = modelProvider.generateDraft(new DraftRequest(
+                    prepared.job().getConversation().getConnection().getIdConnection(),
+                    prepared.systemInstruction(), prepared.conversationContext(), intent,
+                    execution.modelResults()));
+            long draftLatency = elapsedMs(draftStarted);
+            Usage totalUsage = addUsage(usage, draft.usage());
+            String response = normalizeInformationalClosing(clean(draft.response()), intent);
+            if (!allowsEcommerceUrls(prepared, intent, execution.modelResults())) {
+                response = removeUrls(response);
+            }
+            String blocked = response.isBlank() || draft.requiresHuman()
+                    ? defaultReason(draft.reason(), "Gemini no devolvio una respuesta informativa util")
+                    : safetyService.validateGroundedOutput(
+                            prepared.job().getConversation(), response, execution.modelResults());
+            if (blocked == null) {
+                List<MediaReference> media = fallbackMedia == null || fallbackMedia.isEmpty()
+                        ? validateMedia(draft.media(), execution.mediaCandidates())
+                        : fallbackMedia;
+                return ProcessingResult.draft(intent, confidence, response,
+                        defaultReason(draft.reason(), "Respuesta natural fundamentada"),
+                        execution.auditTrace(), execution.evidence(), media, totalUsage, elapsedMs(started))
+                        .withGenerationTrace(true, false, null, classificationLatencyMs, toolLatencyMs, draftLatency);
+            }
+            safetyService.recordFallback(prepared.job().getConversation(), blocked);
+            return ProcessingResult.draft(intent, confidence, fallback, "Respuesta segura de respaldo",
+                    execution.auditTrace(), execution.evidence(), fallbackMedia, totalUsage, elapsedMs(started))
+                    .withGenerationTrace(false, true, blocked, classificationLatencyMs, toolLatencyMs, draftLatency);
+        } catch (RuntimeException error) {
+            long draftLatency = elapsedMs(draftStarted);
+            String reason = "Fallo de redaccion natural: " + safeMessage(error);
+            safetyService.recordFallback(prepared.job().getConversation(), reason);
+            return ProcessingResult.draft(intent, confidence, fallback, "Respuesta segura de respaldo",
+                    execution.auditTrace(), execution.evidence(), fallbackMedia, usage, elapsedMs(started))
+                    .withGenerationTrace(false, true, reason, classificationLatencyMs, toolLatencyMs, draftLatency);
+        }
+    }
+
+    private ProcessingResult classificationFailureFallback(
+            PreparedJob prepared,
+            String rememberedProduct,
+            CrmWhatsappAiPendingQuestion pendingQuestion,
+            long started,
+            long classificationLatency,
+            RuntimeException error) {
+        String intent = fallbackIntent(prepared.latestMessage());
+        if (pendingQuestion == CrmWhatsappAiPendingQuestion.SIZE_GUIDE_PRODUCT) intent = "GUIA_TALLAS";
+        if (!prepared.allowedIntents().contains(intent)) {
+            intent = prepared.allowedIntents().contains("INFORMACION_NEGOCIO")
+                    ? "INFORMACION_NEGOCIO"
+                    : prepared.allowedIntents().contains("PRODUCTOS") ? "PRODUCTOS" : "SALUDO";
+        }
+
+        String reason = "Fallo de clasificacion: " + safeMessage(error);
+        long toolStarted = System.nanoTime();
+        ExecutionResult execution;
+        try {
+            List<ToolCall> tools = normalizeTools(List.of(), intent, prepared.latestMessage(), rememberedProduct,
+                    pendingQuestion == CrmWhatsappAiPendingQuestion.SIZE_GUIDE_PRODUCT);
+            execution = toolService.execute(prepared.job().getConversation(), tools);
+        } catch (RuntimeException toolError) {
+            execution = new ExecutionResult(List.of(), List.of(), List.of(), List.of());
+            reason += "; respaldo comercial no disponible: " + safeMessage(toolError);
+        }
+        long toolLatency = elapsedMs(toolStarted);
+
+        String fallback;
+        List<MediaReference> media = List.of();
+        if ("GUIA_TALLAS".equals(intent)) {
+            fallback = "Indícame el nombre del producto y te mostraré su guía de tallas.";
+        } else {
+            String deterministicIntent = "PRECIO".equals(intent) ? "PRODUCTOS" : intent;
+            fallback = deterministicResponse(deterministicIntent, execution.modelResults(),
+                    prepared.allowedIntents().contains("ENLACE_ECOMMERCE"));
+            if (fallback.isBlank() && hasKnowledgeSources(execution.modelResults())) {
+                fallback = knowledgeFallbackResponse(execution.modelResults());
+            }
+            if (fallback.isBlank()) fallback = clarificationResponse(intent);
+            if (fallback.isBlank()) {
+                fallback = "No pude procesar esa consulta en este momento. ¿Puedes intentarlo nuevamente?";
+            }
+            if ("PRODUCTOS".equals(intent)) {
+                media = productDetailMedia(execution.modelResults(), execution.mediaCandidates());
+            }
+        }
+        safetyService.recordFallback(prepared.job().getConversation(), reason);
+        return ProcessingResult.draft(intent, 100, fallback, "Respuesta segura de respaldo",
+                execution.auditTrace(), execution.evidence(), media, Usage.empty(), elapsedMs(started))
+                .withGenerationTrace(false, true, reason, classificationLatency, toolLatency, null);
+    }
+
+    private String fallbackIntent(String message) {
+        String value = normalizedText(message);
+        if (value.matches("^(hola|buenas|buenos dias|buenas tardes|buenas noches)[.! ]*$")) return "SALUDO";
+        if (asksForSizeGuide(value) || asksBodyMeasurement(value)) return "GUIA_TALLAS";
+        if (asksForEcommerceLink(value)) return "ENLACE_ECOMMERCE";
+        if (value.contains("promocion") || value.contains("combo")) return "PROMOCIONES";
+        if (value.contains("oferta")) return "OFERTAS";
+        if (value.contains("precio") || value.contains("cuanto cuesta") || value.contains("cuanto esta")) return "PRECIO";
+        if (value.contains("stock") || value.contains("disponible") || value.contains("hay en")) return "STOCK";
+        if (value.contains("color") || value.contains("talla")) return "COLORES_TALLAS";
+        if (value.contains("envio") || value.contains("delivery")) return "ENVIOS";
+        if (value.contains("horario") || value.contains("hora atienden")) return "HORARIOS";
+        if (value.contains("ubicacion") || value.contains("direccion") || value.contains("donde queda")) return "UBICACION";
+        if (value.contains("metodo de pago") || value.contains("como puedo pagar")) return "METODOS_PAGO";
+        if (value.contains("politica") || value.contains("cambio") || value.contains("devolucion")) return "POLITICAS";
+        if (value.contains("cuidado") || value.contains("lavar")) return "CUIDADOS";
+        return "PRODUCTOS";
+    }
+
+    private boolean usesNaturalResponse(CrmWhatsappAiConfig config, CrmWhatsappConversation conversation) {
+        if (config == null || !Boolean.TRUE.equals(config.getNaturalResponseEnabled())) return false;
+        int rollout = Math.max(0, Math.min(100,
+                config.getNaturalResponseRolloutPercent() == null ? 0 : config.getNaturalResponseRolloutPercent()));
+        if (rollout == 0 || conversation == null || conversation.getIdConversation() == null) return false;
+        return rollout == 100
+                || Math.floorMod(Long.hashCode(conversation.getIdConversation()), 100) < rollout;
+    }
+
+    private boolean allowsEcommerceUrls(
+            PreparedJob prepared,
+            String intent,
+            List<Map<String, Object>> results) {
+        if (!prepared.allowedIntents().contains("ENLACE_ECOMMERCE")) return false;
+        if (asksForVirtualCatalog(prepared.latestMessage())) return true;
+        if ("ENLACE_ECOMMERCE".equals(intent)
+                && asksForEcommerceLink(normalizedText(prepared.latestMessage()))) return true;
+        return "PRODUCTOS".equals(intent)
+                && productCount(results) == 1
+                && !isGenericProductListing(prepared.latestMessage())
+                && !asksForReadyStock(prepared.latestMessage());
+    }
+
+    private String removeUrls(String response) {
+        return clean(response)
+                .replaceAll("(?i)https?://\\S+", "")
+                .replaceAll("(?m)^[ \\t]+$", "")
+                .replaceAll("\\n{3,}", "\n\n")
+                .trim();
+    }
+
+    private String catalogListingResponse(
+            List<Map<String, Object>> results,
+            boolean includeEcommerceLink) {
+        Map<String, Object> catalog = results.stream()
+                .filter(result -> "buscar_productos".equals(text(result.get("tool"))))
+                .findFirst()
+                .orElse(Map.of());
+        Object rawProducts = catalog.get("products");
+        List<String> names = rawProducts instanceof List<?> products
+                ? products.stream()
+                        .filter(Map.class::isInstance)
+                        .map(Map.class::cast)
+                        .map(product -> text(product.get("name")))
+                        .filter(name -> !name.isBlank())
+                        .distinct()
+                        .limit(10)
+                        .toList()
+                : List.of();
+        if (names.isEmpty()) {
+            return "👗 En este momento no encuentro productos disponibles en el catálogo.\n\n"
+                    + "Puedes volver a consultarme en unos minutos.";
+        }
+
+        StringBuilder response = new StringBuilder();
+        if (includeEcommerceLink) {
+            response.append("🛍️ Claro, bella 💛 Puedes conocer todos nuestros modelos en nuestro catálogo virtual:\n\n")
+                    .append(ECOMMERCE_CATALOG_URL)
+                    .append("\n\nTambién te comparto algunos productos disponibles actualmente:\n\n");
+        } else {
+            response.append("👗 Claro, bella 💛 Estos son algunos de los productos que tenemos disponibles actualmente:\n\n");
+        }
+        response.append("*Modelos disponibles:*\n")
+                .append(names.stream()
+                        .map(name -> "• " + name)
+                        .collect(java.util.stream.Collectors.joining("\n")));
+        if (Boolean.TRUE.equals(catalog.get("hasMore"))) {
+            response.append("\n\nTenemos más modelitos disponibles. Escríbeme *ver más productos* "
+                    + "para mostrarte los siguientes.");
+        }
+        response.append("\n\nDime el nombre del producto que te interesa y te enviaré sus fotos, precio, "
+                + "colores, tallas disponibles y su guía de medidas 💛");
+        return response.toString();
+    }
+
+    private boolean hasProductMatchesOrCandidates(List<Map<String, Object>> results) {
+        if (results == null) return false;
+        for (Map<String, Object> result : results) {
+            if (!"buscar_productos".equals(text(result.get("tool")))) continue;
+            if (result.get("products") instanceof Collection<?> products && !products.isEmpty()) return true;
+            if (result.get("candidates") instanceof Collection<?> candidates && !candidates.isEmpty()) return true;
+        }
+        return false;
+    }
+
+    private boolean isExplicitProductMiss(List<Map<String, Object>> results) {
+        if (results == null) return false;
+        return results.stream()
+                .filter(result -> "buscar_productos".equals(text(result.get("tool"))))
+                .anyMatch(result -> "NONE".equals(text(result.get("resolution")))
+                        || (result.containsKey("products") && result.containsKey("candidates")
+                                && result.get("products") instanceof Collection<?> products && products.isEmpty()
+                                && result.get("candidates") instanceof Collection<?> candidates && candidates.isEmpty()));
+    }
+
+    private String unavailableProductCatalogResponse(List<Map<String, Object>> results) {
+        return "No encontré ese modelo exacto ni otros suficientemente parecidos en el catálogo actual.\n\n"
+                + catalogListingResponse(results, false);
+    }
+
+    private String preorderProductsResponse(List<Map<String, Object>> results) {
+        if (results == null || results.isEmpty()
+                || !(results.getFirst().get("products") instanceof List<?> products)) {
+            return "Por el momento no tenemos productos en preventa. Puedes consultarme por los modelos disponibles.";
+        }
+        List<String> entries = products.stream()
+                .filter(Map.class::isInstance)
+                .map(Map.class::cast)
+                .filter(product -> Boolean.TRUE.equals(product.get("preventa")))
+                .map(product -> {
+                    String name = text(product.get("name"));
+                    String date = customerDate(text(product.get("fechaEnvioPreventa")));
+                    return name.isBlank() ? "" : "• " + name + (date.isBlank() ? "" : " · envíos desde " + date);
+                })
+                .filter(entry -> !entry.isBlank())
+                .limit(10)
+                .toList();
+        if (entries.isEmpty()) {
+            return "Por el momento no tenemos productos en preventa. Puedes consultarme por los modelos disponibles.";
+        }
+        return "📦 *Productos en preventa:*\n" + String.join("\n", entries)
+                + "\n\nDime qué modelo deseas consultar y te mostraré sus colores, tallas y fecha de envío.";
+    }
+
+    private String customerDate(String rawDate) {
+        try {
+            return CUSTOMER_DATE_FORMAT.format(LocalDate.parse(clean(rawDate)));
+        } catch (RuntimeException ignored) {
+            return "";
+        }
+    }
+
+    private boolean hasUsableToolGrounding(List<Map<String, Object>> results) {
+        if (results == null || results.isEmpty()) return false;
+        for (Map<String, Object> result : results) {
+            if (result == null || result.isEmpty()) continue;
+            for (String key : List.of("products", "sources", "methods", "promotions", "offers", "sales")) {
+                Object value = result.get(key);
+                if (value instanceof Collection<?> collection && !collection.isEmpty()) return true;
+            }
+            if (result.entrySet().stream().anyMatch(entry -> !Set.of("tool", "query", "status")
+                    .contains(entry.getKey()) && entry.getValue() != null
+                    && !Boolean.FALSE.equals(entry.getValue()) && !text(entry.getValue()).isBlank())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private String deterministicResponse(
             String intent, List<Map<String, Object>> results, boolean includeEcommerceLink) {
         if ("SALUDO".equals(intent)) {
@@ -1101,7 +1918,7 @@ public class CrmWhatsappAiEngineService {
                 return "El costo de envio debe ser confirmado por el personal encargado segun el destino y la modalidad elegida.";
             }
             if (!(result.get("sources") instanceof List<?> sources) || sources.isEmpty()) {
-                return "No encontre informacion suficiente sobre este tema. Un asesor debe confirmarlo.";
+                return OUT_OF_SCOPE_RESPONSE;
             }
         }
         if ("ENLACE_ECOMMERCE".equals(intent) && result.get("products") instanceof List<?> products) {
@@ -1120,7 +1937,7 @@ public class CrmWhatsappAiEngineService {
                 }
             }
             return matches.isEmpty()
-                    ? "No encontré ese producto en la tienda online."
+                    ? "Ese modelo no está disponible actualmente en nuestra tienda online."
                     : "¿De qué modelo deseas recibir el enlace?";
         }
         if ("PRODUCTOS".equals(intent) && result.get("products") instanceof List<?> products) {
@@ -1172,8 +1989,8 @@ public class CrmWhatsappAiEngineService {
             return query.isBlank()
                     ? "👗 En este momento no encuentro productos disponibles en el catálogo.\n\n"
                             + "Puedes volver a consultarme en unos minutos."
-                    : "🔎 No encontré ese producto entre los modelos disponibles.\n\n"
-                            + "¿Deseas que te muestre el catálogo actual?";
+                    : "Por el momento ese modelo no está disponible en nuestro catálogo actual.\n\n"
+                            + "Si deseas, puedo mostrarte los productos disponibles.";
         }
         if ("COLORES_TALLAS".equals(intent) && result.get("products") instanceof List<?> products) {
             List<String> summaries = new ArrayList<>();
@@ -1190,8 +2007,9 @@ public class CrmWhatsappAiEngineService {
                 summaries.add(summary.toString());
             }
             if (!summaries.isEmpty()) {
-                return String.join("\n\n", summaries)
-                        + "\n\n¿Qué color y talla deseas confirmar?";
+                if (summaries.size() == 1) return summaries.getFirst();
+                return "No pude identificar un único modelo con ese mensaje. "
+                        + "Escríbeme el nombre exacto del modelo para mostrarte solamente su información.";
             }
         }
         if ("METODOS_PAGO".equals(intent) && result.get("methods") instanceof List<?> methods && !methods.isEmpty()) {
@@ -1209,6 +2027,7 @@ public class CrmWhatsappAiEngineService {
 
     private String productDetailResponse(Map<?, ?> product, boolean includeEcommerceLink) {
         String name = text(product.get("name"));
+        String description = text(product.get("description"));
         List<String> colors = stringList(product.get("availableColors"));
         List<String> sizes = stringList(product.get("availableSizes"));
         List<BigDecimal> currentPrices = product.get("variants") instanceof List<?> variants
@@ -1229,6 +2048,7 @@ public class CrmWhatsappAiEngineService {
                         .anyMatch(price -> price != null && price.signum() > 0);
 
         StringBuilder response = new StringBuilder("👗 *").append(name).append("*");
+        if (!description.isBlank()) response.append("\n📝 *Descripción:* ").append(description);
         if (!currentPrices.isEmpty()) {
             String price = currentPrices.size() == 1
                     ? moneyText(currentPrices.getFirst())
@@ -1243,7 +2063,7 @@ public class CrmWhatsappAiEngineService {
             response.append("\n\n🛍️ *Ver producto:*\n").append(ecommerceUrl);
         }
         if (!colors.isEmpty() || !sizes.isEmpty()) {
-            response.append("\n\nIndícame el color y la talla para verificar disponibilidad.");
+            response.append("\n\n¿Qué talla y color deseas, bella?");
         }
         return response.toString();
     }
@@ -1268,7 +2088,352 @@ public class CrmWhatsappAiEngineService {
         try { return new BigDecimal(text(value)); } catch (NumberFormatException ignored) { return null; }
     }
 
+    private boolean asksForProductPriceExtreme(String message) {
+        String value = normalizedText(message);
+        if (value.contains("combo") || value.contains("promocion") || value.contains("promo")) return false;
+        boolean extreme = value.matches(".*\\b(barat[oa]?|economico|economica|comodo|comoda|caro|cara|costoso|costosa)\\b.*")
+                || value.contains("menor precio") || value.contains("mayor precio");
+        boolean product = value.matches(".*\\b(producto|modelo|prenda)\\b.*")
+                || value.contains("que tienes") || value.contains("que tengan");
+        return extreme && product;
+    }
+
+    private boolean asksForHighestPrice(String message) {
+        String value = normalizedText(message);
+        return value.matches(".*\\b(caro|cara|costoso|costosa)\\b.*") || value.contains("mayor precio");
+    }
+
+    private boolean asksForPromotionOverview(String message, String context) {
+        String value = normalizedText(message);
+        if (asksForMorePromotions(message, context)) return true;
+        if (isStandaloneCommercialBenefitQuestion(value)) return true;
+        boolean promotion = value.contains("combo") || value.contains("promocion") || value.contains("promo");
+        if (!promotion) return false;
+        if (requestedPromotionNumber(message) != null) return true;
+        boolean extreme = value.matches(".*\\b(barat[oa]?|economico|economica|comodo|comoda|caro|cara|costoso|costosa)\\b.*")
+                || value.contains("menor precio") || value.contains("mayor precio");
+        boolean listing = value.matches(".*\\b(tienes|tienen|disponible|disponibles|mostrar|muestra|muestrame|lista|listar|cuales)\\b.*")
+                || value.startsWith("que promociones") || value.startsWith("que combos");
+        return extreme || listing;
+    }
+
+    private boolean isStandaloneCommercialBenefitQuestion(String message) {
+        String value = normalizedText(message)
+                .replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        return value.matches("^(?:hay|tienes|tienen|manejas|manejan|cuentas con|ofrecen|ofreces)?\\s*"
+                + "(?:alguna|algunas|algun|algunos)?\\s*"
+                + "(?:oferta|ofertas|promocion|promociones|promos|descuento|descuentos)"
+                + "(?:\\s+(?:disponible|disponibles|vigente|vigentes|ahora|actualmente))?$");
+    }
+
+    private boolean asksForQuantityPromotion(String message, String context) {
+        String value = normalizedText(message);
+        boolean commercialBenefit = value.matches(".*\\b(promocion|promociones|promo|descuento|oferta)\\b.*");
+        boolean purchaseQuantity = requestedQuantity(value) >= 2
+                || value.matches(".*\\b(dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\\b.*");
+        boolean purchaseLanguage = value.matches(".*\\b(llevo|llevar|compro|comprar|quiero|agrego|agregar)\\b.*")
+                || value.contains("del mismo producto") || value.contains("del mismo modelo");
+        boolean promotionalContext = normalizedText(context)
+                .matches("(?s).*\\b(promocion|promociones|promo|descuento|combo|combos)\\b.*");
+        boolean explicitCorrection = value.contains("me refiero") || value.contains("hablo de");
+        return purchaseQuantity && purchaseLanguage
+                && (commercialBenefit || promotionalContext || explicitCorrection);
+    }
+
+    private String quantityPromotionProductQuery(String message, MemorySelection rememberedSelection) {
+        String value = normalizedText(message).replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ").trim();
+        java.util.regex.Matcher explicitReference = java.util.regex.Pattern.compile(
+                "(?:me refiero(?: a)?|hablo de|es)\\s+(.+?)\\s+(?:si\\s+)?"
+                        + "(?:llevo|llevar|compro|comprar|quiero|agrego|agregar)\\s+"
+                        + "(?:\\d+|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\\b")
+                .matcher(value);
+        if (explicitReference.find()) {
+            String candidate = clean(explicitReference.group(1));
+            if (!isGenericPromotionProduct(candidate)) return candidate;
+        }
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
+                "\\b(?:llevo|llevar|compro|comprar|quiero|agrego|agregar)\\s+"
+                        + "(?:\\d+|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\\s+"
+                        + "(?:unidades?\\s+(?:de\\s+)?|(?:de|del)\\s+)?"
+                        + "(.+?)(?:\\s+(?:hay|tiene|tienes|aplica|con|y)\\s+"
+                        + "(?:promocion|promo|descuento|oferta)|$)")
+                .matcher(value);
+        if (matcher.find()) {
+            String candidate = clean(matcher.group(1))
+                    .replaceAll("\\b(?:del mismo producto|del mismo modelo|mismo producto|mismo modelo)\\b", "")
+                    .trim();
+            if (!candidate.isBlank() && !isGenericPromotionProduct(candidate)) return candidate;
+        }
+        return rememberedSelection == null ? "" : clean(rememberedSelection.productName());
+    }
+
+    private boolean isGenericPromotionProduct(String candidate) {
+        String value = normalizedText(candidate).replaceAll("\\s+", " ").trim();
+        return value.isBlank()
+                || value.matches("(?:hay |tiene |tienes )?(?:promocion|promociones|promo|descuento|oferta)")
+                || value.matches("(?:el |la |los |las )?(?:mismo|misma)s?(?: producto| modelo| conjunto| prenda)?")
+                || value.matches("(?:producto|modelo|conjunto|prenda)s?");
+    }
+
+    private String quantityPromotionResponse(List<Map<String, Object>> results, String productQuery, int quantity) {
+        Map<String, Object> result = results == null ? Map.of() : results.stream()
+                .filter(item -> "consultar_promociones".equals(text(item.get("tool"))))
+                .findFirst().orElse(Map.of());
+        List<?> promotions = result.get("promotions") instanceof List<?> values ? values : List.of();
+        int requested = Math.max(2, quantity);
+        String normalizedProduct = normalizedText(productQuery);
+        if (normalizedProduct.isBlank()) {
+            LinkedHashMap<String, Map<?, ?>> productsWithDiscount = new LinkedHashMap<>();
+            for (Object value : promotions) {
+                if (!(value instanceof Map<?, ?> promotion)
+                        || !(promotion.get("products") instanceof List<?> products)) continue;
+                for (Object rawProduct : products) {
+                    if (!(rawProduct instanceof Map<?, ?> product)
+                            || integerValue(product.get("quantity")) != requested) continue;
+                    String name = text(product.get("name"));
+                    if (!name.isBlank()) productsWithDiscount.putIfAbsent(name, promotion);
+                }
+            }
+            if (productsWithDiscount.isEmpty()) {
+                return "🎁 Por el momento no encontré promociones vigentes para llevar "
+                        + requested + " unidades del mismo producto.";
+            }
+            StringBuilder response = new StringBuilder("🎁 *Sí tenemos descuentos llevando ")
+                    .append(requested).append(" unidades del mismo producto*\n\n");
+            productsWithDiscount.entrySet().stream().limit(10).forEach(entry -> response
+                    .append("• *").append(entry.getKey()).append("* — ")
+                    .append(text(entry.getValue().get("name"))).append(" — ")
+                    .append(moneyText(decimal(entry.getValue().get("comboPrice")))).append('\n'));
+            return response.append("\nDime cuál producto deseas y te muestro la promoción completa.")
+                    .toString().trim();
+        }
+        List<Map<?, ?>> matching = new ArrayList<>();
+        for (Object value : promotions) {
+            if (value instanceof Map<?, ?> promotion
+                    && promotionSupportsQuantity(promotion, normalizedProduct, requested)) {
+                matching.add(promotion);
+                if (matching.size() == 3) break;
+            }
+        }
+        String productLabel = clean(productQuery).isBlank() ? "ese producto" : "*" + clean(productQuery).toUpperCase(Locale.ROOT) + "*";
+        if (matching.isEmpty()) {
+            return "🎁 Por el momento no encontré una promoción vigente para " + requested
+                    + " unidades de " + productLabel + ".";
+        }
+        StringBuilder response = new StringBuilder("🎁 *Sí tenemos promoción para ")
+                .append(requested).append(" unidades de ").append(productLabel).append("*\n\n");
+        for (Map<?, ?> promotion : matching) {
+            response.append("• *").append(text(promotion.get("name"))).append("*\n")
+                    .append("👗 Incluye: ").append(promotionProductsText(promotion.get("products"))).append('\n')
+                    .append("💵 Precio normal: ").append(moneyText(decimal(promotion.get("regularPrice")))).append('\n')
+                    .append("🏷️ Descuento: -").append(moneyText(decimal(promotion.get("savings")))).append('\n')
+                    .append("💰 *Precio final: ").append(moneyText(decimal(promotion.get("comboPrice")))).append("*\n\n");
+        }
+        return response.append("¿Deseas agregar esta promoción a tu pedido?").toString().trim();
+    }
+
+    private boolean promotionSupportsQuantity(Map<?, ?> promotion, String normalizedProduct, int quantity) {
+        if (!(promotion.get("products") instanceof List<?> products)) return false;
+        return products.stream().filter(Map.class::isInstance).map(value -> (Map<?, ?>) value)
+                .anyMatch(product -> integerValue(product.get("quantity")) == quantity
+                        && (normalizedProduct.isBlank()
+                                || normalizedText(text(product.get("name"))).contains(normalizedProduct)
+                                || normalizedProduct.contains(normalizedText(text(product.get("name"))))));
+    }
+
+    private boolean asksForMorePromotions(String message, String context) {
+        String value = normalizedText(message);
+        boolean continuation = value.matches(".*\\b(mas|siguiente|siguientes|restante|restantes|otra|otras|otros)\\b.*");
+        if (!continuation) return false;
+        String history = normalizedText(context);
+        return value.contains("promo") || value.contains("combo")
+                || history.contains("promociones disponibles (")
+                || history.contains("promociones que incluyen ");
+    }
+
+    private String promotionProductQuery(String message, MemorySelection rememberedSelection) {
+        String value = normalizedText(message).replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ").trim();
+        String rememberedProduct = rememberedSelection == null ? "" : clean(rememberedSelection.productName());
+        boolean referencesRemembered = value.matches(".*\\b(ese|este|el) producto\\b.*")
+                || value.matches(".*\\b(con|para|de) (ese|este)\\b.*");
+        if (referencesRemembered && !rememberedProduct.isBlank()) return rememberedProduct;
+
+        java.util.regex.Matcher afterPromotion = java.util.regex.Pattern.compile(
+                "\\bpromociones?\\s+(?:(?:disponibles?|hay)\\s+)?(?:en|con|para|de)\\s+(.+)$")
+                .matcher(value);
+        if (afterPromotion.find()) return clean(afterPromotion.group(1));
+
+        java.util.regex.Matcher beforePromotion = java.util.regex.Pattern.compile(
+                "^(?:con|para|de)\\s+(.+?)\\s+(?:tienes|hay|manejas|ofreces)?\\s*promociones?$")
+                .matcher(value);
+        if (beforePromotion.find()) return clean(beforePromotion.group(1));
+        return "";
+    }
+
+    private Integer requestedPromotionNumber(String message) {
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("\\bcombo\\s*(?:numero|nro)?\\s*(\\d{1,5})\\b")
+                .matcher(normalizedText(message));
+        return matcher.find() ? Integer.parseInt(matcher.group(1)) : null;
+    }
+
+    private Integer referencedPromotionToAdd(String message, String context) {
+        String value = normalizedText(message).replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ").trim();
+        boolean directAdd = value.matches(".*\\b(anade|anademe|anadelo|anademelo|agrega|agregame|agregalo|agregamelo|sumalo|sumamelo|incluyelo|incluyemelo)\\b.*");
+        boolean purchaseReference = value.matches(".*\\b(quiero comprarlo|quiero llevarlo|me lo llevo|lo quiero|ese quiero|quiero ese|este quiero|quiero este)\\b.*")
+                || value.matches(".*\\bcombo\\s*\\d{1,5}\\b.*\\b(quiero|compro|comprar|llevo|llevar|agrega|anade)\\b.*")
+                || value.matches(".*\\b(quiero|compro|comprar|llevo|llevar|agrega|anade)\\b.*\\bcombo\\s*\\d{1,5}\\b.*");
+        if (!directAdd && !purchaseReference) return null;
+
+        Integer explicit = requestedPromotionNumber(message);
+        if (explicit != null) return explicit;
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("(?i)\\bcombo\\s*(?:numero|nro)?\\s*(\\d{1,5})\\b")
+                .matcher(clean(context));
+        Integer last = null;
+        while (matcher.find()) last = Integer.parseInt(matcher.group(1));
+        return last;
+    }
+
+    private Map<?, ?> firstPromotion(List<Map<String, Object>> results) {
+        if (results == null) return null;
+        for (Map<String, Object> result : results) {
+            if (!"consultar_promociones".equals(text(result.get("tool")))
+                    || !(result.get("promotions") instanceof List<?> promotions)
+                    || promotions.isEmpty()) continue;
+            if (promotions.getFirst() instanceof Map<?, ?> promotion) return promotion;
+        }
+        return null;
+    }
+
+    private int nextPromotionPage(String context) {
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("(?i)promociones disponibles \\((\\d+)-(\\d+) de \\d+\\)")
+                .matcher(clean(context));
+        int lastShown = 0;
+        while (matcher.find()) lastShown = Math.max(lastShown, Integer.parseInt(matcher.group(2)));
+        return lastShown == 0 ? 1 : lastShown / 10;
+    }
+
+    private String productPriceExtremeResponse(List<Map<String, Object>> results, boolean highest) {
+        Map<String, Object> result = results == null ? Map.of() : results.stream()
+                .filter(item -> "consultar_extremo_precio_producto".equals(text(item.get("tool"))))
+                .findFirst().orElse(Map.of());
+        if (!(result.get("product") instanceof Map<?, ?> product)) {
+            return "👗 En este momento no encuentro productos disponibles con un precio vigente.";
+        }
+        String label = highest ? "de mayor precio" : "más económico";
+        return "👗 El producto " + label + " disponible es *" + text(product.get("name")) + "*.\n\n"
+                + "💰 Precio: " + moneyText(decimal(product.get("price")));
+    }
+
+    private String promotionOverviewResponse(List<Map<String, Object>> results, String message) {
+        Map<String, Object> result = results == null ? Map.of() : results.stream()
+                .filter(item -> "consultar_promociones".equals(text(item.get("tool"))))
+                .findFirst().orElse(Map.of());
+        Integer requestedPromotion = requestedPromotionNumber(message);
+        if (requestedPromotion != null) {
+            List<?> promotions = result.get("promotions") instanceof List<?> values ? values : List.of();
+            if (promotions.isEmpty() || !(promotions.getFirst() instanceof Map<?, ?> promotion)) {
+                return "🎁 No encontré una promoción vigente con el nombre *combo "
+                        + requestedPromotion + "*.";
+            }
+            StringBuilder response = new StringBuilder("🎁 *")
+                    .append(text(promotion.get("name"))).append("*\n\n")
+                    .append("👗 Incluye: ").append(promotionProductsText(promotion.get("products"))).append('\n');
+            BigDecimal regularPrice = decimal(promotion.get("regularPrice"));
+            BigDecimal savings = decimal(promotion.get("savings"));
+            if (regularPrice != null) response.append("💵 Precio normal: ").append(moneyText(regularPrice)).append('\n');
+            if (savings != null && savings.signum() > 0) {
+                response.append("🏷️ Descuento: -").append(moneyText(savings)).append('\n');
+            }
+            return response.append("💰 *Precio del combo: ")
+                    .append(moneyText(decimal(promotion.get("comboPrice")))).append("*")
+                    .toString();
+        }
+        boolean highest = asksForHighestPrice(message);
+        String normalized = normalizedText(message);
+        boolean extreme = highest
+                || normalized.matches(".*\\b(barat[oa]?|economico|economica|comodo|comoda)\\b.*")
+                || normalized.contains("menor precio");
+        if (extreme) {
+            Object selected = result.get(highest ? "mostExpensive" : "cheapest");
+            if (!(selected instanceof Map<?, ?> promotion)) {
+                return "🎁 En este momento no encuentro combos vigentes disponibles.";
+            }
+            String label = highest ? "de mayor precio" : "más económico";
+            return "🎁 El combo " + label + " es *" + text(promotion.get("name")) + "*.\n\n"
+                    + "👗 Incluye: " + promotionProductsText(promotion.get("products")) + "\n"
+                    + "💰 Precio del combo: " + moneyText(decimal(promotion.get("comboPrice")));
+        }
+
+        List<?> promotions = result.get("promotions") instanceof List<?> values ? values : List.of();
+        String productQuery = text(result.get("query"));
+        String productLabel = productQuery.isBlank() ? "" : productQuery.toUpperCase(Locale.ROOT);
+        int total = integerValue(result.get("total"));
+        int page = integerValue(result.get("page"));
+        int pageSize = Math.max(1, integerValue(result.get("pageSize")));
+        if (promotions.isEmpty()) {
+            if (!productLabel.isBlank()) {
+                return "🎁 Por el momento no encontré promociones vigentes que incluyan *"
+                        + productLabel + "*.";
+            }
+            return page > 0
+                    ? "🎁 Ya te mostré todas las promociones disponibles por el momento."
+                    : "🎁 En este momento no encuentro combos vigentes disponibles.";
+        }
+        int from = page * pageSize + 1;
+        int to = from + promotions.size() - 1;
+        String title = productLabel.isBlank()
+                ? "Promociones disponibles"
+                : "Promociones que incluyen " + productLabel;
+        StringBuilder response = new StringBuilder("🎁 *").append(title).append(" (")
+                .append(from).append('-').append(to).append(" de ").append(total).append(")*\n\n");
+        for (Object value : promotions) {
+            if (!(value instanceof Map<?, ?> promotion)) continue;
+            response.append("• *").append(text(promotion.get("name"))).append("* — ")
+                    .append(promotionProductsText(promotion.get("products")))
+                    .append(" — ").append(moneyText(decimal(promotion.get("comboPrice"))))
+                    .append('\n');
+        }
+        if (Boolean.TRUE.equals(result.get("hasMore"))) {
+            response.append(productLabel.isBlank()
+                    ? "\nTenemos más promociones. Escríbeme *ver más promociones* para mostrarte las siguientes 10."
+                    : "\nTenemos más promociones para " + productLabel
+                            + ". Escríbeme *ver más promociones* para continuar.");
+        } else {
+            response.append(productLabel.isBlank()
+                    ? "\nSi buscas una promoción específica, dime el nombre del producto y la revisaré."
+                    : "\nEstas son las promociones vigentes para " + productLabel
+                            + ". Si deseas revisar otro modelo, dime su nombre.");
+        }
+        return response.toString().trim();
+    }
+
+    private String promotionProductsText(Object rawProducts) {
+        if (!(rawProducts instanceof List<?> products)) return "productos seleccionados";
+        List<String> values = new ArrayList<>();
+        for (Object value : products) {
+            if (!(value instanceof Map<?, ?> product)) continue;
+            int quantity = Math.max(1, integerValue(product.get("quantity")));
+            String name = text(product.get("name"));
+            if (!name.isBlank()) values.add((quantity > 1 ? quantity + " x " : "") + name);
+        }
+        return values.isEmpty() ? "productos seleccionados" : String.join(" + ", values);
+    }
+
+    private int integerValue(Object value) {
+        if (value instanceof Number number) return number.intValue();
+        try { return Integer.parseInt(text(value)); } catch (NumberFormatException ignored) { return 0; }
+    }
+
     private String moneyText(BigDecimal value) {
+        if (value == null) return "S/0.00";
         return "S/" + value.setScale(2, RoundingMode.HALF_UP).toPlainString();
     }
 
@@ -1312,10 +2477,17 @@ public class CrmWhatsappAiEngineService {
         String compact = value.replaceAll("[^a-z0-9\\s]", " ")
                 .replaceAll("\\s+", " ")
                 .trim();
+        boolean asksModels = compact.matches(".*\\b(que|cuales)\\s+"
+                + "(prendas?|ropa|modelos?|productos?)\\s+"
+                + "(tienes|tienen|venden|ofrecen|manejan|hay)\\b.*")
+                || compact.matches(".*\\b(que|cuales)\\s+"
+                        + "(prendas?|ropa|modelos?|productos?)\\s+"
+                        + "(esta|estan)\\s+disponibles?\\b.*");
         boolean asksInventory = compact.matches("^(que|cuales) .+ "
                 + "(tienes|tienen|venden|ofrecen|manejan|hay)$")
                 && !compact.matches(".*\\b(colores?|tallas?|precios?|stock|disponibilidad)\\b.*");
         return value.contains("que productos")
+                || value.matches(".*\\b(quiero|deseo|quisiera) (comprar |ver |conocer )?(productos?|prendas?|modelos?)\\b.*")
                 || value.contains("otro producto")
                 || value.contains("otros productos")
                 || value.contains("catalogo")
@@ -1327,6 +2499,11 @@ public class CrmWhatsappAiEngineService {
                 || value.contains("muestrame lo que tienes")
                 || value.contains("mostrar productos")
                 || value.contains("ver productos")
+                || value.contains("ver mas productos")
+                || value.contains("mostrar mas productos")
+                || value.contains("muestrame mas productos")
+                || value.contains("mas modelos")
+                || asksModels
                 || asksInventory
                 || compact.matches("^(que|cuales) (prenda|prendas|ropa|modelo|modelos|producto|productos) "
                         + "(tienes|tienen|venden|manejan|hay)$");
@@ -1339,14 +2516,291 @@ public class CrmWhatsappAiEngineService {
                 || value.matches("^(quiero|deseo) (consultar|ver|buscar|agregar) otro( producto)?( por favor)?$");
     }
 
+    private boolean asksForVirtualCatalog(String message) {
+        String value = normalizedText(message).replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ").trim();
+        return value.matches(".*\\bcatalogo( virtual)?\\b.*")
+                && value.matches(".*\\b(quiero|deseo|ver|mostrar|muestrame|mandame|enviame|pasame|"
+                        + "comparteme|link|enlace)\\b.*");
+    }
+
+    private boolean asksForReadyStock(String message) {
+        String value = normalizedText(message).replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ").trim();
+        boolean immediateDelivery = value.matches(".*\\b(entrega pronta|entrega inmediata|envio inmediato|"
+                + "para entregar|disponible para entrega)\\b.*");
+        boolean sameDayDelivery = value.matches(".*\\b(para (mandar|enviar|entregar) (el dia de )?hoy|"
+                + "envios? (para |el dia |el dia de )?hoy|entrega (para |el dia |el dia de )?hoy|"
+                + "despacho (para |el dia |el dia de )?hoy|sale hoy)\\b.*");
+        boolean excludesPreorder = value.matches(".*\\b(no|sin) (lo que es )?preventa\\b.*")
+                || value.matches(".*\\bque no sea preventa\\b.*")
+                || value.matches(".*\\bno (son|sean|es) (de )?preventa\\b.*")
+                || value.matches(".*\\bque no esten? (en )?preventa\\b.*")
+                || value.matches(".*\\b(no quiero|evita|excluye) (productos? (de )?)?preventa\\b.*")
+                || value.matches(".*\\bproductos? no preventa\\b.*");
+        boolean stockRequest = value.matches(".*\\b(lo que|que|productos?|modelos?) (tienes?|hay) en stock\\b.*")
+                || value.matches(".*\\bnecesito (lo que )?(tienes?|hay) en stock\\b.*");
+        return immediateDelivery || sameDayDelivery || excludesPreorder || stockRequest;
+    }
+
+    private boolean asksForPreorderProducts(String message) {
+        String value = normalizedText(message).replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ").trim();
+        return value.matches(".*\\b(productos?|modelos?|prendas?) (en |de )?preventa\\b.*")
+                || value.matches(".*\\b(que|cuales) .*\\bpreventa\\b.*")
+                || value.matches(".*\\bpreventa (tienes|tienen|hay|disponible)\\b.*");
+    }
+
+    private boolean isClearlyOutOfScope(String message) {
+        String value = normalizedText(message).replaceAll("[^a-z0-9+*/=<>\\s]", " ")
+                .replaceAll("\\s+", " ").trim();
+        if (value.matches("^(cuanto es |resuelve |calcula )?\\d+(?:\\s*[+*/=-]\\s*\\d+)+.*$")) return true;
+        return value.matches(".*\\b(html|css|javascript|java|python|codigo fuente|programacion|algoritmo)\\b.*")
+                || value.matches(".*\\b(capital de|presidente de|clima de|noticias de|futbol|receta de)\\b.*");
+    }
+
+    private boolean isAffirmativeCatalogReply(String message, String context) {
+        String value = normalizedText(message).replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ").trim();
+        if (!value.matches("^(si|si por favor|si porfa|claro|dale|ok|okay|por favor|porfa)$")) return false;
+        String recent = normalizedText(context);
+        if (recent.length() > 700) recent = recent.substring(recent.length() - 700);
+        return recent.contains("mostrarte los modelos")
+                || recent.contains("ver los modelos disponibles")
+                || recent.contains("mostrarte los productos disponibles")
+                || recent.contains("ver los productos disponibles")
+                || recent.contains("mostrarte el catalogo")
+                || recent.contains("ver el catalogo");
+    }
+
+    private boolean isShippingDestinationFollowUp(String message, String context) {
+        String value = normalizedText(message).replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ").trim();
+        if (value.isBlank() || value.split("\\s+").length > 5) return false;
+        if (isGreeting(value)) return false;
+        String recent = normalizedText(context);
+        if (recent.length() > 900) recent = recent.substring(recent.length() - 900);
+        boolean shippingContext = recent.contains("metodo de envio")
+                || recent.contains("envios a nivel nacional")
+                || recent.contains("agencia shalom")
+                || recent.contains("ciudad o distrito")
+                || recent.contains("enviemos tu pedido")
+                || recent.contains("destino del envio");
+        if (!shippingContext) return false;
+        return !value.matches(".*\\b(producto|modelo|conjunto|enterizo|vestido|terno|blazer|polo|blusa|falda|"
+                + "talla|color|precio|stock|catalogo|pedido|pago)\\b.*");
+    }
+
+    private String normalizeInformationalClosing(String response, String intent) {
+        String value = clean(response);
+        if (value.isBlank()) return value;
+        String normalizedIntent = clean(intent).toUpperCase(Locale.ROOT);
+        if (!Set.of("ENVIOS", "TIENDAS", "UBICACION", "UBICACION_HORARIOS",
+                "POLITICAS", "CUIDADOS", "FAQ", "INSTITUCIONAL", "INFORMACION_NEGOCIO")
+                .contains(normalizedIntent)) {
+            return value;
+        }
+        String genericQuestion = "¿Qué otro producto o consulta deseas realizar?";
+        if (normalizedText(value).endsWith(normalizedText(genericQuestion))) return value;
+        String answer = value;
+        int lastLineBreak = value.lastIndexOf('\n');
+        String lastLine = lastLineBreak >= 0 ? value.substring(lastLineBreak + 1).trim() : value;
+        String normalizedLastLine = normalizedText(lastLine);
+        boolean alreadyHasGenericClosing = normalizedLastLine.contains("otro producto")
+                || normalizedLastLine.contains("otro tema")
+                || normalizedLastLine.contains("otra consulta")
+                || normalizedLastLine.contains("algun otro producto")
+                || normalizedLastLine.contains("algun otro tema")
+                || normalizedLastLine.contains("en que mas puedo ayudarte");
+        if (alreadyHasGenericClosing && lastLine.contains("?")) return value;
+        // Gemini puede colocar un emoji despues del signo de cierre. La version
+        // anterior solo reconocia preguntas cuya ultima letra era '?', por lo que
+        // agregaba una segunda pregunta generica.
+        if (lastLineBreak >= 0 && lastLine.contains("?")) {
+            answer = value.substring(0, lastLineBreak).trim();
+        }
+        return answer + "\n\n¿Qué otro producto o consulta deseas realizar?";
+    }
+
+    private String requestedSize(String message) {
+        String value = normalizedText(message).replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ").trim();
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("\\btalla\\s+(xxl|xl|xs|s|m|l)\\b", java.util.regex.Pattern.CASE_INSENSITIVE)
+                .matcher(value);
+        return matcher.find() ? matcher.group(1).toUpperCase(Locale.ROOT) : "";
+    }
+
+    private boolean isSizeOnlyResponse(String message) {
+        String value = normalizedText(message).replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ").trim();
+        return value.matches("^(en )?talla (xxl|xl|xs|s|m|l)( por favor)?$");
+    }
+
+    private boolean hasReadyStockContext(String context) {
+        String value = normalizedText(context).replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ").trim();
+        return value.contains("disponibles para entrega inmediata")
+                || value.contains("disponible para entrega pronta")
+                || value.contains("no son preventa");
+    }
+
+    private CrmWhatsappEcommerceOrderParser.EcommerceWhatsappOrder contextualMultipleSizeOrder(
+            String message,
+            String context,
+            CrmWhatsappAiPendingQuestion pendingQuestion,
+            MemorySelection remembered) {
+        if (remembered == null || clean(remembered.productName()).isBlank()
+                || clean(remembered.color()).isBlank()) {
+            return CrmWhatsappEcommerceOrderParser.EcommerceWhatsappOrder.notRecognized();
+        }
+        String value = normalizedText(message).replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ").trim();
+        List<String> sizes = extractDistinctSizes(value);
+        if (!(pendingQuestion == CrmWhatsappAiPendingQuestion.SIZE && sizes.size() >= 2)) {
+            if (!value.matches("^(los dos|ambos|ambas|las dos|esas dos)( por favor)?$")) {
+                return CrmWhatsappEcommerceOrderParser.EcommerceWhatsappOrder.notRecognized();
+            }
+            sizes = lastOfferedSizePair(context);
+        }
+        if (sizes.size() < 2) {
+            return CrmWhatsappEcommerceOrderParser.EcommerceWhatsappOrder.notRecognized();
+        }
+        List<CrmWhatsappEcommerceOrderParser.EcommerceWhatsappOrderItem> items = sizes.stream()
+                .map(size -> new CrmWhatsappEcommerceOrderParser.EcommerceWhatsappOrderItem(
+                        remembered.productName(), remembered.color(), size, 1, null, null))
+                .toList();
+        return new CrmWhatsappEcommerceOrderParser.EcommerceWhatsappOrder(
+                true, items, null, null, null, List.of());
+    }
+
+    private List<String> extractDistinctSizes(String value) {
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("\\b(xxl|xl|xs|s|m|l)\\b", java.util.regex.Pattern.CASE_INSENSITIVE)
+                .matcher(clean(value));
+        List<String> sizes = new ArrayList<>();
+        while (matcher.find()) {
+            String size = matcher.group(1).toUpperCase(Locale.ROOT);
+            if (!sizes.contains(size)) sizes.add(size);
+        }
+        return sizes;
+    }
+
+    private List<String> lastOfferedSizePair(String context) {
+        String value = normalizedText(context).replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ").trim();
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("\\btalla\\s+(xxl|xl|xs|s|m|l)\\s+(?:o|y)\\s+(xxl|xl|xs|s|m|l)\\b")
+                .matcher(value);
+        List<String> result = List.of();
+        while (matcher.find()) {
+            result = List.of(matcher.group(1).toUpperCase(Locale.ROOT),
+                    matcher.group(2).toUpperCase(Locale.ROOT));
+        }
+        return result;
+    }
+
+    private String readyStockResponse(List<Map<String, Object>> results, String size) {
+        if (results == null || results.isEmpty()
+                || !(results.getFirst().get("products") instanceof List<?> products)) {
+            return readyStockEmptyResponse(size);
+        }
+        List<String> names = products.stream()
+                .filter(Map.class::isInstance)
+                .map(Map.class::cast)
+                .map(product -> text(product.get("name")))
+                .filter(name -> !name.isBlank())
+                .distinct()
+                .limit(10)
+                .toList();
+        if (names.isEmpty()) return readyStockEmptyResponse(size);
+        String sizeText = clean(size).isBlank() ? "" : " en talla " + clean(size);
+        String continuation = Boolean.TRUE.equals(results.getFirst().get("hasMore"))
+                ? "\n\nHay más modelos disponibles. Puedes decirme *ver más productos*."
+                : "";
+        return "✨ *Disponibles para entrega inmediata" + sizeText + "*\n"
+                + names.stream().map(name -> "• " + name)
+                        .collect(java.util.stream.Collectors.joining("\n"))
+                + continuation
+                + "\n\nEstos modelos tienen stock actual y no son preventa. ¿Cuál deseas ver, bella?";
+    }
+
+    private String readyStockEmptyResponse(String size) {
+        String sizeText = clean(size).isBlank() ? "" : " en talla " + clean(size);
+        return "Por el momento no encuentro modelos de entrega inmediata con stock"
+                + sizeText + ". ¿Deseas consultar otra talla?";
+    }
+
+    private boolean asksForProductMaterial(String message) {
+        String value = normalizedText(message).replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ").trim();
+        return value.matches(".*\\b(tela|material|tejido|composicion)\\b.*")
+                || value.matches(".*\\bde que (esta )?(hecho|hecha|confeccionado|confeccionada)\\b.*");
+    }
+
+    private String productMaterialResponse(List<Map<String, Object>> results) {
+        List<Map<?, ?>> products = results == null ? List.of() : results.stream()
+                .map(result -> result.get("products"))
+                .filter(List.class::isInstance)
+                .map(List.class::cast)
+                .flatMap(List::stream)
+                .filter(Map.class::isInstance)
+                .map(Map.class::cast)
+                .distinct()
+                .toList();
+        if (products.size() > 1) {
+            String names = products.stream()
+                    .map(product -> text(product.get("name")))
+                    .filter(name -> !name.isBlank())
+                    .distinct()
+                    .limit(10)
+                    .map(name -> "• " + name)
+                    .collect(java.util.stream.Collectors.joining("\n"));
+            if (!names.isBlank()) {
+                return "Encontré varios modelos parecidos:\n" + names
+                        + "\n\n¿Cuál de estos modelos deseas consultar?";
+            }
+        }
+        if (products.size() == 1) {
+            Map<?, ?> product = products.getFirst();
+            String name = text(product.get("name"));
+            String description = text(product.get("description"));
+            if (!description.isBlank()) {
+                return "👗 *" + name + "*\n📝 *Material o descripción:* " + description;
+            }
+            return "No tengo registrado el material o la descripción de *" + name + "*.";
+        }
+        return "No encontré ese modelo entre los productos disponibles.";
+    }
+
     private boolean isBareProductInterest(String message) {
         String value = normalizedText(message).replaceAll("[^a-z0-9\\s-]", " ")
                 .replaceAll("\\s+", " ").trim();
         if (!value.matches("^(quiero|deseo|dame|muestrame|busco) .+")) return false;
+        if (value.matches(".*\\b\\d{1,3}\\b.*")) return false;
+        if (containsVariantSelection(value)) return false;
         if (value.matches(".*\\b(color|talla|cantidad|unidades?|stock|precio|oferta|promocion|envio|pago|asesor)\\b.*")) {
             return false;
         }
         return !asksForAnotherProductChoice(message);
+    }
+
+    private boolean isNamedProductInquiry(String message) {
+        String value = normalizedText(message).replaceAll("[^a-z0-9\\s-]", " ")
+                .replaceAll("\\s+", " ").trim();
+        if (isGenericProductListing(message) || asksForReadyStock(message)) return false;
+        if (!value.matches("^(conjunto|enterizo|vestido|terno|blazer|polo|blusa|falda) "
+                + "[a-z0-9][a-z0-9\\s-]*$")) return false;
+        if (value.matches(".*\\b(mandar|enviar|entregar|envio|delivery|hoy|catalogo|"
+                + "color|talla|cantidad|unidades?|precio|oferta|promocion|pago)\\b.*")) return false;
+        return !containsVariantSelection(value);
+    }
+
+    private boolean containsVariantSelection(String normalizedMessage) {
+        String value = " " + clean(normalizedMessage) + " ";
+        return value.matches(".*\\b(xs|s|m|l|xl|xxl)\\b.*")
+                || value.matches(".*\\b(negro|negra|guinda|gris|denim|beige|chocolate|plata|perla|marron|"
+                        + "azul|lacre|hueso|topo|nude|rosado|rosada|vino|camel|verde|palo rosa)\\b.*");
     }
 
     private boolean refersToPendingPayment(String message) {
@@ -1358,7 +2812,43 @@ public class CrmWhatsappAiEngineService {
 
     private boolean asksForAnotherProduct(String message) {
         String value = normalizedText(message);
-        return value.contains("otro producto") || value.contains("otros productos");
+        return value.contains("otro producto")
+                || value.contains("otros productos")
+                || value.contains("ver mas productos")
+                || value.contains("mostrar mas productos")
+                || value.contains("muestrame mas productos")
+                || value.contains("mas modelos");
+    }
+
+    private boolean productResultsEmpty(List<Map<String, Object>> results) {
+        if (results == null || results.isEmpty()) return true;
+        return results.stream()
+                .filter(result -> "buscar_productos".equals(text(result.get("tool"))))
+                .noneMatch(result -> result.get("products") instanceof List<?> products && !products.isEmpty());
+    }
+
+    private boolean hasKnowledgeSources(List<Map<String, Object>> results) {
+        if (results == null) return false;
+        return results.stream()
+                .filter(result -> "consultar_informacion_negocio".equals(text(result.get("tool"))))
+                .anyMatch(result -> result.get("sources") instanceof List<?> sources && !sources.isEmpty());
+    }
+
+    private String knowledgeFallbackResponse(List<Map<String, Object>> results) {
+        List<String> contents = new ArrayList<>();
+        if (results != null) {
+            for (Map<String, Object> result : results) {
+                if (!(result.get("sources") instanceof List<?> sources)) continue;
+                for (Object value : sources.stream().limit(3).toList()) {
+                    if (!(value instanceof Map<?, ?> source)) continue;
+                    String content = clean(text(source.get("content")));
+                    if (!content.isBlank()) contents.add(truncate(content, 600));
+                }
+            }
+        }
+        return contents.isEmpty()
+                ? "No tengo informacion suficiente sobre ese tema. Puedes hacerme otra consulta."
+                : String.join("\n\n", contents);
     }
 
     private boolean isProductDetailFollowUp(String message) {
@@ -1367,6 +2857,7 @@ public class CrmWhatsappAiEngineService {
                 .replaceAll("\\s+", " ")
                 .trim();
         return asksColorsOrSizes(value)
+                || asksAvailableSizes(value)
                 || value.matches("^(que |dame |mostrar |muestra )?(precios?|stock|disponibilidad)"
                 + "( disponibles?| disponible)?$")
                 || value.matches("^(cuanto cuesta|cuanto vale|hay stock|esta disponible|tienen stock)$");
@@ -1386,6 +2877,30 @@ public class CrmWhatsappAiEngineService {
         String value = clean(normalizedMessage);
         return value.matches(".*\\b(colores?|tallas?|medidas?)\\b.*")
                 && !value.matches("^(quiero|dame|agrega|anade|llevo|voy a llevar|deseo comprar)\\b.*");
+    }
+
+    private boolean asksToSeparateSetOrMixSizes(String message) {
+        String value = normalizedText(message)
+                .replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        if (value.isBlank()) return false;
+        boolean asksSeparatePieces = value.matches(".*\\b(separad[oa]s?|por separado|solo el|solo la)\\b.*")
+                && value.matches(".*\\b(chaleco|pantalon|saco|falda|blusa|top|pieza|prenda)\\b.*");
+        boolean explicitlyMixesSizes = value.matches(".*\\b(combinar|combino|mezclar|mezclo|conjugar|diferentes tallas|tallas diferentes)\\b.*")
+                && value.matches(".*\\b(talla|tallas|chaleco|pantalon|saco|falda)\\b.*");
+        java.util.regex.Matcher components = java.util.regex.Pattern
+                .compile("\\b(chaleco|pantalon|saco|falda|blusa|top)\\b")
+                .matcher(value);
+        int componentCount = 0;
+        while (components.find()) componentCount++;
+        java.util.regex.Matcher sizes = java.util.regex.Pattern
+                .compile("\\b(xxl|xl|xs|s|m|l)\\b")
+                .matcher(value);
+        Set<String> distinctSizes = new java.util.HashSet<>();
+        while (sizes.find()) distinctSizes.add(sizes.group(1));
+        return asksSeparatePieces || explicitlyMixesSizes
+                || (componentCount >= 2 && distinctSizes.size() >= 2);
     }
 
     private boolean asksAvailability(String normalizedMessage) {
@@ -1421,7 +2936,8 @@ public class CrmWhatsappAiEngineService {
         String messageSize = size;
         if (color.isBlank() && sameRememberedProduct) color = canonicalValue(remembered.color(), colors);
         if (size.isBlank() && sameRememberedProduct) size = canonicalValue(remembered.size(), sizes);
-        if (!"STOCK".equals(intent) && !(sameRememberedProduct
+        boolean explicitVariant = !messageColor.isBlank() && !messageSize.isBlank();
+        if (!"STOCK".equals(intent) && !explicitVariant && !(sameRememberedProduct
                 && (!messageColor.isBlank() || !messageSize.isBlank()))) {
             return StockReply.empty();
         }
@@ -1430,6 +2946,28 @@ public class CrmWhatsappAiEngineService {
                     productName, "", false);
         }
         if (size.isBlank()) {
+            if (asksAvailableSizes(normalized)) {
+                String selectedColor = color;
+                List<String> availableSizes = variants.stream()
+                        .filter(Map.class::isInstance).map(Map.class::cast)
+                        .filter(item -> normalizedText(text(item.get("color")))
+                                .equals(normalizedText(selectedColor)))
+                        .filter(item -> integer(item.get("stock")) > 0)
+                        .map(item -> text(item.get("size")))
+                        .filter(value -> !value.isBlank())
+                        .distinct()
+                        .toList();
+                if (availableSizes.isEmpty()) {
+                    return new StockReply("📦 No hay stock disponible de *" + productName
+                            + "* en color " + color + ".\n\n¿Deseas consultar otro color?", false,
+                            productName, color, false);
+                }
+                return new StockReply("👗 *" + productName + "*\n"
+                        + "🎨 *Color:* " + color + "\n"
+                        + "📏 *Tallas disponibles:* " + String.join(", ", availableSizes)
+                        + "\n\n¿Qué talla deseas llevar, bella? Puedes elegir una o más.", false,
+                        productName, color, true);
+            }
             return new StockReply("📏 ¿Qué talla de *" + productName + "* deseas consultar en color " + color + "?", false,
                     productName, color, false);
         }
@@ -1465,6 +3003,13 @@ public class CrmWhatsappAiEngineService {
         }
         return new StockReply("📦 Sí, hay stock disponible de " + variant + ".\n\n"
                 + "¿Cuántas unidades deseas?", false, productName, color, true);
+    }
+
+    private boolean asksAvailableSizes(String normalizedMessage) {
+        String value = clean(normalizedMessage);
+        return value.matches(".*\\b(que|cuales) tallas?\\b.*")
+                || value.matches(".*\\btallas? (disponibles?|tienes?|hay)\\b.*")
+                || value.matches(".*\\b(que|cuales) (tienes?|hay) en talla\\b.*");
     }
 
     private String canonicalValue(String remembered, List<String> available) {
@@ -1509,15 +3054,31 @@ public class CrmWhatsappAiEngineService {
     }
 
     private String matchingValue(String normalizedMessage, List<String> values) {
-        return values.stream()
+        String exact = values.stream()
                 .filter(value -> (" " + normalizedMessage + " ").contains(" " + normalizedText(value) + " "))
                 .findFirst().orElse("");
+        if (!exact.isBlank()) return exact;
+        List<String> messageTokens = List.of(normalizedMessage.split("\\s+"));
+        List<String> matches = values.stream()
+                .filter(value -> List.of(normalizedText(value).split("\\s+")).stream()
+                        .filter(token -> token.length() >= 3)
+                        .anyMatch(messageTokens::contains))
+                .toList();
+        return matches.size() == 1 ? matches.getFirst() : "";
     }
 
     private int requestedQuantity(String normalizedMessage) {
         java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("(?<!\\d)(\\d{1,3})(?!\\d)")
                 .matcher(normalizedMessage);
-        return matcher.find() ? Integer.parseInt(matcher.group(1)) : 0;
+        if (matcher.find()) return Integer.parseInt(matcher.group(1));
+        Map<String, Integer> words = Map.of(
+                "dos", 2, "tres", 3, "cuatro", 4, "cinco", 5,
+                "seis", 6, "siete", 7, "ocho", 8, "nueve", 9, "diez", 10);
+        String value = normalizedText(normalizedMessage);
+        return words.entrySet().stream()
+                .filter(entry -> value.matches(".*\\b" + entry.getKey() + "\\b.*"))
+                .map(Map.Entry::getValue)
+                .findFirst().orElse(0);
     }
 
     private int integer(Object value) {
@@ -1539,13 +3100,21 @@ public class CrmWhatsappAiEngineService {
             List<Map<String, Object>> results, List<MediaReference> candidates) {
         Integer productId = singleProductId(results);
         if (productId == null || candidates == null) return List.of();
-        return candidates.stream()
+        MediaReference guide = candidates.stream()
+                .filter(media -> "SIZE_GUIDE".equals(media.type()))
+                .filter(media -> productId.equals(media.productId()))
+                .filter(media -> !clean(media.url()).isBlank())
+                .findFirst()
+                .orElse(null);
+        MediaReference global = candidates.stream()
                 .filter(media -> "PRODUCT_GLOBAL_IMAGE".equals(media.type()))
                 .filter(media -> productId.equals(media.productId()))
                 .filter(media -> !clean(media.url()).isBlank())
                 .findFirst()
-                .map(List::of)
-                .orElseGet(List::of);
+                .orElse(null);
+        if (guide != null && global != null) return List.of(guide, global);
+        if (guide != null) return List.of(guide);
+        return global == null ? List.of() : List.of(global);
     }
 
     private List<MediaReference> stockColorMedia(StockReply reply, List<MediaReference> candidates) {
@@ -1568,6 +3137,16 @@ public class CrmWhatsappAiEngineService {
                 || !(products.getFirst() instanceof Map<?, ?> product)) return null;
         Integer productId = integer(product.get("productId"));
         return productId == 0 ? null : productId;
+    }
+
+    private int productCount(List<Map<String, Object>> results) {
+        if (results == null) return 0;
+        return results.stream()
+                .map(result -> result.get("products"))
+                .filter(List.class::isInstance)
+                .map(List.class::cast)
+                .mapToInt(List::size)
+                .sum();
     }
 
     private String locationResponse(Map<String, Object> result) {
@@ -1718,7 +3297,9 @@ public class CrmWhatsappAiEngineService {
         String styled = styleCustomerResponse(result.intent(), result.draft(), greetingAlreadySent);
         return new ProcessingResult(result.outcome(), result.intent(), result.confidence(), result.requiresHuman(),
                 result.reason(), styled, result.toolTrace(), result.evidence(), result.suggestedMedia(),
-                result.usage(), result.latencyMs(), result.superseded());
+                result.usage(), result.latencyMs(), result.superseded(), result.naturalResponseUsed(),
+                result.fallbackUsed(), result.fallbackReason(), result.classificationLatencyMs(),
+                result.toolLatencyMs(), result.draftLatencyMs());
     }
 
     private String styleCustomerResponse(String intent, String response, boolean greetingAlreadySent) {
@@ -1813,6 +3394,15 @@ public class CrmWhatsappAiEngineService {
         }
     }
 
+    private record IncomingBatch(
+            List<CrmWhatsappMessage> messages,
+            String combinedText) {
+
+        static IncomingBatch single(CrmWhatsappMessage message, String text) {
+            return new IncomingBatch(message == null ? List.of() : List.of(message), text == null ? "" : text);
+        }
+    }
+
     public record ProcessingResult(
             CrmWhatsappAiRunOutcome outcome,
             String intent,
@@ -1825,7 +3415,42 @@ public class CrmWhatsappAiEngineService {
             List<MediaReference> suggestedMedia,
             Usage usage,
             Long latencyMs,
-            boolean superseded) {
+            boolean superseded,
+            boolean naturalResponseUsed,
+            boolean fallbackUsed,
+            String fallbackReason,
+            Long classificationLatencyMs,
+            Long toolLatencyMs,
+            Long draftLatencyMs) {
+
+        public ProcessingResult(
+                CrmWhatsappAiRunOutcome outcome,
+                String intent,
+                Integer confidence,
+                boolean requiresHuman,
+                String reason,
+                String draft,
+                List<Map<String, Object>> toolTrace,
+                List<Map<String, Object>> evidence,
+                List<MediaReference> suggestedMedia,
+                Usage usage,
+                Long latencyMs,
+                boolean superseded) {
+            this(outcome, intent, confidence, requiresHuman, reason, draft, toolTrace, evidence,
+                    suggestedMedia, usage, latencyMs, superseded, false, false, null, null, null, null);
+        }
+
+        ProcessingResult withGenerationTrace(
+                boolean natural,
+                boolean fallback,
+                String fallbackReason,
+                Long classificationLatency,
+                Long toolLatency,
+                Long draftLatency) {
+            return new ProcessingResult(outcome, intent, confidence, requiresHuman, reason, draft, toolTrace,
+                    evidence, suggestedMedia, usage, latencyMs, superseded, natural, fallback,
+                    fallbackReason, classificationLatency, toolLatency, draftLatency);
+        }
 
         static ProcessingResult draft(String intent, int confidence, String draft, String reason,
                 List<Map<String, Object>> tools, List<Map<String, Object>> evidence,

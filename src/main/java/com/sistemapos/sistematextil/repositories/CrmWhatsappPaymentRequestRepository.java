@@ -22,6 +22,14 @@ public interface CrmWhatsappPaymentRequestRepository extends JpaRepository<CrmWh
     @Query(value = "UPDATE crm_whatsapp_payment_request SET id_ai_sale_draft = NULL WHERE id_ai_sale_draft IS NOT NULL", nativeQuery = true)
     int detachAllAiSaleDrafts();
 
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = """
+            UPDATE crm_whatsapp_payment_request
+            SET id_ai_sale_draft = NULL, ai_sale_draft_version = NULL
+            WHERE id_conversation = :conversationId
+            """, nativeQuery = true)
+    int detachAiSaleDraftsByConversationId(@Param("conversationId") Long conversationId);
+
     List<CrmWhatsappPaymentRequest> findByConversation_IdConversationAndStatusInOrderByCreatedAtDesc(
             Long conversationId, List<CrmWhatsappPaymentRequestStatus> statuses);
 

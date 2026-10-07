@@ -175,6 +175,17 @@ public class CrmWhatsappAiSaleDraftService {
         }
 
         CatalogResult catalog = commercialQueryService.searchProducts(conversation, requestedName);
+        if ("AMBIGUOUS".equalsIgnoreCase(clean(catalog.resolution())) && catalog.candidates() != null
+                && !catalog.candidates().isEmpty()) {
+            String names = catalog.candidates().stream()
+                    .map(candidate -> clean(candidate.name()))
+                    .filter(name -> !name.isBlank())
+                    .distinct()
+                    .collect(java.util.stream.Collectors.joining(", "));
+            rejected.add("Encontré varios modelos con ese nombre: " + names
+                    + ". ¿Cuál de estos modelos deseas pedir?");
+            return;
+        }
         List<ProductResult> exactProducts = catalog.products().stream()
                 .filter(product -> normalize(product.name()).equals(normalize(requestedName)))
                 .toList();
@@ -210,7 +221,12 @@ public class CrmWhatsappAiSaleDraftService {
                 .filter(variant -> normalize(variant.color()).equals(colorKey))
                 .toList();
         if (colorVariants.isEmpty()) {
-            rejected.add(product.name() + " no tiene el color " + requestedColor + ".");
+            String available = product.availableColors() == null ? "" : product.availableColors().stream()
+                    .filter(value -> !clean(value).isBlank())
+                    .distinct()
+                    .collect(java.util.stream.Collectors.joining(", "));
+            rejected.add(product.name() + " no tiene el color " + requestedColor + "."
+                    + (available.isBlank() ? "" : " Colores disponibles: " + available + "."));
             return;
         }
         List<VariantResult> matches = colorVariants.stream()
@@ -291,8 +307,8 @@ public class CrmWhatsappAiSaleDraftService {
                     .append(" a S/").append(money(draft.getTotal())).append(" según precios y promociones vigentes.\n");
         }
         text.append("\n💰 Total actualizado: S/").append(money(draft.getTotal()))
-                .append("\n\nTu pedido queda guardado. Cuando desees continuar, puedes confirmarlo.")
-                .append("\n\n¿En qué más puedo ayudarte?");
+                .append("\n\n✅ Si estás conforme con tu pedido, escribe *CONFIRMAR PEDIDO*.")
+                .append("\n\n➕ ¿Qué otro producto deseas agregar?");
         return text.toString().trim();
     }
 
@@ -302,17 +318,68 @@ public class CrmWhatsappAiSaleDraftService {
     }
 
     @Transactional(readOnly = true)
+    public PromotionSuggestion promotionSuggestion(Long conversationId) {
+        CrmWhatsappAiSaleDraft draft = draftRepository
+                .findFirstByConversation_IdConversationAndStatusInOrderByCreatedAtDesc(
+                        conversationId, List.of(CrmWhatsappAiSaleDraftStatus.BUILDING,
+                                CrmWhatsappAiSaleDraftStatus.AWAITING_CUSTOMER))
+                .orElse(null);
+        if (draft == null || draft.getItems().isEmpty() || draft.getConversation() == null) return null;
+        Map<Integer, Integer> quantities = new LinkedHashMap<>();
+        for (CrmWhatsappAiSaleDraftItem item : draft.getItems()) {
+            quantities.merge(item.getProductId(), item.getQuantity(), Integer::sum);
+        }
+        var suggestions = commercialQueryService.suggestedPromotions(draft.getConversation(), quantities, 3);
+        if (suggestions.isEmpty()) return null;
+        StringBuilder text = new StringBuilder("🎁 *Puedes aprovechar un descuento especial*\n\n");
+        int index = 1;
+        for (var suggestion : suggestions) {
+            PromotionResult promotion = suggestion.promotion();
+            text.append(index++).append(". *").append(promotion.name()).append("*\n")
+                    .append("👗 Agrega: ")
+                    .append(suggestion.missingProducts().stream()
+                            .map(item -> item.quantity() + " x " + item.name())
+                            .collect(java.util.stream.Collectors.joining(" + ")))
+                    .append("\n💵 Precio normal: S/").append(money(promotion.regularPrice()))
+                    .append("\n🏷️ Descuento: -S/").append(money(promotion.savings()))
+                    .append("\n💰 *Precio final: S/").append(money(promotion.comboPrice())).append("*\n\n");
+        }
+        text.append("¿Deseas aprovechar alguna? Escribe el nombre o número del combo.");
+        return new PromotionSuggestion(
+                "CART_PROMOTION:" + draft.getIdAiSaleDraft() + ":" + draft.getVersion(),
+                text.toString().trim());
+    }
+
+    @Transactional(readOnly = true)
     public boolean hasActivePaymentFlow(Long conversationId) {
         return aiPaymentService.hasActivePaymentFlow(conversationId);
     }
 
     @Transactional
     public ActionOutcome selectConfirmedPaymentMethod(CrmWhatsappConversation conversation, String customerMessage) {
+        return selectConfirmedPaymentMethod(conversation, customerMessage, false);
+    }
+
+    @Transactional
+    public ActionOutcome selectConfirmedPaymentMethod(
+            CrmWhatsappConversation conversation,
+            String customerMessage,
+            boolean paymentPromptPending) {
         if (conversation == null || clean(customerMessage).isBlank()) return null;
         CrmWhatsappAiSaleDraft draft = activeDraft(conversation.getIdConversation());
-        if (draft == null || !isCustomerConfirmed(draft)
-                || draft.getStatus() == CrmWhatsappAiSaleDraftStatus.AWAITING_CUSTOMER_DATA
+        if (draft == null || draft.getStatus() == CrmWhatsappAiSaleDraftStatus.AWAITING_CUSTOMER_DATA
                 || draft.getStatus() == CrmWhatsappAiSaleDraftStatus.PAYMENT_PENDING) return null;
+
+        if (!isCustomerConfirmed(draft)) {
+            boolean recoverablePrompt = paymentPromptPending
+                    && draft.getStatus() == CrmWhatsappAiSaleDraftStatus.AWAITING_CUSTOMER
+                    && conversation.getCliente() != null
+                    && !draft.getItems().isEmpty();
+            if (!recoverablePrompt) return null;
+            draft.setConfirmedVersion(draft.getVersion());
+            draft.setCustomerConfirmedAt(LocalDateTime.now());
+            draftRepository.save(draft);
+        }
 
         String message = normalize(customerMessage);
         List<PaymentMethodItem> matches = commercialQueryService.paymentMethods(conversation).methods().stream()
@@ -627,7 +694,7 @@ public class CrmWhatsappAiSaleDraftService {
         return catalog.products().stream().anyMatch(product -> {
             List<String> values = pendingQuestion == CrmWhatsappAiPendingQuestion.COLOR
                     ? product.availableColors() : product.availableSizes();
-            return values != null && values.stream().map(this::normalize).anyMatch(expected::equals);
+            return values != null && !canonicalCatalogValue(expected, values).isBlank();
         });
     }
 
@@ -659,9 +726,9 @@ public class CrmWhatsappAiSaleDraftService {
     private ActionOutcome mutateItem(CrmWhatsappConversation conversation, CrmWhatsappAiSaleDraft draft,
             SaleActionResult action, String command) {
         if ("REMOVE".equals(command)) {
-            CrmWhatsappAiSaleDraftItem item = findDraftItem(draft, action);
-            if (item == null) return new ActionOutcome("No encontré ese producto en el pedido.", false, response(draft));
-            draft.getItems().remove(item);
+            List<CrmWhatsappAiSaleDraftItem> items = findDraftItems(draft, action);
+            if (items.isEmpty()) return new ActionOutcome("No encontré ese producto en el pedido.", false, response(draft));
+            draft.getItems().removeAll(items);
             changed(draft);
             if (draft.getItems().isEmpty()) draft.setStatus(CrmWhatsappAiSaleDraftStatus.BUILDING);
             else draft.setStatus(CrmWhatsappAiSaleDraftStatus.AWAITING_CUSTOMER);
@@ -673,7 +740,8 @@ public class CrmWhatsappAiSaleDraftService {
             if (item == null) return new ActionOutcome("¿Qué producto del pedido deseas modificar?", false, response(draft));
             int quantity = action.quantity() == null ? item.getQuantity() : Math.max(1, Math.min(99, action.quantity()));
             SucursalStock stock = requireStock(draft, item.getVariantId());
-            if (quantity > stock.getCantidad()) return new ActionOutcome("Solo hay " + stock.getCantidad() + " unidad(es) disponibles.", false, response(draft));
+            if (quantity > stock.getCantidad()) return new ActionOutcome(
+                    unavailableQuantityMessage(quantity, stock.getCantidad()), false, response(draft));
             item.setQuantity(quantity);
             refreshItem(item, stock);
             changed(draft);
@@ -683,6 +751,45 @@ public class CrmWhatsappAiSaleDraftService {
         }
 
         CatalogResult catalog = commercialQueryService.searchProducts(conversation, action.productQuery());
+        if ("AMBIGUOUS".equalsIgnoreCase(clean(catalog.resolution())) && catalog.candidates() != null
+                && !catalog.candidates().isEmpty()) {
+            String names = catalog.candidates().stream()
+                    .map(candidate -> clean(candidate.name()))
+                    .filter(name -> !name.isBlank())
+                    .distinct()
+                    .map(name -> "• " + name)
+                    .collect(java.util.stream.Collectors.joining("\n"));
+            return new ActionOutcome("Encontré varios modelos con ese nombre:\n" + names
+                    + "\n\n¿Cuál de estos modelos deseas pedir?", false, response(draft));
+        }
+        List<String> availableColors = catalog.products().stream()
+                .flatMap(product -> product.availableColors().stream())
+                .filter(value -> !clean(value).isBlank())
+                .distinct()
+                .toList();
+        if (!clean(action.color()).isBlank()
+                && canonicalCatalogValue(action.color(), availableColors).isBlank()) {
+            String available = availableColors.isEmpty()
+                    ? "No tengo colores disponibles registrados para ese modelo."
+                    : "Colores disponibles: " + String.join(", ", availableColors) + ".";
+            return new ActionOutcome("El color " + clean(action.color())
+                    + " no está disponible para ese modelo.\n\n" + available
+                    + "\n\n¿Cuál color deseas elegir?", false, response(draft));
+        }
+        List<String> availableSizes = catalog.products().stream()
+                .flatMap(product -> product.availableSizes().stream())
+                .filter(value -> !clean(value).isBlank())
+                .distinct()
+                .toList();
+        if (!clean(action.size()).isBlank()
+                && canonicalCatalogValue(action.size(), availableSizes).isBlank()) {
+            String available = availableSizes.isEmpty()
+                    ? "No tengo tallas disponibles registradas para ese modelo."
+                    : "Tallas disponibles: " + String.join(", ", availableSizes) + ".";
+            return new ActionOutcome("La talla " + clean(action.size())
+                    + " no está disponible para ese modelo.\n\n" + available
+                    + "\n\n¿Cuál talla deseas elegir?", false, response(draft));
+        }
         List<VariantCandidate> candidates = candidates(catalog, action.color(), action.size());
         if (candidates.isEmpty()) return new ActionOutcome(
                 "No hay stock disponible para ese producto, color y talla. Prueba con otra combinacion.",
@@ -700,7 +807,8 @@ public class CrmWhatsappAiSaleDraftService {
         VariantCandidate selected = candidates.get(0);
         int quantity = action.quantity() == null || action.quantity() < 1 ? 1 : Math.min(99, action.quantity());
         if (quantity > selected.variant().stock()) {
-            return new ActionOutcome("Solo hay " + selected.variant().stock() + " unidad(es) disponibles.", false, response(draft));
+            return new ActionOutcome(unavailableQuantityMessage(quantity, selected.variant().stock()),
+                    false, response(draft));
         }
         CrmWhatsappAiSaleDraftItem item = draft.getItems().stream()
                 .filter(current -> current.getVariantId().equals(selected.variant().variantId())).findFirst().orElse(null);
@@ -728,7 +836,10 @@ public class CrmWhatsappAiSaleDraftService {
 
     private ActionOutcome selectCombo(CrmWhatsappConversation conversation, CrmWhatsappAiSaleDraft draft,
             SaleActionResult action) {
-        List<PromotionResult> promotions = commercialQueryService.promotions(conversation, "", 0).promotions();
+        List<PromotionResult> promotions = action.promotionId() == null || action.promotionId() <= 0
+                ? commercialQueryService.promotions(conversation, "", 0).promotions()
+                : commercialQueryService.promotions(
+                        conversation, "", 0, null, action.promotionId()).promotions();
         PromotionResult selected = promotions.stream()
                 .filter(item -> action.promotionId() != null && action.promotionId() > 0
                         && item.promotionId().equals(action.promotionId()))
@@ -755,7 +866,8 @@ public class CrmWhatsappAiSaleDraftService {
 
     private String pendingComboPrompt(CrmWhatsappAiSaleDraft draft) {
         if (draft.getPendingPromotionId() == null) return null;
-        PromotionResult promotion = commercialQueryService.promotions(draft.getConversation(), "", 0).promotions().stream()
+        PromotionResult promotion = commercialQueryService.promotions(
+                draft.getConversation(), "", 0, null, draft.getPendingPromotionId()).promotions().stream()
                 .filter(item -> item.promotionId().equals(draft.getPendingPromotionId()))
                 .findFirst().orElse(null);
         if (promotion == null) {
@@ -767,8 +879,25 @@ public class CrmWhatsappAiSaleDraftService {
         for (PromotionProductResult product : promotion.products()) {
             int missing = product.quantity() - quantities.getOrDefault(product.productId(), 0);
             if (missing > 0) {
-                return "Para completar el combo " + promotion.name() + ", elige color y talla de "
-                        + product.name() + (missing > 1 ? " (" + missing + " unidades)" : "") + ".";
+                ProductResult detail = commercialQueryService
+                        .searchProducts(draft.getConversation(), product.name()).products().stream()
+                        .filter(item -> item.productId().equals(product.productId()))
+                        .findFirst().orElse(null);
+                StringBuilder prompt = new StringBuilder("🎁 Para completar el combo *")
+                        .append(promotion.name()).append("*, agrega ")
+                        .append(missing).append(missing == 1 ? " unidad de " : " unidades de ")
+                        .append('*').append(product.name()).append("*.");
+                if (detail != null) {
+                    if (!detail.availableColors().isEmpty()) {
+                        prompt.append("\n\n🎨 Colores disponibles: ")
+                                .append(String.join(", ", detail.availableColors()));
+                    }
+                    if (!detail.availableSizes().isEmpty()) {
+                        prompt.append("\n📏 Tallas disponibles: ")
+                                .append(String.join(", ", detail.availableSizes()));
+                    }
+                }
+                return prompt.append("\n\n¿Qué color y talla deseas?").toString();
             }
         }
         draft.setPendingPromotionId(null);
@@ -1033,9 +1162,9 @@ public class CrmWhatsappAiSaleDraftService {
     }
 
     private boolean isExplicitPaymentSelection(String message, String paymentMethod) {
-        String value = normalize(message).replaceAll("[^a-z0-9\\s]", " ")
+        String value = normalize(message).toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9\\s]", " ")
                 .replaceAll("\\s+", " ").trim();
-        String method = normalize(paymentMethod).replaceAll("[^a-z0-9\\s]", " ")
+        String method = normalize(paymentMethod).toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9\\s]", " ")
                 .replaceAll("\\s+", " ").trim();
         if (method.isBlank()) return false;
         if (value.equals(method) || value.equals(method + " por favor")) return true;
@@ -1158,7 +1287,14 @@ public class CrmWhatsappAiSaleDraftService {
     }
 
     private List<VariantCandidate> candidates(CatalogResult catalog, String color, String size) {
-        String colorKey = normalize(color); String sizeKey = normalize(size);
+        List<String> availableColors = catalog.products().stream()
+                .flatMap(product -> product.availableColors().stream()).distinct().toList();
+        List<String> availableSizes = catalog.products().stream()
+                .flatMap(product -> product.availableSizes().stream()).distinct().toList();
+        String colorKey = normalize(canonicalCatalogValue(color, availableColors));
+        String sizeKey = normalize(canonicalCatalogValue(size, availableSizes));
+        if (!clean(color).isBlank() && colorKey.isBlank()) return List.of();
+        if (!clean(size).isBlank() && sizeKey.isBlank()) return List.of();
         List<VariantCandidate> result = new ArrayList<>();
         for (ProductResult product : catalog.products()) for (VariantResult variant : product.variants()) {
             if (!variant.available() || variant.stock() == null || variant.stock() <= 0) continue;
@@ -1169,13 +1305,51 @@ public class CrmWhatsappAiSaleDraftService {
         return result;
     }
 
+    private String canonicalCatalogValue(String requested, List<String> available) {
+        String normalizedRequested = normalize(requested);
+        if (normalizedRequested.isBlank() || available == null) return "";
+        String exact = available.stream()
+                .filter(value -> normalize(value).equals(normalizedRequested))
+                .findFirst().orElse("");
+        if (!exact.isBlank()) return exact;
+        List<String> requestedTokens = List.of(normalizedRequested.split("\\s+"));
+        List<String> matches = available.stream()
+                .filter(value -> List.of(normalize(value).split("\\s+")).stream()
+                        .filter(token -> token.length() >= 3)
+                        .anyMatch(requestedTokens::contains))
+                .distinct()
+                .toList();
+        return matches.size() == 1 ? matches.getFirst() : "";
+    }
+
+    private String unavailableQuantityMessage(int requested, int available) {
+        if (available <= 0) return "No hay unidades disponibles para esa variante.";
+        return "No tengo " + requested + " unidades disponibles; solo tengo " + available
+                + (available == 1 ? " unidad disponible." : " unidades disponibles.");
+    }
+
     private CrmWhatsappAiSaleDraftItem findDraftItem(CrmWhatsappAiSaleDraft draft, SaleActionResult action) {
-        String query = normalize(action.productQuery()); String color = normalize(action.color()); String size = normalize(action.size());
-        List<CrmWhatsappAiSaleDraftItem> matches = draft.getItems().stream()
-                .filter(item -> query.isBlank() || normalize(item.getProductName()).contains(query) || normalize(item.getSku()).contains(query))
-                .filter(item -> color.isBlank() || normalize(item.getColor()).equals(color))
-                .filter(item -> size.isBlank() || normalize(item.getSize()).equals(size)).toList();
+        List<CrmWhatsappAiSaleDraftItem> matches = findDraftItems(draft, action);
         return matches.size() == 1 ? matches.get(0) : null;
+    }
+
+    private List<CrmWhatsappAiSaleDraftItem> findDraftItems(
+            CrmWhatsappAiSaleDraft draft, SaleActionResult action) {
+        String query = normalize(action.productQuery());
+        String color = normalize(action.color());
+        String size = normalize(action.size());
+        return draft.getItems().stream()
+                .filter(item -> {
+                    if (query.isBlank()) return true;
+                    String product = normalize(item.getProductName());
+                    String sku = normalize(item.getSku());
+                    String description = normalize(item.getProductName() + " " + item.getColor() + " " + item.getSize());
+                    return product.contains(query) || query.contains(product)
+                            || sku.contains(query) || description.contains(query);
+                })
+                .filter(item -> color.isBlank() || normalize(item.getColor()).equals(color))
+                .filter(item -> size.isBlank() || normalize(item.getSize()).equals(size))
+                .toList();
     }
 
     private List<String> revalidateItems(CrmWhatsappAiSaleDraft draft, boolean updateSnapshots) {
@@ -1337,33 +1511,45 @@ public class CrmWhatsappAiSaleDraftService {
     }
 
     private String summary(CrmWhatsappAiSaleDraft draft, boolean askConfirmation) {
-        StringBuilder text = new StringBuilder("🛍️ Así quedaría tu pedido:\n");
+        StringBuilder text = new StringBuilder("🛍️ *Así quedaría tu pedido*\n");
         for (CrmWhatsappAiSaleDraftItem item : draft.getItems()) {
-            text.append("- ").append(item.getQuantity()).append(" x ").append(item.getProductName());
-            if (!clean(item.getColor()).isBlank()) text.append(" ").append(item.getColor());
-            if (!clean(item.getSize()).isBlank()) text.append(" talla ").append(item.getSize());
-            text.append(" - S/").append(item.getUnitPrice().multiply(BigDecimal.valueOf(item.getQuantity())).setScale(2)).append("\n");
+            text.append("\n👗 *").append(item.getProductName()).append("*\n");
+            if (!clean(item.getColor()).isBlank()) {
+                text.append("🎨 Color: ").append(item.getColor()).append("\n");
+            }
+            if (!clean(item.getSize()).isBlank()) {
+                text.append("📏 Talla: ").append(item.getSize()).append("\n");
+            }
+            text.append("🔢 Cantidad: ").append(item.getQuantity()).append("\n")
+                    .append("💵 Importe: S/")
+                    .append(item.getUnitPrice().multiply(BigDecimal.valueOf(item.getQuantity())).setScale(2))
+                    .append("\n");
             if (item.getRegularUnitPrice() != null && item.getUnitPrice().compareTo(item.getRegularUnitPrice()) < 0) {
-                text.append("  Oferta aplicada: S/").append(item.getUnitPrice().setScale(2)).append(" c/u\n");
+                text.append("🏷️ Oferta aplicada: S/").append(item.getUnitPrice().setScale(2)).append(" c/u\n");
             }
             if (Boolean.TRUE.equals(item.getPreventa()) && item.getFechaEnvioPreventa() != null) {
-                text.append("  📦 Preventa - envíos desde: ")
+                text.append("📦 Preventa · envíos desde: ")
                         .append(CUSTOMER_DATE_FORMAT.format(item.getFechaEnvioPreventa()))
                         .append("\n");
             }
         }
-        for (CrmWhatsappAiSaleDraftPromotion promotion : draft.getPromotions()) {
-            text.append("- Combo ").append(promotion.getName()).append(": -S/")
-                    .append(promotion.getDiscount().setScale(2)).append("\n");
+        if (!draft.getPromotions().isEmpty()) {
+            text.append("\n🎁 *Promociones aplicadas*\n");
+            for (CrmWhatsappAiSaleDraftPromotion promotion : draft.getPromotions()) {
+                text.append("• ").append(promotion.getName()).append(": -S/")
+                        .append(promotion.getDiscount().setScale(2)).append("\n");
+            }
         }
-        text.append("Subtotal: S/").append(draft.getSubtotal().setScale(2)).append("\n");
+        text.append("\n💰 *Resumen*\n")
+                .append("• Subtotal: S/").append(draft.getSubtotal().setScale(2)).append("\n");
         if (draft.getPromotionDiscount().signum() > 0) {
-            text.append("Descuento promocional: -S/").append(draft.getPromotionDiscount().setScale(2)).append("\n");
+            text.append("• Descuento promocional: -S/")
+                    .append(draft.getPromotionDiscount().setScale(2)).append("\n");
         }
-        text.append("Total estimado: S/").append(draft.getTotal().setScale(2));
+        text.append("• *Total estimado: S/").append(draft.getTotal().setScale(2)).append("*");
         if (askConfirmation) {
-            text.append("\n\nTu pedido queda guardado. Cuando desees continuar, puedes confirmarlo.")
-                    .append("\n\n¿En qué más puedo ayudarte?");
+            text.append("\n\n✅ Si estás conforme con tu pedido, escribe *CONFIRMAR PEDIDO*.")
+                    .append("\n\n➕ ¿Qué otro producto deseas agregar?");
         }
         return text.toString();
     }
@@ -1457,6 +1643,7 @@ public class CrmWhatsappAiSaleDraftService {
             LocalDateTime expiresAt, List<String> warnings, List<SaleDraftPromotionResponse> promotions,
             List<SaleDraftItemResponse> items) {}
     public record CustomerNameSuggestionRequest(String action) {}
+    public record PromotionSuggestion(String idempotencyKey, String text) {}
     public record ActionOutcome(String response, boolean readyForReview, SaleDraftResponse draft) {
         static ActionOutcome human(String message) { return new ActionOutcome(message, false, null); }
     }

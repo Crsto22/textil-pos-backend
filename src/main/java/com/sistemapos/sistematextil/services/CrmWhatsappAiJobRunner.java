@@ -60,7 +60,7 @@ public class CrmWhatsappAiJobRunner {
             engineService.notifyProcessing(id);
             PreparedJob prepared = engineService.prepare(id);
             ProcessingResult result = engineService.execute(prepared);
-            engineService.complete(id, result);
+            engineService.complete(id, result, prepared.latestMessage());
         } catch (AiProviderException error) {
             log.warn("Gemini no pudo procesar el trabajo IA {}: {}. Causa tecnica: {}",
                     id, error.getMessage(), rootCauseSummary(error));

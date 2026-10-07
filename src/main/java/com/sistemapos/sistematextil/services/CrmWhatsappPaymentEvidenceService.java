@@ -39,6 +39,7 @@ import com.sistemapos.sistematextil.model.CrmWhatsappPaymentProcessingStatus;
 import com.sistemapos.sistematextil.model.CrmWhatsappPaymentRequest;
 import com.sistemapos.sistematextil.model.CrmWhatsappPaymentRequestStatus;
 import com.sistemapos.sistematextil.model.CrmWhatsappPaymentReservationStatus;
+import com.sistemapos.sistematextil.model.CrmWhatsappAiAttentionMode;
 import com.sistemapos.sistematextil.model.CrmWhatsappAiDeliveryType;
 import com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason;
 import com.sistemapos.sistematextil.model.MetodoPagoCuenta;
@@ -91,6 +92,7 @@ public class CrmWhatsappPaymentEvidenceService {
     private final CrmWhatsappAiConfigRepository aiConfigRepository;
     private final CrmWhatsappPaymentReservationService reservationService;
     private final CrmWhatsappAiDeliveryService deliveryService;
+    private final CrmWhatsappAiMemoryService aiMemoryService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Transactional
@@ -278,6 +280,7 @@ public class CrmWhatsappPaymentEvidenceService {
             }
             review(evidence, actor, CrmWhatsappPaymentEvidenceStatus.ACEPTABLE, body == null ? null : body.note());
             publish("payment.evidence.updated", evidence.getConversation(), toResponse(evidence));
+            sendCustomerNotice(evidence.getConversation(), "PEDIDO REGISTRADO ✅");
             return decisionResponse(evidence, null);
         }
         if ("OBSERVE".equals(action)) {
@@ -300,6 +303,7 @@ public class CrmWhatsappPaymentEvidenceService {
                 }
             }
             publish("payment.evidence.updated", evidence.getConversation(), toResponse(evidence));
+            sendCustomerNotice(evidence.getConversation(), "PEDIDO RECHAZADO");
             return decisionResponse(evidence, null);
         }
         if (!"VALIDATE".equals(action)) throw badRequest("Accion permitida: ACCEPT, OBSERVE, REJECT o VALIDATE");
@@ -560,8 +564,13 @@ public class CrmWhatsappPaymentEvidenceService {
 
     private void markPaymentVerification(CrmWhatsappConversation conversation) {
         if (conversation == null || conversation.getAssignedUser() != null) return;
+        conversation.setStatus("ESPERA");
+        conversation.setAiAttentionMode(CrmWhatsappAiAttentionMode.HUMANA);
+        conversation.setAiAttentionModeExplicit(true);
         conversation.setWaitingReason(CrmWhatsappWaitingReason.PAYMENT_VERIFICATION);
         conversationRepository.save(conversation);
+        aiMemoryService.pauseForHuman(conversation,
+                "Comprobante registrado; requiere validacion de una asesora");
     }
 
     private CrmWhatsappPaymentEvidence createEvidence(
@@ -712,7 +721,7 @@ public class CrmWhatsappPaymentEvidenceService {
         Long conversationId = conversation.getIdConversation();
         runAfterCommit(() -> {
             try {
-                chatServiceProvider.getObject().enviarMensajeAutomatico(conversationId, message);
+                chatServiceProvider.getObject().enviarAvisoSistemaAutomatico(conversationId, message);
             } catch (RuntimeException ignored) {
                 // La decision financiera ya quedo auditada aunque WhatsApp no este disponible.
             }

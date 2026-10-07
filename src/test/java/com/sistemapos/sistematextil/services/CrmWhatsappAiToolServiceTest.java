@@ -91,6 +91,31 @@ class CrmWhatsappAiToolServiceTest {
     }
 
     @Test
+    void entregaInmediataUsaElFiltroSeguroDeSucursalYTalla() {
+        CrmWhatsappConversation conversation = conversation();
+        CatalogResult catalog = new CatalogResult(3, "Kiments Centro", "", "", false, List.of());
+        when(commercial.searchReadyStockProducts(conversation, "M", 0)).thenReturn(catalog);
+
+        service.execute(conversation, List.of(new ToolCall("buscar_productos", Map.of(
+                "q", "", "page", 0, "readyStockOnly", true, "size", "M",
+                "idSucursal", 999))));
+
+        verify(commercial).searchReadyStockProducts(conversation, "M", 0);
+    }
+
+    @Test
+    void preventaUsaElFiltroComercialSinAceptarIdsDelModelo() {
+        CrmWhatsappConversation conversation = conversation();
+        CatalogResult catalog = new CatalogResult(3, "Kiments Centro", "", "", false, List.of());
+        when(commercial.searchPreorderProducts(conversation, 0)).thenReturn(catalog);
+
+        service.execute(conversation, List.of(new ToolCall("buscar_productos", Map.of(
+                "q", "", "page", 0, "preorderOnly", true, "idSucursal", 999))));
+
+        verify(commercial).searchPreorderProducts(conversation, 0);
+    }
+
+    @Test
     void evidenciaDePagosNoGuardaNumerosDeCuenta() {
         CrmWhatsappConversation conversation = conversation();
         when(commercial.paymentMethods(conversation)).thenReturn(new PaymentResult(

@@ -1540,8 +1540,8 @@ class CrmWhatsappAiEngineServiceTest {
 
         var result = service.execute(service.prepare(50L));
 
-        assertTrue(result.draft().contains("BELEN"));
-        assertTrue(result.draft().contains("EMMA"));
+        assertTrue(result.draft().contains("BELEN"), result.draft());
+        assertTrue(result.draft().contains("EMMA"), result.draft());
         assertTrue(result.draft().contains("Modelos disponibles"));
         assertFalse(result.naturalResponseUsed());
         assertFalse(result.fallbackUsed());
@@ -1613,7 +1613,7 @@ class CrmWhatsappAiEngineServiceTest {
     }
 
     @Test
-    void falloDeRedaccionNaturalSobreConocimientoTambienRespondeConRespaldo() {
+    void politicaDeCambiosPasaDirectamenteAUnaAsesora() {
         CrmWhatsappAiJob job = job("Cual es la politica de cambios?");
         CrmWhatsappAiConfig config = configWithIntent("POLITICAS");
         config.setNaturalResponseEnabled(true);
@@ -1633,11 +1633,10 @@ class CrmWhatsappAiEngineServiceTest {
 
         var result = service.execute(service.prepare(50L));
 
-        assertEquals("POLITICAS", result.intent());
-        assertTrue(result.draft().contains("No realizamos cambios"));
-        assertTrue(result.fallbackUsed());
-        assertFalse(result.naturalResponseUsed());
-        verify(safety).recordFallback(any(), any());
+        assertEquals("ASESOR_SOLICITADO", result.intent());
+        assertTrue(result.requiresHuman());
+        assertTrue(result.reason().contains("posventa"));
+        verifyNoInteractions(provider, tools);
     }
 
     @Test
@@ -1754,8 +1753,8 @@ class CrmWhatsappAiEngineServiceTest {
 
         var result = service.execute(service.prepare(50L));
 
-        assertTrue(result.draft().contains("BELEN"));
-        assertTrue(result.draft().contains("EMMA"));
+        assertTrue(result.draft().contains("BELEN"), result.draft());
+        assertTrue(result.draft().contains("EMMA"), result.draft());
         assertFalse(result.draft().contains("http"), result.draft());
         verifyNoInteractions(provider);
     }
@@ -1778,8 +1777,8 @@ class CrmWhatsappAiEngineServiceTest {
 
         var result = service.execute(service.prepare(50L));
 
-        assertTrue(result.draft().contains("MARIA ENTERO"));
-        assertTrue(result.draft().contains("FATIMA"));
+        assertTrue(result.draft().contains("MARIA ENTERO"), result.draft());
+        assertTrue(result.draft().contains("FATIMA"), result.draft());
         assertFalse(result.draft().contains("http"), result.draft());
         verifyNoInteractions(provider);
     }
@@ -2414,6 +2413,71 @@ class CrmWhatsappAiEngineServiceTest {
         assertEquals("ENVIOS", result.intent());
         assertFalse(result.draft().toLowerCase().contains("ciudad o distrito"), result.draft());
         assertTrue(result.draft().contains("¿Qué otro producto o consulta deseas realizar?"));
+    }
+
+    @Test
+    void consultaDePlazoRespondeConRangoGeneralSinConsultarProgramacion() {
+        CrmWhatsappAiJob job = job("Que dia estara listo mi pedido para recoger");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(configWithIntent("ENVIOS")));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertEquals("ENVIOS", result.intent());
+        assertTrue(result.draft().contains("1 a 2 días"));
+        assertTrue(result.draft().contains("corroborar tus datos"));
+        assertTrue(result.draft().contains("productos en preventa"));
+        verifyNoInteractions(provider, tools);
+    }
+
+    @Test
+    void solicitudDeFechaExactaRequiereAsesora() {
+        CrmWhatsappAiJob job = job("Necesito la fecha exacta para recoger mi pedido");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(configWithIntent("ENVIOS")));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertTrue(result.requiresHuman());
+        assertEquals(com.sistemapos.sistematextil.model.CrmWhatsappAiRunOutcome.HUMAN_REQUIRED, result.outcome());
+        assertTrue(result.reason().contains("fecha u hora exacta"));
+        verifyNoInteractions(provider, tools);
+    }
+
+    @Test
+    void cambioDeTallaPasaDirectamenteAUnaAsesora() {
+        CrmWhatsappAiJob job = job("Quiero cambiar la talla porque me queda grande");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertTrue(result.requiresHuman());
+        assertEquals("ASESOR_SOLICITADO", result.intent());
+        assertTrue(result.reason().contains("posventa"));
+        verifyNoInteractions(provider, tools);
+    }
+
+    @Test
+    void consultaMayoristaPasaDirectamenteAUnaAsesora() {
+        CrmWhatsappAiJob job = job("Quiero una cotizacion por docena para revender en mi boutique");
+        when(jobs.findDetailedById(50L)).thenReturn(Optional.of(job));
+        when(configs.findByConnection_IdConnection(7L)).thenReturn(Optional.of(config()));
+        when(jobs.existsByConversation_IdConversationAndMessage_IdMessageGreaterThan(10L, 20L)).thenReturn(false);
+        when(messages.findRecentActiveMessages(any(), any())).thenReturn(List.of(job.getMessage()));
+
+        var result = service.execute(service.prepare(50L));
+
+        assertTrue(result.requiresHuman());
+        assertEquals("ASESOR_SOLICITADO", result.intent());
+        assertTrue(result.reason().contains("mayorista"));
+        verifyNoInteractions(provider, tools);
     }
 
     @Test

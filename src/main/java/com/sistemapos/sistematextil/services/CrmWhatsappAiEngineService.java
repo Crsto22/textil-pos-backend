@@ -77,6 +77,10 @@ public class CrmWhatsappAiEngineService {
             .ofPattern("d 'de' MMMM 'de' yyyy", Locale.forLanguageTag("es-PE"));
     private static final String ADVISOR_OFFER = "Esta consulta necesita el apoyo de una asesora.\n\n"
             + "¿Te parece si te comunico con una?";
+    private static final String ORDER_PREPARATION_RESPONSE = "📦 Tu pedido estará listo para envío o recojo en un plazo "
+            + "aproximado de 1 a 2 días debido a la alta demanda.\n\n"
+            + "Si logramos prepararlo antes, nuestra asesora de envíos se comunicará contigo para corroborar tus datos 💛\n\n"
+            + "✨ Para productos en preventa, se respetará la fecha de envío indicada en cada modelo.";
     private static final Set<String> SENSITIVE_TERMS = Set.of(
             "reclamo", "queja", "devolucion", "devolución", "asesor", "humano",
             "hablar con una persona", "atencion humana", "atención humana",
@@ -84,6 +88,23 @@ public class CrmWhatsappAiEngineService {
             "ya pague", "ya pagué", "capture de pago", "captura de pago", "comprobante de pago",
             "operacion bancaria", "operación bancaria", "deposite", "deposité",
             "factura incorrecta", "problema con mi factura", "cambiar ruc", "ruc incorrecto");
+    private static final Set<String> AFTER_SALES_TERMS = Set.of(
+            "cambio", "cambiar", "devolver", "devolucion", "reembolso", "garantia",
+            "trocar", "truque", "canje", "canjear",
+            "me queda grande", "me queda chico", "me queda pequeno", "me queda ajustado",
+            "me queda holgado", "no me queda", "no me quedo", "no me gusto", "no me convence",
+            "talla equivocada", "talla incorrecta", "color equivocado", "me llego otro",
+            "me llego otra talla", "prenda defectuosa", "prenda fallada", "prenda danada",
+            "llego mal", "llego con falla", "llego manchada", "llego rota");
+    private static final Set<String> WHOLESALE_TERMS = Set.of(
+            "por mayor", "venta por mayor", "ventas por mayor", "al por mayor", "precio por mayor",
+            "precio mayorista", "mayorista", "mayoreo", "venta mayorista", "comprar por mayor",
+            "venden por mayor", "hacen ventas por mayor", "docena", "por docena", "media docena",
+            "por paquete", "por lote", "lote", "cantidad minima", "minimo de compra",
+            "minimo para mayorista", "pedido grande", "pedido al por mayor", "para revender",
+            "para reventa", "revender", "para mi tienda", "para mi negocio", "para mi boutique",
+            "emprendedora", "catalogo mayorista", "lista de precios mayorista", "cotizacion", "cotizar",
+            "descuento por cantidad", "descuento por volumen", "a partir de cuantas unidades");
     private static final Set<String> RECOVERABLE_INTENTS = Set.of(
             "SALUDO", "PRODUCTOS", "ENLACE_ECOMMERCE", "PRECIO", "STOCK", "COLORES_TALLAS", "GUIA_TALLAS", "OFERTAS", "PROMOCIONES",
             "UBICACION", "HORARIOS", "UBICACION_HORARIOS", "METODOS_PAGO",
@@ -231,6 +252,16 @@ public class CrmWhatsappAiEngineService {
                     "No puedo brindar informacion financiera interna por este medio.\n\n"
                             + "¿Deseas realizar otra consulta?",
                     "No puedo brindar informacion financiera interna por este medio")
+                    .withInitialUsage(initialUsage);
+        }
+        if (requiresAfterSalesAdvisor(body)) {
+            return PreparedJob.handoff(job, config,
+                    "El cliente solicita un cambio, devolucion o atencion posventa")
+                    .withInitialUsage(initialUsage);
+        }
+        if (requiresWholesaleAdvisor(body)) {
+            return PreparedJob.handoff(job, config,
+                    "El cliente solicita informacion o una cotizacion de venta mayorista")
                     .withInitialUsage(initialUsage);
         }
         if (containsSensitiveTerm(body)) {
@@ -601,21 +632,16 @@ public class CrmWhatsappAiEngineService {
                         "La consulta de envios no esta habilitada", List.of(), List.of(),
                         Usage.empty(), elapsedMs(started));
             }
-            long toolStarted = System.nanoTime();
-            Map<String, Object> productArguments = new LinkedHashMap<>();
-            productArguments.put("q", prepared.latestMessage());
-            productArguments.put("page", 0);
-            if (!clean(rememberedSelection.productName()).isBlank()) {
-                productArguments.put("fallbackProduct", clean(rememberedSelection.productName()));
+            if (asksForExactDeliveryDate(prepared.latestMessage())) {
+                return ProcessingResult.human("ENVIOS", 100,
+                        "El cliente solicita confirmar una fecha u hora exacta de despacho o recojo",
+                        List.of(), List.of(), Usage.empty(), elapsedMs(started));
             }
-            ExecutionResult schedule = toolService.execute(prepared.job().getConversation(), List.of(
-                    new ToolCall("buscar_productos", productArguments),
-                    new ToolCall("consultar_programacion_entregas", Map.of())));
             return ProcessingResult.draft("ENVIOS", 100,
-                    deliveryScheduleResponse(schedule.modelResults()),
-                    "Programacion de envios y recojos validada por el backend",
-                    schedule.auditTrace(), schedule.evidence(), List.of(), Usage.empty(), elapsedMs(started))
-                    .withGenerationTrace(false, false, null, null, elapsedMs(toolStarted), null);
+                    ORDER_PREPARATION_RESPONSE,
+                    "Plazo general de preparacion definido por el negocio",
+                    List.of(), List.of(), List.of(), Usage.empty(), elapsedMs(started))
+                    .withGenerationTrace(false, false, null, null, null, null);
         }
         if (asksForProductMaterial(prepared.latestMessage())) {
             if (!prepared.allowedIntents().contains("PRODUCTOS")) {
@@ -1336,9 +1362,8 @@ public class CrmWhatsappAiEngineService {
                 disponibles. Solicitudes desde 5 unidades requieren confirmacion de disponibilidad y precio mayorista
                 por un asesor.
                 Envios, tiendas, horarios, ubicacion, politicas, cuidados y preguntas frecuentes solo pueden
-                provenir de consultar_informacion_negocio. Las fechas de despacho por Shalom y recojo en La Victoria
-                deben provenir de consultar_programacion_entregas. Para una preventa prevalece fechaEnvioPreventa
-                del producto. Nunca presentes la fecha de despacho como fecha garantizada de llegada.
+                provenir de consultar_informacion_negocio. Para una preventa prevalece fechaEnvioPreventa
+                del producto. Nunca presentes una fecha de despacho como fecha garantizada de llegada.
                 Nunca calcules ni prometas costos de envio; indica que
                 el personal encargado debe confirmarlos. No solicites ciudad, distrito, provincia, direccion ni
                 destino, porque este asistente no cotiza ni registra envios. Si el cliente menciona una ubicacion
@@ -1409,9 +1434,7 @@ public class CrmWhatsappAiEngineService {
                     new ToolCall("consultar_metodos_pago", Map.of()));
         }
         if ("ENVIOS".equals(intent)) {
-            return List.of(
-                    new ToolCall("consultar_informacion_negocio", Map.of("q", latestMessage)),
-                    new ToolCall("consultar_programacion_entregas", Map.of()));
+            return List.of(new ToolCall("consultar_informacion_negocio", Map.of("q", latestMessage)));
         }
         if (Set.of("UBICACION_HORARIOS", "UBICACION", "HORARIOS", "TIENDAS", "POLITICAS",
                 "CUIDADOS", "FAQ", "INSTITUCIONAL", "INFORMACION_NEGOCIO").contains(intent)) {
@@ -1493,6 +1516,8 @@ public class CrmWhatsappAiEngineService {
     }
 
     private boolean asksForDeliverySchedule(String message) {
+        // "Productos para enviar hoy" solicita catálogo con stock listo, no una promesa de fecha.
+        if (asksForReadyStock(message)) return false;
         String value = normalizedText(message).replaceAll("[^a-z0-9\\s]", " ")
                 .replaceAll("\\s+", " ").trim();
         boolean timing = value.matches(".*\\b(que dia|cuando|fecha|a que hora|hoy|manana|demora|demorara)\\b.*");
@@ -1502,55 +1527,13 @@ public class CrmWhatsappAiEngineService {
         return timing && (delivery || pickup);
     }
 
-    private String deliveryScheduleResponse(List<Map<String, Object>> results) {
-        Map<String, Object> schedule = results == null ? null : results.stream()
-                .filter(item -> "consultar_programacion_entregas".equals(text(item.get("tool"))))
-                .findFirst().orElse(null);
-        List<Map<String, Object>> matchedProducts = productMaps(results);
-        if (matchedProducts.size() == 1 && Boolean.TRUE.equals(matchedProducts.getFirst().get("preventa"))) {
-            Map<String, Object> product = matchedProducts.getFirst();
-            String name = text(product.get("name"));
-            String date = customerDate(text(product.get("fechaEnvioPreventa")));
-            if (!date.isBlank()) {
-                return "🌸 *" + name + "* está en preventa.\n\n"
-                        + "📦 Los envíos por Shalom comienzan el " + date
-                        + ", de acuerdo con el orden de compra.\n\n"
-                        + "🏬 El recojo en nuestra tienda de La Victoria se coordina tomando como referencia "
-                        + "esa fecha.";
-            }
-        }
-        if (schedule == null) {
-            return "La programación del próximo envío y recojo aún debe ser actualizada por nuestro equipo.";
-        }
-        String shippingDate = text(schedule.get("shippingDateText"));
-        String cutoff = text(schedule.get("sameDayCutoffText"));
-        String pickupDate = text(schedule.get("pickupDateText"));
-        String opens = text(schedule.get("pickupOpensAtText"));
-        String closes = text(schedule.get("pickupClosesAtText"));
-        String shipping = shippingDate.isBlank()
-                ? "📦 La próxima fecha de despacho por Shalom aún debe ser actualizada."
-                : "📦 Los productos listos para entrega se despachan por Shalom " + shippingDate
-                        + ", confirmando el pedido hasta las " + cutoff + ".";
-        String pickup = pickupDate.isBlank()
-                ? "🏬 La próxima fecha de recojo en tienda aún debe ser actualizada."
-                : "🏬 También puedes recoger en nuestra tienda de La Victoria " + pickupDate
-                        + ", de " + opens + " a " + closes + ".";
-        return shipping + "\n\n" + pickup
-                + "\n\nLos productos en preventa conservan la fecha indicada en cada modelo.";
-    }
-
-    @SuppressWarnings("unchecked")
-    private List<Map<String, Object>> productMaps(List<Map<String, Object>> results) {
-        if (results == null) return List.of();
-        return results.stream()
-                .map(item -> item.get("products"))
-                .filter(List.class::isInstance)
-                .map(List.class::cast)
-                .flatMap(List::stream)
-                .filter(Map.class::isInstance)
-                .map(Map.class::cast)
-                .map(item -> (Map<String, Object>) item)
-                .toList();
+    private boolean asksForExactDeliveryDate(String message) {
+        String value = normalizedText(message).replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ").trim();
+        return value.matches(".*\\b(fecha|dia|hora) (exacta|exacto|fija|fijo|especifica|especifico)\\b.*")
+                || value.matches(".*\\b(confirmame|confirma|necesito saber|quiero saber) (la |el )?"
+                        + "(fecha|dia|hora) (exacta|exacto)\\b.*")
+                || value.matches(".*\\bnecesito (una |un )?(fecha|dia|hora) (confirmada|confirmado)\\b.*");
     }
 
     private boolean asksForEcommerceLink(String value) {
@@ -3374,6 +3357,19 @@ public class CrmWhatsappAiEngineService {
     private boolean containsSensitiveTerm(String body) {
         String normalized = body.toLowerCase(Locale.ROOT);
         return SENSITIVE_TERMS.stream().anyMatch(normalized::contains);
+    }
+
+    private boolean requiresAfterSalesAdvisor(String body) {
+        String normalized = normalizedText(body).replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ").trim();
+        return AFTER_SALES_TERMS.stream().anyMatch(normalized::contains);
+    }
+
+    private boolean requiresWholesaleAdvisor(String body) {
+        String normalized = normalizedText(body).replaceAll("[^a-z0-9\\s]", " ")
+                .replaceAll("\\s+", " ").trim();
+        String padded = " " + normalized + " ";
+        return WHOLESALE_TERMS.stream().anyMatch(term -> padded.contains(" " + term + " "));
     }
 
     private Usage addUsage(Usage first, Usage second) {

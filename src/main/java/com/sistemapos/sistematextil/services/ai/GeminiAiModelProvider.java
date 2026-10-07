@@ -148,7 +148,7 @@ public class GeminiAiModelProvider implements AiModelProvider, AiEmbeddingProvid
                 Una confirmacion de pedido o seleccion de metodo para un carrito NO es confirmacion de pago:
                 clasificala con CONFIRMAR_PEDIDO o MODIFICAR_CARRITO cuando esas intenciones esten permitidas.
                 Las herramientas permitidas son buscar_productos, consultar_ofertas, consultar_promociones,
-                consultar_informacion_negocio, consultar_programacion_entregas, consultar_metodos_pago,
+                consultar_informacion_negocio, consultar_metodos_pago,
                 consultar_cliente_actual y consultar_ventas_cliente.
                 Para OFERTAS usa consultar_ofertas. Para PROMOCIONES usa consultar_promociones. Al consultar el
                 precio de un producto puedes usar buscar_productos y consultar_promociones para informar combos relacionados.
@@ -210,9 +210,8 @@ public class GeminiAiModelProvider implements AiModelProvider, AiEmbeddingProvid
                 posventa, facturacion o pagos que requieran validacion. No confirmes pagos, no reserves stock, no
                 negocies precios, no crees descuentos y no indiques que una venta fue emitida. Los horarios comerciales,
                 la ubicacion, las politicas y las modalidades de envio deben provenir de consultar_informacion_negocio.
-                Las fechas de despacho por Shalom y recojo en La Victoria deben provenir de
-                consultar_programacion_entregas; si el producto es preventa, usa fechaEnvioPreventa. Una fecha de
-                despacho no es una fecha garantizada de llegada. Nunca calcules
+                Si el producto es preventa, usa fechaEnvioPreventa. Una fecha de despacho no es una fecha
+                garantizada de llegada. Nunca calcules
                 costos de envio: cuando se consulte un monto, indica que lo confirma el personal encargado. Las
                 respuestas sobre envios no deben pedir ciudad, distrito, provincia, direccion ni destino: este flujo
                 no cotiza ni registra envios. No conviertas una ciudad mencionada como seguimiento en el nombre de un

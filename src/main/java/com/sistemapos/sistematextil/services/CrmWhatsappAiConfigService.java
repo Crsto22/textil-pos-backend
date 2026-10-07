@@ -2,7 +2,6 @@ package com.sistemapos.sistematextil.services;
 
 import java.time.DateTimeException;
 import java.time.LocalTime;
-import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
 import java.util.LinkedHashSet;
@@ -27,7 +26,6 @@ import com.sistemapos.sistematextil.model.CrmWhatsappAttentionQueue;
 import com.sistemapos.sistematextil.model.CrmWhatsappBusinessHours;
 import com.sistemapos.sistematextil.model.CrmWhatsappConnection;
 import com.sistemapos.sistematextil.model.CrmWhatsappConversation;
-import com.sistemapos.sistematextil.model.CrmWhatsappDeliveryDateMode;
 import com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason;
 import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappAiConfigRepository;
@@ -146,34 +144,6 @@ public class CrmWhatsappAiConfigService {
         // tener efecto inmediatamente; el porcentaje sigue permitiendo un rollout
         // parcial entre 1% y 100%.
         if (naturalResponseEnabled && naturalRollout == 0) naturalRollout = 100;
-        CrmWhatsappDeliveryDateMode shippingDateMode = parseEnum(
-                CrmWhatsappDeliveryDateMode.class, request.shippingDateMode(), "Modo de fecha de envio invalido");
-        LocalDate shippingSpecificDate = parseOptionalDate(
-                request.shippingSpecificDate(), "Fecha especifica de envio invalida");
-        LocalTime shippingCutoff = parseTime(
-                request.sameDayShippingCutoff(), "Hora limite de envio invalida");
-        CrmWhatsappDeliveryDateMode pickupDateMode = parseEnum(
-                CrmWhatsappDeliveryDateMode.class, request.pickupDateMode(), "Modo de fecha de recojo invalido");
-        LocalDate pickupSpecificDate = parseOptionalDate(
-                request.pickupSpecificDate(), "Fecha especifica de recojo invalida");
-        LocalTime pickupOpensAt = parseTime(request.pickupOpensAt(), "Hora de apertura para recojo invalida");
-        LocalTime pickupClosesAt = parseTime(request.pickupClosesAt(), "Hora maxima de recojo invalida");
-        if (shippingDateMode == CrmWhatsappDeliveryDateMode.FECHA_ESPECIFICA && shippingSpecificDate == null) {
-            throw badRequest("Selecciona la fecha especifica de envio");
-        }
-        if (pickupDateMode == CrmWhatsappDeliveryDateMode.FECHA_ESPECIFICA && pickupSpecificDate == null) {
-            throw badRequest("Selecciona la fecha especifica de recojo");
-        }
-        LocalDate today = LocalDate.now(ZoneId.of(zonaHoraria));
-        if (shippingSpecificDate != null && shippingSpecificDate.isBefore(today)) {
-            throw badRequest("La fecha de envio no puede estar en el pasado");
-        }
-        if (pickupSpecificDate != null && pickupSpecificDate.isBefore(today)) {
-            throw badRequest("La fecha de recojo no puede estar en el pasado");
-        }
-        if (!pickupOpensAt.isBefore(pickupClosesAt)) {
-            throw badRequest("La hora de apertura debe ser anterior a la hora maxima de recojo");
-        }
         String instrucciones = clean(request.instruccionesPersonalizadas());
         if (instrucciones.length() > 1000) {
             throw badRequest("Las instrucciones no deben superar 1000 caracteres");
@@ -215,15 +185,6 @@ public class CrmWhatsappAiConfigService {
         config.setAutomaticRolloutPercent(rollout);
         config.setNaturalResponseEnabled(naturalResponseEnabled);
         config.setNaturalResponseRolloutPercent(naturalRollout);
-        config.setShippingDateMode(shippingDateMode);
-        config.setShippingSpecificDate(shippingDateMode == CrmWhatsappDeliveryDateMode.FECHA_ESPECIFICA
-                ? shippingSpecificDate : null);
-        config.setSameDayShippingCutoff(shippingCutoff);
-        config.setPickupDateMode(pickupDateMode);
-        config.setPickupSpecificDate(pickupDateMode == CrmWhatsappDeliveryDateMode.FECHA_ESPECIFICA
-                ? pickupSpecificDate : null);
-        config.setPickupOpensAt(pickupOpensAt);
-        config.setPickupClosesAt(pickupClosesAt);
         if (config.getOperationalStatus() == null) config.setOperationalStatus(CrmWhatsappAiOperationsService.ACTIVE);
         saveBusinessHours(connection, request.horariosComerciales());
         CrmWhatsappAiConfig saved = configRepository.save(config);
@@ -259,7 +220,6 @@ public class CrmWhatsappAiConfigService {
                 false,
                 false,
                 null, null, null, null, null, 0, false, 0,
-                "AUTOMATICA", null, "15:00", "AUTOMATICA", null, "10:00", "18:00",
                 new CrmWhatsappAiOperationsService.OperationalSnapshot("ACTIVE", false, 0, 0,
                         BigDecimal.ZERO, null, null, null, 0, null),
                 defaultBusinessHours(),
@@ -296,13 +256,6 @@ public class CrmWhatsappAiConfigService {
                 config.getAutomaticRolloutPercent(),
                 Boolean.TRUE.equals(config.getNaturalResponseEnabled()),
                 config.getNaturalResponseRolloutPercent() == null ? 0 : config.getNaturalResponseRolloutPercent(),
-                config.getShippingDateMode() == null ? "AUTOMATICA" : config.getShippingDateMode().name(),
-                config.getShippingSpecificDate() == null ? null : config.getShippingSpecificDate().toString(),
-                config.getSameDayShippingCutoff() == null ? "15:00" : config.getSameDayShippingCutoff().toString(),
-                config.getPickupDateMode() == null ? "AUTOMATICA" : config.getPickupDateMode().name(),
-                config.getPickupSpecificDate() == null ? null : config.getPickupSpecificDate().toString(),
-                config.getPickupOpensAt() == null ? "10:00" : config.getPickupOpensAt().toString(),
-                config.getPickupClosesAt() == null ? "18:00" : config.getPickupClosesAt().toString(),
                 operationsService.snapshot(config),
                 businessHours(config.getConnection()),
                 REGLAS_SEGURIDAD);
@@ -392,15 +345,6 @@ public class CrmWhatsappAiConfigService {
         }
     }
 
-    private LocalDate parseOptionalDate(String value, String message) {
-        if (clean(value).isBlank()) return null;
-        try {
-            return LocalDate.parse(clean(value));
-        } catch (DateTimeParseException ex) {
-            throw badRequest(message);
-        }
-    }
-
     private int requireRange(Integer value, int min, int max, String message) {
         if (value == null || value < min || value > max) throw badRequest(message);
         return value;
@@ -465,13 +409,6 @@ public class CrmWhatsappAiConfigService {
             Integer automaticRolloutPercent,
             Boolean naturalResponseEnabled,
             Integer naturalResponseRolloutPercent,
-            String shippingDateMode,
-            String shippingSpecificDate,
-            String sameDayShippingCutoff,
-            String pickupDateMode,
-            String pickupSpecificDate,
-            String pickupOpensAt,
-            String pickupClosesAt,
             List<BusinessHoursRequest> horariosComerciales) {}
 
     public record AiConfigResponse(
@@ -503,13 +440,6 @@ public class CrmWhatsappAiConfigService {
             Integer automaticRolloutPercent,
             boolean naturalResponseEnabled,
             Integer naturalResponseRolloutPercent,
-            String shippingDateMode,
-            String shippingSpecificDate,
-            String sameDayShippingCutoff,
-            String pickupDateMode,
-            String pickupSpecificDate,
-            String pickupOpensAt,
-            String pickupClosesAt,
             CrmWhatsappAiOperationsService.OperationalSnapshot operational,
             List<BusinessHoursResponse> horariosComerciales,
             List<String> reglasSeguridad) {}

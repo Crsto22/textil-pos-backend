@@ -135,8 +135,6 @@ class CrmWhatsappAiConfigServiceTest {
                 base.sugerirPromocionesCarrito(), base.dailyTokenLimit(),
                 base.monthlyTokenLimit(), base.monthlyBudgetUsd(), base.inputCostPerMillionUsd(),
                 base.outputCostPerMillionUsd(), base.automaticRolloutPercent(), true, 0,
-                base.shippingDateMode(), base.shippingSpecificDate(), base.sameDayShippingCutoff(),
-                base.pickupDateMode(), base.pickupSpecificDate(), base.pickupOpensAt(), base.pickupClosesAt(),
                 base.horariosComerciales());
 
         var response = service.guardar(request, actor);
@@ -197,7 +195,6 @@ class CrmWhatsappAiConfigServiceTest {
                 false,
                 false,
                 null, null, null, null, null, 0, true, 35,
-                "AUTOMATICA", null, "15:00", "AUTOMATICA", null, "10:00", "18:00",
                 List.of(
                         new BusinessHoursRequest("LUNES", false, "09:00", "19:00"),
                         new BusinessHoursRequest("MARTES", false, "09:00", "19:00"),

@@ -1,0 +1,110 @@
+[
+  {
+    "id": "mensajes-fragmentados-promocion",
+    "covers": ["fragmented", "simultaneous", "typo"],
+    "conversation": "CLIENTE: Buenas tardes\nCLIENTE: quiero la promocio\nCLIENTE: pero si en live la chica dice que hay\nCLIENTE: quiero saber que promos tienen",
+    "acceptedIntents": ["PROMOTION_SEARCH"],
+    "productReferenceContains": null,
+    "promotionReferenceContains": null,
+    "requiresHumanHelp": false
+  },
+  {
+    "id": "producto-con-error-ortografico",
+    "covers": ["typo", "similar-product"],
+    "conversation": "CLIENTE: deseo en modelo alicee a rayas",
+    "acceptedIntents": ["PRODUCT_SEARCH", "PRODUCT_DETAILS"],
+    "productReferenceContains": "alice",
+    "promotionReferenceContains": null,
+    "requiresHumanHelp": false
+  },
+  {
+    "id": "producto-inexistente",
+    "covers": ["missing-product"],
+    "conversation": "CLIENTE: quiero el Brenda talla M",
+    "acceptedIntents": ["PRODUCT_SEARCH", "PRODUCT_DETAILS"],
+    "productReferenceContains": "brenda",
+    "promotionReferenceContains": null,
+    "requiresHumanHelp": false
+  },
+  {
+    "id": "producto-ambiguo",
+    "covers": ["similar-product"],
+    "conversation": "CLIENTE: quiero Alessia color marron talla M",
+    "acceptedIntents": ["PRODUCT_SEARCH", "PRODUCT_DETAILS", "CART_CHANGE"],
+    "productReferenceContains": "alessia",
+    "promotionReferenceContains": null,
+    "requiresHumanHelp": false
+  },
+  {
+    "id": "combo-identificado",
+    "covers": ["combo"],
+    "conversation": "ASESORA: El combo 42 incluye Alice Rayas y Lia Rayas.\nCLIENTE: añádeme ese combo 42",
+    "acceptedIntents": ["PROMOTION_SEARCH", "CART_CHANGE"],
+    "productReferenceContains": null,
+    "promotionReferenceContains": "42",
+    "requiresHumanHelp": false
+  },
+  {
+    "id": "cantidad-supera-stock",
+    "covers": ["stock"],
+    "conversation": "ASESORA: Queda 1 Lia Rayas plata XS.\nCLIENTE: quiero llevar 2",
+    "acceptedIntents": ["CART_CHANGE"],
+    "productReferenceContains": "lia",
+    "promotionReferenceContains": null,
+    "requiresHumanHelp": false
+  },
+  {
+    "id": "cambio-talla-color",
+    "covers": ["variant-change"],
+    "conversation": "ASESORA: Tu carrito tiene Emma negra talla M.\nCLIENTE: mejor cámbiala a camel talla L",
+    "acceptedIntents": ["CART_CHANGE"],
+    "productReferenceContains": "emma",
+    "promotionReferenceContains": null,
+    "requiresHumanHelp": false
+  },
+  {
+    "id": "comprobante-despues-de-vencer",
+    "covers": ["expired-payment", "receipt"],
+    "conversation": "SISTEMA: La reserva de pago venció.\nCLIENTE: ya pagué, aquí está mi comprobante\n[IMAGEN ADJUNTA]",
+    "acceptedIntents": ["PAYMENT_EVIDENCE"],
+    "productReferenceContains": null,
+    "promotionReferenceContains": null,
+    "requiresHumanHelp": false
+  },
+  {
+    "id": "comprobante-incorrecto-o-duplicado",
+    "covers": ["invalid-receipt", "duplicate-receipt"],
+    "conversation": "CLIENTE: te envío nuevamente el mismo comprobante de Yape\n[IMAGEN ADJUNTA]",
+    "acceptedIntents": ["PAYMENT_EVIDENCE"],
+    "productReferenceContains": null,
+    "promotionReferenceContains": null,
+    "requiresHumanHelp": false
+  },
+  {
+    "id": "entrega-shalom",
+    "covers": ["shalom"],
+    "conversation": "ASESORA: ¿Recojo en tienda o envío por Shalom?\nCLIENTE: por Shalom a Huancayo, agencia centro",
+    "acceptedIntents": ["DELIVERY_METHOD", "SHALOM_DATA"],
+    "productReferenceContains": null,
+    "promotionReferenceContains": null,
+    "requiresHumanHelp": false
+  },
+  {
+    "id": "recojo-en-tienda",
+    "covers": ["pickup"],
+    "conversation": "ASESORA: ¿Recojo en tienda o envío por Shalom?\nCLIENTE: prefiero recogerlo en la tienda de Gamarra",
+    "acceptedIntents": ["DELIVERY_METHOD"],
+    "productReferenceContains": null,
+    "promotionReferenceContains": null,
+    "requiresHumanHelp": false
+  },
+  {
+    "id": "cambio-de-prenda-requiere-ayuda",
+    "covers": ["support"],
+    "conversation": "CLIENTE: me llegó otra talla y quiero cambiar la prenda",
+    "acceptedIntents": ["SUPPORT_REQUEST"],
+    "productReferenceContains": null,
+    "promotionReferenceContains": null,
+    "requiresHumanHelp": true
+  }
+]

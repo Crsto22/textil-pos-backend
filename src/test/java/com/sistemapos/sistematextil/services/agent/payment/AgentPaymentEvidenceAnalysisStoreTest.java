@@ -1,0 +1,305 @@
+package com.sistemapos.sistematextil.services.agent.payment;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.List;
+import java.util.Optional;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sistemapos.sistematextil.model.CrmWhatsappAgentEvent;
+import com.sistemapos.sistematextil.model.CrmWhatsappAgentSession;
+import com.sistemapos.sistematextil.model.CrmWhatsappAgentState;
+import com.sistemapos.sistematextil.model.CrmWhatsappConnection;
+import com.sistemapos.sistematextil.model.CrmWhatsappConversation;
+import com.sistemapos.sistematextil.model.CrmWhatsappPaymentEvidence;
+import com.sistemapos.sistematextil.model.CrmWhatsappPaymentEvidenceStatus;
+import com.sistemapos.sistematextil.model.CrmWhatsappPaymentProcessingStatus;
+import com.sistemapos.sistematextil.model.CrmWhatsappPaymentRequest;
+import com.sistemapos.sistematextil.model.CrmWhatsappPaymentRequestStatus;
+import com.sistemapos.sistematextil.model.CrmWhatsappPaymentReservationStatus;
+import com.sistemapos.sistematextil.model.Cliente;
+import com.sistemapos.sistematextil.model.Empresa;
+import com.sistemapos.sistematextil.model.MetodoPagoConfig;
+import com.sistemapos.sistematextil.model.MetodoPagoCuenta;
+import com.sistemapos.sistematextil.repositories.CrmWhatsappAgentSessionRepository;
+import com.sistemapos.sistematextil.repositories.CrmWhatsappPaymentEvidenceRepository;
+import com.sistemapos.sistematextil.repositories.CrmWhatsappPaymentRequestRepository;
+import com.sistemapos.sistematextil.repositories.UsuarioRepository;
+import com.sistemapos.sistematextil.services.CrmWhatsappPaymentReservationService;
+import com.sistemapos.sistematextil.services.agent.CrmWhatsappAgentStateMachine;
+import com.sistemapos.sistematextil.services.agent.payment.AgentPaymentEvidenceAnalysisStore.AnalysisResult;
+import com.sistemapos.sistematextil.services.agent.payment.AgentPaymentEvidenceAnalysisStore.ClaimedEvidence;
+import com.sistemapos.sistematextil.services.agent.payment.AgentPaymentReceiptVisionGateway.VisionResult;
+
+class AgentPaymentEvidenceAnalysisStoreTest {
+    private static final Clock CLOCK = Clock.fixed(
+            Instant.parse("2026-10-08T19:02:00Z"), ZoneId.of("America/Lima"));
+
+    private CrmWhatsappPaymentEvidenceRepository evidenceRepository;
+    private CrmWhatsappPaymentRequestRepository requestRepository;
+    private CrmWhatsappAgentSessionRepository sessionRepository;
+    private CrmWhatsappPaymentReservationService reservationService;
+    private AgentPaymentEvidenceAnalysisStore store;
+    private CrmWhatsappAgentSession session;
+    private CrmWhatsappPaymentRequest request;
+    private CrmWhatsappPaymentEvidence evidence;
+
+    @BeforeEach
+    void setUp() {
+        evidenceRepository = mock(CrmWhatsappPaymentEvidenceRepository.class);
+        requestRepository = mock(CrmWhatsappPaymentRequestRepository.class);
+        sessionRepository = mock(CrmWhatsappAgentSessionRepository.class);
+        UsuarioRepository userRepository = mock(UsuarioRepository.class);
+        reservationService = mock(CrmWhatsappPaymentReservationService.class);
+        store = new AgentPaymentEvidenceAnalysisStore(evidenceRepository, requestRepository, sessionRepository,
+                userRepository, reservationService, new CrmWhatsappAgentStateMachine(),
+                new ObjectMapper().findAndRegisterModules(), CLOCK, 85);
+
+        Empresa company = new Empresa();
+        company.setIdEmpresa(3);
+        CrmWhatsappConnection connection = new CrmWhatsappConnection();
+        connection.setIdConnection(7L);
+        connection.setEmpresa(company);
+        session = new CrmWhatsappAgentSession();
+        session.setIdAgentSession(41L);
+        session.setConnection(connection);
+        session.setState(CrmWhatsappAgentState.VALIDANDO_COMPROBANTE);
+        session.setActiveSlot(true);
+
+        MetodoPagoConfig method = new MetodoPagoConfig();
+        method.setIdMetodoPago(2);
+        method.setNombre("YAPE");
+        MetodoPagoCuenta account = new MetodoPagoCuenta();
+        account.setIdMetodoPagoCuenta(9);
+        account.setMetodoPago(method);
+        account.setNumeroCuenta("999000111");
+        account.setTitular("Kiments SAC");
+        account.setAliasesValidacion("Kiments, Modas Peru");
+
+        request = new CrmWhatsappPaymentRequest();
+        request.setIdPaymentRequest(77L);
+        request.setAgentSession(session);
+        request.setConnection(connection);
+        request.setMetodoPago(method);
+        request.setCuenta(account);
+        request.setExpectedAmount(new BigDecimal("140.00"));
+        request.setCurrency("PEN");
+        request.setStatus(CrmWhatsappPaymentRequestStatus.UNDER_REVIEW);
+        request.setReservationStatus(CrmWhatsappPaymentReservationStatus.ACTIVE);
+        request.setCreatedAt(LocalDateTime.of(2026, 10, 8, 14, 0));
+        request.setExpiresAt(LocalDateTime.of(2026, 10, 8, 14, 4));
+        request.setReviewExpiresAt(LocalDateTime.of(2026, 10, 8, 14, 4));
+
+        evidence = new CrmWhatsappPaymentEvidence();
+        evidence.setIdPaymentEvidence(91L);
+        evidence.setAgentSession(session);
+        evidence.setPaymentRequest(request);
+        evidence.setProcessingStatus(CrmWhatsappPaymentProcessingStatus.PROCESSING);
+        evidence.setValidationStatus(CrmWhatsappPaymentEvidenceStatus.PENDIENTE_VALIDACION);
+        evidence.setSha256("abc123");
+        evidence.setAttempts(1);
+        evidence.setCreatedAt(LocalDateTime.of(2026, 10, 8, 14, 1));
+
+        when(evidenceRepository.findById(91L)).thenReturn(Optional.of(evidence));
+        when(evidenceRepository.findForUpdate(91L)).thenReturn(Optional.of(evidence));
+        when(requestRepository.findForUpdate(77L)).thenReturn(Optional.of(request));
+        when(sessionRepository.findForUpdate(41L)).thenReturn(Optional.of(session));
+        when(evidenceRepository.findOtherByHash(any(), anyString(), any(), any())).thenReturn(List.of());
+        when(evidenceRepository.findOtherByOperation(any(), anyString(), any(), any())).thenReturn(List.of());
+    }
+
+    @Test
+    void claimsEvidenceAndPausesTheFourMinuteExpiryWhileVisionRuns() {
+        session.setState(CrmWhatsappAgentState.ESPERANDO_COMPROBANTE);
+        request.setStatus(CrmWhatsappPaymentRequestStatus.PENDING_EVIDENCE);
+        request.setReviewExpiresAt(null);
+        evidence.setProcessingStatus(CrmWhatsappPaymentProcessingStatus.QUEUED);
+        evidence.setAttempts(0);
+        evidence.setAvailableAt(LocalDateTime.of(2026, 10, 8, 14, 1));
+        evidence.setStoragePath("/storage/proof.png");
+        evidence.setMimeType("image/png");
+
+        ClaimedEvidence claimed = store.claim(91L);
+
+        assertNotNull(claimed);
+        assertEquals(CrmWhatsappPaymentProcessingStatus.PROCESSING, evidence.getProcessingStatus());
+        assertEquals(1, evidence.getAttempts());
+        assertEquals(CrmWhatsappPaymentRequestStatus.UNDER_REVIEW, request.getStatus());
+        assertEquals(LocalDateTime.of(2026, 10, 8, 14, 4), request.getReviewExpiresAt());
+        assertEquals(CrmWhatsappAgentState.VALIDANDO_COMPROBANTE, session.getState());
+        assertEquals(CrmWhatsappAgentEvent.COMPROBANTE_RECIBIDO, session.getLastEvent());
+    }
+
+    @Test
+    void leavesASecondEvidenceQueuedWhileAnotherOneIsBeingValidated() {
+        evidence.setProcessingStatus(CrmWhatsappPaymentProcessingStatus.QUEUED);
+        evidence.setAttempts(0);
+        evidence.setAvailableAt(LocalDateTime.of(2026, 10, 8, 14, 1));
+
+        assertNull(store.claim(91L));
+
+        assertEquals(CrmWhatsappPaymentProcessingStatus.QUEUED, evidence.getProcessingStatus());
+        assertEquals(CrmWhatsappPaymentRequestStatus.UNDER_REVIEW, request.getStatus());
+        assertEquals(CrmWhatsappAgentState.VALIDANDO_COMPROBANTE, session.getState());
+        verify(reservationService, never()).release(any(), any(), anyString());
+    }
+
+    @Test
+    void approvesInitiallyOnlyWhenEveryBackendCheckMatches() {
+        AnalysisResult result = store.complete(91L, vision(95, "140.00", "OP-123"));
+
+        assertEquals(AgentPaymentReceiptOutcome.APPROVED_INITIAL, result.outcome());
+        assertEquals(CrmWhatsappPaymentEvidenceStatus.ACEPTABLE, evidence.getValidationStatus());
+        assertEquals(new BigDecimal("140.00"), evidence.getDetectedAmount());
+        assertEquals("OP123", evidence.getOperationCode());
+        assertEquals(CrmWhatsappAgentState.ESPERANDO_DATOS_CLIENTE, session.getState());
+        assertEquals(CrmWhatsappAgentEvent.COMPROBANTE_APROBADO_INICIALMENTE, session.getLastEvent());
+        assertEquals(CrmWhatsappPaymentRequestStatus.UNDER_REVIEW, request.getStatus());
+        assertEquals(LocalDateTime.of(2026, 10, 8, 14, 4), request.getExpiresAt());
+        assertEquals(LocalDateTime.of(2026, 10, 8, 14, 2), request.getEvidenceAcceptedAt());
+        assertEquals(LocalDateTime.of(2026, 10, 9, 14, 2), request.getReviewExpiresAt());
+        verify(reservationService, never()).release(any(), any(), anyString());
+    }
+
+    @Test
+    void skipsCustomerConfirmationWhenSessionAlreadyHasCompleteCustomerData() {
+        Cliente customer = new Cliente();
+        customer.setIdCliente(15);
+        customer.setNombres("Cristhofer Leonardo");
+        customer.setTelefono("932889985");
+        session.setCliente(customer);
+
+        AnalysisResult result = store.complete(91L, vision(95, "140.00", "OP-123"));
+
+        assertEquals(AgentPaymentReceiptOutcome.APPROVED_INITIAL, result.outcome());
+        assertEquals(customer, request.getCliente());
+        assertEquals(CrmWhatsappAgentState.ESPERANDO_METODO_ENTREGA, session.getState());
+        assertEquals(CrmWhatsappAgentEvent.DATOS_CLIENTE_COMPLETADOS, session.getLastEvent());
+    }
+
+    @Test
+    void requestsOnlyTheNameWhenWhatsappAlreadyProvidesAValidPhone() {
+        CrmWhatsappConversation conversation = new CrmWhatsappConversation();
+        conversation.setPhone("51932889985@s.whatsapp.net");
+        session.setConversation(conversation);
+
+        String message = store.approvedCustomerMessage(session);
+
+        assertTrue(message.contains("nombre completo"));
+        assertFalse(message.contains("Número de celular"));
+    }
+
+    @Test
+    void approvesWithExactAmountDateAndOperationEvenWhenInformativeFieldsAreEmpty() {
+        AgentPaymentReceiptExtraction extraction = new AgentPaymentReceiptExtraction(
+                true, "140.00", "", "2026-10-08", "",
+                "", "", "OP-ONLY-123", "", "", 96);
+
+        AnalysisResult result = store.complete(91L,
+                new VisionResult("GEMINI", "gemini-test", "TEST", 50L, extraction));
+
+        assertEquals(AgentPaymentReceiptOutcome.APPROVED_INITIAL, result.outcome());
+        assertEquals(CrmWhatsappPaymentEvidenceStatus.ACEPTABLE, evidence.getValidationStatus());
+        assertEquals(new BigDecimal("140.00"), evidence.getDetectedAmount());
+        assertEquals("OPONLY123", evidence.getOperationCode());
+        assertEquals(LocalDateTime.of(2026, 10, 8, 0, 0), evidence.getOperationAt());
+    }
+
+    @Test
+    void observesWhenVisionConfidenceIsBelowMinimum() {
+        AnalysisResult result = store.complete(91L, vision(70, "140.00", "OP-123"));
+
+        assertEquals(AgentPaymentReceiptOutcome.OBSERVED, result.outcome());
+        assertEquals(CrmWhatsappPaymentEvidenceStatus.OBSERVADO, evidence.getValidationStatus());
+        assertEquals(CrmWhatsappPaymentRequestStatus.PENDING_EVIDENCE, request.getStatus());
+        assertEquals(LocalDateTime.of(2026, 10, 8, 14, 4), request.getExpiresAt());
+        assertNull(request.getReviewExpiresAt());
+        assertEquals(CrmWhatsappAgentState.ESPERANDO_COMPROBANTE, session.getState());
+        assertEquals(CrmWhatsappAgentEvent.COMPROBANTE_OBSERVADO, session.getLastEvent());
+    }
+
+    @Test
+    void observesWhenOperationCodeCannotBeRead() {
+        AnalysisResult result = store.complete(91L, vision(95, "140.00", ""));
+
+        assertEquals(AgentPaymentReceiptOutcome.OBSERVED, result.outcome());
+        assertTrue(result.warnings().stream().anyMatch(value -> value.contains("numero de operacion")));
+    }
+
+    @Test
+    void rejectsAnAmountDifferentFromThePersistedCartTotal() {
+        AnalysisResult result = store.complete(91L, vision(98, "139.90", "OP-123"));
+
+        assertEquals(AgentPaymentReceiptOutcome.REJECTED, result.outcome());
+        assertEquals(CrmWhatsappPaymentEvidenceStatus.RECHAZADO, evidence.getValidationStatus());
+        assertEquals(CrmWhatsappPaymentRequestStatus.PENDING_EVIDENCE, request.getStatus());
+        assertEquals(CrmWhatsappAgentState.ESPERANDO_COMPROBANTE, session.getState());
+    }
+
+    @Test
+    void rejectsAnOperationAlreadyUsedByTheCompany() {
+        CrmWhatsappPaymentEvidence previous = new CrmWhatsappPaymentEvidence();
+        previous.setIdPaymentEvidence(10L);
+        when(evidenceRepository.findOtherByOperation(any(), anyString(), any(), any()))
+                .thenReturn(List.of(previous));
+
+        AnalysisResult result = store.complete(91L, vision(98, "140.00", "OP-123"));
+
+        assertEquals(AgentPaymentReceiptOutcome.REJECTED, result.outcome());
+        assertEquals(10L, evidence.getDuplicateOfId());
+        assertEquals(CrmWhatsappPaymentEvidenceStatus.RECHAZADO, evidence.getValidationStatus());
+    }
+
+    @Test
+    void rejectsAnExactFileHashAlreadyUsedByTheCompany() {
+        CrmWhatsappPaymentEvidence previous = new CrmWhatsappPaymentEvidence();
+        previous.setIdPaymentEvidence(11L);
+        when(evidenceRepository.findOtherByHash(any(), anyString(), any(), any()))
+                .thenReturn(List.of(previous));
+
+        AnalysisResult result = store.complete(91L, vision(98, "140.00", "OP-123"));
+
+        assertEquals(AgentPaymentReceiptOutcome.REJECTED, result.outcome());
+        assertEquals(11L, evidence.getDuplicateOfId());
+        verify(evidenceRepository, never()).findOtherByOperation(any(), anyString(), any(), any());
+    }
+
+    @Test
+    void ignoresAVisualSimilarityFlagWhenFileAndOperationAreDifferent() {
+        evidence.setDuplicateOfId(25L);
+        evidence.setPerceptualHash("00ffffffff6e7e00");
+
+        AnalysisResult result = store.complete(91L, vision(98, "140.00", "NEW-OP-456"));
+
+        assertEquals(AgentPaymentReceiptOutcome.APPROVED_INITIAL, result.outcome());
+        assertEquals(CrmWhatsappPaymentEvidenceStatus.ACEPTABLE, evidence.getValidationStatus());
+        assertEquals("NEWOP456", evidence.getOperationCode());
+        assertNull(evidence.getDuplicateOfId());
+    }
+
+    private VisionResult vision(int confidence, String amount, String operation) {
+        AgentPaymentReceiptExtraction extraction = new AgentPaymentReceiptExtraction(
+                true, amount, "PEN", "2026-10-08", "14:01:00",
+                "Kiments SAC", "999000111", operation, "YAPE",
+                "Pago exitoso Yape Kiments SAC 999000111 S/ 140.00 OP-123", confidence);
+        return new VisionResult("GEMINI", "gemini-test", "TEST", 50L, extraction);
+    }
+}

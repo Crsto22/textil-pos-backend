@@ -1,10 +1,6 @@
 package com.sistemapos.sistematextil.services;
 
 import java.time.LocalDateTime;
-import java.time.LocalTime;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -13,8 +9,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.sistemapos.sistematextil.model.CrmWhatsappAiConfig;
-import com.sistemapos.sistematextil.model.CrmWhatsappAiMode;
-import com.sistemapos.sistematextil.model.CrmWhatsappAiTone;
 import com.sistemapos.sistematextil.model.CrmWhatsappConnection;
 import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappAiConfigRepository;
@@ -22,6 +16,7 @@ import com.sistemapos.sistematextil.repositories.UsuarioRepository;
 import com.sistemapos.sistematextil.services.ai.AiSecretEncryptionService;
 import com.sistemapos.sistematextil.services.ai.AiSecretEncryptionService.EncryptedSecret;
 import com.sistemapos.sistematextil.util.usuario.Rol;
+import com.sistemapos.sistematextil.services.agent.config.AgentRuntimeControlService;
 
 import lombok.RequiredArgsConstructor;
 
@@ -30,14 +25,11 @@ import lombok.RequiredArgsConstructor;
 public class CrmWhatsappAiCredentialService {
 
     private static final String DEFAULT_MODEL = "gemini-3.8-flash";
-    private static final String DEFAULT_INTENTS =
-            "SALUDO,PRODUCTOS,ENLACE_ECOMMERCE,PRECIO,STOCK,COLORES_TALLAS,OFERTAS,PROMOCIONES,UBICACION,HORARIOS,ENVIOS,TIENDAS,POLITICAS,CUIDADOS,FAQ,INSTITUCIONAL,INFORMACION_NEGOCIO,METODOS_PAGO,INTENCION_COMPRA,MODIFICAR_CARRITO,CONFIRMAR_PEDIDO,CANCELAR_PEDIDO";
-
     private final CrmWhatsappAiConfigRepository configRepository;
     private final CrmWhatsappConnectionService connectionService;
     private final UsuarioRepository usuarioRepository;
     private final AiSecretEncryptionService encryptionService;
-    private final CrmWhatsappAiAuditService auditService;
+    private final AgentRuntimeControlService runtimeControlService;
 
     @Value("${crm.whatsapp.ai.gemini.api-key:}")
     private String environmentApiKey;
@@ -88,9 +80,6 @@ public class CrmWhatsappAiCredentialService {
         config.setApiKeyUpdatedAt(LocalDateTime.now());
         config.setApiKeyUpdatedBy(actor);
         CrmWhatsappAiConfig saved = configRepository.save(config);
-        auditService.record(connection, null, null, actor, replacingKey ? "API_KEY_UPDATED" : "MODEL_UPDATED",
-                "WARN", replacingKey ? "Credencial de Gemini actualizada" : "Modelo de Gemini actualizado",
-                Map.of("model", model));
         return response(saved);
     }
 
@@ -102,12 +91,11 @@ public class CrmWhatsappAiCredentialService {
             config.setGeminiApiKeyCiphertext(null);
             config.setGeminiApiKeyNonce(null);
             config.setGeminiModel(null);
-            config.setModo(CrmWhatsappAiMode.DESACTIVADA);
+            config.setAgentEnabled(false);
             config.setApiKeyUpdatedAt(LocalDateTime.now());
             config.setApiKeyUpdatedBy(actor);
             configRepository.save(config);
-            auditService.record(connection, null, null, actor, "API_KEY_DELETED", "WARN",
-                    "Credencial de Gemini eliminada", Map.of());
+            runtimeControlService.stop(connection.getIdConnection(), "Credencial de Gemini eliminada");
         });
         return response(configRepository.findByConnection_IdConnection(connection.getIdConnection()).orElse(null));
     }
@@ -124,7 +112,7 @@ public class CrmWhatsappAiCredentialService {
         }
         String key = clean(environmentApiKey);
         if (!key.isBlank()) {
-            String model = configRepository.findByConnection_IdConnection(connectionId)
+            String model = connectionId == null ? environmentModel : configRepository.findByConnection_IdConnection(connectionId)
                     .map(CrmWhatsappAiConfig::getGeminiModel)
                     .filter(value -> !clean(value).isBlank())
                     .orElse(environmentModel);
@@ -182,26 +170,6 @@ public class CrmWhatsappAiCredentialService {
     private CrmWhatsappAiConfig defaultConfig(CrmWhatsappConnection connection) {
         CrmWhatsappAiConfig config = new CrmWhatsappAiConfig();
         config.setConnection(connection);
-        config.setModo(CrmWhatsappAiMode.DESACTIVADA);
-        config.setZonaHoraria("America/Lima");
-        config.setDiasAtencion("LUNES,MARTES,MIERCOLES,JUEVES,VIERNES,SABADO");
-        config.setHoraInicio(LocalTime.of(9, 0));
-        config.setHoraFin(LocalTime.of(19, 0));
-        config.setEsperaRespuestaSegundos(5);
-        config.setTono(CrmWhatsappAiTone.CERCANO);
-        config.setIntencionesPermitidas(DEFAULT_INTENTS);
-        config.setMaxRespuestasAutomaticas(5);
-        config.setConfianzaMinima(75);
-        config.setTransferirBajaConfianza(true);
-        config.setTransferirSolicitudHumana(true);
-        config.setTransferirAsuntoSensible(true);
-        config.setTransferirImagenesAsesora(false);
-        config.setMostrarProductosNuevos(false);
-        config.setSugerirPromocionesCarrito(false);
-        config.setAutomaticRolloutPercent(0);
-        config.setNaturalResponseEnabled(true);
-        config.setNaturalResponseRolloutPercent(0);
-        config.setOperationalStatus(CrmWhatsappAiOperationsService.ACTIVE);
         return config;
     }
 

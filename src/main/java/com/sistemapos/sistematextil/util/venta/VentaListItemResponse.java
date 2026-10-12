@@ -24,6 +24,7 @@ public record VentaListItemResponse(
         Integer idSucursal,
         String nombreSucursal,
         String origen,
+        String metodoEntrega,
         VentaConversionOrigenResponse conversionOrigen,
         long items,
         long pagos

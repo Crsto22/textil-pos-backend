@@ -13,13 +13,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
-import com.sistemapos.sistematextil.model.CrmWhatsappAiDeliveryStatus;
-import com.sistemapos.sistematextil.model.CrmWhatsappAiDeliveryType;
-import com.sistemapos.sistematextil.model.CrmWhatsappAiJobStatus;
 import com.sistemapos.sistematextil.model.CrmWhatsappConnection;
 import com.sistemapos.sistematextil.model.Usuario;
-import com.sistemapos.sistematextil.repositories.CrmWhatsappAiDeliveryRepository;
-import com.sistemapos.sistematextil.repositories.CrmWhatsappAiJobRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappConnectionRepository;
 import com.sistemapos.sistematextil.util.usuario.Rol;
 
@@ -34,8 +29,6 @@ public class CrmWhatsappConnectionStateService {
             "INITIALIZING", "QR_REQUIRED", CONNECTED, "DISCONNECTED", "AUTH_FAILURE", "UNKNOWN");
 
     private final CrmWhatsappConnectionRepository connectionRepository;
-    private final CrmWhatsappAiJobRepository jobRepository;
-    private final CrmWhatsappAiDeliveryRepository deliveryRepository;
     private final CrmWhatsappEventService eventService;
 
     @Value("${whatsapp.bridge.client-id:kiments-main}")
@@ -85,10 +78,6 @@ public class CrmWhatsappConnectionStateService {
 
         connection = connectionRepository.save(connection);
         ConnectionStateResponse response = toResponse(connection);
-        if (!response.operational()) {
-            cancelAutomaticWork(connection, response.blockedReason());
-        }
-
         boolean changed = !Objects.equals(previousStatus, response.status())
                 || !Objects.equals(previousNumber, clean(connection.getConnectedNumber()))
                 || !Objects.equals(previousApproved, clean(connection.getApprovedNumber()))
@@ -172,30 +161,6 @@ public class CrmWhatsappConnectionStateService {
         return new ConnectionStateResponse(clientId, status, connected.isBlank() ? null : connected,
                 null, false, true, operational ? "" : "WhatsApp esta desconectado. Ve a Conexiones para volver a vincularlo.",
                 operational ? null : LocalDateTime.now(), null);
-    }
-
-    private void cancelAutomaticWork(CrmWhatsappConnection connection, String reason) {
-        if (connection == null || connection.getIdConnection() == null) return;
-        String cancellationReason = clean(reason).isBlank() ? "Conexion de WhatsApp no disponible" : reason;
-        jobRepository.cancelForConnection(
-                connection.getIdConnection(),
-                List.of(CrmWhatsappAiJobStatus.PENDING, CrmWhatsappAiJobStatus.PROCESSING),
-                CrmWhatsappAiJobStatus.SKIPPED,
-                cancellationReason,
-                LocalDateTime.now());
-        deliveryRepository.cancelForConnection(
-                connection.getIdConnection(),
-                List.of(CrmWhatsappAiDeliveryStatus.PENDING, CrmWhatsappAiDeliveryStatus.SENDING),
-                List.of(CrmWhatsappAiDeliveryType.AUTOMATIC_RESPONSE,
-                        CrmWhatsappAiDeliveryType.PRODUCT_IMAGE,
-                        CrmWhatsappAiDeliveryType.SIZE_GUIDE_IMAGE,
-                        CrmWhatsappAiDeliveryType.NEW_PRODUCT_ANNOUNCEMENT,
-                        CrmWhatsappAiDeliveryType.CATALOG_PRODUCT_CARD,
-                        CrmWhatsappAiDeliveryType.PRODUCT_PROMOTION_SUGGESTION,
-                        CrmWhatsappAiDeliveryType.CART_PROMOTION_SUGGESTION,
-                        CrmWhatsappAiDeliveryType.HANDOFF_NOTICE),
-                CrmWhatsappAiDeliveryStatus.CANCELLED,
-                cancellationReason);
     }
 
     private void publish(ConnectionStateResponse response) {

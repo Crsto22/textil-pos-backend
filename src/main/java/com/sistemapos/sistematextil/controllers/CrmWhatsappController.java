@@ -27,30 +27,22 @@ import com.sistemapos.sistematextil.services.CrmWhatsappBridgeService;
 import com.sistemapos.sistematextil.services.CrmWhatsappConnectionService;
 import com.sistemapos.sistematextil.services.CrmWhatsappConnectionService.BranchRequest;
 import com.sistemapos.sistematextil.services.CrmWhatsappConnectionStateService.BridgeConnectionState;
-import com.sistemapos.sistematextil.services.CrmWhatsappAiConfigService;
-import com.sistemapos.sistematextil.services.CrmWhatsappAiJobService;
-import com.sistemapos.sistematextil.services.CrmWhatsappAiJobService.DraftRequest;
-import com.sistemapos.sistematextil.services.CrmWhatsappAiFeedbackService;
-import com.sistemapos.sistematextil.services.CrmWhatsappAiFeedbackService.DecisionRequest;
 import com.sistemapos.sistematextil.services.CrmWhatsappAiCredentialService;
-import com.sistemapos.sistematextil.services.CrmWhatsappAiMemoryService;
-import com.sistemapos.sistematextil.services.CrmWhatsappAiSaleDraftService;
-import com.sistemapos.sistematextil.services.CrmWhatsappAiReportService;
-import com.sistemapos.sistematextil.services.CrmWhatsappAiOperationsService;
-import com.sistemapos.sistematextil.services.CrmWhatsappAiKnowledgeService;
-import com.sistemapos.sistematextil.services.CrmWhatsappAiDeliveryService;
-import com.sistemapos.sistematextil.services.CrmWhatsappAiKnowledgeService.ArticleRequest;
-import com.sistemapos.sistematextil.services.CrmWhatsappAiKnowledgeService.TestRequest;
-import com.sistemapos.sistematextil.services.CrmWhatsappAiSaleDraftService.RevalidateRequest;
-import com.sistemapos.sistematextil.services.CrmWhatsappAiSaleDraftService.SaleDraftUpdateRequest;
-import com.sistemapos.sistematextil.services.CrmWhatsappAiSaleDraftService.CustomerNameSuggestionRequest;
 import com.sistemapos.sistematextil.services.CrmWhatsappPaymentEvidenceService;
+import com.sistemapos.sistematextil.services.CrmWhatsappSalesReviewService;
+import com.sistemapos.sistematextil.services.CrmWhatsappFilmReviewService;
 import com.sistemapos.sistematextil.services.CrmWhatsappPaymentEvidenceService.PaymentRequestCreateRequest;
 import com.sistemapos.sistematextil.services.CrmWhatsappPaymentEvidenceService.PaymentEvidenceDownload;
 import com.sistemapos.sistematextil.services.CrmWhatsappAiCredentialService.CredentialRequest;
-import com.sistemapos.sistematextil.services.ai.AiModelProvider;
+import com.sistemapos.sistematextil.services.CrmWhatsappAgentConfigService;
+import com.sistemapos.sistematextil.services.CrmWhatsappAgentConfigService.AgentConfigRequest;
+import com.sistemapos.sistematextil.services.ai.GeminiConnectionService;
 import com.sistemapos.sistematextil.services.ai.AiProviderException;
-import com.sistemapos.sistematextil.services.CrmWhatsappAiConfigService.AiConfigRequest;
+import com.sistemapos.sistematextil.services.agent.visibility.AgentConversationVisibilityService;
+import com.sistemapos.sistematextil.services.agent.knowledge.AgentKnowledgeAdminService;
+import com.sistemapos.sistematextil.services.agent.knowledge.AgentKnowledgeAdminService.ArticleRequest;
+import com.sistemapos.sistematextil.services.agent.knowledge.AgentKnowledgeAdminService.KnowledgeTestRequest;
+import com.sistemapos.sistematextil.services.agent.fulfillment.ShalomAgencySyncService;
 import com.sistemapos.sistematextil.model.CustomUser;
 import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.services.CrmWhatsappChatService.MediaDownload;
@@ -60,7 +52,6 @@ import com.sistemapos.sistematextil.services.CrmWhatsappChatService.LinkClienteR
 import com.sistemapos.sistematextil.services.CrmWhatsappChatService.SendMessageRequest;
 import com.sistemapos.sistematextil.services.CrmWhatsappChatService.ReceiptRequest;
 import com.sistemapos.sistematextil.services.CrmWhatsappChatService.TransferRequest;
-import com.sistemapos.sistematextil.services.CrmWhatsappChatService.AttentionModeRequest;
 import com.sistemapos.sistematextil.services.CrmWhatsappChatService.WebhookRequest;
 import com.sistemapos.sistematextil.util.cliente.ClienteCreateRequest;
 import com.sistemapos.sistematextil.util.cliente.ClienteUpdateRequest;
@@ -75,18 +66,26 @@ public class CrmWhatsappController {
     private final CrmWhatsappBridgeService crmWhatsappBridgeService;
     private final CrmWhatsappChatService crmWhatsappChatService;
     private final CrmWhatsappConnectionService crmWhatsappConnectionService;
-    private final CrmWhatsappAiConfigService crmWhatsappAiConfigService;
-    private final CrmWhatsappAiJobService crmWhatsappAiJobService;
-    private final CrmWhatsappAiFeedbackService crmWhatsappAiFeedbackService;
     private final CrmWhatsappAiCredentialService crmWhatsappAiCredentialService;
-    private final CrmWhatsappAiMemoryService crmWhatsappAiMemoryService;
+    private final CrmWhatsappAgentConfigService crmWhatsappAgentConfigService;
     private final CrmWhatsappPaymentEvidenceService crmWhatsappPaymentEvidenceService;
-    private final CrmWhatsappAiSaleDraftService crmWhatsappAiSaleDraftService;
-    private final AiModelProvider aiModelProvider;
-    private final CrmWhatsappAiReportService crmWhatsappAiReportService;
-    private final CrmWhatsappAiOperationsService crmWhatsappAiOperationsService;
-    private final CrmWhatsappAiKnowledgeService crmWhatsappAiKnowledgeService;
-    private final CrmWhatsappAiDeliveryService crmWhatsappAiDeliveryService;
+    private final GeminiConnectionService geminiConnectionService;
+    private final AgentConversationVisibilityService agentConversationVisibilityService;
+    private final AgentKnowledgeAdminService agentKnowledgeAdminService;
+    private final CrmWhatsappSalesReviewService crmWhatsappSalesReviewService;
+    private final ShalomAgencySyncService shalomAgencySyncService;
+    private final CrmWhatsappFilmReviewService crmWhatsappFilmReviewService;
+
+    @GetMapping("/sales")
+    public ResponseEntity<?> listarVentasCrm(
+            @RequestParam(name = "q", defaultValue = "") String query,
+            @RequestParam(name = "reviewStatus", defaultValue = "ALL") String reviewStatus,
+            @RequestParam(name = "page", defaultValue = "0") int page,
+            @RequestParam(name = "size", defaultValue = "20") int size,
+            Authentication authentication) {
+        return ResponseEntity.ok(crmWhatsappSalesReviewService.list(
+                currentUser(authentication), query, reviewStatus, page, size));
+    }
 
     @GetMapping("/status")
     public ResponseEntity<?> obtenerEstado(Authentication authentication) {
@@ -122,25 +121,6 @@ public class CrmWhatsappController {
                 currentUser(authentication)));
     }
 
-    @GetMapping("/connection/ai-config")
-    public ResponseEntity<?> obtenerConfiguracionIa(Authentication authentication) {
-        return ResponseEntity.ok(crmWhatsappAiConfigService.obtener(currentUser(authentication)));
-    }
-
-    @PutMapping("/connection/ai-config")
-    public ResponseEntity<?> guardarConfiguracionIa(
-            @RequestBody AiConfigRequest request,
-            Authentication authentication) {
-        return ResponseEntity.ok(crmWhatsappAiConfigService.guardar(request, currentUser(authentication)));
-    }
-
-    @PostMapping("/connection/ai-control")
-    public ResponseEntity<?> controlarIa(
-            @RequestBody CrmWhatsappAiOperationsService.ControlRequest request,
-            Authentication authentication) {
-        return ResponseEntity.ok(crmWhatsappAiOperationsService.control(request, currentUser(authentication)));
-    }
-
     @GetMapping("/connection/ai-credentials")
     public ResponseEntity<?> obtenerCredencialesIa(Authentication authentication) {
         return ResponseEntity.ok(crmWhatsappAiCredentialService.getStatus(currentUser(authentication)));
@@ -162,154 +142,63 @@ public class CrmWhatsappController {
     public ResponseEntity<?> probarCredencialesIa(Authentication authentication) {
         Long connectionId = crmWhatsappAiCredentialService.requireAdminConnectionId(currentUser(authentication));
         try {
-            return ResponseEntity.ok(aiModelProvider.testConnection(connectionId));
+            return ResponseEntity.ok(geminiConnectionService.testConnection(connectionId));
         } catch (AiProviderException error) {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, error.getMessage());
         }
     }
 
-    @GetMapping("/connection/ai-knowledge")
-    public ResponseEntity<?> listarConocimientoIa(
-            @RequestParam(name = "q", required = false) String query,
-            @RequestParam(name = "category", required = false) String category,
-            Authentication authentication) {
-        return ResponseEntity.ok(crmWhatsappAiKnowledgeService.list(query, category, currentUser(authentication)));
+    @GetMapping("/connection/agent-config")
+    public ResponseEntity<?> obtenerConfiguracionAgente(Authentication authentication) {
+        return ResponseEntity.ok(crmWhatsappAgentConfigService.get(currentUser(authentication)));
     }
 
-    @PostMapping("/connection/ai-knowledge")
-    public ResponseEntity<?> crearConocimientoIa(
+    @PutMapping("/connection/agent-config")
+    public ResponseEntity<?> guardarConfiguracionAgente(
+            @RequestBody AgentConfigRequest request,
+            Authentication authentication) {
+        return ResponseEntity.ok(crmWhatsappAgentConfigService.save(request, currentUser(authentication)));
+    }
+
+    @GetMapping("/connection/shalom-agencies/status")
+    public ResponseEntity<?> obtenerEstadoAgenciasShalom(Authentication authentication) {
+        crmWhatsappAiCredentialService.requireAdminConnectionId(currentUser(authentication));
+        return ResponseEntity.ok(shalomAgencySyncService.status());
+    }
+
+    @PostMapping("/connection/shalom-agencies/sync")
+    public ResponseEntity<?> sincronizarAgenciasShalom(Authentication authentication) {
+        crmWhatsappAiCredentialService.requireAdminConnectionId(currentUser(authentication));
+        return ResponseEntity.ok(shalomAgencySyncService.synchronize());
+    }
+
+    @GetMapping("/connection/knowledge")
+    public ResponseEntity<?> listarConocimientos(Authentication authentication) {
+        return ResponseEntity.ok(agentKnowledgeAdminService.list(currentUser(authentication)));
+    }
+
+    @PostMapping("/connection/knowledge")
+    public ResponseEntity<?> guardarConocimiento(
             @RequestBody ArticleRequest request,
             Authentication authentication) {
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(crmWhatsappAiKnowledgeService.create(request, currentUser(authentication)));
+        return ResponseEntity.ok(agentKnowledgeAdminService.save(request, currentUser(authentication)));
     }
 
-    @PutMapping("/connection/ai-knowledge/{articleId}")
-    public ResponseEntity<?> actualizarConocimientoIa(
-            @PathVariable Long articleId,
-            @RequestBody ArticleRequest request,
-            Authentication authentication) {
-        return ResponseEntity.ok(crmWhatsappAiKnowledgeService.update(
-                articleId, request, currentUser(authentication)));
-    }
-
-    @DeleteMapping("/connection/ai-knowledge/{articleId}")
-    public ResponseEntity<?> eliminarConocimientoIa(
+    @DeleteMapping("/connection/knowledge/{articleId}")
+    public ResponseEntity<?> eliminarConocimiento(
             @PathVariable Long articleId,
             Authentication authentication) {
-        crmWhatsappAiKnowledgeService.delete(articleId, currentUser(authentication));
-        return ResponseEntity.noContent().build();
+        agentKnowledgeAdminService.delete(articleId, currentUser(authentication));
+        return ResponseEntity.ok(java.util.Map.of("deleted", true));
     }
 
-    @PostMapping("/connection/ai-knowledge/{articleId}/reindex")
-    public ResponseEntity<?> reindexarConocimientoIa(
-            @PathVariable Long articleId,
+    @PostMapping("/connection/knowledge/test")
+    public ResponseEntity<?> probarConocimiento(
+            @RequestBody KnowledgeTestRequest request,
             Authentication authentication) {
-        return ResponseEntity.accepted().body(crmWhatsappAiKnowledgeService.reindex(
-                articleId, currentUser(authentication)));
+        return ResponseEntity.ok(agentKnowledgeAdminService.test(request, currentUser(authentication)));
     }
 
-    @PostMapping("/connection/ai-knowledge/test")
-    public ResponseEntity<?> probarConocimientoIa(
-            @RequestBody TestRequest request,
-            Authentication authentication) {
-        try {
-            return ResponseEntity.ok(crmWhatsappAiKnowledgeService.test(request, currentUser(authentication)));
-        } catch (AiProviderException error) {
-            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, error.getMessage());
-        }
-    }
-
-    @PostMapping("/conversations/{id}/ai/drafts")
-    public ResponseEntity<?> solicitarBorradorIa(
-            @PathVariable("id") Long id,
-            @RequestBody(required = false) DraftRequest request,
-            Authentication authentication) {
-        return ResponseEntity.accepted().body(
-                crmWhatsappAiJobService.enqueueManual(id, request, currentUser(authentication)));
-    }
-
-    @GetMapping("/conversations/{id}/ai/runs")
-    public ResponseEntity<?> listarEjecucionesIa(
-            @PathVariable("id") Long id,
-            Authentication authentication) {
-        return ResponseEntity.ok(crmWhatsappAiJobService.listRuns(id, currentUser(authentication)));
-    }
-
-    @GetMapping("/conversations/{id}/ai/memory")
-    public ResponseEntity<?> obtenerMemoriaIa(
-            @PathVariable("id") Long id,
-            Authentication authentication) {
-        return ResponseEntity.ok(crmWhatsappAiMemoryService.get(id, currentUser(authentication)));
-    }
-
-    @GetMapping("/conversations/{id}/ai/attention")
-    public ResponseEntity<?> obtenerAtencionIa(
-            @PathVariable("id") Long id,
-            Authentication authentication) {
-        return ResponseEntity.ok(crmWhatsappChatService.obtenerAtencion(id, currentUser(authentication)));
-    }
-
-    @PutMapping("/conversations/{id}/ai/attention")
-    public ResponseEntity<?> cambiarAtencionIa(
-            @PathVariable("id") Long id,
-            @RequestBody AttentionModeRequest request,
-            Authentication authentication) {
-        return ResponseEntity.ok(crmWhatsappChatService.cambiarAtencion(id, request, currentUser(authentication)));
-    }
-
-    @DeleteMapping("/conversations/{id}/ai/memory")
-    public ResponseEntity<?> limpiarMemoriaIa(
-            @PathVariable("id") Long id,
-            Authentication authentication) {
-        return ResponseEntity.ok(crmWhatsappAiMemoryService.clear(id, currentUser(authentication)));
-    }
-
-    @GetMapping("/conversations/{id}/ai/sale-draft")
-    public ResponseEntity<?> obtenerPedidoIa(@PathVariable("id") Long id, Authentication authentication) {
-        var draft = crmWhatsappAiSaleDraftService.get(id, currentUser(authentication));
-        return draft == null ? ResponseEntity.noContent().build() : ResponseEntity.ok(draft);
-    }
-
-    @PostMapping("/conversations/{id}/ai/sale-draft/revalidate")
-    public ResponseEntity<?> revalidarPedidoIa(
-            @PathVariable("id") Long id,
-            @RequestBody(required = false) RevalidateRequest request,
-            Authentication authentication) {
-        return ResponseEntity.ok(crmWhatsappAiSaleDraftService.revalidate(id, request, currentUser(authentication)));
-    }
-
-    @PostMapping("/conversations/{id}/ai/sale-draft/request-confirmation")
-    public ResponseEntity<?> solicitarConfirmacionPedidoIa(
-            @PathVariable("id") Long id,
-            @RequestBody(required = false) SaleDraftUpdateRequest request,
-            Authentication authentication) {
-        return ResponseEntity.ok(crmWhatsappAiSaleDraftService.requestConfirmation(id, request, currentUser(authentication)));
-    }
-
-    @DeleteMapping("/conversations/{id}/ai/sale-draft")
-    public ResponseEntity<?> cancelarPedidoIa(@PathVariable("id") Long id, Authentication authentication) {
-        return ResponseEntity.ok(crmWhatsappAiSaleDraftService.cancel(id, currentUser(authentication)));
-    }
-
-    @PostMapping("/conversations/{id}/ai/sale-draft/customer-name-suggestion")
-    public ResponseEntity<?> decidirSugerenciaNombreCliente(
-            @PathVariable("id") Long id,
-            @RequestBody CustomerNameSuggestionRequest request,
-            Authentication authentication) {
-        return ResponseEntity.ok(crmWhatsappAiSaleDraftService.decideCustomerNameSuggestion(
-                id, request, currentUser(authentication)));
-    }
-
-    @PostMapping("/conversations/{id}/ai/runs/{runId}/decision")
-    public ResponseEntity<?> decidirBorradorIa(
-            @PathVariable("id") Long id,
-            @PathVariable("runId") Long runId,
-            @RequestBody DecisionRequest request,
-            Authentication authentication) {
-        return ResponseEntity.ok(crmWhatsappAiFeedbackService.decide(
-                id, runId, request, currentUser(authentication)));
-    }
 
     @GetMapping("/qr")
     public ResponseEntity<String> obtenerQr() {
@@ -376,6 +265,13 @@ public class CrmWhatsappController {
         return ResponseEntity.ok(crmWhatsappChatService.obtenerConversacion(id, currentUser(authentication)));
     }
 
+    @GetMapping("/conversations/{id}/agent-summary")
+    public ResponseEntity<?> obtenerResumenAgente(
+            @PathVariable("id") Long id,
+            Authentication authentication) {
+        return ResponseEntity.ok(agentConversationVisibilityService.getSummary(id, currentUser(authentication)));
+    }
+
     @GetMapping("/transfer-users")
     public ResponseEntity<?> listarUsuariosTransferencia(Authentication authentication) {
         return ResponseEntity.ok(crmWhatsappChatService.listarUsuariosTransferencia(currentUser(authentication)));
@@ -400,15 +296,6 @@ public class CrmWhatsappController {
             @RequestParam(name = "hasta", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hasta,
             Authentication authentication) {
         return ResponseEntity.ok(crmWhatsappChatService.obtenerReporteCrm(filtro, desde, hasta, currentUser(authentication)));
-    }
-
-    @GetMapping("/reports/ai")
-    public ResponseEntity<?> obtenerReportesIa(
-            @RequestParam(name = "filtro", required = false) String filtro,
-            @RequestParam(name = "desde", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate desde,
-            @RequestParam(name = "hasta", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate hasta,
-            Authentication authentication) {
-        return ResponseEntity.ok(crmWhatsappAiReportService.report(filtro, desde, hasta, currentUser(authentication)));
     }
 
     @GetMapping("/contacts")
@@ -622,6 +509,28 @@ public class CrmWhatsappController {
                 .body(media.bytes());
     }
 
+    @GetMapping("/film-evidences/{evidenceId}")
+    public ResponseEntity<?> obtenerEvidenciaFilm(@PathVariable Long evidenceId,Authentication authentication){return ResponseEntity.ok(crmWhatsappFilmReviewService.get(evidenceId,currentUser(authentication)));}
+
+    @PostMapping("/film-evidences/{evidenceId}/decision")
+    public ResponseEntity<?> decidirEvidenciaFilm(@PathVariable Long evidenceId,@RequestBody CrmWhatsappFilmReviewService.DecisionRequest request,Authentication authentication){return ResponseEntity.ok(crmWhatsappFilmReviewService.decide(evidenceId,request,currentUser(authentication)));}
+
+    @GetMapping(value="/film-evidences/{evidenceId}/media",produces=MediaType.ALL_VALUE)
+    public ResponseEntity<byte[]> descargarEvidenciaFilm(@PathVariable Long evidenceId,Authentication authentication){var media=crmWhatsappFilmReviewService.download(evidenceId,currentUser(authentication));return ResponseEntity.ok().contentType(MediaType.parseMediaType(media.contentType())).header(HttpHeaders.CONTENT_DISPOSITION,"inline; filename=\""+media.fileName().replace("\"","")+"\"").body(media.bytes());}
+
+    @GetMapping(value = "/payment-evidences/{evidenceId}/sales-note", produces = MediaType.APPLICATION_PDF_VALUE)
+    public ResponseEntity<byte[]> descargarNotaVentaDeEvidencia(
+            @PathVariable Long evidenceId,
+            Authentication authentication) {
+        PaymentEvidenceDownload file = crmWhatsappPaymentEvidenceService
+                .downloadSalesNote(evidenceId, currentUser(authentication));
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "inline; filename=\"" + file.fileName().replace("\"", "") + "\"")
+                .body(file.bytes());
+    }
+
     @PostMapping("/messages/{messageId}/payment-evidence/analyze")
     public ResponseEntity<?> analizarEvidenciaPago(
             @PathVariable Long messageId,
@@ -650,26 +559,7 @@ public class CrmWhatsappController {
             Authentication authentication) {
         Usuario actor = currentUser(authentication);
         var message = crmWhatsappChatService.enviarMensaje(id, request, actor);
-        crmWhatsappAiDeliveryService.completeHumanDraft(
-                id, request == null ? null : request.pendingDeliveryId(), message.id(), actor);
         return ResponseEntity.ok(message);
-    }
-
-    @GetMapping("/conversations/{id}/pending-message")
-    public ResponseEntity<?> obtenerBorradorPendiente(
-            @PathVariable("id") Long id,
-            Authentication authentication) {
-        var draft = crmWhatsappAiDeliveryService.pendingHumanDraft(id, currentUser(authentication));
-        return draft == null ? ResponseEntity.noContent().build() : ResponseEntity.ok(draft);
-    }
-
-    @DeleteMapping("/conversations/{id}/pending-message/{deliveryId}")
-    public ResponseEntity<Void> descartarBorradorPendiente(
-            @PathVariable("id") Long id,
-            @PathVariable Long deliveryId,
-            Authentication authentication) {
-        crmWhatsappAiDeliveryService.discardHumanDraft(id, deliveryId, currentUser(authentication));
-        return ResponseEntity.noContent().build();
     }
 
     @PostMapping(value = "/conversations/{id}/media", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)

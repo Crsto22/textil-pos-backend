@@ -65,6 +65,8 @@ import com.lowagie.text.pdf.PdfWriter;
 import com.sistemapos.sistematextil.events.VentaRegistradaEvent;
 import com.sistemapos.sistematextil.model.Cliente;
 import com.sistemapos.sistematextil.model.ComprobanteConfig;
+import com.sistemapos.sistematextil.model.CrmWhatsappFilmAddon;
+import com.sistemapos.sistematextil.model.CrmWhatsappFilmStatus;
 import com.sistemapos.sistematextil.model.EcommercePedido;
 import com.sistemapos.sistematextil.model.Empresa;
 import com.sistemapos.sistematextil.model.HistorialStock;
@@ -81,6 +83,8 @@ import com.sistemapos.sistematextil.model.VentaComprobanteConversionHistorial;
 import com.sistemapos.sistematextil.model.VentaDetalle;
 import com.sistemapos.sistematextil.repositories.ClienteRepository;
 import com.sistemapos.sistematextil.repositories.ComprobanteConfigRepository;
+import com.sistemapos.sistematextil.repositories.CrmWhatsappFilmAddonRepository;
+import com.sistemapos.sistematextil.repositories.CrmWhatsappFulfillmentRepository;
 import com.sistemapos.sistematextil.repositories.EcommercePedidoRepository;
 import com.sistemapos.sistematextil.repositories.EmpresaRepository;
 import com.sistemapos.sistematextil.repositories.MetodoPagoConfigRepository;
@@ -103,6 +107,7 @@ import com.sistemapos.sistematextil.util.venta.VentaConversionOrigenResponse;
 import com.sistemapos.sistematextil.util.venta.VentaCreateRequest;
 import com.sistemapos.sistematextil.util.venta.VentaDetalleCreateItem;
 import com.sistemapos.sistematextil.util.venta.VentaDetalleResponse;
+import com.sistemapos.sistematextil.util.venta.VentaEntregaResponse;
 import com.sistemapos.sistematextil.util.venta.VentaListItemResponse;
 import com.sistemapos.sistematextil.util.venta.VentaPagoCreateItem;
 import com.sistemapos.sistematextil.util.venta.VentaPagoResponse;
@@ -134,6 +139,8 @@ public class VentaService {
     private final ClienteRepository clienteRepository;
     private final EcommercePedidoRepository ecommercePedidoRepository;
     private final VentaComprobanteConversionHistorialRepository ventaConversionHistorialRepository;
+    private final CrmWhatsappFulfillmentRepository crmWhatsappFulfillmentRepository;
+    private final CrmWhatsappFilmAddonRepository crmWhatsappFilmAddonRepository;
     private final EmpresaRepository empresaRepository;
     private final StockMovimientoService stockMovimientoService;
     private final PrecioOfertaService precioOfertaService;
@@ -196,8 +203,19 @@ public class VentaService {
                 fechaInicioFiltro,
                 fechaFinExclusiveFiltro,
                 pageable);
+        List<Integer> saleIds = ventas.getContent().stream()
+                .map(Venta::getIdVenta)
+                .toList();
+        Map<Integer, String> deliveryMethods = saleIds.isEmpty()
+                ? Map.of()
+                : crmWhatsappFulfillmentRepository.findSaleMethodsBySaleIds(saleIds).stream()
+                        .collect(java.util.stream.Collectors.toMap(
+                                CrmWhatsappFulfillmentRepository.SaleMethodProjection::getIdVenta,
+                                row -> row.getMethod() != null ? row.getMethod().name() : "",
+                                (first, ignored) -> first));
 
-        return PagedResponse.fromPage(ventas.map(this::toListItemResponse));
+        return PagedResponse.fromPage(ventas.map(venta ->
+                toListItemResponse(venta, deliveryMethods.get(venta.getIdVenta()))));
     }
 
     public VentaReporteResponse obtenerReporteVentas(
@@ -2688,7 +2706,7 @@ public class VentaService {
                 .orElse(null);
     }
 
-    private VentaListItemResponse toListItemResponse(Venta venta) {
+    private VentaListItemResponse toListItemResponse(Venta venta, String metodoEntrega) {
         String nombreCliente = venta.getCliente() != null ? venta.getCliente().getNombres() : null;
         String nombreUsuario = nombreUsuario(venta.getUsuario());
         Integer idSucursal = venta.getSucursal() != null ? venta.getSucursal().getIdSucursal() : null;
@@ -2715,6 +2733,7 @@ public class VentaService {
                 idSucursal,
                 nombreSucursal,
                 venta.getOrigen(),
+                metodoEntrega,
                 conversionOrigen,
                 items,
                 pagos);
@@ -2730,6 +2749,7 @@ public class VentaService {
                 .map(this::toPagoResponse)
                 .toList();
         VentaConversionOrigenResponse conversionOrigen = toConversionOrigenResponse(venta.getIdVenta());
+        VentaEntregaResponse entrega = toEntregaResponse(venta.getIdVenta());
 
         return new VentaResponse(
                 venta.getIdVenta(),
@@ -2771,9 +2791,43 @@ public class VentaService {
                 venta.getSucursal() != null ? venta.getSucursal().getIdSucursal() : null,
                 venta.getSucursal() != null ? venta.getSucursal().getNombre() : null,
                 venta.getOrigen(),
+                entrega,
                 conversionOrigen,
                 detalleResponses,
                 pagoResponses);
+    }
+
+    private VentaEntregaResponse toEntregaResponse(Integer idVenta) {
+        return crmWhatsappFulfillmentRepository.findByVenta_IdVenta(idVenta)
+                .map(fulfillment -> {
+                    CrmWhatsappFilmAddon film = crmWhatsappFilmAddonRepository
+                            .findByVenta_IdVenta(idVenta)
+                            .orElse(null);
+                    CrmWhatsappFilmStatus filmStatus = film != null ? film.getStatus() : null;
+                    boolean filmPagado = filmStatus == CrmWhatsappFilmStatus.PAID_PENDING_REVIEW
+                            || filmStatus == CrmWhatsappFilmStatus.CONFIRMED;
+                    return new VentaEntregaResponse(
+                            fulfillment.getMethod() != null ? fulfillment.getMethod().name() : null,
+                            fulfillment.getRecipientName(),
+                            fulfillment.getDocumentNumber(),
+                            fulfillment.getPhone(),
+                            fulfillment.getPickupBranch() != null
+                                    ? fulfillment.getPickupBranch().getIdSucursal()
+                                    : null,
+                            fulfillment.getPickupBranch() != null
+                                    ? fulfillment.getPickupBranch().getNombre()
+                                    : null,
+                            fulfillment.getShalomAgencyReference() != null
+                                    ? fulfillment.getShalomAgencyReference().getIdShalomAgency()
+                                    : null,
+                            fulfillment.getShalomAgency(),
+                            fulfillment.getShalomAgencyAddress(),
+                            fulfillment.getShalomDestination(),
+                            filmStatus != null ? filmStatus.name() : null,
+                            film != null ? film.getAmount() : null,
+                            filmPagado);
+                })
+                .orElse(null);
     }
 
     private VentaDetalleResponse toDetalleResponse(VentaDetalle detalle, Integer idSucursal) {

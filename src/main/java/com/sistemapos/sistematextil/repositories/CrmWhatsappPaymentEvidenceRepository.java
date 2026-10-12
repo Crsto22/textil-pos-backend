@@ -23,6 +23,10 @@ public interface CrmWhatsappPaymentEvidenceRepository extends JpaRepository<CrmW
     Optional<CrmWhatsappPaymentEvidence> findByMessage_IdMessage(Long messageId);
     Optional<CrmWhatsappPaymentEvidence> findFirstByPaymentRequest_IdPaymentRequestAndValidationStatusOrderByCreatedAtDesc(
             Long paymentRequestId, CrmWhatsappPaymentEvidenceStatus status);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    Optional<CrmWhatsappPaymentEvidence> findFirstByAgentSession_IdAgentSessionAndValidationStatusOrderByCreatedAtDesc(
+            Long sessionId, CrmWhatsappPaymentEvidenceStatus status);
     List<CrmWhatsappPaymentEvidence> findByConversation_IdConversationOrderByCreatedAtDesc(Long conversationId);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
@@ -37,9 +41,33 @@ public interface CrmWhatsappPaymentEvidenceRepository extends JpaRepository<CrmW
     List<CrmWhatsappPaymentEvidence> findDuplicatesByOperation(
             @Param("code") String code, @Param("companyId") Integer companyId, Pageable pageable);
 
-    @Query("select e from CrmWhatsappPaymentEvidence e where e.perceptualHash is not null and e.conversation.connection.empresa.idEmpresa = :companyId order by e.createdAt desc")
-    List<CrmWhatsappPaymentEvidence> findRecentVisualHashes(
-            @Param("companyId") Integer companyId, Pageable pageable);
+    @Query("""
+            select e
+            from CrmWhatsappPaymentEvidence e
+            where e.idPaymentEvidence <> :evidenceId
+              and e.sha256 = :sha
+              and e.conversation.connection.empresa.idEmpresa = :companyId
+            order by e.createdAt
+            """)
+    List<CrmWhatsappPaymentEvidence> findOtherByHash(
+            @Param("evidenceId") Long evidenceId,
+            @Param("sha") String sha,
+            @Param("companyId") Integer companyId,
+            Pageable pageable);
+
+    @Query("""
+            select e
+            from CrmWhatsappPaymentEvidence e
+            where e.idPaymentEvidence <> :evidenceId
+              and upper(e.operationCode) = upper(:code)
+              and e.conversation.connection.empresa.idEmpresa = :companyId
+            order by e.createdAt
+            """)
+    List<CrmWhatsappPaymentEvidence> findOtherByOperation(
+            @Param("evidenceId") Long evidenceId,
+            @Param("code") String code,
+            @Param("companyId") Integer companyId,
+            Pageable pageable);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select e from CrmWhatsappPaymentEvidence e where e.idPaymentEvidence = :id")
@@ -49,6 +77,32 @@ public interface CrmWhatsappPaymentEvidenceRepository extends JpaRepository<CrmW
     List<CrmWhatsappPaymentEvidence> findReady(
             @Param("status") CrmWhatsappPaymentProcessingStatus status,
             @Param("now") LocalDateTime now,
+            Pageable pageable);
+
+    @Query("""
+            select e.idPaymentEvidence
+            from CrmWhatsappPaymentEvidence e
+            where e.agentSession is not null
+              and e.processingStatus = :status
+              and e.availableAt <= :now
+            order by e.availableAt, e.idPaymentEvidence
+            """)
+    List<Long> findReadyAgentEvidenceIds(
+            @Param("status") CrmWhatsappPaymentProcessingStatus status,
+            @Param("now") LocalDateTime now,
+            Pageable pageable);
+
+    @Query("""
+            select e.idPaymentEvidence
+            from CrmWhatsappPaymentEvidence e
+            where e.agentSession is not null
+              and e.processingStatus = :status
+              and e.updatedAt <= :staleBefore
+            order by e.updatedAt, e.idPaymentEvidence
+            """)
+    List<Long> findStaleAgentEvidenceIds(
+            @Param("status") CrmWhatsappPaymentProcessingStatus status,
+            @Param("staleBefore") LocalDateTime staleBefore,
             Pageable pageable);
 
     @Query("""

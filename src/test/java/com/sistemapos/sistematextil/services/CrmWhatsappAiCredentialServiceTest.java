@@ -22,6 +22,7 @@ import com.sistemapos.sistematextil.repositories.CrmWhatsappAiConfigRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
 import com.sistemapos.sistematextil.services.CrmWhatsappAiCredentialService.CredentialRequest;
 import com.sistemapos.sistematextil.services.ai.AiSecretEncryptionService;
+import com.sistemapos.sistematextil.services.agent.config.AgentRuntimeControlService;
 import com.sistemapos.sistematextil.util.usuario.Rol;
 
 class CrmWhatsappAiCredentialServiceTest {
@@ -29,13 +30,12 @@ class CrmWhatsappAiCredentialServiceTest {
     private final CrmWhatsappAiConfigRepository configRepository = mock(CrmWhatsappAiConfigRepository.class);
     private final CrmWhatsappConnectionService connectionService = mock(CrmWhatsappConnectionService.class);
     private final UsuarioRepository usuarioRepository = mock(UsuarioRepository.class);
-    private final CrmWhatsappAiAuditService auditService = mock(CrmWhatsappAiAuditService.class);
     private final CrmWhatsappAiCredentialService service = new CrmWhatsappAiCredentialService(
             configRepository,
             connectionService,
             usuarioRepository,
             new AiSecretEncryptionService("clave-maestra-local-de-pruebas-1234567890"),
-            auditService);
+            mock(AgentRuntimeControlService.class));
 
     @BeforeEach
     void configurarEntorno() {

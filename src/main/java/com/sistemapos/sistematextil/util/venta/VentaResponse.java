@@ -48,6 +48,7 @@ public record VentaResponse(
         Integer idSucursal,
         String nombreSucursal,
         String origen,
+        VentaEntregaResponse entrega,
         VentaConversionOrigenResponse conversionOrigen,
         List<VentaDetalleResponse> detalles,
         List<VentaPagoResponse> pagos

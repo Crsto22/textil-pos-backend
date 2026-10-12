@@ -22,24 +22,6 @@ public interface CrmWhatsappMessageRepository extends JpaRepository<CrmWhatsappM
     List<CrmWhatsappMessage> findByConversation_IdConversationOrderByCreatedAtAsc(Long idConversation);
     Optional<CrmWhatsappMessage> findFirstByWhatsappMessageId(String whatsappMessageId);
 
-    @Query("""
-            SELECT m
-            FROM CrmWhatsappMessage m
-            WHERE m.conversation.idConversation = :conversationId
-              AND m.direction = 'OUTGOING'
-              AND m.origin = 'AI_AUTOMATIC'
-              AND m.messageType = 'TEXT'
-              AND m.body = :body
-              AND m.deletedAt IS NULL
-              AND m.createdAt >= :createdAfter
-            ORDER BY m.createdAt DESC, m.idMessage DESC
-            """)
-    List<CrmWhatsappMessage> findRecentIdenticalAutomaticTexts(
-            @Param("conversationId") Long conversationId,
-            @Param("body") String body,
-            @Param("createdAfter") java.time.LocalDateTime createdAfter,
-            Pageable pageable);
-
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT m FROM CrmWhatsappMessage m WHERE m.idMessage = :id")
     Optional<CrmWhatsappMessage> findForUpdate(@Param("id") Long id);
@@ -93,6 +75,15 @@ public interface CrmWhatsappMessageRepository extends JpaRepository<CrmWhatsappM
               AND m.media_storage_path IS NOT NULL
               AND m.media_storage_path <> ''
               AND e.id_payment_evidence IS NULL
+              AND (
+                r.id_agent_session IS NULL
+                OR EXISTS (
+                  SELECT 1
+                  FROM crm_whatsapp_agent_session s
+                  WHERE s.id_agent_session = r.id_agent_session
+                    AND s.state IN ('ESPERANDO_COMPROBANTE', 'VALIDANDO_COMPROBANTE')
+                )
+              )
             ORDER BY m.id_message
             """, nativeQuery = true)
     List<Long> findUnregisteredPaymentMedia(Pageable pageable);
@@ -148,6 +139,18 @@ public interface CrmWhatsappMessageRepository extends JpaRepository<CrmWhatsappM
             WHERE m.mediaStoragePath IS NOT NULL AND m.mediaStoragePath <> ''
             """)
     List<String> findAllMediaStoragePaths();
+
+    @Query(value = """
+            SELECT DISTINCT m.media_storage_path
+            FROM crm_whatsapp_message m
+            WHERE m.media_storage_path IS NOT NULL
+              AND m.media_storage_path <> ''
+              AND NOT EXISTS (
+                  SELECT 1 FROM crm_whatsapp_payment_evidence e
+                  WHERE BINARY e.storage_path = BINARY m.media_storage_path
+              )
+            """, nativeQuery = true)
+    List<String> findAllDisposableMediaStoragePaths();
 
     @Query("""
             SELECT m.mediaStoragePath

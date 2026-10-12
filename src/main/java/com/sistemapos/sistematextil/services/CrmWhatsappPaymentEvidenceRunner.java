@@ -19,12 +19,6 @@ public class CrmWhatsappPaymentEvidenceRunner {
         for (Long messageId : service.unregisteredIncomingMediaIds()) {
             runSafely("registrar mensaje", messageId, () -> service.registerIncomingMedia(messageId));
         }
-        for (Long evidenceId : service.readyEvidenceIds()) {
-            runSafely("procesar evidencia", evidenceId, () -> service.processOne(evidenceId));
-        }
-        for (Long evidenceId : service.observedExactAmountEvidenceIds()) {
-            runSafely("reconciliar evidencia", evidenceId, () -> service.promoteObservedExactAmount(evidenceId));
-        }
     }
 
     @Scheduled(initialDelay = 60000L, fixedDelay = 60000L)

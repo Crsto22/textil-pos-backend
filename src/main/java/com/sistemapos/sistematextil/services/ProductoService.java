@@ -61,6 +61,7 @@ import com.sistemapos.sistematextil.util.producto.ProductoVarianteStockCreateIte
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteStockDetalleResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteStockSucursalRow;
 import com.sistemapos.sistematextil.util.producto.StockSucursalVentaResumen;
+import com.sistemapos.sistematextil.services.agent.sizeguide.JdbcProductSizeGuideStore;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -87,6 +88,7 @@ public class ProductoService {
     private final S3StorageService s3StorageService;
     private final StockMovimientoService stockMovimientoService;
     private final EcommerceCacheInvalidationService ecommerceCacheInvalidationService;
+    private final JdbcProductSizeGuideStore sizeGuideStore;
 
     @Value("${application.pagination.default-size:10}")
     private int defaultPageSize;
@@ -874,6 +876,7 @@ List<ProductoColorImagen> imagenesActuales = productoColorImagenRepository.findB
     }
 
     private ProductoListItemResponse toListItemResponse(Producto producto, VarianteCatalogo catalogo, Sucursal sucursalContexto) {
+        var guideStatus = sizeGuideStore.status(producto.getIdProducto());
         return new ProductoListItemResponse(
                 producto.getIdProducto(),
                 catalogo != null ? catalogo.sku() : null,
@@ -884,6 +887,9 @@ List<ProductoColorImagen> imagenesActuales = productoColorImagenRepository.findB
                 producto.getImagenGlobalThumbUrl(),
                 producto.getGuiaTallasUrl(),
                 producto.getGuiaTallasThumbUrl(),
+                guideStatus == null ? "NOT_ANALYZED" : guideStatus.analysisStatus(),
+                guideStatus == null ? null : guideStatus.analyzedAt(),
+                guideStatus == null ? null : guideStatus.measurementType(),
                 Boolean.TRUE.equals(producto.getPublicarEcommerce()),
                 preventaActiva(producto),
                 preventaActiva(producto) ? producto.getFechaEnvioPreventa() : null,

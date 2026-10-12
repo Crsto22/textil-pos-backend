@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import com.sistemapos.sistematextil.model.CrmWhatsappAiKnowledgeChunk;
+import com.sistemapos.sistematextil.model.CrmWhatsappAiKnowledgeCategory;
 import com.sistemapos.sistematextil.model.CrmWhatsappAiKnowledgeStatus;
 
 public interface CrmWhatsappAiKnowledgeChunkRepository extends JpaRepository<CrmWhatsappAiKnowledgeChunk, Long> {
@@ -25,6 +26,22 @@ public interface CrmWhatsappAiKnowledgeChunkRepository extends JpaRepository<Crm
     List<CrmWhatsappAiKnowledgeChunk> findSearchable(
             @Param("connectionId") Long connectionId,
             @Param("statuses") List<CrmWhatsappAiKnowledgeStatus> statuses);
+
+    @Query("""
+            select c from CrmWhatsappAiKnowledgeChunk c
+            join fetch c.article a
+            where a.connection.idConnection = :connectionId
+              and a.deletedAt is null
+              and a.activeVersion > 0
+              and c.articleVersion = a.activeVersion
+              and a.status in :statuses
+              and a.category in :categories
+            order by a.updatedAt desc, c.chunkOrder asc
+            """)
+    List<CrmWhatsappAiKnowledgeChunk> findSearchableByCategories(
+            @Param("connectionId") Long connectionId,
+            @Param("statuses") List<CrmWhatsappAiKnowledgeStatus> statuses,
+            @Param("categories") List<CrmWhatsappAiKnowledgeCategory> categories);
 
     @Modifying
     @Query("delete from CrmWhatsappAiKnowledgeChunk c where c.article.idKnowledgeArticle = :articleId and c.articleVersion <> :version")

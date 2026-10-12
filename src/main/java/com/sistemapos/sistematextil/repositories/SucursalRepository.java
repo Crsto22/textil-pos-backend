@@ -22,6 +22,8 @@ public interface SucursalRepository extends JpaRepository<Sucursal, Integer> {
     Optional<Sucursal> findByEmpresa_IdEmpresaAndNombreIgnoreCaseAndDeletedAtIsNull(Integer idEmpresa, String nombre);
     List<Sucursal> findByDeletedAtIsNullAndEstadoOrderByIdSucursalAsc(String estado);
     List<Sucursal> findByEmpresa_IdEmpresaAndDeletedAtIsNullOrderByIdSucursalAsc(Integer idEmpresa);
+    List<Sucursal> findByEmpresa_IdEmpresaAndDeletedAtIsNullAndEstadoOrderByIdSucursalAsc(
+            Integer idEmpresa, String estado);
     List<Sucursal> findByIdSucursalInAndDeletedAtIsNullOrderByIdSucursalAsc(Set<Integer> idsSucursales);
     Optional<Sucursal> findFirstByPublicarEcommerceTrueAndDeletedAtIsNullAndEstadoAndTipoOrderByIdSucursalAsc(
             String estado,

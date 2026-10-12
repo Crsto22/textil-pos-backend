@@ -1,5 +1,6 @@
 package com.sistemapos.sistematextil.services;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -8,7 +9,6 @@ import java.util.List;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.sistemapos.sistematextil.model.CrmWhatsappAiSaleDraftItem;
 import com.sistemapos.sistematextil.model.CrmWhatsappPaymentRequest;
 import com.sistemapos.sistematextil.model.CrmWhatsappPaymentRequestItem;
 import com.sistemapos.sistematextil.model.CrmWhatsappPaymentReservationStatus;
@@ -16,6 +16,7 @@ import com.sistemapos.sistematextil.model.HistorialStock;
 import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappPaymentRequestItemRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappPaymentRequestRepository;
+import com.sistemapos.sistematextil.util.venta.VentaDetalleCreateItem;
 
 import lombok.RequiredArgsConstructor;
 
@@ -27,8 +28,8 @@ public class CrmWhatsappPaymentReservationService {
     private final StockMovimientoService stockMovimientoService;
 
     @Transactional
-    public void reserve(CrmWhatsappPaymentRequest request, List<CrmWhatsappAiSaleDraftItem> draftItems, Usuario actor) {
-        if (request == null || request.getIdPaymentRequest() == null || draftItems == null || draftItems.isEmpty()) {
+    public void reserve(CrmWhatsappPaymentRequest request, List<VentaDetalleCreateItem> details, Usuario actor) {
+        if (request == null || request.getIdPaymentRequest() == null || details == null || details.isEmpty()) {
             throw new IllegalArgumentException("La solicitud no contiene productos para reservar");
         }
         if (request.getReservationStatus() == CrmWhatsappPaymentReservationStatus.ACTIVE) return;
@@ -37,30 +38,30 @@ public class CrmWhatsappPaymentReservationService {
         }
 
         Integer branchId = request.getSucursal().getIdSucursal();
-        List<CrmWhatsappAiSaleDraftItem> ordered = draftItems.stream()
-                .sorted(Comparator.comparing(CrmWhatsappAiSaleDraftItem::getVariantId))
+        List<VentaDetalleCreateItem> ordered = details.stream()
+                .sorted(Comparator.comparing(VentaDetalleCreateItem::idProductoVariante))
                 .toList();
         List<StockMovimientoService.StockContexto> locked = new ArrayList<>();
-        for (CrmWhatsappAiSaleDraftItem item : ordered) {
-            var context = stockMovimientoService.obtenerContextoConBloqueo(branchId, item.getVariantId());
-            if (context.stockActual() < item.getQuantity()) {
-                throw new IllegalStateException("Stock insuficiente para " + item.getProductName()
+        for (VentaDetalleCreateItem item : ordered) {
+            var context = stockMovimientoService.obtenerContextoConBloqueo(branchId, item.idProductoVariante());
+            if (context.stockActual() < item.cantidad()) {
+                throw new IllegalStateException("Stock insuficiente para " + safe(item.descripcion())
                         + ". Disponible: " + context.stockActual());
             }
             locked.add(context);
         }
 
         for (int index = 0; index < ordered.size(); index++) {
-            CrmWhatsappAiSaleDraftItem source = ordered.get(index);
+            VentaDetalleCreateItem source = ordered.get(index);
             var variant = locked.get(index).sucursalStock().getProductoVariante();
-            stockMovimientoService.descontar(branchId, source.getVariantId(), source.getQuantity(),
+            stockMovimientoService.descontar(branchId, source.idProductoVariante(), source.cantidad(),
                     HistorialStock.TipoMovimiento.RESERVA,
                     "Reserva pago WhatsApp #" + request.getIdPaymentRequest(), actor);
             CrmWhatsappPaymentRequestItem item = new CrmWhatsappPaymentRequestItem();
             item.setPaymentRequest(request);
             item.setProductoVariante(variant);
-            item.setCantidad(source.getQuantity());
-            item.setUnitPrice(source.getUnitPrice());
+            item.setCantidad(source.cantidad());
+            item.setUnitPrice(BigDecimal.valueOf(source.precioUnitario()));
             itemRepository.save(item);
         }
         request.setReservationStatus(CrmWhatsappPaymentReservationStatus.ACTIVE);
@@ -96,6 +97,23 @@ public class CrmWhatsappPaymentReservationService {
             throw new IllegalStateException("La reserva de stock ya no esta activa");
         }
         locked.setReservationStatus(CrmWhatsappPaymentReservationStatus.CONSUMED);
+        requestRepository.save(locked);
+    }
+
+    @Transactional
+    public void markReversedAfterSaleCancellation(CrmWhatsappPaymentRequest request, String reason) {
+        if (request == null || request.getIdPaymentRequest() == null) {
+            throw new IllegalArgumentException("La solicitud de pago es obligatoria");
+        }
+        CrmWhatsappPaymentRequest locked = requestRepository.findForUpdate(request.getIdPaymentRequest())
+                .orElseThrow(() -> new IllegalStateException("Solicitud de pago no encontrada"));
+        if (locked.getReservationStatus() == CrmWhatsappPaymentReservationStatus.REVERSED) return;
+        if (locked.getReservationStatus() != CrmWhatsappPaymentReservationStatus.CONSUMED) {
+            throw new IllegalStateException("Solo una reserva consumida puede revertirse despues de anular la venta");
+        }
+        locked.setReservationStatus(CrmWhatsappPaymentReservationStatus.REVERSED);
+        locked.setReleasedAt(LocalDateTime.now());
+        locked.setReleaseReason(limit(reason, 500));
         requestRepository.save(locked);
     }
 

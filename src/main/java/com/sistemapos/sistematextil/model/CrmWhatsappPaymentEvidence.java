@@ -43,6 +43,13 @@ public class CrmWhatsappPaymentEvidence {
     @JoinColumn(name = "id_payment_request")
     private CrmWhatsappPaymentRequest paymentRequest;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "id_agent_session")
+    private CrmWhatsappAgentSession agentSession;
+
+    @Column(name = "agent_validation_key", length = 64, unique = true)
+    private String agentValidationKey;
+
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "reviewed_by")
     private Usuario reviewedBy;

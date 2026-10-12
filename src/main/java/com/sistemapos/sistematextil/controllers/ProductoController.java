@@ -23,6 +23,8 @@ import com.sistemapos.sistematextil.services.ProductoImagenService;
 import com.sistemapos.sistematextil.services.ProductoImportService;
 import com.sistemapos.sistematextil.services.ProductoReporteService;
 import com.sistemapos.sistematextil.services.ProductoService;
+import com.sistemapos.sistematextil.services.agent.sizeguide.ProductSizeGuideQueryService;
+import com.sistemapos.sistematextil.services.agent.sizeguide.ProductSizeGuideScanner;
 import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoCompletoCreateRequest;
 import com.sistemapos.sistematextil.util.producto.ProductoCompletoResponse;
@@ -49,6 +51,29 @@ public class ProductoController {
     private final ProductoImagenService productoImagenService;
     private final ProductoImportService productoImportService;
     private final ProductoReporteService productoReporteService;
+    private final ProductSizeGuideQueryService sizeGuideQueryService;
+    private final ProductSizeGuideScanner sizeGuideScanner;
+
+    @GetMapping("/guia-tallas/{id}/analisis")
+    public ResponseEntity<?> obtenerAnalisisGuia(@PathVariable Integer id) {
+        try {
+            return ResponseEntity.ok(sizeGuideQueryService.getAdminGuide(id));
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(Map.of("message",
+                    e.getMessage() == null ? "No se pudo consultar la guia" : e.getMessage()));
+        }
+    }
+
+    @PostMapping("/guia-tallas/{id}/reanalyze")
+    public ResponseEntity<?> reanalizarGuia(@PathVariable Integer id) {
+        try {
+            sizeGuideScanner.reanalyze(id);
+            return ResponseEntity.accepted().body(Map.of("message", "La guia fue encolada para analisis"));
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(Map.of("message",
+                    e.getMessage() == null ? "No se pudo encolar la guia" : e.getMessage()));
+        }
+    }
 
     @GetMapping("/listar")
     public ResponseEntity<?> listar(

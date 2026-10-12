@@ -6,9 +6,9 @@ import java.util.Optional;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
-import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.data.domain.Pageable;
 
 import com.sistemapos.sistematextil.model.CrmWhatsappPaymentRequest;
 import com.sistemapos.sistematextil.model.CrmWhatsappPaymentRequestStatus;
@@ -18,26 +18,14 @@ import jakarta.persistence.LockModeType;
 public interface CrmWhatsappPaymentRequestRepository extends JpaRepository<CrmWhatsappPaymentRequest, Long> {
     List<CrmWhatsappPaymentRequest> findByStatusIn(List<CrmWhatsappPaymentRequestStatus> statuses);
 
-    @Modifying(clearAutomatically = true, flushAutomatically = true)
-    @Query(value = "UPDATE crm_whatsapp_payment_request SET id_ai_sale_draft = NULL WHERE id_ai_sale_draft IS NOT NULL", nativeQuery = true)
-    int detachAllAiSaleDrafts();
-
-    @Modifying(clearAutomatically = true, flushAutomatically = true)
-    @Query(value = """
-            UPDATE crm_whatsapp_payment_request
-            SET id_ai_sale_draft = NULL, ai_sale_draft_version = NULL
-            WHERE id_conversation = :conversationId
-            """, nativeQuery = true)
-    int detachAiSaleDraftsByConversationId(@Param("conversationId") Long conversationId);
-
     List<CrmWhatsappPaymentRequest> findByConversation_IdConversationAndStatusInOrderByCreatedAtDesc(
             Long conversationId, List<CrmWhatsappPaymentRequestStatus> statuses);
 
     Optional<CrmWhatsappPaymentRequest> findFirstByConversation_IdConversationAndStatusInOrderByCreatedAtDesc(
             Long conversationId, List<CrmWhatsappPaymentRequestStatus> statuses);
 
-    Optional<CrmWhatsappPaymentRequest> findFirstByAiSaleDraft_IdAiSaleDraftAndStatusInOrderByCreatedAtDesc(
-            Long draftId, List<CrmWhatsappPaymentRequestStatus> statuses);
+    List<CrmWhatsappPaymentRequest> findByConversation_IdConversationInAndStatusInOrderByCreatedAtDesc(
+            List<Long> conversationIds, List<CrmWhatsappPaymentRequestStatus> statuses);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select r from CrmWhatsappPaymentRequest r where r.idPaymentRequest = :id")
@@ -45,4 +33,23 @@ public interface CrmWhatsappPaymentRequestRepository extends JpaRepository<CrmWh
 
     List<CrmWhatsappPaymentRequest> findByStatusInAndExpiresAtBefore(
             List<CrmWhatsappPaymentRequestStatus> statuses, LocalDateTime now);
+
+    List<CrmWhatsappPaymentRequest> findByAgentSessionIsNullAndStatusInAndExpiresAtBefore(
+            List<CrmWhatsappPaymentRequestStatus> statuses, LocalDateTime now);
+
+    Optional<CrmWhatsappPaymentRequest> findFirstByAgentSession_IdAgentSessionAndStatusInOrderByCreatedAtDesc(
+            Long sessionId, List<CrmWhatsappPaymentRequestStatus> statuses);
+
+    @Query("""
+            select r.idPaymentRequest
+            from CrmWhatsappPaymentRequest r
+            where r.agentSession is not null
+              and r.status in :statuses
+              and r.expiresAt <= :now
+            order by r.expiresAt asc, r.idPaymentRequest asc
+            """)
+    List<Long> findExpiredAgentRequestIds(
+            @Param("statuses") List<CrmWhatsappPaymentRequestStatus> statuses,
+            @Param("now") LocalDateTime now,
+            Pageable pageable);
 }

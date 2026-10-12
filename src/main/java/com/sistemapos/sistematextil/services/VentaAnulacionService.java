@@ -72,6 +72,26 @@ public class VentaAnulacionService {
         });
     }
 
+    public VentaAnulacionResponse anularNotaVentaAutomaticaDesdeCrm(
+            Integer idVenta, String motivo, Usuario reviewer) {
+        String descripcionMotivo = normalizarDescripcion(motivo);
+        if (reviewer == null || reviewer.getIdUsuario() == null
+                || !(reviewer.getRol().esAdministrador()
+                        || reviewer.getRol().esSistema()
+                        || Boolean.TRUE.equals(reviewer.getAccesoCrm()))) {
+            throw new RuntimeException("El usuario no tiene permisos para revisar pagos del CRM");
+        }
+        return transactionTemplate.execute(status -> {
+            Venta venta = ventaRepository.findByIdVentaForUpdate(idVenta)
+                    .orElseThrow(() -> new RuntimeException("Venta con ID " + idVenta + " no encontrada"));
+            if (!TIPO_NOTA_VENTA.equals(normalizarTipoComprobante(venta.getTipoComprobante()))
+                    || !"CRM_WHATSAPP".equalsIgnoreCase(normalizarTexto(venta.getOrigen(), 20))) {
+                throw new RuntimeException("Solo se puede revertir una Nota de Venta automatica del CRM");
+            }
+            return anularNotaVentaBloqueada(venta, descripcionMotivo, reviewer);
+        });
+    }
+
     private VentaAnulacionResponse anularComprobanteElectronico(
             Integer idVenta,
             String descripcionMotivo,
@@ -82,6 +102,11 @@ public class VentaAnulacionService {
 
     private VentaAnulacionResponse anularNotaVenta(Integer idVenta, String descripcionMotivo, Usuario usuarioAutenticado) {
         Venta venta = obtenerVentaConAlcanceForUpdate(idVenta, usuarioAutenticado);
+        return anularNotaVentaBloqueada(venta, descripcionMotivo, usuarioAutenticado);
+    }
+
+    private VentaAnulacionResponse anularNotaVentaBloqueada(
+            Venta venta, String descripcionMotivo, Usuario usuarioAutenticado) {
         validarVentaDisponibleParaAnulacion(venta);
 
         revertirStock(venta, usuarioAutenticado, "ANULACION VENTA #" + venta.getIdVenta());

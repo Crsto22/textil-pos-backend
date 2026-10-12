@@ -63,7 +63,9 @@ public class SecurityConfig {
                                  "/api/crm/whatsapp/tags",
                                  "/api/crm/whatsapp/tags/**",
                                  "/api/crm/whatsapp/transfer-users",
-                                "/api/crm/whatsapp/messages/*/media")
+                                 "/api/crm/whatsapp/sales",
+                                 "/api/crm/whatsapp/payment-evidences/**",
+                                 "/api/crm/whatsapp/messages/*/media")
                         .hasAnyAuthority("ADMINISTRADOR", "CRM_CHAT")
                         .requestMatchers("/api/crm/whatsapp/**").hasAuthority("ADMINISTRADOR")
                         .requestMatchers("/api/usuario/**").hasAnyAuthority("ADMINISTRADOR", "SISTEMA")
@@ -92,6 +94,8 @@ public class SecurityConfig {
                         .requestMatchers("/api/config/sunat/**").hasAnyAuthority("ADMINISTRADOR", "SISTEMA")
                         .requestMatchers("/api/ecommerce/promociones-combo", "/api/ecommerce/promociones-combo/**").hasAnyAuthority("ADMINISTRADOR", "SISTEMA")
                         .requestMatchers("/api/ecommerce/pedidos", "/api/ecommerce/pedidos/**").hasAnyAuthority("ADMINISTRADOR", "VENTAS", "VENTAS_ALMACEN", "SISTEMA")
+                        .requestMatchers(HttpMethod.POST, "/api/producto/guia-tallas/*/reanalyze")
+                        .hasAnyAuthority("ADMINISTRADOR", "SISTEMA")
                         .requestMatchers(HttpMethod.PUT, "/api/producto/**").hasAnyAuthority("ADMINISTRADOR", "ALMACEN", "SISTEMA")
                         .requestMatchers(HttpMethod.DELETE, "/api/producto/**").hasAnyAuthority("ADMINISTRADOR", "ALMACEN", "SISTEMA")
                         .requestMatchers("/api/producto/**")

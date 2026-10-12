@@ -59,6 +59,13 @@ public class CrmWhatsappPaymentRequest {
     @JoinColumn(name = "id_venta")
     private Venta venta;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "id_agent_session")
+    private CrmWhatsappAgentSession agentSession;
+
+    @Column(name = "agent_idempotency_key", length = 64, unique = true)
+    private String agentIdempotencyKey;
+
     @ManyToOne(fetch = FetchType.EAGER, optional = false)
     @JoinColumn(name = "created_by", nullable = false)
     private Usuario createdBy;
@@ -72,13 +79,6 @@ public class CrmWhatsappPaymentRequest {
     @Column(name = "sale_request_json", nullable = false, columnDefinition = "MEDIUMTEXT")
     private String saleRequestJson;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "id_ai_sale_draft")
-    private CrmWhatsappAiSaleDraft aiSaleDraft;
-
-    @Column(name = "ai_sale_draft_version")
-    private Integer aiSaleDraftVersion;
-
     @Enumerated(EnumType.STRING)
     @Column(name = "reservation_status", nullable = false, length = 20)
     private CrmWhatsappPaymentReservationStatus reservationStatus;
@@ -88,6 +88,9 @@ public class CrmWhatsappPaymentRequest {
 
     @Column(name = "review_expires_at")
     private LocalDateTime reviewExpiresAt;
+
+    @Column(name = "evidence_accepted_at")
+    private LocalDateTime evidenceAcceptedAt;
 
     @Column(name = "released_at")
     private LocalDateTime releasedAt;

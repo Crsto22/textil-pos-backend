@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import makeWASocket, {
@@ -17,6 +18,8 @@ import { prepareVoiceNote } from "./audio.js";
 import { isAuthorized, isIndividualChatId, mediaDurationSeconds, mediaExtension, normalizeChatId, normalizePhone } from "./helpers.js";
 import { prepareImageForWhatsApp } from "./image.js";
 import { SendDeduplicator } from "./send-deduplicator.js";
+import { deterministicMessageId, RequestIdempotencyRegistry } from "./request-idempotency.js";
+import { postJsonWithRetry } from "./backend-webhook-retry.js";
 
 const bridgeRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = path.resolve(bridgeRoot, "..");
@@ -37,6 +40,7 @@ const config = {
   sessionDir: process.env.WHATSAPP_SESSION_DIR || path.join(repoRoot, "storage/whatsapp/session"),
   mediaDir: process.env.WHATSAPP_MEDIA_DIR || path.join(repoRoot, "storage/whatsapp/media"),
   clientId: process.env.WHATSAPP_CLIENT_ID || "kiments-main",
+  backendWebhookAttempts: Number(process.env.BACKEND_WEBHOOK_ATTEMPTS || 20),
 };
 
 const app = express();
@@ -52,6 +56,7 @@ let sessionReset;
 let connectionGeneration = 0;
 let credentialWrite = Promise.resolve();
 const sendDeduplicator = new SendDeduplicator();
+const requestIdempotency = new RequestIdempotencyRegistry();
 const lidToPhoneNumber = new Map();
 
 const state = {
@@ -225,19 +230,16 @@ async function saveIncomingMedia(message) {
 
 async function postToBackend(payload) {
   const url = `${config.backendBaseUrl}${config.backendWebhookPath}`;
-  const response = await fetch(url, {
-    method: "POST",
+  await postJsonWithRetry(url, { clientId: config.clientId, ...payload }, {
+    attempts: config.backendWebhookAttempts,
     headers: {
       "Content-Type": "application/json",
       "X-Bridge-Token": config.token,
     },
-    body: JSON.stringify({ clientId: config.clientId, ...payload }),
+    onRetry: ({ nextAttempt, delayMs, error }) => {
+      console.warn(`Backend temporalmente no disponible; reintento ${nextAttempt} en ${delayMs} ms: ${error.message}`);
+    },
   });
-
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(`Backend webhook respondio ${response.status}${detail ? `: ${detail}` : ""}`);
-  }
 }
 
 async function postConnectionState() {
@@ -611,22 +613,28 @@ app.post("/send-text", requireBridgeToken, async (req, res) => {
     return res.status(409).json({ message: "WhatsApp no esta conectado", ...publicStatus() });
   }
 
-  const signature = bridgeSendSignature(to, "TEXT", message);
+  const signature = `${bridgeSendSignature(to, "TEXT", message)}|${JSON.stringify(req.body?.quoted ?? null)}`;
   const pendingToken = registerPendingBridgeSend(signature);
   try {
-    const quoted = parseQuotedMessage(req.body?.quoted);
-    const sent = await sock.sendMessage(to, { text: message }, quoted ? { quoted } : undefined);
-    if (sent?.key?.id) {
-      rememberSentFromBridge(sent.key.id);
-    }
-    state.lastActivityAt = new Date().toISOString();
-    return res.json({
-      messageId: sent?.key?.id,
-      status: "sent",
-      messageKey: sent?.key,
-      baileysMessage: sent ? getBaileysMessageForQuote(sent) : null,
+    const idempotencyKey = String(req.get("X-Idempotency-Key") || "").trim();
+    const result = await requestIdempotency.execute(idempotencyKey, signature, async () => {
+      const quoted = parseQuotedMessage(req.body?.quoted);
+      const options = quoted ? { quoted } : {};
+      const messageId = deterministicMessageId(idempotencyKey);
+      if (messageId) options.messageId = messageId;
+      const sent = await sock.sendMessage(to, { text: message }, Object.keys(options).length ? options : undefined);
+      if (sent?.key?.id) rememberSentFromBridge(sent.key.id);
+      state.lastActivityAt = new Date().toISOString();
+      return {
+        messageId: sent?.key?.id,
+        status: "sent",
+        messageKey: sent?.key,
+        baileysMessage: sent ? getBaileysMessageForQuote(sent) : null,
+      };
     });
+    return res.json(result);
   } catch (error) {
+    if (error.code === "IDEMPOTENCY_CONFLICT") return res.status(409).json({ message: error.message });
     state.lastError = error.message;
     return res.status(500).json({ message: "No se pudo enviar el mensaje", detail: error.message });
   } finally {
@@ -650,24 +658,32 @@ app.post("/send-media", requireBridgeToken, upload.single("file"), async (req, r
     return res.status(409).json({ message: "WhatsApp no esta conectado", ...publicStatus() });
   }
 
-  const signature = bridgeSendSignature(to, "MEDIA", caption);
+  const signature = `${bridgeSendSignature(to, "MEDIA", caption)}|${JSON.stringify(req.body?.quoted ?? null)}`;
   const pendingToken = registerPendingBridgeSend(signature);
   try {
-    const payload = await buildMediaPayload(req.file, caption);
-    const quoted = parseQuotedMessage(req.body?.quoted);
-    const sent = await sock.sendMessage(to, payload, quoted ? { quoted } : undefined);
-    if (!sent?.key?.id) {
-      throw new Error("WhatsApp no devolvio un identificador para el archivo enviado");
-    }
-    rememberSentFromBridge(sent.key.id);
-    state.lastActivityAt = new Date().toISOString();
-    return res.json({
-      messageId: sent?.key?.id,
-      status: "sent",
-      messageKey: sent?.key,
-      baileysMessage: sent ? getBaileysMessageForQuote(sent) : null,
+    const idempotencyKey = String(req.get("X-Idempotency-Key") || "").trim();
+    const fileHash = createHash("sha256").update(req.file.buffer).digest("hex");
+    const requestSignature = `${signature}|${req.file.mimetype}|${fileHash}`;
+    const result = await requestIdempotency.execute(idempotencyKey, requestSignature, async () => {
+      const payload = await buildMediaPayload(req.file, caption);
+      const quoted = parseQuotedMessage(req.body?.quoted);
+      const options = quoted ? { quoted } : {};
+      const messageId = deterministicMessageId(idempotencyKey);
+      if (messageId) options.messageId = messageId;
+      const sent = await sock.sendMessage(to, payload, Object.keys(options).length ? options : undefined);
+      if (!sent?.key?.id) throw new Error("WhatsApp no devolvio un identificador para el archivo enviado");
+      rememberSentFromBridge(sent.key.id);
+      state.lastActivityAt = new Date().toISOString();
+      return {
+        messageId: sent?.key?.id,
+        status: "sent",
+        messageKey: sent?.key,
+        baileysMessage: sent ? getBaileysMessageForQuote(sent) : null,
+      };
     });
+    return res.json(result);
   } catch (error) {
+    if (error.code === "IDEMPOTENCY_CONFLICT") return res.status(409).json({ message: error.message });
     state.lastError = error.message;
     return res.status(500).json({ message: "No se pudo enviar el archivo", detail: error.message });
   } finally {

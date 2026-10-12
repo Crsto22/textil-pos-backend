@@ -3,14 +3,13 @@ package com.sistemapos.sistematextil.model;
 import java.time.LocalDateTime;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
@@ -57,18 +56,11 @@ public class CrmWhatsappConversation {
     @Column(name = "unread_count", nullable = false)
     private Integer unreadCount;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "ai_attention_mode", nullable = false, length = 20)
-    private CrmWhatsappAiAttentionMode aiAttentionMode;
-
-    @Column(name = "ai_attention_mode_explicit", nullable = false)
-    private Boolean aiAttentionModeExplicit;
-
-    @Enumerated(EnumType.STRING)
+    @Convert(converter = CrmWhatsappAttentionQueueConverter.class)
     @Column(name = "attention_queue", nullable = false, length = 30)
     private CrmWhatsappAttentionQueue attentionQueue;
 
-    @Enumerated(EnumType.STRING)
+    @Convert(converter = CrmWhatsappWaitingReasonConverter.class)
     @Column(name = "waiting_reason", length = 30)
     private CrmWhatsappWaitingReason waitingReason;
 
@@ -107,12 +99,6 @@ public class CrmWhatsappConversation {
         if (unreadCount == null) {
             unreadCount = 0;
         }
-        if (aiAttentionMode == null) {
-            aiAttentionMode = CrmWhatsappAiAttentionMode.AUTOMATICA;
-        }
-        if (aiAttentionModeExplicit == null) {
-            aiAttentionModeExplicit = false;
-        }
         normalizeAttentionQueue();
     }
 
@@ -132,22 +118,18 @@ public class CrmWhatsappConversation {
             waitingReason = null;
             waitingDetail = null;
         } else if (waitingReason == CrmWhatsappWaitingReason.PAYMENT_VERIFICATION) {
-            attentionQueue = CrmWhatsappAttentionQueue.PAYMENT_VERIFICATION;
-        } else if (waitingReason == CrmWhatsappWaitingReason.AI_DISABLED
-                || waitingReason == CrmWhatsappWaitingReason.ADVISOR_REQUIRED
-                || waitingReason == CrmWhatsappWaitingReason.IMAGE_RECEIVED
-                || waitingReason == CrmWhatsappWaitingReason.AI_RESPONSE_FAILED
-                || aiAttentionMode == CrmWhatsappAiAttentionMode.HUMANA) {
+            attentionQueue = CrmWhatsappAttentionQueue.AGENT_ACTIVE;
+            waitingReason = null;
+            waitingDetail = null;
+        } else if (attentionQueue == CrmWhatsappAttentionQueue.AGENT_ACTIVE) {
+            waitingReason = null;
+            waitingDetail = null;
+        } else {
             attentionQueue = CrmWhatsappAttentionQueue.ADVISOR_REQUIRED;
             if (waitingReason == null) {
                 waitingReason = CrmWhatsappWaitingReason.ADVISOR_REQUIRED;
             }
-        } else {
-            attentionQueue = CrmWhatsappAttentionQueue.AI_ACTIVE;
-            waitingReason = null;
-            waitingDetail = null;
         }
-        if (waitingReason != CrmWhatsappWaitingReason.ADVISOR_REQUIRED
-                && waitingReason != CrmWhatsappWaitingReason.AI_RESPONSE_FAILED) waitingDetail = null;
+        if (waitingReason != CrmWhatsappWaitingReason.ADVISOR_REQUIRED) waitingDetail = null;
     }
 }

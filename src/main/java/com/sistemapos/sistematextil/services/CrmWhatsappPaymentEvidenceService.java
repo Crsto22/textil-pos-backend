@@ -14,6 +14,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 import javax.imageio.ImageIO;
@@ -32,33 +33,44 @@ import org.springframework.web.server.ResponseStatusException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sistemapos.sistematextil.model.CrmWhatsappConversation;
+import com.sistemapos.sistematextil.model.CrmWhatsappAttentionQueue;
+import com.sistemapos.sistematextil.model.CrmWhatsappAgentEvent;
+import com.sistemapos.sistematextil.model.CrmWhatsappAgentSession;
+import com.sistemapos.sistematextil.model.CrmWhatsappAgentState;
+import com.sistemapos.sistematextil.model.CrmWhatsappFulfillment;
 import com.sistemapos.sistematextil.model.CrmWhatsappMessage;
 import com.sistemapos.sistematextil.model.CrmWhatsappPaymentEvidence;
 import com.sistemapos.sistematextil.model.CrmWhatsappPaymentEvidenceStatus;
 import com.sistemapos.sistematextil.model.CrmWhatsappPaymentProcessingStatus;
 import com.sistemapos.sistematextil.model.CrmWhatsappPaymentRequest;
 import com.sistemapos.sistematextil.model.CrmWhatsappPaymentRequestStatus;
+import com.sistemapos.sistematextil.model.CrmWhatsappPaymentReviewAction;
+import com.sistemapos.sistematextil.model.CrmWhatsappPaymentReviewAudit;
 import com.sistemapos.sistematextil.model.CrmWhatsappPaymentReservationStatus;
-import com.sistemapos.sistematextil.model.CrmWhatsappAiAttentionMode;
-import com.sistemapos.sistematextil.model.CrmWhatsappAiDeliveryType;
-import com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason;
 import com.sistemapos.sistematextil.model.MetodoPagoCuenta;
 import com.sistemapos.sistematextil.model.SucursalMetodoPagoConfig;
 import com.sistemapos.sistematextil.model.Usuario;
+import com.sistemapos.sistematextil.model.Venta;
+import com.sistemapos.sistematextil.model.VentaDetalle;
+import com.sistemapos.sistematextil.model.Pago;
+import com.sistemapos.sistematextil.repositories.CrmWhatsappAgentSessionRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappConversationRepository;
+import com.sistemapos.sistematextil.repositories.CrmWhatsappFulfillmentRepository;
+import com.sistemapos.sistematextil.repositories.CrmWhatsappFilmAddonRepository;
+import com.sistemapos.sistematextil.model.CrmWhatsappFilmStatus;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappMessageRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappPaymentEvidenceRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappPaymentRequestRepository;
-import com.sistemapos.sistematextil.repositories.CrmWhatsappAiConfigRepository;
+import com.sistemapos.sistematextil.repositories.CrmWhatsappPaymentReviewAuditRepository;
 import com.sistemapos.sistematextil.repositories.MetodoPagoCuentaRepository;
 import com.sistemapos.sistematextil.repositories.SucursalMetodoPagoConfigRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
 import com.sistemapos.sistematextil.repositories.VentaRepository;
+import com.sistemapos.sistematextil.repositories.VentaDetalleRepository;
+import com.sistemapos.sistematextil.repositories.PagoRepository;
+import com.sistemapos.sistematextil.services.agent.CrmWhatsappAgentStateMachine;
 import com.sistemapos.sistematextil.services.CrmWhatsappChatService.CrmSaleCreateRequest;
 import com.sistemapos.sistematextil.services.CrmWhatsappChatService.VentaCrmResponse;
-import com.sistemapos.sistematextil.services.ai.AiModelProvider;
-import com.sistemapos.sistematextil.services.ai.AiModelProvider.PaymentEvidenceExtraction;
-import com.sistemapos.sistematextil.services.ai.AiModelProvider.PaymentEvidenceRequest;
 import com.sistemapos.sistematextil.util.usuario.Rol;
 import com.sistemapos.sistematextil.util.venta.VentaPagoCreateItem;
 
@@ -68,6 +80,8 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class CrmWhatsappPaymentEvidenceService {
     private static final long MAX_FILE_BYTES = 10L * 1024L * 1024L;
+    private static final String ORDER_REGISTERED_NOTICE = "PEDIDO REGISTRADO ✅\n\n"
+            + "Nuestra asesora de envíos se comunicará contigo para corroborar tus datos.";
     private static final List<CrmWhatsappPaymentRequestStatus> ACTIVE_REQUESTS = List.of(
             CrmWhatsappPaymentRequestStatus.PENDING_EVIDENCE,
             CrmWhatsappPaymentRequestStatus.UNDER_REVIEW,
@@ -78,21 +92,25 @@ public class CrmWhatsappPaymentEvidenceService {
 
     private final CrmWhatsappPaymentRequestRepository requestRepository;
     private final CrmWhatsappPaymentEvidenceRepository evidenceRepository;
+    private final CrmWhatsappPaymentReviewAuditRepository reviewAuditRepository;
+    private final CrmWhatsappAgentSessionRepository agentSessionRepository;
+    private final CrmWhatsappFulfillmentRepository fulfillmentRepository;
+    private final CrmWhatsappFilmAddonRepository filmAddonRepository;
     private final CrmWhatsappConversationRepository conversationRepository;
     private final CrmWhatsappMessageRepository messageRepository;
     private final SucursalMetodoPagoConfigRepository branchPaymentRepository;
     private final MetodoPagoCuentaRepository accountRepository;
     private final UsuarioRepository usuarioRepository;
     private final VentaRepository ventaRepository;
+    private final VentaDetalleRepository ventaDetalleRepository;
+    private final PagoRepository pagoRepository;
     private final S3StorageService storageService;
-    private final AiModelProvider aiModelProvider;
     private final CrmWhatsappEventService eventService;
     private final ObjectProvider<CrmWhatsappChatService> chatServiceProvider;
-    private final CrmWhatsappAiSaleDraftService aiSaleDraftService;
-    private final CrmWhatsappAiConfigRepository aiConfigRepository;
     private final CrmWhatsappPaymentReservationService reservationService;
-    private final CrmWhatsappAiDeliveryService deliveryService;
-    private final CrmWhatsappAiMemoryService aiMemoryService;
+    private final VentaAnulacionService ventaAnulacionService;
+    private final VentaService ventaService;
+    private final CrmWhatsappAgentStateMachine agentStateMachine;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Transactional
@@ -113,8 +131,6 @@ public class CrmWhatsappPaymentEvidenceService {
             throw badRequest("La solicitud pendiente admite un metodo de pago");
         }
         VentaPagoCreateItem payment = sale.pagos().get(0);
-        aiSaleDraftService.validateSale(conversationId, sale.aiSaleDraftId(), sale.aiSaleDraftVersion(),
-                sale.detalles(), payment.idMetodoPago(), sale.descuentoTotal(), sale.tipoDescuento());
         SucursalMetodoPagoConfig config = branchPaymentRepository
                 .findBySucursal_IdSucursalAndMetodoPago_IdMetodoPagoAndDeletedAtIsNull(branchId, payment.idMetodoPago())
                 .filter(item -> "ACTIVO".equalsIgnoreCase(item.getEstado()))
@@ -149,12 +165,11 @@ public class CrmWhatsappPaymentEvidenceService {
         request.setCurrency(clean(sale.moneda()).isBlank() ? "PEN" : clean(sale.moneda()).toUpperCase(Locale.ROOT));
         request.setSaleRequestJson(writeJson(new CrmSaleCreateRequest(
                 branchId, sale.idComprobante(), request.getCurrency(), sale.formaPago(), sale.igvPorcentaje(),
-                sale.descuentoTotal(), sale.tipoDescuento(), sale.detalles(), sale.pagos(), sale.telefonoRespaldo(),
-                sale.aiSaleDraftId(), sale.aiSaleDraftVersion())));
+                sale.descuentoTotal(), sale.tipoDescuento(), sale.detalles(), sale.pagos(), sale.telefonoRespaldo())));
         request.setStatus(CrmWhatsappPaymentRequestStatus.PENDING_EVIDENCE);
         request.setExpiresAt(LocalDateTime.now().plusMinutes(10));
         request = requestRepository.save(request);
-        aiSaleDraftService.markPaymentPending(sale.aiSaleDraftId());
+        reservationService.reserve(request, sale.detalles(), actor);
         publish("payment.request.updated", conversation, toResponse(request));
         return toResponse(request);
     }
@@ -187,9 +202,6 @@ public class CrmWhatsappPaymentEvidenceService {
         CrmWhatsappMessage message = messageRepository.findById(messageId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Mensaje no encontrado"));
         requireCanOperate(message.getConversation(), actor);
-        if (aiStopped(message.getConversation())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "La IA esta detenida por un administrador");
-        }
         CrmWhatsappPaymentEvidence evidence = evidenceRepository.findByMessage_IdMessage(messageId).orElse(null);
         CrmWhatsappPaymentRequest activeRequest = requestRepository
                 .findFirstByConversation_IdConversationAndStatusInOrderByCreatedAtDesc(
@@ -208,12 +220,6 @@ public class CrmWhatsappPaymentEvidenceService {
             }
             evidence.setPaymentRequest(activeRequest);
             evidenceRepository.save(evidence);
-        }
-        if (evidence.getProcessingStatus() == CrmWhatsappPaymentProcessingStatus.FAILED) {
-            evidence.setProcessingStatus(CrmWhatsappPaymentProcessingStatus.QUEUED);
-            evidence.setAvailableAt(LocalDateTime.now());
-            evidence.setLastError(null);
-            evidence = evidenceRepository.save(evidence);
         }
         return toResponse(evidence);
     }
@@ -247,6 +253,22 @@ public class CrmWhatsappPaymentEvidenceService {
                 clean(evidence.getFileName()).isBlank() ? "evidencia-pago" + extension(evidence.getMimeType()) : evidence.getFileName());
     }
 
+    @Transactional(readOnly = true)
+    public PaymentEvidenceDownload downloadSalesNote(Long evidenceId, Usuario sessionUser) {
+        Usuario actor = requireCrmUser(sessionUser);
+        CrmWhatsappPaymentEvidence evidence = evidenceRepository.findById(evidenceId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Evidencia no encontrada"));
+        requireCanRead(evidence.getConversation(), actor);
+        Venta sale = evidence.getPaymentRequest() == null ? null : evidence.getPaymentRequest().getVenta();
+        if (sale == null || !"NOTA DE VENTA".equalsIgnoreCase(clean(sale.getTipoComprobante()))
+                || !"CRM_WHATSAPP".equalsIgnoreCase(clean(sale.getOrigen()))) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "La evidencia no tiene una Nota de Venta automatica relacionada");
+        }
+        VentaService.ArchivoDescargable file = ventaService.descargarComprobantePdfPublico(sale.getIdVenta());
+        return new PaymentEvidenceDownload(file.bytes(), "application/pdf", file.nombreArchivo());
+    }
+
     @Transactional
     public PaymentDecisionResponse decide(Long evidenceId, PaymentDecisionRequest body, Usuario sessionUser) {
         Usuario actor = requireCrmUser(sessionUser);
@@ -254,9 +276,7 @@ public class CrmWhatsappPaymentEvidenceService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Evidencia no encontrada"));
         String action = clean(body == null ? null : body.action()).toUpperCase(Locale.ROOT);
         if ("ACCEPT".equals(action) || "REJECT".equals(action)) {
-            CrmWhatsappConversation assignedConversation = chatServiceProvider.getObject()
-                    .asignarParaOperacion(evidence.getConversation().getIdConversation(), actor);
-            evidence.setConversation(assignedConversation);
+            requireCanRead(evidence.getConversation(), actor);
         } else {
             requireCanOperate(evidence.getConversation(), actor);
         }
@@ -264,23 +284,35 @@ public class CrmWhatsappPaymentEvidenceService {
                 || evidence.getValidationStatus() == CrmWhatsappPaymentEvidenceStatus.RECHAZADO) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "La evidencia ya fue revisada");
         }
+        if (("ACCEPT".equals(action) || "REJECT".equals(action))
+                && evidence.getPaymentRequest() != null) {
+            CrmWhatsappPaymentRequest automaticRequest = requestRepository
+                    .findForUpdate(evidence.getPaymentRequest().getIdPaymentRequest()).orElse(null);
+            if (automaticRequest != null && automaticRequest.getAgentSession() != null
+                    && automaticRequest.getVenta() != null) {
+                return decideAutomaticSale(evidence, automaticRequest, body, actor, action);
+            }
+        }
         if ("ACCEPT".equals(action)) {
-            if (evidence.getProcessingStatus() != CrmWhatsappPaymentProcessingStatus.COMPLETED
-                    || evidence.getValidationStatus() != CrmWhatsappPaymentEvidenceStatus.ACEPTABLE
-                    || evidence.getPaymentRequest() == null) {
+            if (evidence.getPaymentRequest() == null) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT,
-                        "El comprobante aun no esta listo para cargar la venta");
+                        "La evidencia no tiene una solicitud de pago vinculada");
             }
             CrmWhatsappPaymentRequest request = requestRepository
                     .findForUpdate(evidence.getPaymentRequest().getIdPaymentRequest()).orElse(null);
-            if (request == null || request.getStatus() != CrmWhatsappPaymentRequestStatus.READY_FOR_SALE
+            if (request == null || !ACTIVE_REQUESTS.contains(request.getStatus())
                     || request.getReservationStatus() != CrmWhatsappPaymentReservationStatus.ACTIVE
                     || request.getExpiresAt() == null || request.getExpiresAt().isBefore(LocalDateTime.now())) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "La reserva del pedido ya no esta disponible");
             }
             review(evidence, actor, CrmWhatsappPaymentEvidenceStatus.ACEPTABLE, body == null ? null : body.note());
+            request.setStatus(CrmWhatsappPaymentRequestStatus.READY_FOR_SALE);
+            request.setReviewExpiresAt(LocalDateTime.now().plusHours(24));
+            request.setExpiresAt(request.getReviewExpiresAt());
+            requestRepository.save(request);
+            publish("payment.request.updated", evidence.getConversation(), toResponse(request));
             publish("payment.evidence.updated", evidence.getConversation(), toResponse(evidence));
-            sendCustomerNotice(evidence.getConversation(), "PEDIDO REGISTRADO ✅");
+            sendCustomerNotice(evidence.getConversation(), ORDER_REGISTERED_NOTICE);
             return decisionResponse(evidence, null);
         }
         if ("OBSERVE".equals(action)) {
@@ -297,8 +329,6 @@ public class CrmWhatsappPaymentEvidenceService {
                     reservationService.release(request, actor, "Comprobante rechazado por el asesor");
                     request.setStatus(CrmWhatsappPaymentRequestStatus.CANCELLED);
                     requestRepository.save(request);
-                    aiSaleDraftService.markPaymentRejected(request.getAiSaleDraft() == null
-                            ? null : request.getAiSaleDraft().getIdAiSaleDraft());
                     publish("payment.request.updated", evidence.getConversation(), toResponse(request));
                 }
             }
@@ -331,7 +361,7 @@ public class CrmWhatsappPaymentEvidenceService {
                 sale.descuentoTotal(), sale.tipoDescuento(), sale.detalles(),
                 List.of(new VentaPagoCreateItem(request.getMetodoPago().getIdMetodoPago(),
                         request.getExpectedAmount().doubleValue(), blankToNull(evidence.getOperationCode()), paidAt)),
-                sale.telefonoRespaldo(), sale.aiSaleDraftId(), sale.aiSaleDraftVersion());
+                sale.telefonoRespaldo());
         try {
             boolean reserved = request.getReservationStatus() == CrmWhatsappPaymentReservationStatus.ACTIVE;
             VentaCrmResponse result = reserved
@@ -403,7 +433,7 @@ public class CrmWhatsappPaymentEvidenceService {
                         clean(evidence.getOperationCode()).isBlank()
                                 ? selectedPayment.codigoOperacion() : evidence.getOperationCode(),
                         evidence.getOperationAt() == null ? selectedPayment.fecha() : evidence.getOperationAt())),
-                body.telefonoRespaldo(), stored.aiSaleDraftId(), stored.aiSaleDraftVersion());
+                body.telefonoRespaldo());
 
         try {
             VentaCrmResponse result = chatServiceProvider.getObject().registrarVentaReservadaDesdeCrm(
@@ -428,78 +458,18 @@ public class CrmWhatsappPaymentEvidenceService {
     }
 
     @Transactional(readOnly = true)
-    public List<Long> readyEvidenceIds() {
-        return evidenceRepository.findReady(
-                CrmWhatsappPaymentProcessingStatus.QUEUED, LocalDateTime.now(), PageRequest.of(0, 5))
-                .stream().map(CrmWhatsappPaymentEvidence::getIdPaymentEvidence).toList();
-    }
-
-    @Transactional(readOnly = true)
     public List<Long> unregisteredIncomingMediaIds() {
         return messageRepository.findUnregisteredPaymentMedia(PageRequest.of(0, 10));
-    }
-
-    @Transactional(readOnly = true)
-    public List<Long> observedExactAmountEvidenceIds() {
-        return evidenceRepository.findObservedWithExactAmount(
-                CrmWhatsappPaymentEvidenceStatus.OBSERVADO,
-                CrmWhatsappPaymentProcessingStatus.COMPLETED,
-                ACCEPTING_EVIDENCE,
-                CrmWhatsappPaymentReservationStatus.ACTIVE,
-                LocalDateTime.now(),
-                PageRequest.of(0, 10));
-    }
-
-    @Transactional
-    public void promoteObservedExactAmount(Long evidenceId) {
-        CrmWhatsappPaymentEvidence evidence = evidenceRepository.findForUpdate(evidenceId).orElse(null);
-        if (evidence == null
-                || evidence.getValidationStatus() != CrmWhatsappPaymentEvidenceStatus.OBSERVADO
-                || evidence.getProcessingStatus() != CrmWhatsappPaymentProcessingStatus.COMPLETED
-                || evidence.getDuplicateOfId() != null
-                || evidence.getDetectedAmount() == null
-                || evidence.getPaymentRequest() == null) return;
-
-        CrmWhatsappPaymentRequest request = requestRepository
-                .findForUpdate(evidence.getPaymentRequest().getIdPaymentRequest()).orElse(null);
-        LocalDateTime now = LocalDateTime.now();
-        if (request == null
-                || !ACCEPTING_EVIDENCE.contains(request.getStatus())
-                || request.getReservationStatus() != CrmWhatsappPaymentReservationStatus.ACTIVE
-                || request.getExpiresAt() == null
-                || request.getExpiresAt().isBefore(now)
-                || request.getExpectedAmount().compareTo(evidence.getDetectedAmount()) != 0) return;
-
-        evidence.setValidationStatus(CrmWhatsappPaymentEvidenceStatus.ACEPTABLE);
-        evidence.setWarningsJson(writeJson(readStringList(evidence.getWarningsJson()).stream()
-                .filter(warning -> !isLegacyBlockingWarning(warning))
-                .distinct()
-                .toList()));
-        evidence.setCustomerNotifiedAt(null);
-        evidence = evidenceRepository.save(evidence);
-
-        request.setStatus(CrmWhatsappPaymentRequestStatus.READY_FOR_SALE);
-        request.setReviewExpiresAt(now.plusHours(24));
-        request.setExpiresAt(request.getReviewExpiresAt());
-        requestRepository.save(request);
-        markPaymentVerification(request.getConversation());
-        aiSaleDraftService.extendPaymentReview(request.getAiSaleDraft() == null
-                ? null : request.getAiSaleDraft().getIdAiSaleDraft(), request.getReviewExpiresAt());
-
-        publish("payment.evidence.updated", evidence.getConversation(), toResponse(evidence));
-        publish("payment.request.updated", evidence.getConversation(), toResponse(request));
-        notifyCustomer(evidence);
     }
 
     @Transactional
     public void expireRequests() {
         Usuario systemUser = usuarioRepository.findByCorreoAndDeletedAtIsNull("sistema@gmail.com").orElse(null);
-        requestRepository.findByStatusInAndExpiresAtBefore(ACTIVE_REQUESTS, LocalDateTime.now()).forEach(request -> {
+        requestRepository.findByAgentSessionIsNullAndStatusInAndExpiresAtBefore(
+                ACTIVE_REQUESTS, LocalDateTime.now()).forEach(request -> {
             if (systemUser != null) reservationService.release(request, systemUser, "Solicitud de pago vencida");
             request.setStatus(CrmWhatsappPaymentRequestStatus.EXPIRED);
             requestRepository.save(request);
-            aiSaleDraftService.markPaymentExpired(request.getAiSaleDraft() == null
-                    ? null : request.getAiSaleDraft().getIdAiSaleDraft());
             if (request.getConversation() != null) publish("payment.request.updated", request.getConversation(), toResponse(request));
             if (request.getConversation() != null) {
                 sendCustomerNotice(request.getConversation(),
@@ -508,69 +478,13 @@ public class CrmWhatsappPaymentEvidenceService {
         });
     }
 
-    @Transactional
-    public void processOne(Long evidenceId) {
-        CrmWhatsappPaymentEvidence evidence = evidenceRepository.findForUpdate(evidenceId).orElse(null);
-        if (evidence == null || evidence.getProcessingStatus() != CrmWhatsappPaymentProcessingStatus.QUEUED) return;
-        if (aiStopped(evidence.getConversation())) return;
-        evidence.setProcessingStatus(CrmWhatsappPaymentProcessingStatus.PROCESSING);
-        evidence.setAttempts(evidence.getAttempts() + 1);
-        evidenceRepository.saveAndFlush(evidence);
-        publish("payment.evidence.processing", evidence.getConversation(), toResponse(evidence));
-        try {
-            byte[] bytes = storageService.readBytes(evidence.getStoragePath());
-            PaymentEvidenceExtraction extraction = aiModelProvider.extractPaymentEvidence(new PaymentEvidenceRequest(
-                    evidence.getConversation().getConnection().getIdConnection(), bytes, evidence.getMimeType(), evidence.getFileName()));
-            applyExtraction(evidence, extraction);
-            compare(evidence);
-            evidence.setProcessingStatus(CrmWhatsappPaymentProcessingStatus.COMPLETED);
-            evidence.setLastError(null);
-            if (evidence.getPaymentRequest() != null
-                    && evidence.getValidationStatus() == CrmWhatsappPaymentEvidenceStatus.ACEPTABLE) {
-                CrmWhatsappPaymentRequest request = requestRepository
-                        .findForUpdate(evidence.getPaymentRequest().getIdPaymentRequest()).orElse(null);
-                if (request != null && ACCEPTING_EVIDENCE.contains(request.getStatus())) {
-                    request.setStatus(CrmWhatsappPaymentRequestStatus.READY_FOR_SALE);
-                    request.setReviewExpiresAt(LocalDateTime.now().plusHours(24));
-                    request.setExpiresAt(request.getReviewExpiresAt());
-                    requestRepository.save(request);
-                    markPaymentVerification(request.getConversation());
-                    aiSaleDraftService.extendPaymentReview(request.getAiSaleDraft() == null
-                            ? null : request.getAiSaleDraft().getIdAiSaleDraft(), request.getReviewExpiresAt());
-                    publish("payment.request.updated", evidence.getConversation(), toResponse(request));
-                }
-            }
-        } catch (RuntimeException error) {
-            evidence.setLastError(truncate(safeMessage(error), 1000));
-            if (evidence.getAttempts() < 3) {
-                evidence.setProcessingStatus(CrmWhatsappPaymentProcessingStatus.QUEUED);
-                evidence.setAvailableAt(LocalDateTime.now().plusSeconds((long) Math.pow(2, evidence.getAttempts()) * 15));
-            } else {
-                evidence.setProcessingStatus(CrmWhatsappPaymentProcessingStatus.FAILED);
-                evidence.setValidationStatus(CrmWhatsappPaymentEvidenceStatus.OBSERVADO);
-            }
-        }
-        evidence = evidenceRepository.save(evidence);
-        publish("payment.evidence.updated", evidence.getConversation(), toResponse(evidence));
-        notifyCustomer(evidence);
-    }
-
-    private boolean aiStopped(CrmWhatsappConversation conversation) {
-        return conversation != null && conversation.getConnection() != null
-                && aiConfigRepository.findByConnection_IdConnection(conversation.getConnection().getIdConnection())
-                        .map(config -> CrmWhatsappAiOperationsService.EMERGENCY_STOP.equals(config.getOperationalStatus()))
-                        .orElse(false);
-    }
-
-    private void markPaymentVerification(CrmWhatsappConversation conversation) {
+    private void keepAgentActive(CrmWhatsappConversation conversation) {
         if (conversation == null || conversation.getAssignedUser() != null) return;
         conversation.setStatus("ESPERA");
-        conversation.setAiAttentionMode(CrmWhatsappAiAttentionMode.HUMANA);
-        conversation.setAiAttentionModeExplicit(true);
-        conversation.setWaitingReason(CrmWhatsappWaitingReason.PAYMENT_VERIFICATION);
+        conversation.setAttentionQueue(CrmWhatsappAttentionQueue.AGENT_ACTIVE);
+        conversation.setWaitingReason(null);
+        conversation.setWaitingDetail(null);
         conversationRepository.save(conversation);
-        aiMemoryService.pauseForHuman(conversation,
-                "Comprobante registrado; requiere validacion de una asesora");
     }
 
     private CrmWhatsappPaymentEvidence createEvidence(
@@ -587,26 +501,35 @@ public class CrmWhatsappPaymentEvidenceService {
         evidence.setMessage(message);
         evidence.setConversation(message.getConversation());
         evidence.setPaymentRequest(request);
+        boolean agentManaged = request != null && request.getAgentSession() != null;
+        if (agentManaged) {
+            evidence.setAgentSession(request.getAgentSession());
+            evidence.setAgentValidationKey(sha256(("agent-evidence:"
+                    + request.getAgentSession().getIdAgentSession() + ":" + message.getIdMessage())
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        }
         evidence.setStoragePath(storagePath);
         evidence.setMimeType(message.getMediaMimeType());
         evidence.setFileName(message.getMediaFileName());
         evidence.setSha256(sha);
         evidence.setPerceptualHash(perceptualHash(bytes, message.getMediaMimeType()));
+        evidence.setProcessingStatus(agentManaged
+                ? CrmWhatsappPaymentProcessingStatus.QUEUED
+                : CrmWhatsappPaymentProcessingStatus.COMPLETED);
+        evidence.setValidationStatus(agentManaged
+                ? CrmWhatsappPaymentEvidenceStatus.PENDIENTE_VALIDACION
+                : CrmWhatsappPaymentEvidenceStatus.OBSERVADO);
+        evidence.setWarningsJson(writeJson(agentManaged
+                ? List.of()
+                : List.of("Comprobante pendiente de revision manual")));
         Integer companyId = message.getConversation().getConnection() == null
                 ? null : message.getConversation().getConnection().getEmpresa().getIdEmpresa();
         CrmWhatsappPaymentEvidence duplicateByHash = companyId == null ? null : evidenceRepository
                 .findDuplicatesByHash(sha, companyId, PageRequest.of(0, 1)).stream().findFirst().orElse(null);
         if (duplicateByHash != null) evidence.setDuplicateOfId(duplicateByHash.getIdPaymentEvidence());
-        if (evidence.getDuplicateOfId() == null && evidence.getPerceptualHash() != null && companyId != null) {
-            String visualHash = evidence.getPerceptualHash();
-            CrmWhatsappPaymentEvidence visualDuplicate = evidenceRepository
-                    .findRecentVisualHashes(companyId, PageRequest.of(0, 100)).stream()
-                    .filter(other -> hammingDistance(visualHash, other.getPerceptualHash()) <= 5)
-                    .findFirst()
-                    .orElse(null);
-            if (visualDuplicate != null) evidence.setDuplicateOfId(visualDuplicate.getIdPaymentEvidence());
+        if (!agentManaged && evidence.getDuplicateOfId() != null) {
+            evidence.setValidationStatus(CrmWhatsappPaymentEvidenceStatus.OBSERVADO);
         }
-        if (evidence.getDuplicateOfId() != null) evidence.setValidationStatus(CrmWhatsappPaymentEvidenceStatus.OBSERVADO);
         try {
             evidence = evidenceRepository.save(evidence);
         } catch (DataIntegrityViolationException error) {
@@ -614,71 +537,11 @@ public class CrmWhatsappPaymentEvidenceService {
             throw error;
         }
         publish("payment.evidence.updated", message.getConversation(), toResponse(evidence));
+        if (agentManaged) return evidence;
+        keepAgentActive(message.getConversation());
+        sendCustomerNotice(message.getConversation(),
+                "âœ… Comprobante registrado correctamente. En unos momentos validaremos tu pedido.");
         return evidence;
-    }
-
-    private void applyExtraction(CrmWhatsappPaymentEvidence evidence, PaymentEvidenceExtraction value) {
-        evidence.setDetectedProvider(blankToNull(value.provider()));
-        evidence.setDetectedAmount(parseAmount(value.amount()));
-        evidence.setDetectedCurrency(clean(value.currency()).isBlank() ? "PEN" : clean(value.currency()).toUpperCase(Locale.ROOT));
-        evidence.setOperationCode(blankToNull(value.operationCode()));
-        evidence.setOperationAt(parseDateTime(value.operationDateTime()));
-        evidence.setRecipient(null);
-        evidence.setConfidence(value.confidence());
-        evidence.setExtractedText(truncate(value.extractedText(), 10000));
-        evidence.setExtractionJson(writeJson(Map.of(
-                "paymentEvidence", value.paymentEvidence(),
-                "fieldConfidences", value.fieldConfidences(),
-                "usage", value.usage())));
-        evidence.setWarningsJson(writeJson(value.warnings()));
-        if (!value.paymentEvidence()) {
-            evidence.setValidationStatus(CrmWhatsappPaymentEvidenceStatus.OBSERVADO);
-            List<String> warnings = readStringList(evidence.getWarningsJson());
-            warnings.add("El archivo no parece ser un comprobante de pago legible");
-            evidence.setWarningsJson(writeJson(warnings.stream().distinct().toList()));
-        }
-    }
-
-    private void compare(CrmWhatsappPaymentEvidence evidence) {
-        List<String> warnings = readStringList(evidence.getWarningsJson());
-        List<String> blockingWarnings = new ArrayList<>();
-        CrmWhatsappPaymentRequest request = evidence.getPaymentRequest();
-        if (request == null) blockingWarnings.add("No existe una solicitud de pago vinculada");
-        if (request != null && evidence.getDetectedAmount() == null) {
-            blockingWarnings.add("No se pudo detectar el importe del comprobante");
-        }
-        if (request != null && evidence.getDetectedAmount() != null
-                && request.getExpectedAmount().compareTo(evidence.getDetectedAmount()) != 0) {
-            blockingWarnings.add("El monto detectado no coincide con el monto esperado");
-        }
-        if (evidence.getOperationCode() != null) {
-            Integer companyId = evidence.getConversation().getConnection().getEmpresa().getIdEmpresa();
-            evidenceRepository.findDuplicatesByOperation(evidence.getOperationCode(), companyId, PageRequest.of(0, 2)).stream()
-                    .filter(other -> !other.getIdPaymentEvidence().equals(evidence.getIdPaymentEvidence()))
-                    .findFirst()
-                    .ifPresent(other -> {
-                        evidence.setDuplicateOfId(other.getIdPaymentEvidence());
-                        blockingWarnings.add("El codigo de operacion ya fue registrado");
-                    });
-        }
-        if (evidence.getDuplicateOfId() != null) blockingWarnings.add("La evidencia puede estar duplicada");
-        warnings.addAll(blockingWarnings);
-        evidence.setValidationStatus(blockingWarnings.isEmpty()
-                ? CrmWhatsappPaymentEvidenceStatus.ACEPTABLE
-                : CrmWhatsappPaymentEvidenceStatus.OBSERVADO);
-        evidence.setWarningsJson(writeJson(warnings.stream().distinct().toList()));
-    }
-
-    private boolean isLegacyBlockingWarning(String warning) {
-        String normalized = clean(warning).toLowerCase(Locale.ROOT);
-        return normalized.contains("moneda")
-                || normalized.contains("codigo")
-                || normalized.contains("operacion")
-                || normalized.contains("fecha")
-                || normalized.contains("hora")
-                || normalized.contains("destinatario")
-                || normalized.contains("confianza")
-                || normalized.contains("no parece ser un comprobante");
     }
 
     private void notifyCustomer(CrmWhatsappPaymentEvidence evidence) {
@@ -687,8 +550,7 @@ public class CrmWhatsappPaymentEvidenceService {
         if (evidence.getProcessingStatus() == CrmWhatsappPaymentProcessingStatus.FAILED) {
             message = "No pudimos leer el comprobante. Por favor envía una captura clara y completa para revisarla nuevamente.";
         } else if (evidence.getValidationStatus() == CrmWhatsappPaymentEvidenceStatus.ACEPTABLE) {
-            deliveryService.enqueueNotice(evidence.getConversation(), CrmWhatsappAiDeliveryType.PAYMENT_REGISTERED,
-                    "payment-registered:" + evidence.getIdPaymentEvidence(),
+            sendCustomerNotice(evidence.getConversation(),
                     "✅ Comprobante registrado correctamente. En unos momentos validaremos tu pedido.");
             return;
         } else if (readStringList(evidence.getWarningsJson()).stream()
@@ -712,8 +574,7 @@ public class CrmWhatsappPaymentEvidenceService {
         if (evidence.getProcessingStatus() == CrmWhatsappPaymentProcessingStatus.FAILED) {
             retryMessage = message;
         }
-        deliveryService.enqueueNotice(evidence.getConversation(), CrmWhatsappAiDeliveryType.PAYMENT_RETRY,
-                "payment-retry:" + evidence.getIdPaymentEvidence(), retryMessage);
+        sendCustomerNotice(evidence.getConversation(), retryMessage);
     }
 
     private void sendCustomerNotice(CrmWhatsappConversation conversation, String message) {
@@ -773,7 +634,8 @@ public class CrmWhatsappPaymentEvidenceService {
                 accepted == null ? null : accepted.getOperationCode(),
                 accepted == null ? null : accepted.getOperationAt(),
                 accepted == null ? null : accepted.getDetectedAmount(),
-                accepted == null ? null : accepted.getDetectedProvider());
+                accepted == null ? null : accepted.getDetectedProvider(),
+                request.getVenta() == null ? null : toSalesNoteReview(request));
     }
 
     private PaymentEvidenceResponse toResponse(CrmWhatsappPaymentEvidence evidence) {
@@ -784,7 +646,7 @@ public class CrmWhatsappPaymentEvidenceService {
                 evidence.getValidationStatus().name(), evidence.getProcessingStatus().name(),
                 evidence.getMimeType(), evidence.getFileName(), evidence.getDetectedProvider(), evidence.getDetectedAmount(),
                 evidence.getDetectedCurrency(), evidence.getOperationCode(), evidence.getOperationAt(), evidence.getRecipient(),
-                evidence.getConfidence(), readStringList(evidence.getWarningsJson()), evidence.getDuplicateOfId(),
+                evidence.getExtractedText(), evidence.getConfidence(), readStringList(evidence.getWarningsJson()), evidence.getDuplicateOfId(),
                 evidence.getReviewNote(), evidence.getCreatedAt(),
                 evidence.getPaymentRequest() == null ? null : evidence.getPaymentRequest().getExpectedAmount(),
                 evidence.getPaymentRequest() == null ? null : evidence.getPaymentRequest().getCurrency(),
@@ -796,6 +658,62 @@ public class CrmWhatsappPaymentEvidenceService {
                 "/api/crm/whatsapp/payment-evidences/" + evidence.getIdPaymentEvidence() + "/media");
     }
 
+    private SalesNoteReview toSalesNoteReview(CrmWhatsappPaymentRequest request) {
+        Venta sale = request.getVenta();
+        List<SalesNoteItem> items = ventaDetalleRepository
+                .findByVenta_IdVentaAndDeletedAtIsNullOrderByIdVentaDetalleAsc(sale.getIdVenta())
+                .stream().map(this::toSalesNoteItem).toList();
+        List<SalesNotePayment> payments = pagoRepository
+                .findByVenta_IdVentaAndDeletedAtIsNullOrderByIdPagoAsc(sale.getIdVenta())
+                .stream().map(this::toSalesNotePayment).toList();
+        CrmWhatsappFulfillment fulfillment = request.getAgentSession() == null ? null
+                : fulfillmentRepository.findByAgentSession_IdAgentSession(
+                        request.getAgentSession().getIdAgentSession()).orElse(null);
+        return new SalesNoteReview(
+                sale.getIdVenta(),
+                clean(sale.getSerie()) + "-" + sale.getCorrelativo(),
+                sale.getTipoComprobante(),
+                sale.getEstado(),
+                sale.getOrigen(),
+                sale.getFecha(),
+                sale.getSubtotal(),
+                sale.getDescuentoTotal(),
+                sale.getTotal(),
+                sale.getCliente() == null ? null : sale.getCliente().getNombres(),
+                sale.getSucursal() == null ? null : sale.getSucursal().getNombre(),
+                items,
+                payments,
+                fulfillment == null ? null : new FulfillmentReview(
+                        fulfillment.getMethod() == null ? null : fulfillment.getMethod().name(),
+                        fulfillment.getStatus() == null ? null : fulfillment.getStatus().name(),
+                        fulfillment.getRecipientName(),
+                        fulfillment.getDocumentNumber(),
+                        fulfillment.getPhone(),
+                        fulfillment.getPickupBranch() == null ? null : fulfillment.getPickupBranch().getNombre(),
+                        fulfillment.getShalomAgency(),
+                        fulfillment.getShalomDestination(),
+                        fulfillment.getShalomAgencyAddress()));
+    }
+
+    private SalesNoteItem toSalesNoteItem(VentaDetalle detail) {
+        return new SalesNoteItem(
+                detail.getProductoVariante() == null ? null
+                        : detail.getProductoVariante().getIdProductoVariante(),
+                detail.getDescripcion(),
+                detail.getCantidad(),
+                detail.getPrecioUnitario(),
+                detail.getDescuento(),
+                detail.getTotalDetalle());
+    }
+
+    private SalesNotePayment toSalesNotePayment(Pago payment) {
+        return new SalesNotePayment(
+                payment.getMetodoPago() == null ? null : payment.getMetodoPago().getNombre(),
+                payment.getMonto(),
+                payment.getCodigoOperacion(),
+                payment.getFecha());
+    }
+
     private PaymentDecisionResponse decisionResponse(CrmWhatsappPaymentEvidence evidence, VentaCrmResponse sale) {
         CrmWhatsappPaymentRequest request = evidence.getPaymentRequest();
         return new PaymentDecisionResponse(
@@ -803,6 +721,167 @@ public class CrmWhatsappPaymentEvidenceService {
                 request == null ? null : toResponse(request),
                 chatServiceProvider.getObject().conversationResponse(evidence.getConversation()),
                 sale);
+    }
+
+    private PaymentDecisionResponse decideAutomaticSale(
+            CrmWhatsappPaymentEvidence evidence,
+            CrmWhatsappPaymentRequest request,
+            PaymentDecisionRequest body,
+            Usuario actor,
+            String action) {
+        CrmWhatsappAgentSession session = agentSessionRepository
+                .findForUpdate(request.getAgentSession().getIdAgentSession())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT,
+                        "La sesion automatica ya no existe"));
+        CrmWhatsappFulfillment fulfillment = fulfillmentRepository
+                .findForUpdateBySessionId(session.getIdAgentSession())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT,
+                        "La entrega de la venta no esta registrada"));
+        Venta sale = request.getVenta();
+        validateAutomaticSaleReview(evidence, request, session, fulfillment, sale);
+
+        String note = clean(body == null ? null : body.note());
+        String saleStatusBefore = clean(sale.getEstado()).toUpperCase(Locale.ROOT);
+        CrmWhatsappAgentState stateBefore = session.getState();
+        CrmWhatsappPaymentReviewAction reviewAction;
+        String saleStatusAfter;
+
+        if ("ACCEPT".equals(action)) {
+            if (filmAddonRepository != null && filmAddonRepository.findPendingForSale(sale.getIdVenta(),
+                    List.of(CrmWhatsappFilmStatus.PAID_PENDING_REVIEW)).isPresent()) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "Primero revisa el comprobante adicional del film protector");
+            }
+            if (!Boolean.TRUE.equals(body == null ? null : body.confirmedExternal())) {
+                throw badRequest("Confirma que verificaste el abono antes de aceptar el pago");
+            }
+            review(evidence, actor, CrmWhatsappPaymentEvidenceStatus.VALIDADO, note);
+            request.setStatus(CrmWhatsappPaymentRequestStatus.COMPLETED);
+            request.setCompletedAt(LocalDateTime.now());
+            applyFinalAgentEvent(session, CrmWhatsappAgentEvent.PAGO_APROBADO_FINALMENTE);
+            reviewAction = CrmWhatsappPaymentReviewAction.ACCEPTED;
+            saleStatusAfter = saleStatusBefore;
+        } else {
+            if (note.length() < 5) {
+                throw badRequest("Indica el motivo del rechazo con al menos 5 caracteres");
+            }
+            var cancellation = ventaAnulacionService.anularNotaVentaAutomaticaDesdeCrm(
+                    sale.getIdVenta(), note, actor);
+            if (filmAddonRepository != null) {
+                filmAddonRepository.findByVenta_IdVenta(sale.getIdVenta()).ifPresent(film -> {
+                    film.setStatus(CrmWhatsappFilmStatus.ORDER_CANCELLED);
+                    film.setResolvedAt(LocalDateTime.now());
+                    filmAddonRepository.save(film);
+                });
+            }
+            reservationService.markReversedAfterSaleCancellation(request,
+                    "Pago rechazado por revision humana: " + note);
+            review(evidence, actor, CrmWhatsappPaymentEvidenceStatus.RECHAZADO, note);
+            request.setStatus(CrmWhatsappPaymentRequestStatus.CANCELLED);
+            request.setCompletedAt(LocalDateTime.now());
+            request.setReleaseReason(truncate("Pago rechazado: " + note, 500));
+            applyFinalAgentEvent(session, CrmWhatsappAgentEvent.PAGO_RECHAZADO_Y_VENTA_ANULADA);
+            reviewAction = CrmWhatsappPaymentReviewAction.REJECTED;
+            saleStatusAfter = clean(cancellation.estadoVenta()).toUpperCase(Locale.ROOT);
+        }
+
+        requestRepository.save(request);
+        saveReviewAudit(evidence, request, session, sale, actor, reviewAction, note,
+                saleStatusBefore, saleStatusAfter, stateBefore);
+        publish("payment.request.updated", evidence.getConversation(), toResponse(request));
+        publish("payment.evidence.updated", evidence.getConversation(), toResponse(evidence));
+        sendCustomerNotice(evidence.getConversation(), reviewAction == CrmWhatsappPaymentReviewAction.ACCEPTED
+                ? ORDER_REGISTERED_NOTICE
+                : "PEDIDO RECHAZADO");
+        return decisionResponse(evidence, null);
+    }
+
+    private void validateAutomaticSaleReview(
+            CrmWhatsappPaymentEvidence evidence,
+            CrmWhatsappPaymentRequest request,
+            CrmWhatsappAgentSession session,
+            CrmWhatsappFulfillment fulfillment,
+            Venta sale) {
+        if (evidence.getValidationStatus() != CrmWhatsappPaymentEvidenceStatus.ACEPTABLE
+                || evidence.getProcessingStatus() != CrmWhatsappPaymentProcessingStatus.COMPLETED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "El comprobante no esta listo para revision humana");
+        }
+        if (request.getStatus() != CrmWhatsappPaymentRequestStatus.UNDER_REVIEW
+                || request.getReservationStatus() != CrmWhatsappPaymentReservationStatus.CONSUMED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "La venta automatica ya no esta pendiente de revision");
+        }
+        if (session.getState() != CrmWhatsappAgentState.VENTA_PENDIENTE_REVISION) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "La sesion no esta pendiente de revision humana");
+        }
+        if (fulfillment.getVenta() == null
+                || !Objects.equals(fulfillment.getVenta().getIdVenta(), sale.getIdVenta())
+                || fulfillment.getPaymentRequest() == null
+                || !Objects.equals(fulfillment.getPaymentRequest().getIdPaymentRequest(),
+                        request.getIdPaymentRequest())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "La venta, el pago y la entrega no estan relacionados correctamente");
+        }
+        if (!"NOTA DE VENTA".equalsIgnoreCase(clean(sale.getTipoComprobante()))
+                || !"CRM_WHATSAPP".equalsIgnoreCase(clean(sale.getOrigen()))
+                || !"EMITIDA".equalsIgnoreCase(clean(sale.getEstado()))
+                || sale.getTotal() == null
+                || request.getExpectedAmount() == null
+                || sale.getTotal().setScale(2, RoundingMode.HALF_UP)
+                        .compareTo(request.getExpectedAmount().setScale(2, RoundingMode.HALF_UP)) != 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "La Nota de Venta no coincide con el pago validado");
+        }
+        if (reviewAuditRepository.findByPaymentEvidence_IdPaymentEvidence(
+                evidence.getIdPaymentEvidence()).isPresent()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Esta revision humana ya fue registrada");
+        }
+    }
+
+    private void applyFinalAgentEvent(CrmWhatsappAgentSession session, CrmWhatsappAgentEvent event) {
+        LocalDateTime now = LocalDateTime.now();
+        session.setState(agentStateMachine.transition(session.getState(), event));
+        session.setLastEvent(event);
+        session.setLastActivityAt(now);
+        session.setStateChangedAt(now);
+        session.setCompletedAt(now);
+        // NULL libera el slot unico y permite conservar multiples sesiones
+        // historicas cerradas para la misma conversacion.
+        session.setActiveSlot(null);
+        agentSessionRepository.save(session);
+    }
+
+    private void saveReviewAudit(
+            CrmWhatsappPaymentEvidence evidence,
+            CrmWhatsappPaymentRequest request,
+            CrmWhatsappAgentSession session,
+            Venta sale,
+            Usuario actor,
+            CrmWhatsappPaymentReviewAction action,
+            String reason,
+            String saleStatusBefore,
+            String saleStatusAfter,
+            CrmWhatsappAgentState stateBefore) {
+        CrmWhatsappPaymentReviewAudit audit = new CrmWhatsappPaymentReviewAudit();
+        audit.setPaymentEvidence(evidence);
+        audit.setPaymentRequest(request);
+        audit.setAgentSession(session);
+        audit.setConversation(evidence.getConversation());
+        audit.setVenta(sale);
+        audit.setReviewedBy(actor);
+        audit.setAction(action);
+        audit.setReason(blankToNull(truncate(reason, 500)));
+        audit.setExpectedAmount(request.getExpectedAmount());
+        audit.setDetectedAmount(evidence.getDetectedAmount());
+        audit.setOperationCode(blankToNull(evidence.getOperationCode()));
+        audit.setSaleStatusBefore(saleStatusBefore);
+        audit.setSaleStatusAfter(saleStatusAfter);
+        audit.setAgentStateBefore(stateBefore.name());
+        audit.setAgentStateAfter(session.getState().name());
+        reviewAuditRepository.save(audit);
     }
 
     private void publish(String type, CrmWhatsappConversation conversation, Object data) {
@@ -894,11 +973,6 @@ public class CrmWhatsappPaymentEvidenceService {
         } catch (Exception ignored) { return null; }
     }
 
-    private int hammingDistance(String first, String second) {
-        try { return Long.bitCount(Long.parseUnsignedLong(first, 16) ^ Long.parseUnsignedLong(second, 16)); }
-        catch (RuntimeException error) { return Integer.MAX_VALUE; }
-    }
-
     private String extension(String mime) {
         return switch (clean(mime).toLowerCase(Locale.ROOT)) {
             case "image/png" -> ".png"; case "image/webp" -> ".webp"; case "application/pdf" -> ".pdf"; default -> ".jpg";
@@ -938,12 +1012,23 @@ public class CrmWhatsappPaymentEvidenceService {
             String reservationStatus, LocalDateTime reservedAt, LocalDateTime reviewExpiresAt, String releaseReason,
             Integer saleId, Long evidenceId, Long evidenceMessageId, String evidenceStatus, boolean advisorAccepted,
             String operationCode, LocalDateTime operationAt,
-            BigDecimal detectedAmount, String detectedProvider) {}
+            BigDecimal detectedAmount, String detectedProvider, SalesNoteReview salesNote) {}
     public record PaymentEvidenceResponse(Long idPaymentEvidence, Long messageId, Long conversationId, Long paymentRequestId,
             String validationStatus, String processingStatus, String mimeType, String fileName, String provider,
             BigDecimal amount, String currency, String operationCode, LocalDateTime operationAt, String recipient,
-            Integer confidence, List<String> warnings, Long duplicateOfId, String reviewNote, LocalDateTime createdAt,
+            String extractedText, Integer confidence, List<String> warnings, Long duplicateOfId,
+            String reviewNote, LocalDateTime createdAt,
             BigDecimal expectedAmount, String expectedCurrency, String expectedPaymentMethod,
             String expectedAccountNumber, String expectedAccountHolder,
             String mediaUrl) {}
+    public record SalesNoteReview(Integer saleId, String number, String receiptType, String status, String origin,
+            LocalDateTime createdAt, BigDecimal subtotal, BigDecimal discount, BigDecimal total,
+            String customer, String branch, List<SalesNoteItem> items, List<SalesNotePayment> payments,
+            FulfillmentReview fulfillment) {}
+    public record SalesNoteItem(Integer variantId, String description, Integer quantity,
+            BigDecimal unitPrice, BigDecimal discount, BigDecimal total) {}
+    public record SalesNotePayment(String method, BigDecimal amount, String operationCode, LocalDateTime paidAt) {}
+    public record FulfillmentReview(String method, String status, String recipientName, String documentNumber,
+            String phone, String pickupBranch, String shalomAgency, String shalomDestination,
+            String shalomAgencyAddress) {}
 }

@@ -4,5 +4,6 @@ public enum CrmWhatsappPaymentReservationStatus {
     LEGACY_NONE,
     ACTIVE,
     CONSUMED,
-    RELEASED
+    RELEASED,
+    REVERSED
 }

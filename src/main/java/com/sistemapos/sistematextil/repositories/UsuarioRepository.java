@@ -65,6 +65,18 @@ public interface UsuarioRepository extends JpaRepository <Usuario, Integer>{
             ORDER BY u.nombre ASC, u.apellido ASC, u.correo ASC
             """, nativeQuery = true)
     List<Usuario> findUsuariosConAccesoCrm();
+    @Query(value = """
+            SELECT DISTINCT u.*
+            FROM usuario u
+            LEFT JOIN usuario_sucursal us ON us.id_usuario = u.id_usuario
+            WHERE u.deleted_at IS NULL
+              AND u.activo = 1
+              AND (u.id_sucursal = :idSucursal OR us.id_sucursal = :idSucursal)
+            ORDER BY CASE WHEN u.id_sucursal = :idSucursal THEN 0 ELSE 1 END,
+                     u.id_usuario ASC
+            LIMIT 1
+            """, nativeQuery = true)
+    Optional<Usuario> findFirstActiveBySucursal(@Param("idSucursal") Integer idSucursal);
     @Query("""
             SELECT COUNT(DISTINCT u)
             FROM Usuario u

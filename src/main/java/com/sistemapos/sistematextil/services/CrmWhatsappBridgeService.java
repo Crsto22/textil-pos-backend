@@ -53,6 +53,10 @@ public class CrmWhatsappBridgeService {
     }
 
     public ResponseEntity<String> enviarTexto(String to, String message, Object quotedMessage) {
+        return enviarTexto(to, message, quotedMessage, null);
+    }
+
+    public ResponseEntity<String> enviarTexto(String to, String message, Object quotedMessage, String idempotencyKey) {
         connectionStateService.requireOperational();
         java.util.Map<String, Object> body = new java.util.LinkedHashMap<>();
         body.put("to", to);
@@ -60,7 +64,7 @@ public class CrmWhatsappBridgeService {
         if (quotedMessage != null) {
             body.put("quoted", quotedMessage);
         }
-        return request(HttpMethod.POST, "/send-text", body);
+        return request(HttpMethod.POST, "/send-text", body, idempotencyKey);
     }
 
     public ResponseEntity<String> enviarMedia(String to, MultipartFile file, String caption, String quotedMessageJson) {
@@ -74,6 +78,11 @@ public class CrmWhatsappBridgeService {
 
     public ResponseEntity<String> enviarMedia(String to, byte[] bytes, String originalFilename,
             String contentType, String caption, String quotedMessageJson) {
+        return enviarMedia(to, bytes, originalFilename, contentType, caption, quotedMessageJson, null);
+    }
+
+    public ResponseEntity<String> enviarMedia(String to, byte[] bytes, String originalFilename,
+            String contentType, String caption, String quotedMessageJson, String idempotencyKey) {
         connectionStateService.requireOperational();
         if (bridgeUrl.isBlank()) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "WHATSAPP_BRIDGE_URL no configurado");
@@ -87,6 +96,9 @@ public class CrmWhatsappBridgeService {
             headers.setAccept(List.of(MediaType.APPLICATION_JSON));
             headers.setContentType(MediaType.MULTIPART_FORM_DATA);
             headers.set("X-Bridge-Token", bridgeToken);
+            if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+                headers.set("X-Idempotency-Key", idempotencyKey);
+            }
 
             MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
             body.add("to", to);
@@ -133,6 +145,10 @@ public class CrmWhatsappBridgeService {
     }
 
     private ResponseEntity<String> request(HttpMethod method, String path, Object body) {
+        return request(method, path, body, null);
+    }
+
+    private ResponseEntity<String> request(HttpMethod method, String path, Object body, String idempotencyKey) {
         if (bridgeUrl.isBlank()) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "WHATSAPP_BRIDGE_URL no configurado");
         }
@@ -144,6 +160,9 @@ public class CrmWhatsappBridgeService {
         headers.setAccept(List.of(MediaType.APPLICATION_JSON));
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.set("X-Bridge-Token", bridgeToken);
+        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+            headers.set("X-Idempotency-Key", idempotencyKey);
+        }
 
         try {
             ResponseEntity<String> response = restTemplate.exchange(

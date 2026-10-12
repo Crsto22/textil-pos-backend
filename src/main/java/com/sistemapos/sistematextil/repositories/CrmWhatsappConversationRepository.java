@@ -37,17 +37,6 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
     @Query(value = "UPDATE crm_whatsapp_conversation SET id_connection = :idConnection WHERE id_connection IS NULL", nativeQuery = true)
     int assignUnlinkedConversations(@Param("idConnection") Long idConnection);
 
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("""
-            SELECT c FROM CrmWhatsappConversation c
-            WHERE c.connection.idConnection = :connectionId
-              AND c.assignedUser IS NULL
-              AND c.status <> 'RESUELTO'
-              AND (c.attentionQueue = com.sistemapos.sistematextil.model.CrmWhatsappAttentionQueue.AI_ACTIVE
-                   OR c.waitingReason = com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.AI_DISABLED)
-            """)
-    List<CrmWhatsappConversation> findAutomationQueueCandidatesForUpdate(@Param("connectionId") Long connectionId);
-
     @Modifying
     @Query(value = "DELETE FROM crm_whatsapp_conversation", nativeQuery = true)
     int deleteAllWhatsappConversations();
@@ -65,23 +54,16 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
                    OR (:view = 'ATTENDED'
                        AND c.status <> 'RESUELTO'
                        AND (c.assignedUser IS NOT NULL OR c.status = 'ATENDIDO'))
-                   OR (:view = 'AI_ACTIVE'
-                       AND c.status <> 'RESUELTO' AND c.status <> 'ATENDIDO'
+                   OR (:view = 'AGENT'
+                       AND c.status <> 'RESUELTO'
                        AND c.assignedUser IS NULL
-                       AND c.aiAttentionMode = com.sistemapos.sistematextil.model.CrmWhatsappAiAttentionMode.AUTOMATICA
-                       AND c.waitingReason IS NULL)
+                       AND c.attentionQueue = com.sistemapos.sistematextil.model.CrmWhatsappAttentionQueue.AGENT_ACTIVE)
                    OR (:view = 'RESOLVED'
                        AND c.status = 'RESUELTO'))
               AND (:waitingOnly = false OR (
                     c.status <> 'RESUELTO' AND c.status <> 'ATENDIDO'
                     AND c.assignedUser IS NULL
-                    AND (c.waitingReason IN (
-                          com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.ADVISOR_REQUIRED,
-                          com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.AI_DISABLED,
-                          com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.IMAGE_RECEIVED,
-                          com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.AI_RESPONSE_FAILED,
-                          com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.PAYMENT_VERIFICATION)
-                         OR c.aiAttentionMode = com.sistemapos.sistematextil.model.CrmWhatsappAiAttentionMode.HUMANA)))
+                    AND c.waitingReason = com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.ADVISOR_REQUIRED))
               AND (:isAdmin = true
                    OR (c.assignedUser IS NOT NULL AND c.assignedUser.idUsuario = :idUsuario)
                    OR (c.status = 'ESPERA' AND c.assignedUser IS NULL))
@@ -110,23 +92,16 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
                    OR (:view = 'ATTENDED'
                        AND c.status <> 'RESUELTO'
                        AND (c.assignedUser IS NOT NULL OR c.status = 'ATENDIDO'))
-                   OR (:view = 'AI_ACTIVE'
-                       AND c.status <> 'RESUELTO' AND c.status <> 'ATENDIDO'
+                   OR (:view = 'AGENT'
+                       AND c.status <> 'RESUELTO'
                        AND c.assignedUser IS NULL
-                       AND c.aiAttentionMode = com.sistemapos.sistematextil.model.CrmWhatsappAiAttentionMode.AUTOMATICA
-                       AND c.waitingReason IS NULL)
+                       AND c.attentionQueue = com.sistemapos.sistematextil.model.CrmWhatsappAttentionQueue.AGENT_ACTIVE)
                    OR (:view = 'RESOLVED'
                        AND c.status = 'RESUELTO'))
               AND (:waitingOnly = false OR (
                     c.status <> 'RESUELTO' AND c.status <> 'ATENDIDO'
                     AND c.assignedUser IS NULL
-                    AND (c.waitingReason IN (
-                          com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.ADVISOR_REQUIRED,
-                          com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.AI_DISABLED,
-                          com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.IMAGE_RECEIVED,
-                          com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.AI_RESPONSE_FAILED,
-                          com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.PAYMENT_VERIFICATION)
-                         OR c.aiAttentionMode = com.sistemapos.sistematextil.model.CrmWhatsappAiAttentionMode.HUMANA)))
+                    AND c.waitingReason = com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.ADVISOR_REQUIRED))
               AND (:isAdmin = true
                    OR (c.assignedUser IS NOT NULL AND c.assignedUser.idUsuario = :idUsuario)
                    OR (c.status = 'ESPERA' AND c.assignedUser IS NULL))
@@ -189,20 +164,13 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
               COALESCE(SUM(CASE WHEN c.status <> 'RESUELTO'
                                      AND (c.assignedUser IS NOT NULL OR c.status = 'ATENDIDO')
                                 THEN 1 ELSE 0 END), 0),
-              COALESCE(SUM(CASE WHEN c.status <> 'RESUELTO' AND c.status <> 'ATENDIDO'
+              COALESCE(SUM(CASE WHEN c.status <> 'RESUELTO'
                                      AND c.assignedUser IS NULL
-                                     AND c.aiAttentionMode = com.sistemapos.sistematextil.model.CrmWhatsappAiAttentionMode.AUTOMATICA
-                                     AND c.waitingReason IS NULL
+                                     AND c.attentionQueue = com.sistemapos.sistematextil.model.CrmWhatsappAttentionQueue.AGENT_ACTIVE
                                 THEN 1 ELSE 0 END), 0),
               COALESCE(SUM(CASE WHEN c.status <> 'RESUELTO' AND c.status <> 'ATENDIDO'
                                      AND c.assignedUser IS NULL
-                                     AND (c.waitingReason IN (
-                                          com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.ADVISOR_REQUIRED,
-                                          com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.AI_DISABLED,
-                                          com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.IMAGE_RECEIVED,
-                                          com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.AI_RESPONSE_FAILED,
-                                          com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.PAYMENT_VERIFICATION)
-                                          OR c.aiAttentionMode = com.sistemapos.sistematextil.model.CrmWhatsappAiAttentionMode.HUMANA)
+                                     AND c.waitingReason = com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.ADVISOR_REQUIRED
                                 THEN 1 ELSE 0 END), 0),
               COALESCE(SUM(CASE WHEN c.status = 'RESUELTO' THEN 1 ELSE 0 END), 0)
             FROM CrmWhatsappConversation c

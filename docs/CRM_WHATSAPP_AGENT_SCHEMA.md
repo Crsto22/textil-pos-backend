@@ -1,8 +1,8 @@
-# Esquema local del agente de WhatsApp
+# Esquema del agente de WhatsApp
 
 ## Alcance
 
-`CrmWhatsappAgentSchemaMigration` crea este esquema únicamente cuando la URL JDBC apunta a `localhost`, `127.0.0.1` o `::1`. La propiedad `crm.whatsapp.agent-schema-enabled` permite desactivarlo. La migración no inserta, actualiza ni elimina productos, clientes, conversaciones, stock, promociones o ventas.
+`CrmWhatsappAgentSchemaMigration` crea o verifica este esquema en la base MySQL configurada, tanto local como remota. La propiedad `crm.whatsapp.agent-schema-enabled` permite desactivarlo. La migración no inserta, actualiza ni elimina productos, clientes, conversaciones, stock, promociones o ventas.
 
 ## Tablas
 

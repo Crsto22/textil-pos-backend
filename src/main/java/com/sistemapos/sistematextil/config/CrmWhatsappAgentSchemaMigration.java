@@ -19,7 +19,7 @@ import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 /**
- * Crea el esquema del agente nuevo exclusivamente en MySQL local.
+ * Crea o actualiza el esquema aditivo del agente nuevo en MySQL.
  * No inserta, actualiza ni elimina datos comerciales.
  */
 @Component
@@ -43,8 +43,8 @@ public class CrmWhatsappAgentSchemaMigration implements ApplicationRunner {
         if (!enabled) return;
         try (Connection connection = dataSource.getConnection()) {
             String jdbcUrl = connection.getMetaData().getURL();
-            if (!isLocalDatabase(jdbcUrl)) {
-                log.info("Esquema del agente omitido: la base configurada no es local");
+            if (!isMysqlDatabase(jdbcUrl)) {
+                log.warn("Esquema del agente omitido: la base configurada no es MySQL");
                 return;
             }
             try (Statement statement = connection.createStatement()) {
@@ -64,7 +64,7 @@ public class CrmWhatsappAgentSchemaMigration implements ApplicationRunner {
                 adaptPaymentReviewConversationReference(connection, statement);
                 migrateActiveSessionsToPaymentFirstFlow(statement);
             }
-            log.info("Esquema local del agente de WhatsApp verificado");
+            log.info("Esquema del agente de WhatsApp verificado");
         }
     }
 
@@ -141,11 +141,9 @@ public class CrmWhatsappAgentSchemaMigration implements ApplicationRunner {
                 """);
     }
 
-    static boolean isLocalDatabase(String url) {
+    static boolean isMysqlDatabase(String url) {
         String normalized = url == null ? "" : url.toLowerCase(Locale.ROOT);
-        return normalized.contains("//localhost:")
-                || normalized.contains("//127.0.0.1:")
-                || normalized.contains("//[::1]:");
+        return normalized.startsWith("jdbc:mysql:");
     }
 
     private void createSessionTable(Statement statement) throws SQLException {

@@ -282,7 +282,7 @@ public class AgentDeterministicCommerceService {
             text.append("Envío aproximado: 1 a 3 días, según el volumen de pedidos.\n\n");
         }
         if (requestConfirmation) {
-            text.append("⚠️ Revisa bien el modelo, color y talla. Los cambios tienen una penalidad de S/20 y pueden demorar.\n\n")
+            text.append("⚠️ Revisa bien el modelo, color y talla. Los cambios tienen una penalidad de S/10 y pueden demorar.\n\n")
                     .append("Si todo está correcto, confirma tu pedido para continuar con el pago.");
         }
         return text.toString().trim();

@@ -37,7 +37,7 @@ public class AgentConversationOrchestrator {
     static final String POST_SALE_CHANGE_MESSAGE = """
             Entiendo. Como tu pedido ya fue confirmado, no puedo realizar cambios de color, talla, modelo, cantidad, pago o entrega desde el chat automatico.
 
-            Una asesora revisara tu solicitud y te indicara si el cambio es posible. Ten en cuenta que puede aplicarse una penalidad de S/20 por prenda.
+            Una asesora revisara tu solicitud y te indicara si el cambio es posible. Ten en cuenta que puede aplicarse una penalidad de S/10 por prenda.
 
             Para recibir ayuda con tu caso, comunícate con nuestra asesora al 933918047.""";
     static final String GENERAL_IMAGE_MESSAGE = """

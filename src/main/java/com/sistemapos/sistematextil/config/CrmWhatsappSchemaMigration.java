@@ -258,6 +258,13 @@ public class CrmWhatsappSchemaMigration implements ApplicationRunner {
                     "TEXT NULL");
             addColumnIfMissing(connection, statement, "crm_whatsapp_ai_config", "agent_behavior_instructions",
                     "TEXT NULL");
+            statement.executeUpdate("""
+                    UPDATE crm_whatsapp_ai_config
+                    SET welcome_message = REPLACE(welcome_message,
+                        'penalidad de S/20.00 por cada cambio de prenda',
+                        'penalidad de S/10.00 por cada cambio de prenda')
+                    WHERE welcome_message LIKE '%penalidad de S/20.00 por cada cambio de prenda%'
+                    """);
             if (!columnExists(connection, "crm_whatsapp_ai_config", "api_key_updated_at")) {
                 statement.execute("""
                         ALTER TABLE crm_whatsapp_ai_config

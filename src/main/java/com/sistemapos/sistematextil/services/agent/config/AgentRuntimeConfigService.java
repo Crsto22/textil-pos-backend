@@ -32,7 +32,7 @@ public class AgentRuntimeConfigService {
             Antes de realizar tu compra, revisa cuidadosamente el *modelo, color y talla* seleccionados.
 
             ⚠️ *IMPORTANTE SOBRE LOS CAMBIOS*
-            Evita solicitar cambios después de confirmar tu pedido. Este proceso puede tomar más tiempo y tiene una *penalidad de S/20.00 por cada cambio de prenda*.
+            Evita solicitar cambios después de confirmar tu pedido. Este proceso puede tomar más tiempo y tiene una *penalidad de S/10.00 por cada cambio de prenda*.
 
             Por favor, asegúrate de elegir correctamente tu *talla, modelo y color* antes de continuar. Si tienes alguna duda, consúltanos antes de confirmar tu compra.
 

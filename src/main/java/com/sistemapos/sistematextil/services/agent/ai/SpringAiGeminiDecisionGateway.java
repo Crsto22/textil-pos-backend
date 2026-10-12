@@ -32,7 +32,10 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
             commercialAction es una accion semantica, no una palabra clave. Determinala por el significado,
             el ESTADO_ACTUAL y el ultimo mensaje. Usa el historial solo para resolver referencias.
             - SHOW_PRODUCTS: pide catalogo o pregunta que productos existen.
-            - SHOW_PRODUCT: pide datos, colores, tallas o imagen de un modelo.
+            - SHOW_PRODUCT: pide datos, colores, tallas o detalles de un modelo.
+            - SHOW_PRODUCT_IMAGES: pide expresamente fotos o imagenes de uno o varios modelos. Conserva en
+              productReference el nombre o familia solicitada aunque coincida con varios productos. Si tambien
+              solicita un color, conservalo en colorReference; Java decidira si primero debe precisar el modelo.
             - SHOW_SIZE_GUIDE: pide expresamente ver o recibir la imagen de la guia de tallas de un modelo.
             - RECOMMEND_SIZE: comunica una o varias medidas corporales o pregunta que talla le corresponde.
               Conserva el producto en productReference, la pieza opcional en sizeGuideComponent y todas las

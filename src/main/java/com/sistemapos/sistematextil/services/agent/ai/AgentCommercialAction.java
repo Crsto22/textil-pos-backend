@@ -8,6 +8,7 @@ public enum AgentCommercialAction {
     NONE,
     SHOW_PRODUCTS,
     SHOW_PRODUCT,
+    SHOW_PRODUCT_IMAGES,
     SHOW_SIZE_GUIDE,
     RECOMMEND_SIZE,
     SHOW_PROMOTIONS,

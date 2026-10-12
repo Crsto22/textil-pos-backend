@@ -138,7 +138,8 @@ public class AgentVerifiedGroundingService {
             groundPromotions(sessionId, jobId, decision, conversation, ordinal, evidence);
         } else if (!commercial.handled()
                 && (decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCTS
-                || decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT)) {
+                || decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT
+                || decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT_IMAGES)) {
             groundCatalog(sessionId, jobId, decision, conversation, ordinal, evidence, media);
         } else if (!commercial.handled()) switch (decision.intent()) {
             case PRODUCT_SEARCH, PRODUCT_DETAILS -> groundCatalog(
@@ -163,6 +164,7 @@ public class AgentVerifiedGroundingService {
             }
         }
 
+        evidence.put("verifiedMediaCount", media.size());
         int verifiedCalls = ordinal.get() - AUDIT_ORDINAL_BASE;
         return new Grounding(decision, write(evidence), List.copyOf(media), verifiedCalls,
                 mutationExecuted, customerMessage);
@@ -552,6 +554,7 @@ public class AgentVerifiedGroundingService {
             String conversation, AtomicInteger ordinal, Map<String, Object> evidence,
             List<AgentMediaRequest> media) {
         boolean browsingCatalog = decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCTS;
+        boolean imagesRequested = decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT_IMAGES;
         String query = browsingCatalog ? firstPresent(decision.productReference())
                 : firstPresent(decision.productReference(), decision.customerGoal(), conversation);
         ProductSearchResult search = verified(sessionId, jobId, ordinal,
@@ -572,7 +575,34 @@ public class AgentVerifiedGroundingService {
         }
 
         var selected = unambiguousProduct(search, decision.productReference());
-        if (selected == null) return;
+        if (selected == null) {
+            boolean requestedSpecificColor = decision.colorReference() != null
+                    && !decision.colorReference().isBlank();
+            if (imagesRequested && !requestedSpecificColor) {
+                List<Map<String, Object>> imageEvidence = new ArrayList<>();
+                for (var candidate : search.products().stream().limit(3).toList()) {
+                    Integer candidateId = candidate.productId();
+                    ProductImageResult candidateImages = verified(sessionId, jobId, ordinal,
+                            "obtener_imagen_producto", nullableMap("productoId", candidateId, "color", ""),
+                            ProductImageResult.class,
+                            () -> catalog.getProductImage(sessionId, candidateId, ""));
+                    boolean hasGlobalImage = candidateImages.globalImageUrl() != null
+                            && !candidateImages.globalImageUrl().isBlank();
+                    imageEvidence.add(Map.of(
+                            "productId", candidateId,
+                            "productName", candidate.name(),
+                            "globalImageAvailable", hasGlobalImage));
+                    if (hasGlobalImage) {
+                        media.add(new AgentMediaRequest(MediaType.PRODUCT_IMAGE, candidateId, ""));
+                    }
+                }
+                evidence.put("matchingProductImages", imageEvidence);
+                evidence.put("matchingProductImagesTruncated", search.products().size() > 3);
+            } else if (imagesRequested) {
+                evidence.put("productSelectionRequiredBeforeColorImage", true);
+            }
+            return;
+        }
 
         Integer productId = selected.productId();
         ProductDetail detail = verified(sessionId, jobId, ordinal,

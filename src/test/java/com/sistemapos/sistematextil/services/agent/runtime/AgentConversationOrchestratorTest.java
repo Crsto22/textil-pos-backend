@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import com.sistemapos.sistematextil.services.agent.ai.AgentResponseGateway;
+import com.sistemapos.sistematextil.services.agent.ai.AgentCommercialAction;
 import com.sistemapos.sistematextil.services.agent.ai.AgentResponseGateway.AgentResponseResult;
 import com.sistemapos.sistematextil.services.agent.ai.AgentConversationDecision;
 import com.sistemapos.sistematextil.services.agent.ai.AgentDecisionIntent;
@@ -169,6 +170,40 @@ class AgentConversationOrchestratorTest {
         ArgumentCaptor<GeneratedTurn> turn = ArgumentCaptor.forClass(GeneratedTurn.class);
         verify(fixture.jobs).saveGeneratedTurn(eq(41L), eq("worker:lease"), turn.capture(), any());
         assertEquals("Emma esta disponible a S/65.00.", turn.getValue().customerMessage());
+    }
+
+    @Test
+    void rewritesAFalseImageDeliveryClaimWhenNoMediaWasVerified() {
+        Fixture fixture = new Fixture();
+        fixture.current(true, true, true);
+        when(fixture.grounding.ground(eq(7L), eq(8L), eq(41L), any())).thenReturn(
+                new AgentVerifiedGroundingService.Grounding(
+                        new AgentConversationDecision(AgentDecisionIntent.PRODUCT_DETAILS,
+                                "mostrar fotos", "Alessia", "", "", 0, "",
+                                com.sistemapos.sistematextil.services.agent.ai.AgentCartAction.NONE,
+                                AgentCommercialAction.SHOW_PRODUCT_IMAGES,
+                                "", "", "", "", "", "", "", "",
+                                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL,
+                                100, false),
+                        "{\"productSelectionRequiredBeforeColorImage\":true,\"verifiedMediaCount\":0}",
+                        java.util.List.of(), 1, false));
+        when(fixture.gateway.respond(eq(7L), any(), eq(12)))
+                .thenReturn(new AgentResponseResult("GEMINI", "gemini", 100, 2,
+                        new AgentTurnResponse("Aqui tienes las imagenes de Alessia.", "Fotos", false,
+                                java.util.List.of())))
+                .thenReturn(new AgentResponseResult("GEMINI", "gemini", 90, 0,
+                        new AgentTurnResponse(
+                                "Tengo Alessia Entero y Alessia Rayas. ¿Cual modelo deseas ver?",
+                                "Fotos", false, java.util.List.of())));
+
+        assertEquals(AgentConversationOrchestrator.Outcome.COMPLETED,
+                fixture.orchestrator.process(fixture.lease));
+
+        verify(fixture.gateway, times(2)).respond(eq(7L), any(), eq(12));
+        ArgumentCaptor<GeneratedTurn> turn = ArgumentCaptor.forClass(GeneratedTurn.class);
+        verify(fixture.jobs).saveGeneratedTurn(eq(41L), eq("worker:lease"), turn.capture(), any());
+        assertEquals("Tengo Alessia Entero y Alessia Rayas. ¿Cual modelo deseas ver?",
+                turn.getValue().customerMessage());
     }
 
     private static final class Fixture {

@@ -404,6 +404,70 @@ class AgentVerifiedGroundingServiceTest {
     }
 
     @Test
+    void addsGlobalImagesForUpToThreeAmbiguousProductsWhenCustomerRequestsPhotos() {
+        AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.PRODUCT_DETAILS, "mostrar fotos de Alessia", "Alessia", "", "", 0, "",
+                AgentCartAction.NONE, AgentCommercialAction.SHOW_PRODUCT_IMAGES,
+                "", "", "", "", "", "", "", "",
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL, 99, false);
+        when(decisions.interpret(4L, "Si, pasame fotos de Alessia")).thenReturn(
+                new AgentInterpretationResult("GEMINI", "model", "DB", 10, 0, decision));
+        ProductSummary entero = new ProductSummary(68, "ALESSIA ENTERO", "ARUBA", "CONJUNTO",
+                false, null, 75D, 10, List.of("NEGRO"), List.of("XS"));
+        ProductSummary rayas = new ProductSummary(77, "ALESSIA RAYAS", "ARUBA", "CONJUNTO",
+                false, null, 75D, 8, List.of("AZUL"), List.of("S"));
+        when(catalog.searchProducts(9L, "Alessia", 20,
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL)).thenReturn(
+                new ProductSearchResult("Alessia", 1, List.of(entero, rayas), false));
+        when(catalog.getProductImage(9L, 68, "")).thenReturn(new ProductImageResult(
+                68, "ALESSIA ENTERO", "", "/alessia-entero.webp", null, List.of()));
+        when(catalog.getProductImage(9L, 77, "")).thenReturn(new ProductImageResult(
+                77, "ALESSIA RAYAS", "", "/alessia-rayas.webp", null, List.of()));
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
+                mock(AgentCartService.class), passThroughAudit());
+
+        var result = service.ground(4L, 9L, 30L, "Si, pasame fotos de Alessia");
+
+        assertEquals(3, result.verifiedToolCalls());
+        assertEquals(2, result.media().size());
+        assertEquals(68, result.media().get(0).productId());
+        assertEquals(77, result.media().get(1).productId());
+        assertTrue(result.evidenceJson().contains("matchingProductImages"));
+        assertTrue(result.evidenceJson().contains("\"verifiedMediaCount\":2"));
+    }
+
+    @Test
+    void doesNotChooseAColorImageWhenSeveralModelsMatch() {
+        AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.PRODUCT_DETAILS, "mostrar Alessia negra", "Alessia", "NEGRO", "", 0, "",
+                AgentCartAction.NONE, AgentCommercialAction.SHOW_PRODUCT_IMAGES,
+                "", "", "", "", "", "", "", "",
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL, 99, false);
+        when(decisions.interpret(4L, "Muestrame Alessia en negro")).thenReturn(
+                new AgentInterpretationResult("GEMINI", "model", "DB", 10, 0, decision));
+        ProductSummary entero = new ProductSummary(68, "ALESSIA ENTERO", "ARUBA", "CONJUNTO",
+                false, null, 75D, 10, List.of("NEGRO"), List.of("XS"));
+        ProductSummary rayas = new ProductSummary(77, "ALESSIA RAYAS", "ARUBA", "CONJUNTO",
+                false, null, 75D, 8, List.of("NEGRO"), List.of("S"));
+        when(catalog.searchProducts(9L, "Alessia", 20,
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL)).thenReturn(
+                new ProductSearchResult("Alessia", 1, List.of(entero, rayas), false));
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
+                mock(AgentCartService.class), passThroughAudit());
+
+        var result = service.ground(4L, 9L, 30L, "Muestrame Alessia en negro");
+
+        assertTrue(result.media().isEmpty());
+        assertTrue(result.evidenceJson().contains("productSelectionRequiredBeforeColorImage"));
+    }
+
+    @Test
     void addsPreviouslySelectedVariantWhenCustomerConfirmsOneUnit() {
         AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
         AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);

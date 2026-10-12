@@ -120,6 +120,8 @@ public class AgentConversationOrchestrator {
                         - Usa esta evidencia como unica fuente para hechos del negocio.
                         - No digas que estas buscando, revisando o verificando: la consulta ya fue ejecutada.
                         - No escribas marcadores como [lista], datos pendientes ni productos no presentes en la evidencia.
+                        - Solo afirma que adjuntas, compartes, envias o muestras fotos cuando verifiedMediaCount es
+                          mayor que cero. Si vale cero, no prometas ni anuncies imagenes que no seran enviadas.
                         - Cuando exista selectedProduct, responde ahora con sus datos reales.
                         - Todo producto que menciones o muestres debe incluir su precio real de la evidencia.
                           No omitas precios, no los agrupes si tienen importes distintos y no inventes montos.
@@ -145,10 +147,12 @@ public class AgentConversationOrchestrator {
         var priceValidation = priceValidator.validate(grounding.evidenceJson(), response.customerMessage());
         var promotionValidation = promotionValidator.validate(
                 grounding.evidenceJson(), response.customerMessage());
-        if (!priceValidation.valid() || !promotionValidation.valid()) {
+        String mediaCorrection = mediaCorrectionInstruction(grounding, response.customerMessage());
+        if (!priceValidation.valid() || !promotionValidation.valid() || !mediaCorrection.isBlank()) {
             String correctionInstruction = String.join("\n",
                     priceValidation.valid() ? "" : priceValidation.correctionInstruction(),
-                    promotionValidation.valid() ? "" : promotionValidation.correctionInstruction()).trim();
+                    promotionValidation.valid() ? "" : promotionValidation.correctionInstruction(),
+                    mediaCorrection).trim();
             AgentMainPrompt correctionPrompt = groundingCorrectionPrompt(
                     prompt, response.customerMessage(), correctionInstruction);
             var corrected = gateway.respond(context.connectionId(), correctionPrompt, maxTools);
@@ -158,10 +162,14 @@ public class AgentConversationOrchestrator {
                     grounding.evidenceJson(), correctedResponse.customerMessage());
             var correctedPromotionValidation = promotionValidator.validate(
                     grounding.evidenceJson(), correctedResponse.customerMessage());
-            if (!correctedValidation.valid() || !correctedPromotionValidation.valid()) {
+            String correctedMediaValidation = mediaCorrectionInstruction(
+                    grounding, correctedResponse.customerMessage());
+            if (!correctedValidation.valid() || !correctedPromotionValidation.valid()
+                    || !correctedMediaValidation.isBlank()) {
                 throw new IllegalStateException("Gemini contradijo la evidencia comercial despues de corregir la redaccion: "
                         + String.join(" ", correctedValidation.correctionInstruction(),
-                                correctedPromotionValidation.correctionInstruction()).trim());
+                                correctedPromotionValidation.correctionInstruction(),
+                                correctedMediaValidation).trim());
             }
             generated = new AgentResponseGateway.AgentResponseResult(
                     corrected.provider(), corrected.model(), generated.latencyMs() + corrected.latencyMs(),
@@ -228,7 +236,8 @@ public class AgentConversationOrchestrator {
     private void validateTurn(AgentVerifiedGroundingService.Grounding grounding, String customerMessage) {
         AgentDecisionIntent intent = grounding.decision().intent();
         boolean requiresVerifiedRead = requiresVerifiedRead(intent)
-                || grounding.decision().commercialAction() == AgentCommercialAction.SHOW_PROMOTIONS;
+                || grounding.decision().commercialAction() == AgentCommercialAction.SHOW_PROMOTIONS
+                || grounding.decision().commercialAction() == AgentCommercialAction.SHOW_PRODUCT_IMAGES;
         if (requiresVerifiedRead && grounding.verifiedToolCalls() < 1) {
             throw new IllegalStateException("La respuesta comercial no tiene evidencia verificada del backend");
         }
@@ -257,6 +266,22 @@ public class AgentConversationOrchestrator {
                 || normalized.contains("permitame verificar")
                 || normalized.contains("permiteme verificar")
                 || normalized.contains("voy a revisar");
+    }
+
+    private String mediaCorrectionInstruction(AgentVerifiedGroundingService.Grounding grounding,
+            String customerMessage) {
+        if (grounding.media() != null && !grounding.media().isEmpty()) return "";
+        String normalized = normalize(customerMessage);
+        boolean mentionsMedia = normalized.contains("foto") || normalized.contains("imagen");
+        boolean claimsDelivery = normalized.contains("aqui tienes")
+                || normalized.contains("te comparto")
+                || normalized.contains("te envio")
+                || normalized.contains("te muestro")
+                || normalized.contains("te paso")
+                || normalized.contains("adjunto");
+        if (!mentionsMedia || !claimsDelivery) return "";
+        return "No hay archivos verificados para adjuntar. No afirmes que envias, compartes o muestras fotos; "
+                + "explica brevemente la opcion disponible o solicita precisar el modelo.";
     }
 
     private List<AgentMediaRequest> verifiedMedia(List<AgentMediaRequest> verified) {

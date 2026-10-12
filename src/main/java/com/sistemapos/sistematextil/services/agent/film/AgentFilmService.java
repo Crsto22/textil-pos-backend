@@ -59,8 +59,11 @@ public class AgentFilmService {
         });
         if (addon.getVenta() == null) addon.setVenta(sales.findById(saleId)
                 .orElseThrow(() -> new IllegalStateException("La venta no existe")));
-        if (addon.getStatus() == CrmWhatsappFilmStatus.AWAITING_PAYMENT
-                || addon.getStatus() == CrmWhatsappFilmStatus.CONFIRMED) return result(addon, false);
+        if (addon.getStatus() == CrmWhatsappFilmStatus.AWAITING_PAYMENT) {
+            ensureWaitingForFilmPayment(session);
+            return result(addon, false);
+        }
+        if (addon.getStatus() == CrmWhatsappFilmStatus.CONFIRMED) return result(addon, false);
         MetodoPagoCuenta account = findYapeAccount(session);
         LocalDateTime now = LocalDateTime.now();
         fulfillment.setStatus(CrmWhatsappFulfillmentStatus.FILM_PAYMENT_PENDING);
@@ -74,6 +77,7 @@ public class AgentFilmService {
         }
         addon.setPaymentAccount(account); addon.setStatus(CrmWhatsappFilmStatus.AWAITING_PAYMENT);
         addon.setPaymentStartedAt(now); addon.setExpiresAt(now.plusHours(12)); addon.setResolvedAt(null);
+        ensureWaitingForFilmPayment(session);
         return result(addons.save(addon), false);
     }
 
@@ -151,6 +155,12 @@ public class AgentFilmService {
     private void transition(CrmWhatsappAgentSession s, CrmWhatsappAgentEvent e) {
         LocalDateTime now = LocalDateTime.now(); s.setState(stateMachine.transition(s.getState(), e));
         s.setLastEvent(e); s.setStateChangedAt(now); s.setLastActivityAt(now); sessions.save(s);
+    }
+    private void ensureWaitingForFilmPayment(CrmWhatsappAgentSession session) {
+        if (session.getState() == CrmWhatsappAgentState.ESPERANDO_PAGO_FILM) return;
+        if (session.getState() != CrmWhatsappAgentState.VENTA_PENDIENTE_REVISION)
+            throw new IllegalStateException("La venta no esta lista para esperar el pago del film");
+        transition(session, CrmWhatsappAgentEvent.FILM_ACEPTADO);
     }
     private FilmResult result(CrmWhatsappFilmAddon a, boolean continueWithoutFilm) {
         MetodoPagoCuenta c = a.getPaymentAccount();

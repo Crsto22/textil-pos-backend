@@ -171,6 +171,7 @@ public class CrmWhatsappAgentStateMachine {
                 entry(CrmWhatsappAgentEvent.AYUDA_REQUERIDA, CrmWhatsappAgentState.REQUIERE_AYUDA));
 
         register(result, CrmWhatsappAgentState.VENTA_PENDIENTE_REVISION,
+                entry(CrmWhatsappAgentEvent.FILM_ACEPTADO, CrmWhatsappAgentState.ESPERANDO_PAGO_FILM),
                 entry(CrmWhatsappAgentEvent.PAGO_APROBADO_FINALMENTE, CrmWhatsappAgentState.COMPLETADO),
                 entry(CrmWhatsappAgentEvent.PAGO_RECHAZADO_Y_VENTA_ANULADA, CrmWhatsappAgentState.CANCELADO),
                 entry(CrmWhatsappAgentEvent.AYUDA_REQUERIDA, CrmWhatsappAgentState.REQUIERE_AYUDA));

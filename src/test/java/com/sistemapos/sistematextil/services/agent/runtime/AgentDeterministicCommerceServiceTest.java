@@ -59,6 +59,24 @@ class AgentDeterministicCommerceServiceTest {
     }
 
     @Test
+    void doesNotAppendEarlyShippingPreferenceAfterShalomWasAlreadySelected() {
+        CrmWhatsappAgentSessionRepository sessions=mock(CrmWhatsappAgentSessionRepository.class);
+        CrmWhatsappAgentSession session=new CrmWhatsappAgentSession();
+        session.setState(CrmWhatsappAgentState.ESPERANDO_CONFIRMACION_AGENCIA_SHALOM);
+        when(sessions.findById(41L)).thenReturn(Optional.of(session));
+        AgentDeterministicCommerceService service=new AgentDeterministicCommerceService(
+                sessions,null,null,null,null,null,null,null,null,null,null);
+        AgentConversationDecision decision=new AgentConversationDecision(
+                AgentDecisionIntent.SHALOM_DATA,"confirmar agencia","","","",0,"",
+                AgentCartAction.NONE,AgentCommercialAction.CONFIRM_SHALOM_AGENCY,"","","","",
+                "SHALOM","","Agencia Proceres","",AgentCatalogAvailability.ALL,100,false);
+
+        assertFalse(service.rememberEarlyDeliveryPreference(41L,decision));
+        assertEquals(null,session.getPreferredFulfillmentMethod());
+        verify(sessions,never()).save(session);
+    }
+
+    @Test
     void groupsRepeatedPromotionsAndShowsTheTotalDiscountOnlyOnce() {
         AgentDeterministicCommerceService service = serviceWithNoDependencies();
         List<CartPromotionView> promotions = java.util.stream.IntStream.range(0, 10)

@@ -35,7 +35,11 @@ class AgentFilmServiceTest {
 
     @Test void startsExactlyTwelveHoursAfterSaleWithoutChangingMainPayment(){MetodoPagoConfig method=new MetodoPagoConfig();method.setIdMetodoPago(7);method.setNombre("YAPE");method.setEstado("ACTIVO");SucursalMetodoPagoConfig cfg=new SucursalMetodoPagoConfig();cfg.setMetodoPago(method);cfg.setEstado("ACTIVO");MetodoPagoCuenta account=new MetodoPagoCuenta();account.setIdMetodoPagoCuenta(8);account.setNumeroCuenta("999111222");account.setTitular("Kiments");
         when(branchMethods.findActivosBySucursal(1)).thenReturn(List.of(cfg));when(accounts.findByMetodoPago_IdMetodoPagoAndActivoTrueOrderByIdMetodoPagoCuentaAsc(7)).thenReturn(List.of(account));
-        var result=service.startMandatoryPayment(9L,12);assertEquals("AWAITING_PAYMENT",result.status());assertEquals(43200,java.time.Duration.between(addon.getPaymentStartedAt(),addon.getExpiresAt()).toSeconds());assertEquals("999111222",result.accountNumber());assertNotNull(addon.getVenta());}
+        var result=service.startMandatoryPayment(9L,12);assertEquals("AWAITING_PAYMENT",result.status());assertEquals(43200,java.time.Duration.between(addon.getPaymentStartedAt(),addon.getExpiresAt()).toSeconds());assertEquals("999111222",result.accountNumber());assertNotNull(addon.getVenta());assertEquals(CrmWhatsappAgentState.ESPERANDO_PAGO_FILM,session.getState());}
+
+    @Test void repairsWaitingStateOnIdempotentFilmPaymentRetry(){addon.setStatus(CrmWhatsappFilmStatus.AWAITING_PAYMENT);
+        var result=service.startMandatoryPayment(9L,12);
+        assertEquals("AWAITING_PAYMENT",result.status());assertEquals(CrmWhatsappAgentState.ESPERANDO_PAGO_FILM,session.getState());}
 
     @Test void preservesSaleAndBlocksShipmentWhenYapeIsUnavailable(){when(branchMethods.findActivosBySucursal(1)).thenReturn(List.of());var result=service.startMandatoryPayment(9L,12);assertFalse(result.continueWithoutFilm());assertEquals(CrmWhatsappFilmStatus.PAYMENT_CONFIGURATION_REQUIRED,addon.getStatus());assertNotNull(addon.getVenta());}
 

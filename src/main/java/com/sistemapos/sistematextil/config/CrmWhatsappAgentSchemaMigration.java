@@ -801,6 +801,14 @@ public class CrmWhatsappAgentSchemaMigration implements ApplicationRunner {
     private void migrateActiveSessionsToPaymentFirstFlow(Statement statement) throws SQLException {
         statement.executeUpdate("""
                 UPDATE crm_whatsapp_agent_session s
+                JOIN crm_whatsapp_film_addon a ON a.id_agent_session=s.id_agent_session
+                SET s.state='ESPERANDO_PAGO_FILM', s.last_event='FILM_ACEPTADO',
+                    s.state_changed_at=CURRENT_TIMESTAMP(6), s.updated_at=CURRENT_TIMESTAMP(6)
+                WHERE s.active_slot=TRUE AND s.state='VENTA_PENDIENTE_REVISION'
+                  AND a.status='AWAITING_PAYMENT' AND a.expires_at>CURRENT_TIMESTAMP(6)
+                """);
+        statement.executeUpdate("""
+                UPDATE crm_whatsapp_agent_session s
                 SET s.state='ESPERANDO_METODO_PAGO', s.updated_at=CURRENT_TIMESTAMP(6)
                 WHERE s.active_slot=TRUE AND s.state='ESPERANDO_DATOS_CLIENTE'
                   AND NOT EXISTS (

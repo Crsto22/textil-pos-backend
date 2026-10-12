@@ -105,7 +105,7 @@ public class AgentDeterministicCommerceService {
     public boolean rememberEarlyDeliveryPreference(Long sessionId, AgentConversationDecision decision) {
         if (decision == null) return false;
         CrmWhatsappAgentSession session = requireSession(sessionId);
-        if (session.getState() == CrmWhatsappAgentState.ESPERANDO_METODO_ENTREGA) return false;
+        if (!canRememberEarlyDeliveryPreference(session.getState())) return false;
         String method = normalize(decision.deliveryMethod());
         boolean shalom = decision.commercialAction() == AgentCommercialAction.SELECT_SHALOM
                 || method.equals("shalom") || method.equals("envio shalom") || method.equals("shipping");
@@ -115,6 +115,16 @@ public class AgentDeterministicCommerceService {
             sessions.save(session);
         }
         return true;
+    }
+
+    private boolean canRememberEarlyDeliveryPreference(CrmWhatsappAgentState state) {
+        return state == CrmWhatsappAgentState.IDLE
+                || state == CrmWhatsappAgentState.EXPLORANDO_PRODUCTOS
+                || state == CrmWhatsappAgentState.ARMANDO_CARRITO
+                || state == CrmWhatsappAgentState.ESPERANDO_METODO_PAGO
+                || state == CrmWhatsappAgentState.ESPERANDO_COMPROBANTE
+                || state == CrmWhatsappAgentState.VALIDANDO_COMPROBANTE
+                || state == CrmWhatsappAgentState.ESPERANDO_DATOS_CLIENTE;
     }
 
     public String earlyDeliveryPreferenceMessage() {

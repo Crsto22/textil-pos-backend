@@ -32,7 +32,9 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
             commercialAction es una accion semantica, no una palabra clave. Determinala por el significado,
             el ESTADO_ACTUAL y el ultimo mensaje. Usa el historial solo para resolver referencias.
             - SHOW_PRODUCTS: pide catalogo o pregunta que productos existen.
-            - SHOW_PRODUCT: pide datos, colores, tallas o detalles de un modelo.
+            - SHOW_PRODUCT: pide datos, colores, tallas o detalles de un modelo. Si el cliente elige un modelo y
+              solicita un color que podria no existir, o aun no proporciona talla, usa SHOW_PRODUCT para comprobar
+              primero el catalogo. Los errores ortograficos no cambian esta regla.
             - SHOW_PRODUCT_IMAGES: pide expresamente fotos o imagenes de uno o varios modelos. Conserva en
               productReference el nombre o familia solicitada aunque coincida con varios productos. Si tambien
               solicita un color, conservalo en colorReference; Java decidira si primero debe precisar el modelo.
@@ -46,7 +48,8 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
               para un modelo concreto, conserva ese modelo en productReference y promotionReference.
               Si solicita todas o pregunta de forma general cuales existen, deja productReference y
               promotionReference vacios para que Java liste las promociones vigentes sin filtrar.
-            - ADD_PRODUCT: ya eligio producto, color, talla y cantidad o acepta la cantidad propuesta.
+            - ADD_PRODUCT: ya eligio producto, color, talla y cantidad o acepta la cantidad propuesta. No uses
+              CHANGE_CART cuando apenas esta eligiendo un modelo o color y todavia no existe una edicion concreta.
             - CHANGE_CART: quiere quitar un producto, vaciar el carrito, cambiar cantidad, color o talla.
             - CONFIRM_CART: acepta el resumen, dice continuar, eso es todo o confirma la compra sin indicar como pagara.
             - SHOW_PAYMENT_METHODS: esta listo para elegir como pagar.

@@ -122,8 +122,8 @@ public class AgentTurnFinalizer {
             // orden completo del outbox de la conversacion.
             int ordinal = Math.floorMod(Objects.hash("AGENT_FAILURE", lease.jobId()), Integer.MAX_VALUE);
             outbox.enqueueText(lease.sessionId(), null, lease.anchorMessageId(), ordinal,
-                    "Tuve un inconveniente al procesar tu ultimo mensaje. "
-                    + "Por favor escribelo nuevamente y continuare desde el punto actual.");
+                    "No entendi bien tu mensaje, bella. ¿Puedes indicarme nuevamente "
+                    + "el producto, color o talla que deseas?");
         }
         sessions.save(session);
     }

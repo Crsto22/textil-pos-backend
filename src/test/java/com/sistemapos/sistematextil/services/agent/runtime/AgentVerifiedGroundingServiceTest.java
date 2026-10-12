@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -401,6 +402,46 @@ class AgentVerifiedGroundingServiceTest {
         assertEquals(null, result.customerMessage());
         assertTrue(result.evidenceJson().contains("ANNIE RAYAS"));
         assertTrue(result.evidenceJson().contains("annie-rosa.webp"));
+    }
+
+    @Test
+    void recoversAnIncompleteProductSelectionMisclassifiedAsCartChange() {
+        AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        AgentDeterministicCommerceService commerce = mock(AgentDeterministicCommerceService.class);
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.PRODUCT_DETAILS, "elegir Annie Entero rojo", "ANNIE ENTERO", "ROJO", "",
+                0, "", AgentCartAction.NONE, AgentCommercialAction.CHANGE_CART,
+                "", "", "", "", "", "", "", "",
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL, 96, false);
+        when(decisions.interpret(4L, "annie entero color rojo qiieeo")).thenReturn(
+                new AgentInterpretationResult("GEMINI", "model", "DB", 10, 0, decision));
+        when(commerce.normalizeShalomAgencyRefinement(9L, decision)).thenReturn(decision);
+        when(commerce.execute(eq(9L), eq(30L), any(AgentConversationDecision.class)))
+                .thenReturn(AgentDeterministicCommerceService.Outcome.notHandled());
+        ProductSummary summary = new ProductSummary(61, "ANNIE ENTERO", "ARUBA", "CONJUNTO",
+                false, null, 75D, 343,
+                List.of("AZUL", "BEIGE CLARO", "CHOCOLATE", "NEGRO"), List.of("XS", "S", "M", "L"));
+        when(catalog.searchProducts(9L, "ANNIE ENTERO", 20,
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL)).thenReturn(
+                new ProductSearchResult("ANNIE ENTERO", 1, List.of(summary), false));
+        when(catalog.getProduct(9L, 61)).thenReturn(new ProductDetail(61, "ANNIE ENTERO", "ARUBA",
+                "CONJUNTO", false, null, null, null,
+                List.of("AZUL", "BEIGE CLARO", "CHOCOLATE", "NEGRO"), List.of("XS", "S", "M", "L"),
+                343, 75D, 16));
+        when(catalog.getProductImage(9L, 61, "ROJO")).thenReturn(new ProductImageResult(
+                61, "ANNIE ENTERO", "ROJO", "/annie-entero.webp", null, List.of()));
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
+                mock(AgentCartService.class), commerce, mock(ProductSizeGuideQueryService.class),
+                passThroughAudit());
+
+        var result = service.ground(4L, 9L, 30L, "annie entero color rojo qiieeo");
+
+        assertEquals(3, result.verifiedToolCalls());
+        assertTrue(result.evidenceJson().contains("ANNIE ENTERO"));
+        assertTrue(result.evidenceJson().contains("BEIGE CLARO"));
+        assertTrue(result.media().isEmpty());
     }
 
     @Test

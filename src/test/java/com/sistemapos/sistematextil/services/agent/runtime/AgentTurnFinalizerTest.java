@@ -156,7 +156,7 @@ class AgentTurnFinalizerTest {
 
         int expectedOrdinal = Math.floorMod(java.util.Objects.hash("AGENT_FAILURE", 41L), Integer.MAX_VALUE);
         verify(outbox).enqueueText(8L, null, 99L, expectedOrdinal,
-                "Tuve un inconveniente al procesar tu ultimo mensaje. "
-                + "Por favor escribelo nuevamente y continuare desde el punto actual.");
+                "No entendi bien tu mensaje, bella. ¿Puedes indicarme nuevamente "
+                + "el producto, color o talla que deseas?");
     }
 }

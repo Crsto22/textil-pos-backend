@@ -96,6 +96,7 @@ public class AgentVerifiedGroundingService {
         if (commerce != null) {
             decision = commerce.normalizeShalomAgencyRefinement(sessionId, decision);
         }
+        decision = normalizeIncompleteProductSelection(decision);
 
         AtomicInteger ordinal = new AtomicInteger(AUDIT_ORDINAL_BASE);
         Map<String, Object> evidence = new LinkedHashMap<>();
@@ -164,10 +165,31 @@ public class AgentVerifiedGroundingService {
             }
         }
 
+        boolean catalogIntent = decision.intent() == AgentDecisionIntent.PRODUCT_SEARCH
+                || decision.intent() == AgentDecisionIntent.PRODUCT_DETAILS;
+        if (catalogIntent && ordinal.get() == AUDIT_ORDINAL_BASE && !mutationExecuted) {
+            // Una consulta comercial nunca debe llegar a redaccion sin datos reales,
+            // incluso cuando la decision semantica venga parcialmente incoherente.
+            groundCatalog(sessionId, jobId, decision, conversation, ordinal, evidence, media);
+            customerMessage = null;
+        }
         evidence.put("verifiedMediaCount", media.size());
         int verifiedCalls = ordinal.get() - AUDIT_ORDINAL_BASE;
         return new Grounding(decision, write(evidence), List.copyOf(media), verifiedCalls,
                 mutationExecuted, customerMessage);
+    }
+
+    private AgentConversationDecision normalizeIncompleteProductSelection(AgentConversationDecision decision) {
+        boolean productInquiry = decision.intent() == AgentDecisionIntent.PRODUCT_DETAILS
+                || decision.intent() == AgentDecisionIntent.PRODUCT_SEARCH;
+        boolean productKnown = decision.productReference() != null && !decision.productReference().isBlank();
+        boolean variantIncomplete = decision.sizeReference() == null || decision.sizeReference().isBlank();
+        boolean accidentalCartTransition = decision.commercialAction() == AgentCommercialAction.CHANGE_CART
+                && (decision.cartAction() == null || decision.cartAction() == AgentCartAction.NONE);
+        if (productInquiry && productKnown && variantIncomplete && accidentalCartTransition) {
+            return decision.withCommercialAction(AgentCommercialAction.SHOW_PRODUCT);
+        }
+        return decision;
     }
 
     private void groundSizeRecommendation(Long sessionId, Long jobId, AgentConversationDecision decision,

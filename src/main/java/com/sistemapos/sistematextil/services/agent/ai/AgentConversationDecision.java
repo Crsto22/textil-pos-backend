@@ -60,6 +60,15 @@ public record AgentConversationDecision(
                 bodyMeasurements, fitPreference, confidence, false);
     }
 
+    public AgentConversationDecision withCommercialAction(AgentCommercialAction action) {
+        return new AgentConversationDecision(intent, customerGoal, productReference, colorReference,
+                sizeReference, quantity, promotionReference, promotionSelections, cartAction,
+                action == null ? AgentCommercialAction.NONE : action, paymentMethodReference,
+                paymentAccountReference, customerName, customerPhone, deliveryMethod, documentNumber,
+                shalomAgency, shalomDestination, shalomFieldsToChange, catalogAvailability,
+                sizeGuideComponent, bodyMeasurements, fitPreference, confidence, requiresHumanHelp);
+    }
+
     public AgentConversationDecision(
             AgentDecisionIntent intent, String customerGoal, String productReference, String colorReference,
             String sizeReference, Integer quantity, String promotionReference,

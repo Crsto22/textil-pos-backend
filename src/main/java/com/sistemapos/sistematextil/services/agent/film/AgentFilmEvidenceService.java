@@ -142,7 +142,6 @@ public class AgentFilmEvidenceService {
         if(e.getDetectedAmount()==null||e.getDetectedAmount().compareTo(AgentFilmService.PRICE)!=0)errors.add("el monto debe ser exactamente S/2.00");
         if(!"PEN".equalsIgnoreCase(clean(e.getDetectedCurrency())))errors.add("la moneda debe ser PEN");
         if(!"YAPE".equalsIgnoreCase(clean(x.paymentMethod())))errors.add("el proveedor debe ser Yape");
-        if(!recipientMatches(clean(e.getRecipient()),addon.getPaymentAccount()))errors.add("el destinatario no coincide con el titular configurado");
         if(clean(e.getOperationCode()).isBlank())errors.add("no se encontró el código de operación");
         if(e.getConfidence()==null||e.getConfidence()<config.forSession(addon.getAgentSession().getIdAgentSession()).receiptMinimumConfidence())errors.add("la imagen no se lee con suficiente claridad");
         if(e.getMessage().getCreatedAt()==null||addon.getExpiresAt()==null||e.getMessage().getCreatedAt().isAfter(addon.getExpiresAt()))errors.add("el comprobante llegó después del plazo de 12 horas");
@@ -160,15 +159,6 @@ public class AgentFilmEvidenceService {
     private String hash(byte[] b){try{return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(b));}catch(Exception e){throw new IllegalStateException(e);}}
     private String write(Object o){try{return json.writeValueAsString(o);}catch(Exception e){return "[]";}}
     private String clean(String v){return v==null?"":v.trim();}
-    private boolean recipientMatches(String recipient,MetodoPagoCuenta account){
-        if(account==null||recipient.isBlank())return false;
-        String actual=normalize(recipient),holder=normalize(account.getTitular());
-        if(!holder.isBlank()&&(actual.contains(holder)||holder.contains(actual)))return true;
-        return java.util.Arrays.stream(clean(account.getAliasesValidacion()).split("[,;|]"))
-                .map(this::normalize).filter(v->!v.isBlank()).anyMatch(v->actual.contains(v)||v.contains(actual));
-    }
-    private String normalize(String value){return java.text.Normalizer.normalize(clean(value),java.text.Normalizer.Form.NFD)
-            .replaceAll("\\p{M}","").replaceAll("[^A-Za-z0-9]","").toUpperCase();}
     private record Claimed(Long id,Long connectionId,String path,String mime){}
     private record Completion(Long addonId,boolean approved){}
 }

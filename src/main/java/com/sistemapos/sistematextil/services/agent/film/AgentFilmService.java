@@ -25,7 +25,9 @@ public class AgentFilmService {
     private final CrmWhatsappFulfillmentRepository fulfillments;
     private final SucursalMetodoPagoConfigRepository branchMethods;
     private final MetodoPagoCuentaRepository accounts;
+    private final VentaRepository sales;
     private final CrmWhatsappAgentStateMachine stateMachine;
+    private final AgentFilmEscalationService escalation;
 
     @Transactional
     public FilmResult offer(Long sessionId) {
@@ -42,6 +44,39 @@ public class AgentFilmService {
         return result(addon, false);
     }
 
+    /** Starts the mandatory, non-sale-blocking film charge after the sale exists. */
+    @Transactional
+    public FilmResult startMandatoryPayment(Long sessionId, Integer saleId) {
+        CrmWhatsappAgentSession session = requireSession(sessionId);
+        CrmWhatsappFulfillment fulfillment = requireShalom(sessionId);
+        CrmWhatsappFilmAddon addon = addons.findByAgentSession_IdAgentSession(sessionId).orElseGet(() -> {
+            CrmWhatsappFilmAddon created = new CrmWhatsappFilmAddon();
+            created.setAgentSession(session); created.setFulfillment(fulfillment);
+            created.setConversation(session.getConversation()); created.setAmount(PRICE);
+            created.setStatus(CrmWhatsappFilmStatus.OFFERED);
+            created.setIdempotencyKey(hash("film:" + sessionId));
+            return addons.save(created);
+        });
+        if (addon.getVenta() == null) addon.setVenta(sales.findById(saleId)
+                .orElseThrow(() -> new IllegalStateException("La venta no existe")));
+        if (addon.getStatus() == CrmWhatsappFilmStatus.AWAITING_PAYMENT
+                || addon.getStatus() == CrmWhatsappFilmStatus.CONFIRMED) return result(addon, false);
+        MetodoPagoCuenta account = findYapeAccount(session);
+        LocalDateTime now = LocalDateTime.now();
+        fulfillment.setStatus(CrmWhatsappFulfillmentStatus.FILM_PAYMENT_PENDING);
+        fulfillments.save(fulfillment);
+        if (account == null) {
+            addon.setStatus(CrmWhatsappFilmStatus.PAYMENT_CONFIGURATION_REQUIRED);
+            addon.setResolvedAt(now);
+            addon=addons.save(addon);
+            escalation.escalate(sessionId,addon.getIdFilmAddon(),"No existe una cuenta Yape activa para cobrar el film obligatorio");
+            return result(addon, false);
+        }
+        addon.setPaymentAccount(account); addon.setStatus(CrmWhatsappFilmStatus.AWAITING_PAYMENT);
+        addon.setPaymentStartedAt(now); addon.setExpiresAt(now.plusHours(12)); addon.setResolvedAt(null);
+        return result(addons.save(addon), false);
+    }
+
     @Transactional
     public FilmResult accept(Long sessionId) {
         CrmWhatsappAgentSession session = requireSession(sessionId);
@@ -50,30 +85,45 @@ public class AgentFilmService {
                 : addons.findByAgentSession_IdAgentSession(sessionId).orElseThrow();
         MetodoPagoCuenta account = findYapeAccount(session);
         if (account == null) {
-            addon.setStatus(CrmWhatsappFilmStatus.UNAVAILABLE_WITHOUT_FILM);
+            addon.setStatus(CrmWhatsappFilmStatus.PAYMENT_CONFIGURATION_REQUIRED);
             addon.setResolvedAt(LocalDateTime.now());
             transition(session, CrmWhatsappAgentEvent.PAGO_FILM_NO_DISPONIBLE);
             return result(addons.save(addon), true);
         }
         LocalDateTime now = LocalDateTime.now();
         addon.setPaymentAccount(account); addon.setStatus(CrmWhatsappFilmStatus.AWAITING_PAYMENT);
-        addon.setPaymentStartedAt(now); addon.setExpiresAt(now.plusHours(1));
+        addon.setPaymentStartedAt(now); addon.setExpiresAt(now.plusHours(12));
         transition(session, CrmWhatsappAgentEvent.FILM_ACEPTADO);
         return result(addons.save(addon), false);
     }
 
     @Transactional
     public FilmResult decline(Long sessionId) {
-        CrmWhatsappAgentSession session = requireSession(sessionId);
-        if (session.getState() != CrmWhatsappAgentState.ESPERANDO_DECISION_FILM
-                && session.getState() != CrmWhatsappAgentState.ESPERANDO_PAGO_FILM) {
-            throw new IllegalStateException("La sesion no esta esperando una decision sobre el film");
-        }
-        CrmWhatsappFilmAddon addon = addons.findByAgentSession_IdAgentSession(sessionId)
-                .orElseThrow(() -> new IllegalStateException("No existe una oferta de film"));
-        addon.setStatus(CrmWhatsappFilmStatus.DECLINED); addon.setResolvedAt(LocalDateTime.now());
-        transition(session, CrmWhatsappAgentEvent.FILM_RECHAZADO);
-        return result(addons.save(addon), true);
+        throw new IllegalStateException("El film protector es obligatorio para los envios por Shalom");
+    }
+
+    @Transactional
+    public FilmResult reactivate(Long addonId) {
+        CrmWhatsappFilmAddon addon=addons.findForUpdate(addonId).orElseThrow();
+        if(addon.getStatus()!=CrmWhatsappFilmStatus.PAYMENT_OVERDUE
+                && addon.getStatus()!=CrmWhatsappFilmStatus.PAYMENT_CONFIGURATION_REQUIRED)
+            throw new IllegalStateException("El cobro del film no se puede reactivar en su estado actual");
+        MetodoPagoCuenta account=findYapeAccount(addon.getAgentSession());
+        if(account==null)throw new IllegalStateException("No existe una cuenta Yape activa");
+        LocalDateTime now=LocalDateTime.now();addon.setPaymentAccount(account);
+        addon.setStatus(CrmWhatsappFilmStatus.AWAITING_PAYMENT);addon.setPaymentStartedAt(now);
+        addon.setExpiresAt(now.plusHours(12));addon.setResolvedAt(null);
+        addon.getFulfillment().setStatus(CrmWhatsappFulfillmentStatus.FILM_PAYMENT_PENDING);
+        return result(addons.save(addon),false);
+    }
+
+    @Transactional
+    public FilmResult confirmManually(Long addonId) {
+        CrmWhatsappFilmAddon addon=addons.findForUpdate(addonId).orElseThrow();
+        if(addon.getVenta()==null)throw new IllegalStateException("El film no está vinculado a una venta");
+        addon.setStatus(CrmWhatsappFilmStatus.CONFIRMED);addon.setPaidAt(LocalDateTime.now());
+        addon.setResolvedAt(LocalDateTime.now());addon.getFulfillment().setStatus(CrmWhatsappFulfillmentStatus.READY);
+        return result(addons.save(addon),false);
     }
 
     private MetodoPagoCuenta findYapeAccount(CrmWhatsappAgentSession session) {
@@ -91,7 +141,9 @@ public class AgentFilmService {
             .orElseThrow(() -> new IllegalArgumentException("La sesion no existe")); }
     private CrmWhatsappFulfillment requireShalom(Long id) { return fulfillments.findForUpdateBySessionId(id)
             .filter(f -> f.getMethod() == CrmWhatsappFulfillmentMethod.SHALOM
-                    && f.getStatus() == CrmWhatsappFulfillmentStatus.READY)
+                    && (f.getStatus() == CrmWhatsappFulfillmentStatus.READY
+                        || f.getStatus() == CrmWhatsappFulfillmentStatus.FILM_PAYMENT_PENDING
+                        || f.getStatus() == CrmWhatsappFulfillmentStatus.FILM_PAYMENT_OVERDUE))
             .orElseThrow(() -> new IllegalStateException("El envio Shalom aun no esta confirmado")); }
     private void requireState(CrmWhatsappAgentSession s, CrmWhatsappAgentState state) {
         if (s.getState() != state) throw new IllegalStateException("La sesion no esta en " + state);

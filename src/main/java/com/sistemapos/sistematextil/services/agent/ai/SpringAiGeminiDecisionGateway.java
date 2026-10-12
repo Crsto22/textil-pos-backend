@@ -27,7 +27,7 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
             deben resolverse con su intencion comercial y herramientas verificadas.
             No inventes producto, color, talla, cantidad ni promocion.
             El esquema no admite valores null: usa cadena vacia para referencias ausentes, 0 para cantidad ausente
-            y una lista vacia en promotionSelections cuando no se trate de una promocion.
+            y una lista vacia en promotionSelections salvo cuando confirme varios productos o una promocion.
             Devuelve siempre todos los campos del esquema. Nunca omitas campos y nunca escribas null.
             commercialAction es una accion semantica, no una palabra clave. Determinala por el significado,
             el ESTADO_ACTUAL y el ultimo mensaje. Usa el historial solo para resolver referencias.
@@ -48,7 +48,10 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
               para un modelo concreto, conserva ese modelo en productReference y promotionReference.
               Si solicita todas o pregunta de forma general cuales existen, deja productReference y
               promotionReference vacios para que Java liste las promociones vigentes sin filtrar.
-            - ADD_PRODUCT: ya eligio producto, color, talla y cantidad o acepta la cantidad propuesta. No uses
+            - ADD_PRODUCT: ya eligio producto, color, talla y cantidad o acepta la cantidad propuesta. Si el último
+              mensaje confirma varios productos ofrecidos por el asistente, reúne todos en promotionSelections
+              aunque no pertenezcan a una promoción; cada selección debe conservar producto, color, talla y cantidad.
+              No uses
               CHANGE_CART cuando apenas esta eligiendo un modelo o color y todavia no existe una edicion concreta.
             - CHANGE_CART: quiere quitar un producto, vaciar el carrito, cambiar cantidad, color o talla.
             - CONFIRM_CART: acepta el resumen, dice continuar, eso es todo o confirma la compra sin indicar como pagara.
@@ -63,7 +66,12 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
             - RETRY_PAYMENT: despues de vencer la reserva pide reactivarla o continuar con la compra.
             - PROVIDE_CUSTOMER_DATA: envia nombre y/o celular despues del comprobante aprobado.
             - CONFIRM_EXISTING_CUSTOMER: confirma los datos existentes mostrados.
-            - SELECT_PICKUP o SELECT_SHALOM: elige modalidad de entrega.
+            - SELECT_PICKUP o SELECT_SHALOM: elige modalidad de entrega solamente cuando ESTADO_ACTUAL sea
+              ESPERANDO_METODO_ENTREGA. Antes de ese estado, una consulta o preferencia de envío nunca selecciona
+              formalmente la entrega ni requiere ayuda humana. Si expresa preferencia anticipada por envío, escribe
+              SHALOM en deliveryMethod y conserva como commercialAction la acción pendiente del estado (por ejemplo,
+              ADD_PRODUCT o CONFIRM_CART). Si solo consulta si existen envíos, usa BUSINESS_INFORMATION y deja
+              deliveryMethod vacío. Interpreta el significado completo; no decidas por palabras aisladas.
             - PROVIDE_SHALOM_DATA: envia nombre, DNI, celular y referencia de agencia para Shalom. Tambien usa esta
               accion cuando, despues de ver candidatos, rechaza esas opciones y pide buscar otra ciudad, distrito,
               sede, direccion o referencia. Conserva la nueva busqueda en shalomAgency aunque los datos personales
@@ -76,8 +84,7 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
               y conservan en shalomFieldsToChange solamente los campos que están siendo reemplazados.
             - CONFIRM_SHALOM_AGENCY: confirma una de las agencias ofrecidas; repite en shalomAgency el nombre exacto elegido.
             - REUSE_SHALOM_PROFILE: confirma reutilizar los datos Shalom guardados mostrados por el sistema.
-            - ACCEPT_FILM: acepta agregar y pagar el film protector ofrecido para el envio Shalom.
-            - DECLINE_FILM: rechaza el film o desea continuar el pedido sin ese adicional.
+            - ACCEPT_FILM y DECLINE_FILM son acciones históricas: no las uses. El film de Shalom es obligatorio y se cobra automáticamente después de crear la venta.
             - REQUEST_SUPPORT: comunica un problema que necesita revision humana; establece requiresHumanHelp=true.
             Usa NONE cuando solo conversa o la accion no esta suficientemente clara.
             Una solicitud de promociones o combos nunca es PRODUCT_SEARCH, PRODUCT_DETAILS ni

@@ -97,6 +97,8 @@ public class AgentVerifiedGroundingService {
             decision = commerce.normalizeShalomAgencyRefinement(sessionId, decision);
         }
         decision = normalizeIncompleteProductSelection(decision);
+        boolean earlyDeliveryPreference = commerce != null
+                && commerce.rememberEarlyDeliveryPreference(sessionId, decision);
 
         AtomicInteger ordinal = new AtomicInteger(AUDIT_ORDINAL_BASE);
         Map<String, Object> evidence = new LinkedHashMap<>();
@@ -172,6 +174,9 @@ public class AgentVerifiedGroundingService {
             // incluso cuando la decision semantica venga parcialmente incoherente.
             groundCatalog(sessionId, jobId, decision, conversation, ordinal, evidence, media);
             customerMessage = null;
+        }
+        if (earlyDeliveryPreference && mutationExecuted && customerMessage != null) {
+            customerMessage = commerce.appendEarlyDeliveryPreference(customerMessage);
         }
         evidence.put("verifiedMediaCount", media.size());
         int verifiedCalls = ordinal.get() - AUDIT_ORDINAL_BASE;
@@ -267,6 +272,10 @@ public class AgentVerifiedGroundingService {
         if (action == AgentCartAction.ADD_PROMOTION) {
             return groundPromotionAdd(sessionId, jobId, decision, conversation, ordinal, evidence);
         }
+        if (action == AgentCartAction.ADD_PRODUCT && decision.promotionSelections() != null
+                && decision.promotionSelections().size() > 1) {
+            return groundMultipleProductAdd(sessionId, jobId, decision, ordinal, evidence);
+        }
         if (action == AgentCartAction.CLEAR_CART) {
             CartResult result = verified(sessionId, jobId, ordinal,
                     "vaciar_carrito", Map.of(), CartResult.class,
@@ -326,6 +335,32 @@ public class AgentVerifiedGroundingService {
                 ? "Producto agregado correctamente al carrito."
                 : commerce.cartTemplate(sessionId, result, true);
         return new CartMutation(true, message);
+    }
+
+    private CartMutation groundMultipleProductAdd(Long sessionId,Long jobId,AgentConversationDecision decision,
+            AtomicInteger ordinal,Map<String,Object> evidence){
+        CartResult result=null;int index=0;
+        for(PromotionSelection selection:decision.promotionSelections()){
+            int quantity=selection.quantity()==null||selection.quantity()<1?1:selection.quantity();
+            ProductSearchResult search=verified(sessionId,jobId,ordinal,"buscar_productos",
+                    Map.of("consulta",selection.productReference(),"limite",10),ProductSearchResult.class,
+                    ()->catalog.searchProducts(sessionId,selection.productReference(),10));
+            var product=unambiguousProduct(search,selection.productReference());
+            if(product==null)return new CartMutation(false,null);
+            VariantResult variants=verified(sessionId,jobId,ordinal,"consultar_variantes",
+                    nullableMap("productoId",product.productId(),"color",selection.colorReference(),"talla",selection.sizeReference()),
+                    VariantResult.class,()->catalog.getVariants(sessionId,product.productId(),selection.colorReference(),selection.sizeReference()));
+            if(variants.variants()==null||variants.variants().size()!=1)return new CartMutation(false,null);
+            Integer variantId=variants.variants().getFirst().variantId();
+            StockResult stock=verified(sessionId,jobId,ordinal,"consultar_stock",Map.of("varianteId",variantId,"cantidad",quantity),
+                    StockResult.class,()->catalog.getStock(sessionId,variantId,quantity));
+            if(!Boolean.TRUE.equals(stock.sufficient()))return new CartMutation(false,null);
+            String operation="agent-job-"+jobId+":verified-add-product:"+(index++);
+            result=verified(sessionId,jobId,ordinal,"agregar_producto_carrito",Map.of("varianteId",variantId,"cantidad",quantity),
+                    CartResult.class,()->cart.addProduct(sessionId,variantId,quantity,operation));
+        }
+        evidence.put("cartOperation",Map.of("executed",true,"result",result));
+        return new CartMutation(true,commerce==null?"Productos agregados correctamente al carrito.":commerce.cartTemplate(sessionId,result,true));
     }
 
     private CartMutation groundPromotionAdd(Long sessionId, Long jobId, AgentConversationDecision decision,

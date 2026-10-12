@@ -139,6 +139,28 @@ public class CrmWhatsappAgentSchemaMigration implements ApplicationRunner {
                   CONSTRAINT fk_crm_film_evidence_reviewer FOREIGN KEY (reviewed_by) REFERENCES usuario(id_usuario) ON DELETE SET NULL
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """);
+        statement.execute("""
+                CREATE TABLE IF NOT EXISTS crm_whatsapp_film_payment (
+                  id_film_payment BIGINT NOT NULL AUTO_INCREMENT,
+                  id_film_addon BIGINT NOT NULL,
+                  id_venta INT NOT NULL,
+                  id_film_evidence BIGINT NOT NULL,
+                  amount DECIMAL(12,2) NOT NULL,
+                  currency VARCHAR(3) NOT NULL,
+                  provider VARCHAR(40) NOT NULL,
+                  operation_code VARCHAR(120) NOT NULL,
+                  paid_at DATETIME(6) NOT NULL,
+                  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                  PRIMARY KEY (id_film_payment),
+                  UNIQUE KEY uk_crm_film_payment_addon (id_film_addon),
+                  UNIQUE KEY uk_crm_film_payment_evidence (id_film_evidence),
+                  UNIQUE KEY uk_crm_film_payment_operation (provider, operation_code),
+                  KEY idx_crm_film_payment_sale (id_venta),
+                  CONSTRAINT fk_crm_film_payment_addon FOREIGN KEY (id_film_addon) REFERENCES crm_whatsapp_film_addon(id_film_addon),
+                  CONSTRAINT fk_crm_film_payment_sale FOREIGN KEY (id_venta) REFERENCES venta(id_venta),
+                  CONSTRAINT fk_crm_film_payment_evidence FOREIGN KEY (id_film_evidence) REFERENCES crm_whatsapp_film_evidence(id_film_evidence)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """);
     }
 
     static boolean isMysqlDatabase(String url) {
@@ -159,6 +181,7 @@ public class CrmWhatsappAgentSchemaMigration implements ApplicationRunner {
                   session_key VARCHAR(64) NOT NULL,
                   state VARCHAR(50) NOT NULL DEFAULT 'IDLE',
                   resume_state VARCHAR(50) NULL,
+                  preferred_fulfillment_method VARCHAR(20) NULL,
                   active_slot TINYINT(1) NULL DEFAULT 1,
                   summary TEXT NULL,
                   last_event VARCHAR(60) NULL,
@@ -195,6 +218,8 @@ public class CrmWhatsappAgentSchemaMigration implements ApplicationRunner {
     }
 
     private void adaptSessionPaymentSelection(Connection connection, Statement statement) throws Exception {
+        addColumnIfMissing(connection, statement, "crm_whatsapp_agent_session", "preferred_fulfillment_method",
+                "VARCHAR(20) NULL");
         addColumnIfMissing(connection, statement, "crm_whatsapp_agent_session", "selected_payment_method_id",
                 "INT NULL");
         addColumnIfMissing(connection, statement, "crm_whatsapp_agent_session", "selected_payment_account_id",

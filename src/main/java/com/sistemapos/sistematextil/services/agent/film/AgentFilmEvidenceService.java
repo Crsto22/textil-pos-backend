@@ -11,6 +11,7 @@ import java.util.UUID;
 
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -33,6 +34,7 @@ public class AgentFilmEvidenceService {
     private final CrmWhatsappPaymentEvidenceRepository mainEvidence;
     private final CrmWhatsappMessageRepository messages;
     private final CrmWhatsappAgentSessionRepository sessions;
+    private final CrmWhatsappFulfillmentRepository fulfillments;
     private final S3StorageService storage;
     private final AgentPaymentReceiptVisionGateway vision;
     private final AgentRuntimeConfigService config;
@@ -41,17 +43,20 @@ public class AgentFilmEvidenceService {
     private final AgentOutboxService outbox;
     private final TransactionTemplate tx;
     private final ObjectMapper json = new ObjectMapper().findAndRegisterModules();
+    private final JdbcTemplate jdbc;
 
     public AgentFilmEvidenceService(CrmWhatsappFilmAddonRepository addons,
             CrmWhatsappFilmEvidenceRepository evidence, CrmWhatsappPaymentEvidenceRepository mainEvidence,
             CrmWhatsappMessageRepository messages, CrmWhatsappAgentSessionRepository sessions,
+            CrmWhatsappFulfillmentRepository fulfillments,
             S3StorageService storage, AgentPaymentReceiptVisionGateway vision,
             AgentRuntimeConfigService config, CrmWhatsappAgentStateMachine stateMachine,
             AgentFilmFinalizationService finalizer, AgentOutboxService outbox,
+            JdbcTemplate jdbc,
             org.springframework.transaction.PlatformTransactionManager manager) {
         this.addons=addons; this.evidence=evidence; this.mainEvidence=mainEvidence; this.messages=messages;
-        this.sessions=sessions; this.storage=storage; this.vision=vision; this.config=config;
-        this.stateMachine=stateMachine; this.finalizer=finalizer; this.outbox=outbox;
+        this.sessions=sessions; this.fulfillments=fulfillments; this.storage=storage; this.vision=vision; this.config=config;
+        this.stateMachine=stateMachine; this.finalizer=finalizer; this.outbox=outbox; this.jdbc=jdbc;
         this.tx=new TransactionTemplate(manager);
     }
 
@@ -115,8 +120,17 @@ public class AgentFilmEvidenceService {
                             +errors.getFirst()+". Puedes enviar otro comprobante mientras quede tiempo.");
             return new Completion(addon.getIdFilmAddon(),false);
         }
-        e.setValidationStatus(CrmWhatsappPaymentEvidenceStatus.ACEPTABLE); evidence.save(e);
-        addon.setStatus(CrmWhatsappFilmStatus.PAID_PENDING_REVIEW);addon.setPaidAt(LocalDateTime.now());addon.setResolvedAt(LocalDateTime.now());addons.save(addon);
+        e.setValidationStatus(CrmWhatsappPaymentEvidenceStatus.VALIDADO); evidence.save(e);
+        addon.setStatus(CrmWhatsappFilmStatus.CONFIRMED);addon.setPaidAt(LocalDateTime.now());addon.setResolvedAt(LocalDateTime.now());addons.save(addon);
+        jdbc.update("""
+                INSERT INTO crm_whatsapp_film_payment
+                  (id_film_addon,id_venta,id_film_evidence,amount,currency,provider,operation_code,paid_at)
+                VALUES (?,?,?,?,?,?,?,?)
+                ON DUPLICATE KEY UPDATE id_film_payment=id_film_payment
+                """,addon.getIdFilmAddon(),addon.getVenta().getIdVenta(),e.getIdFilmEvidence(),AgentFilmService.PRICE,
+                "PEN","YAPE",e.getOperationCode(),e.getOperationAt());
+        CrmWhatsappFulfillment fulfillment=fulfillments.findForUpdateBySessionId(addon.getAgentSession().getIdAgentSession()).orElseThrow();
+        fulfillment.setStatus(CrmWhatsappFulfillmentStatus.READY);fulfillments.save(fulfillment);
         CrmWhatsappAgentSession session=sessions.findForUpdate(addon.getAgentSession().getIdAgentSession()).orElseThrow();
         if(session.getState()==CrmWhatsappAgentState.ESPERANDO_PAGO_FILM){session.setState(stateMachine.transition(session.getState(),CrmWhatsappAgentEvent.PAGO_FILM_APROBADO));session.setLastEvent(CrmWhatsappAgentEvent.PAGO_FILM_APROBADO);session.setStateChangedAt(LocalDateTime.now());sessions.save(session);}
         return new Completion(addon.getIdFilmAddon(),true);
@@ -126,9 +140,12 @@ public class AgentFilmEvidenceService {
         java.util.ArrayList<String> errors=new java.util.ArrayList<>(); Integer company=addon.getConversation().getConnection().getEmpresa().getIdEmpresa();
         if(!x.paymentReceipt())errors.add("la imagen no parece ser un comprobante");
         if(e.getDetectedAmount()==null||e.getDetectedAmount().compareTo(AgentFilmService.PRICE)!=0)errors.add("el monto debe ser exactamente S/2.00");
+        if(!"PEN".equalsIgnoreCase(clean(e.getDetectedCurrency())))errors.add("la moneda debe ser PEN");
+        if(!"YAPE".equalsIgnoreCase(clean(x.paymentMethod())))errors.add("el proveedor debe ser Yape");
+        if(!recipientMatches(clean(e.getRecipient()),addon.getPaymentAccount()))errors.add("el destinatario no coincide con el titular configurado");
         if(clean(e.getOperationCode()).isBlank())errors.add("no se encontró el código de operación");
         if(e.getConfidence()==null||e.getConfidence()<config.forSession(addon.getAgentSession().getIdAgentSession()).receiptMinimumConfidence())errors.add("la imagen no se lee con suficiente claridad");
-        if(e.getMessage().getCreatedAt()==null||addon.getExpiresAt()==null||e.getMessage().getCreatedAt().isAfter(addon.getExpiresAt()))errors.add("el comprobante llegó después del plazo de una hora");
+        if(e.getMessage().getCreatedAt()==null||addon.getExpiresAt()==null||e.getMessage().getCreatedAt().isAfter(addon.getExpiresAt()))errors.add("el comprobante llegó después del plazo de 12 horas");
         if(e.getOperationAt()==null||e.getOperationAt().isBefore(addon.getPaymentStartedAt().minusMinutes(15))||e.getOperationAt().isAfter(e.getMessage().getCreatedAt().plusMinutes(15)))errors.add("la fecha u hora no corresponde a esta solicitud");
         if(!mainEvidence.findOtherByHash(-1L,e.getSha256(),company,PageRequest.of(0,1)).isEmpty()||!evidence.findOtherByHash(e.getIdFilmEvidence(),e.getSha256(),company,PageRequest.of(0,1)).isEmpty())errors.add("el archivo del comprobante ya fue utilizado");
         if(!clean(e.getOperationCode()).isBlank()&&(!mainEvidence.findOtherByOperation(-1L,e.getOperationCode(),company,PageRequest.of(0,1)).isEmpty()||!evidence.findOtherByOperation(e.getIdFilmEvidence(),e.getOperationCode(),company,PageRequest.of(0,1)).isEmpty()))errors.add("el código de operación ya fue utilizado");
@@ -143,6 +160,15 @@ public class AgentFilmEvidenceService {
     private String hash(byte[] b){try{return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(b));}catch(Exception e){throw new IllegalStateException(e);}}
     private String write(Object o){try{return json.writeValueAsString(o);}catch(Exception e){return "[]";}}
     private String clean(String v){return v==null?"":v.trim();}
+    private boolean recipientMatches(String recipient,MetodoPagoCuenta account){
+        if(account==null||recipient.isBlank())return false;
+        String actual=normalize(recipient),holder=normalize(account.getTitular());
+        if(!holder.isBlank()&&(actual.contains(holder)||holder.contains(actual)))return true;
+        return java.util.Arrays.stream(clean(account.getAliasesValidacion()).split("[,;|]"))
+                .map(this::normalize).filter(v->!v.isBlank()).anyMatch(v->actual.contains(v)||v.contains(actual));
+    }
+    private String normalize(String value){return java.text.Normalizer.normalize(clean(value),java.text.Normalizer.Form.NFD)
+            .replaceAll("\\p{M}","").replaceAll("[^A-Za-z0-9]","").toUpperCase();}
     private record Claimed(Long id,Long connectionId,String path,String mime){}
     private record Completion(Long addonId,boolean approved){}
 }

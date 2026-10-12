@@ -32,6 +32,24 @@ import com.sistemapos.sistematextil.services.agent.outbox.AgentOutboxService;
 
 class AgentTurnFinalizerTest {
     @Test
+    void appendsAdvisorPhoneToEveryHumanHandoff() {
+        AgentOutboxService outbox=mock(AgentOutboxService.class);CrmWhatsappAgentSessionRepository sessions=mock(CrmWhatsappAgentSessionRepository.class);
+        CrmWhatsappAgentSession session=new CrmWhatsappAgentSession();session.setIdAgentSession(8L);session.setActiveSlot(true);
+        CrmWhatsappConversation conversation=new CrmWhatsappConversation();conversation.setIdConversation(20L);session.setConversation(conversation);
+        CrmWhatsappMessage anchor=new CrmWhatsappMessage();anchor.setIdMessage(99L);session.setLastCustomerMessage(anchor);
+        when(sessions.findForUpdate(8L)).thenReturn(java.util.Optional.of(session));
+        JdbcTemplate jdbc=mock(JdbcTemplate.class);when(jdbc.queryForObject(anyString(),eq(Long.class),eq(20L),eq(99L))).thenReturn(2L);
+        AgentTurnFinalizer finalizer=new AgentTurnFinalizer(outbox,mock(AgentCatalogQueryService.class),sessions,
+                mock(CrmWhatsappAgentStateMachine.class),mock(AgentRuntimeConfigService.class),jdbc);
+        JobLease lease=new JobLease(41L,8L,99L,1,"worker:lease",LocalDateTime.now());
+        GeneratedTurn turn=new GeneratedTurn("Una asesora revisará el caso.","Resumen",true,"GEMINI","gemini",10,0,"fp",List.of());
+
+        finalizer.finalizeTurn(lease,turn);
+
+        verify(outbox).enqueueText(8L,41L,99L,0,"Una asesora revisará el caso.\n\n"+AgentTurnFinalizer.ADVISOR_CONTACT);
+    }
+
+    @Test
     void queuesConfiguredWelcomeOnlyBeforeTheFirstAgentReply() {
         AgentOutboxService outbox = mock(AgentOutboxService.class);
         CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);

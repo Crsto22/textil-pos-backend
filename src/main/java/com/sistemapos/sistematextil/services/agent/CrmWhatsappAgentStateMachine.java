@@ -128,7 +128,7 @@ public class CrmWhatsappAgentStateMachine {
                 entry(CrmWhatsappAgentEvent.DATOS_SHALOM_COMPLETADOS,
                         CrmWhatsappAgentState.ESPERANDO_CONFIRMACION_AGENCIA_SHALOM),
                 entry(CrmWhatsappAgentEvent.PERFIL_SHALOM_REUTILIZADO,
-                        CrmWhatsappAgentState.ESPERANDO_DECISION_FILM),
+                        CrmWhatsappAgentState.LISTO_PARA_VENTA),
                 entry(CrmWhatsappAgentEvent.RECOJO_TIENDA_SELECCIONADO, CrmWhatsappAgentState.LISTO_PARA_VENTA),
                 entry(CrmWhatsappAgentEvent.CAMBIO_METODO_ENTREGA_SOLICITADO,
                         CrmWhatsappAgentState.ESPERANDO_METODO_ENTREGA),
@@ -139,7 +139,7 @@ public class CrmWhatsappAgentStateMachine {
                 entry(CrmWhatsappAgentEvent.AGENCIA_SHALOM_PROPUESTA,
                         CrmWhatsappAgentState.ESPERANDO_CONFIRMACION_AGENCIA_SHALOM),
                 entry(CrmWhatsappAgentEvent.AGENCIA_SHALOM_CONFIRMADA,
-                        CrmWhatsappAgentState.ESPERANDO_DECISION_FILM),
+                        CrmWhatsappAgentState.LISTO_PARA_VENTA),
                 entry(CrmWhatsappAgentEvent.CORRECCION_DATOS_SHALOM_SOLICITADA,
                         CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM),
                 entry(CrmWhatsappAgentEvent.RECOJO_TIENDA_SELECCIONADO, CrmWhatsappAgentState.LISTO_PARA_VENTA),
@@ -172,7 +172,8 @@ public class CrmWhatsappAgentStateMachine {
 
         register(result, CrmWhatsappAgentState.VENTA_PENDIENTE_REVISION,
                 entry(CrmWhatsappAgentEvent.PAGO_APROBADO_FINALMENTE, CrmWhatsappAgentState.COMPLETADO),
-                entry(CrmWhatsappAgentEvent.PAGO_RECHAZADO_Y_VENTA_ANULADA, CrmWhatsappAgentState.CANCELADO));
+                entry(CrmWhatsappAgentEvent.PAGO_RECHAZADO_Y_VENTA_ANULADA, CrmWhatsappAgentState.CANCELADO),
+                entry(CrmWhatsappAgentEvent.AYUDA_REQUERIDA, CrmWhatsappAgentState.REQUIERE_AYUDA));
 
         register(result, CrmWhatsappAgentState.COMPLETADO,
                 entry(CrmWhatsappAgentEvent.NUEVA_COMPRA_INICIADA, CrmWhatsappAgentState.IDLE));

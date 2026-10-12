@@ -34,6 +34,12 @@ import lombok.extern.slf4j.Slf4j;
 @RequiredArgsConstructor
 @Slf4j
 public class AgentConversationOrchestrator {
+    static final String POST_SALE_CHANGE_MESSAGE = """
+            Entiendo. Como tu pedido ya fue confirmado, no puedo realizar cambios de color, talla, modelo, cantidad, pago o entrega desde el chat automatico.
+
+            Una asesora revisara tu solicitud y te indicara si el cambio es posible. Ten en cuenta que puede aplicarse una penalidad de S/20 por prenda.
+
+            Para recibir ayuda con tu caso, comunícate con nuestra asesora al 933918047.""";
     static final String GENERAL_IMAGE_MESSAGE = """
             Recibí tu imagen, bella 💛
             Para confirmar correctamente el producto, indícame el nombre del modelo que aparece en la foto.""";
@@ -89,6 +95,13 @@ public class AgentConversationOrchestrator {
     private GeneratedTurn generate(JobLease lease) {
         var context = contextFactory.build(lease.sessionId(), lease.anchorMessageId());
         var batch = batchFactory.build(lease.sessionId(), context.conversationId(), lease.anchorMessageId());
+        if (isPostSaleChangeRequest(context, batch)) {
+            GeneratedTurn deterministic = new GeneratedTurn(
+                    POST_SALE_CHANGE_MESSAGE, context.previousSummary(), true,
+                    "JAVA_DETERMINISTIC", "post-sale-change-guard", 0L, 0,
+                    context.fingerprint(), List.of());
+            return persistGeneratedTurn(lease, deterministic);
+        }
         String mediaMessage = generalMediaMessage(batch, context.state());
         if (mediaMessage != null) {
             GeneratedTurn deterministic = new GeneratedTurn(
@@ -194,6 +207,26 @@ public class AgentConversationOrchestrator {
         boolean document = batch.messages().stream()
                 .anyMatch(item -> "DOCUMENT".equalsIgnoreCase(item.messageType()));
         return document ? GENERAL_DOCUMENT_MESSAGE : null;
+    }
+
+    static boolean isPostSaleChangeRequest(
+            com.sistemapos.sistematextil.services.agent.context.AgentContext context,
+            AgentMessageBatch batch) {
+        if (context == null || context.fulfillment() == null || context.fulfillment().saleId() == null
+                || batch == null) return false;
+        String message = normalizeText(batch.combinedInput());
+        boolean asksForChange = message.matches(
+                ".*\\b(cambi(?:ar|arme|o|ame|es|e|arlo|arla)|modific(?:ar|acion)|reemplaz(?:ar|o)|correg(?:ir|irlo|irla))\\b.*");
+        if (!asksForChange) return false;
+        return message.matches(
+                ".*\\b(color|talla|modelo|producto|prenda|cantidad|pedido|pago|direccion|agencia|envio|entrega)\\b.*")
+                || message.contains("quiero cambiar") || message.contains("deseo cambiar");
+    }
+
+    private static String normalizeText(String value) {
+        if (value == null) return "";
+        return Normalizer.normalize(value, Normalizer.Form.NFD).replaceAll("\\p{M}+", "")
+                .toLowerCase(Locale.ROOT).replaceAll("\\s+", " ").trim();
     }
 
     private static boolean isReceiptWorkflow(

@@ -66,6 +66,10 @@ public class CrmWhatsappAgentSession {
     @Column(name = "resume_state", length = 50)
     private CrmWhatsappAgentState resumeState;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "preferred_fulfillment_method", length = 20)
+    private CrmWhatsappFulfillmentMethod preferredFulfillmentMethod;
+
     @Column(name = "active_slot")
     private Boolean activeSlot;
 

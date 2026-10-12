@@ -53,7 +53,7 @@ class AgentContextFactoryTest {
         Payment payment = new Payment(40L, "PENDING_EVIDENCE", "ACTIVE", "YAPE", money("155"), "PEN",
                 NOW.plusMinutes(4), new PaymentEvidence(41L, "ACEPTABLE", "COMPLETED", "YAPE", money("155"),
                         "PEN", 98, NOW));
-        Fulfillment fulfillment = new Fulfillment(50L, "SHALOM", "DRAFT", "Ana Perez", "DNI", null,
+        Fulfillment fulfillment = new Fulfillment(50L, null, "SHALOM", "DRAFT", "Ana Perez", "DNI", null,
                 "999111222", null, null, null, "AREQUIPA", null, null);
         ToolResult tool = new ToolResult(60L, "buscar_producto", "COMPLETED", "{\"product\":\"ALICE RAYAS\"}",
                 null, null, NOW);

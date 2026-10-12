@@ -184,7 +184,7 @@ public class JdbcAgentContextDataSource implements AgentContextDataSource {
     @Override
     public Optional<Fulfillment> findFulfillment(Long sessionId) {
         List<Fulfillment> rows = jdbc.query("""
-                SELECT id_fulfillment, method, status, recipient_name, document_type, document_number,
+                SELECT id_fulfillment, id_venta, method, status, recipient_name, document_type, document_number,
                        phone, id_pickup_branch, id_shalom_agency, shalom_agency, shalom_destination,
                        shalom_agency_address, shalom_candidate_ids
                 FROM crm_whatsapp_fulfillment
@@ -192,6 +192,7 @@ public class JdbcAgentContextDataSource implements AgentContextDataSource {
                 LIMIT 1
                 """, (rs, row) -> new Fulfillment(
                         rs.getLong("id_fulfillment"),
+                        nullableInteger(rs, "id_venta"),
                         rs.getString("method"),
                         rs.getString("status"),
                         rs.getString("recipient_name"),

@@ -102,7 +102,7 @@ class AgentFulfillmentServiceTest {
         agency.setAddress(view.address());agency.setDepartment("AREQUIPA");agency.setProvince("AREQUIPA");agency.setActive(true);agency.setDestinationEnabled(true);
         when(agencies.findById(9L)).thenReturn(Optional.of(agency));
         var confirmed=service.confirmShalomAgency(41L,9L,"confirm");
-        assertEquals("READY",confirmed.status());assertEquals(CrmWhatsappAgentState.ESPERANDO_DECISION_FILM,session.getState());
+        assertEquals("READY",confirmed.status());assertEquals(CrmWhatsappAgentState.LISTO_PARA_VENTA,session.getState());
         verify(profiles).save(any());
     }
 

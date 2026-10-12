@@ -544,6 +544,34 @@ class AgentVerifiedGroundingServiceTest {
     }
 
     @Test
+    void addsAllPreviouslyProposedProductsFromCombinedConfirmationAndShippingMessage() {
+        AgentDecisionGateway decisions=mock(AgentDecisionGateway.class);AgentCatalogQueryService catalog=mock(AgentCatalogQueryService.class);AgentCartService cart=mock(AgentCartService.class);
+        AgentConversationDecision decision=new AgentConversationDecision(
+                AgentDecisionIntent.CART_CHANGE,"confirmar ambos","BELEN","","",0,"",
+                List.of(new PromotionSelection("BELEN","TOPO","S",1),new PromotionSelection("BELEN","HUESO","XS",1)),
+                AgentCartAction.ADD_PRODUCT,AgentCommercialAction.ADD_PRODUCT,"","","","","SHALOM","","","",List.of(),
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL,"",List.of(),"",100,false);
+        when(decisions.interpret(4L,"Si\nEnvio")).thenReturn(new AgentInterpretationResult("GEMINI","model","DB",10,0,decision));
+        ProductSummary product=new ProductSummary(45,"BELEN","CATANIA","CONJUNTO",false,null,75D,20,List.of("TOPO","HUESO"),List.of("S","XS"));
+        when(catalog.searchProducts(9L,"BELEN",10)).thenReturn(new ProductSearchResult("BELEN",1,List.of(product),false));
+        VariantSummary topo=new VariantSummary(1417,"BEL-TOP-S","TOPO","S",75D,75D,9,true);
+        VariantSummary hueso=new VariantSummary(1402,"BEL-HUE-XS","HUESO","XS",75D,75D,4,true);
+        when(catalog.getVariants(9L,45,"TOPO","S")).thenReturn(new VariantResult(45,"BELEN","TOPO","S",List.of(topo)));
+        when(catalog.getVariants(9L,45,"HUESO","XS")).thenReturn(new VariantResult(45,"BELEN","HUESO","XS",List.of(hueso)));
+        when(catalog.getStock(9L,1417,1)).thenReturn(new StockResult(1417,45,"BELEN","TOPO","S",1,9,true,1,true));
+        when(catalog.getStock(9L,1402,1)).thenReturn(new StockResult(1402,45,"BELEN","HUESO","XS",1,4,true,1,true));
+        CartResult first=new CartResult(70L,"DRAFT","PEN",BigDecimal.valueOf(75),BigDecimal.ZERO,BigDecimal.valueOf(75),List.of(),List.of());
+        CartResult both=new CartResult(70L,"DRAFT","PEN",BigDecimal.valueOf(150),BigDecimal.ZERO,BigDecimal.valueOf(150),List.of(),List.of());
+        when(cart.addProduct(9L,1417,1,"agent-job-30:verified-add-product:0")).thenReturn(first);
+        when(cart.addProduct(9L,1402,1,"agent-job-30:verified-add-product:1")).thenReturn(both);
+        AgentVerifiedGroundingService service=new AgentVerifiedGroundingService(decisions,catalog,mock(AgentPromotionQueryService.class),mock(AgentKnowledgeRetriever.class),cart,passThroughAudit());
+
+        var result=service.ground(4L,9L,30L,"Si\nEnvio");
+
+        assertTrue(result.mutationExecuted());verify(cart).addProduct(9L,1417,1,"agent-job-30:verified-add-product:0");verify(cart).addProduct(9L,1402,1,"agent-job-30:verified-add-product:1");
+    }
+
+    @Test
     void listsReadyStockWithAnEmptyCatalogQueryAndTheSemanticFilter() {
         AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
         AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);

@@ -51,13 +51,19 @@ public class AgentFilmFinalizationService {
                 || addon.getStatus() == CrmWhatsappFilmStatus.CONFIRMED;
         StringBuilder text = new StringBuilder();
         if (prefix != null && !prefix.isBlank()) text.append(prefix.trim()).append("\n\n");
+        if (addon.getStatus() == CrmWhatsappFilmStatus.PAYMENT_OVERDUE
+                || addon.getStatus() == CrmWhatsappFilmStatus.PAYMENT_CONFIGURATION_REQUIRED) {
+            return text.append("📦 El envío permanece bloqueado hasta resolver el pago obligatorio del film.")
+                    .append("\n📍 *Agencia:* ").append(f.getShalomAgency())
+                    .append("\n\n🧾 *Número de pedido: ").append(saleId).append("*").toString();
+        }
         text.append(included ? "📦 Tu paquete será enviado con film protector mediante Shalom."
                 : "📦 Tu paquete será enviado sin film protector mediante Shalom.");
         text.append("\n📍 *Agencia:* ").append(f.getShalomAgency());
         if (f.getShalomAgencyAddress() != null && !f.getShalomAgencyAddress().isBlank())
             text.append("\n🏠 ").append(f.getShalomAgencyAddress());
         return text.append("\n\n🧾 *Número de pedido: ").append(saleId)
-                .append("*\n\nNuestra asesora de envíos se comunicará contigo para corroborar tus datos.")
+                .append("*\n\nSi necesitas ayuda, comunícate con nuestra asesora al 933918047.")
                 .append("\n\nGracias por confiar en Kiments 💛").toString();
     }
     public record FinalResult(Integer saleId, String message) {}

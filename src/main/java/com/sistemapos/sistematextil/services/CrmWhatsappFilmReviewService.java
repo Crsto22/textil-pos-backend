@@ -10,6 +10,7 @@ import org.springframework.web.server.ResponseStatusException;
 import com.sistemapos.sistematextil.model.*;
 import com.sistemapos.sistematextil.repositories.*;
 import com.sistemapos.sistematextil.util.usuario.Rol;
+import com.sistemapos.sistematextil.services.agent.film.AgentFilmService;
 
 import lombok.RequiredArgsConstructor;
 
@@ -19,6 +20,13 @@ public class CrmWhatsappFilmReviewService {
     private final CrmWhatsappFilmAddonRepository addonRepository;
     private final UsuarioRepository users;
     private final S3StorageService storage;
+    private final AgentFilmService filmService;
+
+    @Transactional
+    public AgentFilmService.FilmResult reactivate(Long addonId,Usuario user){requireUser(user);return filmService.reactivate(addonId);}
+
+    @Transactional
+    public AgentFilmService.FilmResult confirmManually(Long addonId,Usuario user){requireUser(user);return filmService.confirmManually(addonId);}
 
     @Transactional(readOnly=true)
     public FilmEvidenceResponse get(Long id,Usuario user){requireUser(user);return response(requireEvidence(id));}

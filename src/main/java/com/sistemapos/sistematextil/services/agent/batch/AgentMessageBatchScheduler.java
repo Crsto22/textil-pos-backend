@@ -110,7 +110,8 @@ public class AgentMessageBatchScheduler {
     private boolean isWorkflowEvidence(CrmWhatsappMessage message, CrmWhatsappAgentState state) {
         if (state != CrmWhatsappAgentState.ESPERANDO_COMPROBANTE
                 && state != CrmWhatsappAgentState.VALIDANDO_COMPROBANTE
-                && state != CrmWhatsappAgentState.ESPERANDO_PAGO_FILM) return false;
+                && state != CrmWhatsappAgentState.ESPERANDO_PAGO_FILM
+                && state != CrmWhatsappAgentState.VENTA_PENDIENTE_REVISION) return false;
         String mime = message.getMediaMimeType() == null ? "" : message.getMediaMimeType().toLowerCase();
         return mime.equals("image/jpeg") || mime.equals("image/png") || mime.equals("image/webp")
                 || mime.equals("application/pdf");

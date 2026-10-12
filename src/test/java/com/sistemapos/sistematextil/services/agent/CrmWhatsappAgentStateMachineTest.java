@@ -87,19 +87,7 @@ class CrmWhatsappAgentStateMachineTest {
         state = machine.transition(state, DATOS_SHALOM_COMPLETADOS);
         assertEquals(ESPERANDO_CONFIRMACION_AGENCIA_SHALOM, state);
         state = machine.transition(state, AGENCIA_SHALOM_CONFIRMADA);
-        assertEquals(ESPERANDO_DECISION_FILM, state);
-        state = machine.transition(state, FILM_ACEPTADO);
-        assertEquals(ESPERANDO_PAGO_FILM, state);
-        state = machine.transition(state, PAGO_FILM_APROBADO);
         assertEquals(LISTO_PARA_VENTA, state);
-    }
-
-    @Test
-    void continuesShalomSaleWhenFilmIsDeclinedOrExpires() {
-        assertEquals(LISTO_PARA_VENTA, machine.transition(ESPERANDO_DECISION_FILM,
-                CrmWhatsappAgentEvent.FILM_RECHAZADO));
-        assertEquals(LISTO_PARA_VENTA, machine.transition(ESPERANDO_PAGO_FILM,
-                CrmWhatsappAgentEvent.PAGO_FILM_EXPIRADO));
     }
 
     @Test

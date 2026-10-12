@@ -97,6 +97,9 @@ public class AgentMainPromptFactory {
             - Si nada cambió, no reenvíes el mismo bloque: explica en una frase qué falta o qué está ocurriendo.
 
             AYUDA HUMANA
+            - La IA solo vende. Nunca cambia color, talla, modelo, cantidad, pago, dirección ni entrega de un pedido confirmado o emitido.
+            - Ante cualquier cambio postventa, no consultes ni modifiques el carrito, no generes otro pedido y no solicites otro pago.
+              Marca ayuda y deriva inmediatamente a una asesora, quien es la única autorizada para evaluar y realizar cambios.
             - Marca ayuda cuando la clienta la pide expresamente; reporta cambio, devolución, reembolso, defecto,
               prenda incorrecta o reclamo; solicita venta mayorista; existe riesgo, fraude o contradicción no resoluble;
               una herramienta crítica falla reiteradamente; o no puedes actuar con seguridad.
@@ -133,9 +136,7 @@ public class AgentMainPromptFactory {
 
         RuntimeConfig runtime = runtimeConfigService == null ? null
                 : runtimeConfigService.forConnection(context.connectionId());
-        String advisorRule = runtime == null ? "" : runtime.advisorAttentionEnabled()
-                ? "\n- La derivacion a asesoras esta habilitada para los casos definidos en AYUDA HUMANA."
-                : "\n- La derivacion a asesoras esta deshabilitada. No prometas una asesora; resuelve solo lo que permitan las herramientas y comunica con honestidad cualquier limite.";
+        String advisorRule = "\n- La derivacion a asesoras esta habilitada para los casos definidos en AYUDA HUMANA. Toda derivacion real debe indicar el numero 933918047.";
         String saleRule = runtime != null && !runtime.automaticSalesEnabled()
                 ? "\n- La creacion de Notas de Venta esta bloqueada por la fase de activacion. No afirmes que una venta fue creada."
                 : "";
@@ -159,21 +160,21 @@ public class AgentMainPromptFactory {
         return switch (state) {
             case IDLE -> "Comprende el pedido actual. Saluda solo si corresponde y dirige la conversación a explorar productos o resolver información.";
             case EXPLORANDO_PRODUCTOS -> "Resuelve primero la consulta de producto actual. Busca nombres aproximados y aclara solo si existen varias coincidencias reales.";
-            case ARMANDO_CARRITO -> "Continúa con el producto o combo vigente. Solicita únicamente variante o cantidad faltante y confirma cambios mediante herramientas.";
+            case ARMANDO_CARRITO -> "Continúa con el producto o combo vigente. Si confirma productos pendientes y además menciona una preferencia de envío, confirma primero los productos y conserva la preferencia sin seleccionar todavía la entrega. Solicita únicamente variante o cantidad faltante y confirma cambios mediante herramientas.";
             case ESPERANDO_DATOS_CLIENTE -> "El comprobante ya fue aprobado inicialmente. Obtén únicamente los datos del cliente indicados como faltantes; no vuelvas a pedir pago ni entrega todavía.";
             case ESPERANDO_METODO_PAGO -> "Lista métodos reales si todavía no se mostraron y registra únicamente la opción elegida por la clienta.";
             case ESPERANDO_COMPROBANTE -> "Espera el comprobante dentro de la reserva vigente. No reinicies el pedido ni solicites nuevamente datos ya confirmados.";
             case VALIDANDO_COMPROBANTE -> "No redactes una espera ni prometas avisar. El analizador visual enviará automáticamente un único resultado final.";
-            case ESPERANDO_METODO_ENTREGA -> "Solicita elegir una sola modalidad: recojo en tienda o envío por Shalom.";
+            case ESPERANDO_METODO_ENTREGA -> "Solicita elegir una sola modalidad: recojo en tienda o envío por Shalom. Solo en este estado puede ejecutarse SELECT_PICKUP o SELECT_SHALOM.";
             case ESPERANDO_DATOS_SHALOM -> "Solicita únicamente los campos Shalom indicados en datos faltantes. Si existe un perfil guardado, permite reutilizarlo o cambiar uno, varios o todos sus datos conservando los demás.";
             case ESPERANDO_CONFIRMACION_AGENCIA_SHALOM -> "Interpreta cuál agencia ofrecida confirma la clienta. También permite cambiar uno, varios o todos los datos Shalom conservando los demás. Si rechaza las opciones o menciona otra ciudad, distrito, sede, dirección o referencia, solicita una nueva búsqueda; no la derives a una asesora por ese motivo. Nunca inventes una agencia ni solicites capturas.";
-            case ESPERANDO_DECISION_FILM -> "La agencia Shalom ya está confirmada. Interpreta semánticamente si acepta el film protector por S/2 o si desea continuar sin film. Usa ACCEPT_FILM o DECLINE_FILM; no inventes otra modalidad.";
+            case ESPERANDO_DECISION_FILM -> "El film protector de S/2 es obligatorio para Shalom. No permitas rechazarlo ni continuar sin film; informa que el envío queda pendiente y deriva cualquier excepción a una asesora.";
             case ESPERANDO_PAGO_FILM -> "La clienta tiene una solicitud adicional de S/2 por film. Si envía una imagen será validada por el backend. Responde preguntas sobre el plazo sin confundir este pago con el pago principal.";
             case LISTO_PARA_VENTA -> "Genera la Nota de Venta con la herramienta; no anuncies registro hasta recibir confirmación.";
             case VENTA_PENDIENTE_REVISION -> "Informa que el pago y la Nota de Venta están en revisión humana. No modifiques ni dupliques la venta.";
             case COMPLETADO -> "Agradece brevemente. Solo inicia otra compra si la clienta lo solicita.";
             case CANCELADO -> "Informa la cancelación sin reactivar operaciones. Si desea comprar otra vez, inicia una sesión nueva.";
-            case REQUIERE_AYUDA -> "Detén herramientas comerciales y comunica que una asesora revisará el caso; no prometas plazo ni solución.";
+            case REQUIERE_AYUDA -> "Detén herramientas comerciales y comunica que puede recibir ayuda escribiendo a la asesora al 933918047; no prometas plazo ni solución.";
         };
     }
 

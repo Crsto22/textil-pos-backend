@@ -40,6 +40,35 @@ import com.sistemapos.sistematextil.model.CrmWhatsappAgentState;
 
 class AgentConversationOrchestratorTest {
     @Test
+    void escalatesPostSaleChangesWithoutCallingGeminiOrCartTools() {
+        Fixture fixture = new Fixture();
+        AgentContext context = mock(AgentContext.class);
+        AgentContext.Fulfillment fulfillment = mock(AgentContext.Fulfillment.class);
+        when(fulfillment.saleId()).thenReturn(11305);
+        when(context.fulfillment()).thenReturn(fulfillment);
+        when(context.connectionId()).thenReturn(7L);
+        when(context.conversationId()).thenReturn(20L);
+        when(context.fingerprint()).thenReturn("post-sale-change");
+        when(context.previousSummary()).thenReturn("Pedido 11305 emitido");
+        when(fixture.contexts.build(8L, 99L)).thenReturn(context);
+        when(fixture.batches.build(8L, 20L, 99L)).thenReturn(new AgentMessageBatch(
+                8L, 20L, 99L, List.of(), "Quiero que me cambies de color", false, false, false));
+        fixture.current(true, true, true);
+
+        assertEquals(AgentConversationOrchestrator.Outcome.COMPLETED,
+                fixture.orchestrator.process(fixture.lease));
+
+        verify(fixture.grounding, never()).ground(any(), any(), any(), any());
+        verify(fixture.gateway, never()).respond(any(), any(), any(Integer.class));
+        ArgumentCaptor<GeneratedTurn> turn = ArgumentCaptor.forClass(GeneratedTurn.class);
+        verify(fixture.jobs).saveGeneratedTurn(eq(41L), eq("worker:lease"), turn.capture(), any());
+        assertTrue(turn.getValue().requiresHumanHelp());
+        assertEquals("post-sale-change-guard", turn.getValue().model());
+        assertEquals(AgentConversationOrchestrator.POST_SALE_CHANGE_MESSAGE,
+                turn.getValue().customerMessage());
+    }
+
+    @Test
     void answersGeneralImagesWithoutCallingGemini() {
         Fixture fixture = new Fixture();
         fixture.current(true, true, true);

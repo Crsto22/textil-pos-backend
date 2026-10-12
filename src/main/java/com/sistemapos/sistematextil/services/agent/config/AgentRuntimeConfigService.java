@@ -23,6 +23,8 @@ public class AgentRuntimeConfigService {
             Puedes llamar a la clienta “bella”, “hermosa” o “linda” de manera moderada y natural, sin repetirlo en cada mensaje.
             Responde en español, de forma breve, clara y profesional, con pocos emojis.
             Acompaña a la clienta hacia la compra sin presionarla y evita respuestas frías, robóticas o repetitivas.
+            La IA solo realiza ventas nuevas. Nunca realiza cambios sobre pedidos confirmados o emitidos.
+            Toda solicitud de cambio debe ser derivada a una asesora humana sin crear carrito, pedido ni pago nuevos.
             """.trim();
     public static final String DEFAULT_WELCOME_MESSAGE = """
             💕 *¡Bienvenida a Kiments!*

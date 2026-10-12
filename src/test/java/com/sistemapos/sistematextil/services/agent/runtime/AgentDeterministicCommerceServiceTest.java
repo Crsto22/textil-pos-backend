@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import com.sistemapos.sistematextil.model.CrmWhatsappAgentSession;
 import com.sistemapos.sistematextil.model.CrmWhatsappAgentState;
 import com.sistemapos.sistematextil.model.CrmWhatsappConversation;
+import com.sistemapos.sistematextil.model.CrmWhatsappFulfillmentMethod;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappAgentSessionRepository;
 import com.sistemapos.sistematextil.services.agent.ai.AgentCartAction;
 import com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability;
@@ -34,6 +35,27 @@ import java.math.BigDecimal;
 import com.sistemapos.sistematextil.util.cliente.TipoDocumento;
 
 class AgentDeterministicCommerceServiceTest {
+
+    @Test
+    void remembersEarlyShippingPreferenceWithoutExecutingFulfillmentOrEscalating() {
+        CrmWhatsappAgentSessionRepository sessions=mock(CrmWhatsappAgentSessionRepository.class);
+        CrmWhatsappAgentSession session=new CrmWhatsappAgentSession();session.setState(CrmWhatsappAgentState.ARMANDO_CARRITO);
+        when(sessions.findById(41L)).thenReturn(Optional.of(session));
+        AgentDeterministicCommerceService service=new AgentDeterministicCommerceService(
+                sessions,null,null,null,null,null,null,null,null,null,null);
+        AgentConversationDecision decision=new AgentConversationDecision(
+                AgentDecisionIntent.CART_CHANGE,"prefiero envio","BELEN","HUESO","XS",1,"",
+                AgentCartAction.NONE,AgentCommercialAction.SELECT_SHALOM,"","","","",
+                "SHALOM","","","",AgentCatalogAvailability.ALL,100,false);
+
+        var result=service.execute(41L,181L,decision);
+
+        assertTrue(result.handled());assertFalse(result.mutationExecuted());
+        assertEquals(CrmWhatsappFulfillmentMethod.SHALOM,session.getPreferredFulfillmentMethod());
+        assertTrue(result.customerMessage().contains("He guardado tu preferencia"));
+        assertFalse(result.customerMessage().contains("asesora"));
+        verify(sessions).save(session);
+    }
 
     @Test
     void groupsRepeatedPromotionsAndShowsTheTotalDiscountOnlyOnce() {

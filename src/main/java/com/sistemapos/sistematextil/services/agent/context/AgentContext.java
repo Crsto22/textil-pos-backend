@@ -103,6 +103,7 @@ public record AgentContext(
 
     public record Fulfillment(
             Long id,
+            Integer saleId,
             String method,
             String status,
             String recipientName,

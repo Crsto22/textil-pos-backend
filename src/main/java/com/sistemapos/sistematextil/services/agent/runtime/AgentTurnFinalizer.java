@@ -25,6 +25,7 @@ import lombok.RequiredArgsConstructor;
 @Service
 @RequiredArgsConstructor
 public class AgentTurnFinalizer {
+    public static final String ADVISOR_CONTACT = "Para recibir ayuda con tu caso, comunícate con nuestra asesora al 933918047.";
     private final AgentOutboxService outbox;
     private final AgentCatalogQueryService catalog;
     private final CrmWhatsappAgentSessionRepository sessions;
@@ -43,8 +44,9 @@ public class AgentTurnFinalizer {
         String summary = clean(turn.conversationSummary());
         if (!summary.isBlank()) session.setSummary(truncate(summary, 4000));
         session.setLastActivityAt(LocalDateTime.now());
-        boolean escalated = turn.requiresHumanHelp()
-                && runtimeConfig.forSession(lease.sessionId()).advisorAttentionEnabled();
+        // La ayuda humana solicitada por una regla de seguridad siempre detiene al
+        // agente automatico; no es una preferencia de estilo configurable.
+        boolean escalated = turn.requiresHumanHelp();
         if (escalated) {
             escalate(session, lease.jobId(), "La IA determino que el caso requiere revision humana");
         } else {
@@ -53,8 +55,9 @@ public class AgentTurnFinalizer {
         sessions.save(session);
         int ordinal = enqueueWelcomeForNewConversation(session, lease, 0);
         ordinal = enqueueValidatedMedia(lease, turn, ordinal);
-        outbox.enqueueText(lease.sessionId(), lease.jobId(), lease.anchorMessageId(), ordinal,
-                turn.customerMessage().trim());
+        String customerMessage=turn.customerMessage().trim();
+        if(escalated&&!customerMessage.contains("933918047"))customerMessage=customerMessage+"\n\n"+ADVISOR_CONTACT;
+        outbox.enqueueText(lease.sessionId(), lease.jobId(), lease.anchorMessageId(), ordinal,customerMessage);
     }
 
     private int enqueueWelcomeForNewConversation(CrmWhatsappAgentSession session, JobLease lease, int ordinal) {
@@ -115,6 +118,8 @@ public class AgentTurnFinalizer {
         if (session == null || !Boolean.TRUE.equals(session.getActiveSlot())) return;
         if (runtimeConfig.forSession(lease.sessionId()).advisorAttentionEnabled()) {
             escalate(session, lease.jobId(), truncate(clean(reason), 160));
+            int ordinal=Math.floorMod(Objects.hash("AGENT_FAILURE_HELP",lease.jobId()),Integer.MAX_VALUE);
+            outbox.enqueueText(lease.sessionId(),null,lease.anchorMessageId(),ordinal,ADVISOR_CONTACT);
         } else {
             markAgentActive(session);
             // El job ya quedo FAILED. La notificacion de recuperacion no debe

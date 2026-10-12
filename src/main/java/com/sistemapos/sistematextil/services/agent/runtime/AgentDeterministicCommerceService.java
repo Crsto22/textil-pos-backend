@@ -19,6 +19,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sistemapos.sistematextil.model.CrmWhatsappAgentState;
 import com.sistemapos.sistematextil.model.CrmWhatsappAgentSession;
 import com.sistemapos.sistematextil.model.CrmWhatsappConversation;
+import com.sistemapos.sistematextil.model.CrmWhatsappFulfillmentMethod;
 import com.sistemapos.sistematextil.model.CrmWhatsappPaymentRequestStatus;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappAgentSessionRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappPaymentRequestRepository;
@@ -72,6 +73,19 @@ public class AgentDeterministicCommerceService {
     public Outcome execute(Long sessionId, Long jobId, AgentConversationDecision decision) {
         AgentConversationDecision effectiveDecision = normalizeShalomAgencyRefinement(sessionId, decision);
         AgentCommercialAction action = effectiveCommercialAction(effectiveDecision);
+        boolean earlyDeliveryPreference = rememberEarlyDeliveryPreference(sessionId, effectiveDecision);
+        if (action == AgentCommercialAction.SELECT_PICKUP
+                && requireSession(sessionId).getState() != CrmWhatsappAgentState.ESPERANDO_METODO_ENTREGA) {
+            return Outcome.message("Contamos con recojo en tienda sin costo adicional y envío por Shalom con "
+                    + "film protector obligatorio de S/2. Primero terminaremos de confirmar tu pedido y el pago; "
+                    + "después podrás elegir una modalidad de entrega.");
+        }
+        if (earlyDeliveryPreference && action == AgentCommercialAction.SELECT_SHALOM) {
+            return Outcome.message(earlyDeliveryPreferenceMessage());
+        }
+        if (earlyDeliveryPreference && action == AgentCommercialAction.NONE) {
+            return Outcome.message(earlyDeliveryPreferenceMessage());
+        }
         if (action == AgentCommercialAction.CHANGE_CART
                 && effectiveDecision.cartAction() != null && effectiveDecision.cartAction() != AgentCartAction.NONE) {
             return Outcome.notHandled();
@@ -85,6 +99,37 @@ public class AgentDeterministicCommerceService {
         } catch (Exception error) {
             throw new IllegalStateException("No se pudo recuperar el resultado determinístico", error);
         }
+    }
+
+    /** Persists semantic delivery intent without advancing the commercial state. */
+    public boolean rememberEarlyDeliveryPreference(Long sessionId, AgentConversationDecision decision) {
+        if (decision == null) return false;
+        CrmWhatsappAgentSession session = requireSession(sessionId);
+        if (session.getState() == CrmWhatsappAgentState.ESPERANDO_METODO_ENTREGA) return false;
+        String method = normalize(decision.deliveryMethod());
+        boolean shalom = decision.commercialAction() == AgentCommercialAction.SELECT_SHALOM
+                || method.equals("shalom") || method.equals("envio shalom") || method.equals("shipping");
+        if (!shalom) return false;
+        if (session.getPreferredFulfillmentMethod() != CrmWhatsappFulfillmentMethod.SHALOM) {
+            session.setPreferredFulfillmentMethod(CrmWhatsappFulfillmentMethod.SHALOM);
+            sessions.save(session);
+        }
+        return true;
+    }
+
+    public String earlyDeliveryPreferenceMessage() {
+        return "Sí realizamos envíos 💛\n"
+                + "🏬 Recojo en tienda: sin costo adicional.\n"
+                + "🚌 Envío por Shalom: requiere film protector obligatorio de S/2.\n"
+                + "He guardado tu preferencia por envío. Primero terminaremos de confirmar tu pedido y el pago; "
+                + "después te solicitaré los datos de Shalom.";
+    }
+
+    public String appendEarlyDeliveryPreference(String message) {
+        if (blank(message)) return earlyDeliveryPreferenceMessage();
+        return message.trim() + "\n\nTambién registré que prefieres envío. Trabajamos con Shalom y el envío "
+                + "requiere film protector obligatorio de S/2. Primero confirma que el pedido está correcto "
+                + "para continuar con el pago.";
     }
 
     AgentCommercialAction effectiveCommercialAction(AgentConversationDecision decision) {
@@ -395,7 +440,7 @@ public class AgentDeterministicCommerceService {
         customers.register(sessionId, decision.customerName(), phone,
                 TipoDocumento.SIN_DOC, null, operation);
         payments.bindApprovedCustomer(sessionId);
-        return Outcome.executed(deliveryQuestion());
+        return Outcome.executed(deliveryQuestion(sessionId));
     }
 
     private String conversationPhone(CrmWhatsappAgentSession session) {
@@ -412,7 +457,7 @@ public class AgentDeterministicCommerceService {
         }
         customers.link(sessionId, session.getCliente().getIdCliente(), operation);
         payments.bindApprovedCustomer(sessionId);
-        return Outcome.executed(deliveryQuestion());
+        return Outcome.executed(deliveryQuestion(sessionId));
     }
 
     private Outcome selectPickup(Long sessionId, String operation) {
@@ -444,7 +489,7 @@ public class AgentDeterministicCommerceService {
                 + "• Domingos: cerrado.\n"
                 + "• Feriados: cerrado.\n\n"
                 + "🧾 *Tu número de pedido es " + saleId + ".*\n\n"
-                + "Nuestra asesora de envíos se comunicará contigo para corroborar tus datos.\n\n"
+                + "Si necesitas ayuda, comunícate con nuestra asesora al 933918047.\n\n"
                 + "Gracias por confiar en Kiments 💛";
     }
 
@@ -522,15 +567,17 @@ public class AgentDeterministicCommerceService {
     }
 
     private Outcome confirmShalomAgency(Long sessionId, AgentConversationDecision decision, String operation) {
-        fulfillment.confirmShalomAgency(sessionId, decision.shalomAgency(), operation);
-        films.offer(sessionId);
-        return Outcome.executed(filmOffer());
+        var confirmed = fulfillment.confirmShalomAgency(sessionId, decision.shalomAgency(), operation);
+        var sale = sales.createSalesNote(sessionId, operation + ":sale");
+        var film = films.startMandatoryPayment(sessionId, sale.saleId());
+        return Outcome.executed(mandatoryFilmMessage(confirmed, sale.saleId(), film));
     }
 
     private Outcome reuseShalomProfile(Long sessionId, String operation) {
-        fulfillment.reuseSavedProfile(sessionId, operation);
-        films.offer(sessionId);
-        return Outcome.executed(filmOffer());
+        var confirmed = fulfillment.reuseSavedProfile(sessionId, operation);
+        var sale = sales.createSalesNote(sessionId, operation + ":sale");
+        var film = films.startMandatoryPayment(sessionId, sale.saleId());
+        return Outcome.executed(mandatoryFilmMessage(confirmed, sale.saleId(), film));
     }
 
     private Outcome acceptFilm(Long sessionId) {
@@ -543,13 +590,28 @@ public class AgentDeterministicCommerceService {
         String holder = blank(result.accountHolder()) ? "" : "\n👤 Titular: " + result.accountHolder();
         return Outcome.executed("📦 *Film protector para tu envío por Shalom*\n\n"
                 + "💰 Monto exacto: *S/2.00*\n📱 Yape: *" + result.accountNumber() + "*" + holder
-                + "\n\n⏱️ Tienes *1 hora* para enviar el comprobante por este chat. "
+                + "\n\n⏱️ Tienes *12 horas* para enviar el comprobante por este chat. "
                 + "Este pago no modifica el total de tu Nota de Venta.");
     }
 
     private Outcome declineFilm(Long sessionId) {
-        var result = films.decline(sessionId);
-        return Outcome.executed(filmFinalizer.finalizeSale(result.addonId(), false, "").message());
+        return Outcome.executed("El film protector de S/2 es obligatorio para los envíos por Shalom. "
+                + "Si necesitas ayuda con el pago, comunícate con nuestra asesora al 933918047.");
+    }
+
+    private String mandatoryFilmMessage(AgentFulfillmentService.FulfillmentResult result, Integer saleId,
+            AgentFilmService.FilmResult film) {
+        String registered = "✅ Tu pedido fue registrado correctamente.\n"
+                + "🧾 Número de pedido: " + saleId + "\n"
+                + "📍 Agencia: " + result.shalomAgency() + "\n"
+                + "Para completar la preparación del envío, queda pendiente el pago obligatorio de S/2 por el film protector.";
+        if (film.accountNumber() == null) {
+            return registered + "\n\nNo hay una cuenta Yape activa. Tu venta se conserva. Para recibir ayuda, "
+                    + "comunícate con nuestra asesora al 933918047.";
+        }
+        String holder = blank(film.accountHolder()) ? "" : "\nTitular: " + film.accountHolder();
+        return registered + "\n\n📦 Pago obligatorio del film protector\nMonto exacto: S/2.00\nYape: "
+                + film.accountNumber() + holder + "\nTienes hasta 12 horas para enviar el comprobante por este chat.";
     }
 
     private String filmOffer() {
@@ -561,7 +623,7 @@ public class AgentDeterministicCommerceService {
         return "✅ *Tu pedido fue registrado para envío por Shalom*\n\n📍 *Agencia:* "
                 + result.shalomAgency() + (result.shalomAgencyAddress() == null ? "" : "\n" + result.shalomAgencyAddress())
                 + "\n\n🧾 *Tu número de pedido es " + saleId + ".*\n\n"
-                + "Nuestra asesora de envíos se comunicará contigo para corroborar tus datos.\n\n"
+                + "Si necesitas ayuda, comunícate con nuestra asesora al 933918047.\n\n"
                 + "Gracias por confiar en Kiments 💛";
     }
 
@@ -590,8 +652,13 @@ public class AgentDeterministicCommerceService {
         return text.toString();
     }
 
-    private String deliveryQuestion() {
-        return "¿Cómo deseas recibir tu pedido?\n🏬 Recojo en tienda\n🚌 Envío por Shalom";
+    private String deliveryQuestion(Long sessionId) {
+        if (requireSession(sessionId).getPreferredFulfillmentMethod() == CrmWhatsappFulfillmentMethod.SHALOM) {
+            return "Me indicaste que prefieres envío por Shalom. Este método requiere film protector obligatorio "
+                    + "de S/2. ¿Confirmas que deseas recibirlo por Shalom?";
+        }
+        return "¿Cómo deseas recibir tu pedido?\n🏬 Recojo en tienda: sin costo adicional.\n"
+                + "🚌 Envío por Shalom: requiere film protector obligatorio de S/2.\n¿Cuál opción deseas?";
     }
 
     private String shalomDataRequest() {

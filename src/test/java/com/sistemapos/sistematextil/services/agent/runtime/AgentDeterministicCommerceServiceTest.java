@@ -29,6 +29,7 @@ import com.sistemapos.sistematextil.services.agent.payment.AgentPaymentService.P
 import com.sistemapos.sistematextil.services.agent.payment.AgentPaymentService.PaymentMethodView;
 import com.sistemapos.sistematextil.services.agent.payment.AgentPaymentService;
 import com.sistemapos.sistematextil.services.agent.customer.AgentCustomerService;
+import com.sistemapos.sistematextil.services.agent.fulfillment.AgentFulfillmentService;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.CartPromotionView;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.CartResult;
 import java.math.BigDecimal;
@@ -142,6 +143,35 @@ class AgentDeterministicCommerceServiceTest {
         assertEquals(AgentCommercialAction.EDIT_SHALOM_DATA, normalized.commercialAction());
         assertEquals(java.util.List.of(AgentShalomDataField.AGENCY), normalized.shalomFieldsToChange());
         assertFalse(normalized.requiresHumanHelp());
+    }
+
+    @Test
+    void reportsInvalidShalomPhoneWithoutEscalatingOrRetryingTheFlow() {
+        CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        AgentFulfillmentService fulfillment = mock(AgentFulfillmentService.class);
+        CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
+        session.setState(CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM);
+        when(sessions.findById(41L)).thenReturn(Optional.of(session));
+        when(fulfillment.hasCompletePendingShalomData(41L)).thenReturn(false);
+        when(fulfillment.saveShalomData(41L, "Cristhofer Leonardo Quispe Mamani", "75132958",
+                "9338889985", "Agencia Montenegro", "agent-job-null:provide_shalom_data"))
+                .thenThrow(new IllegalArgumentException(
+                        "El celular es incorrecto. Ingresa un numero celular peruano valido de exactamente 9 digitos"));
+        AgentDeterministicCommerceService service = new AgentDeterministicCommerceService(
+                sessions, null, null, null, null, null, fulfillment, null, null, null,
+                new AgentToolCallAuditService(null));
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.SHALOM_DATA, "datos para envio", "", "", "", 0, "",
+                AgentCartAction.NONE, AgentCommercialAction.PROVIDE_SHALOM_DATA, "", "",
+                "Cristhofer Leonardo Quispe Mamani", "9338889985", "SHALOM", "75132958",
+                "Agencia Montenegro", "", AgentCatalogAvailability.ALL, 100, false);
+
+        var result = service.execute(41L, null, decision);
+
+        assertTrue(result.handled());
+        assertFalse(result.mutationExecuted());
+        assertTrue(result.customerMessage().contains("exactamente 9 digitos"));
+        assertFalse(result.customerMessage().contains("asesora"));
     }
 
     @Test

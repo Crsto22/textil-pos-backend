@@ -515,8 +515,13 @@ public class AgentDeterministicCommerceService {
                     || blank(decision.customerPhone()))) {
             return Outcome.message(shalomDataRequest());
         }
-        var result = fulfillment.saveShalomData(sessionId, decision.customerName(), decision.documentNumber(),
-                decision.customerPhone(), decision.shalomAgency(), operation);
+        AgentFulfillmentService.FulfillmentResult result;
+        try {
+            result = fulfillment.saveShalomData(sessionId, decision.customerName(), decision.documentNumber(),
+                    decision.customerPhone(), decision.shalomAgency(), operation);
+        } catch (IllegalArgumentException invalidData) {
+            return Outcome.message(shalomValidationMessage(invalidData));
+        }
         if (result.agencyCandidates().isEmpty()) {
             return Outcome.message("No encontré una agencia Shalom segura con esa referencia. "
                     + "Indícame la ciudad, distrito o dirección de la agencia; conservaré tus otros datos.");
@@ -529,8 +534,13 @@ public class AgentDeterministicCommerceService {
         if(fields==null||fields.isEmpty())
             return Outcome.message("Indícame si deseas cambiar el nombre, DNI, celular, agencia o todos los datos.");
         String agency=firstPresent(decision.shalomAgency(),decision.shalomDestination());
-        var result=fulfillment.editShalomData(sessionId,fields,decision.customerName(),decision.documentNumber(),
-                decision.customerPhone(),agency,operation);
+        AgentFulfillmentService.FulfillmentResult result;
+        try {
+            result=fulfillment.editShalomData(sessionId,fields,decision.customerName(),decision.documentNumber(),
+                    decision.customerPhone(),agency,operation);
+        } catch (IllegalArgumentException invalidData) {
+            return Outcome.message(shalomValidationMessage(invalidData));
+        }
         if(!result.agencyCandidates().isEmpty()&&!blank(result.recipientName())
                 &&!blank(result.documentNumber())&&!blank(result.phone()))
             return Outcome.executed(editedShalomDataMessage(result));
@@ -664,6 +674,14 @@ public class AgentDeterministicCommerceService {
     private String shalomDataRequest() {
         return "Saludos 🤝🚌\nPara el envío por *SHALOM*, envíame:\n\n"
                 + "☑️ Nombres y apellidos\n☑️ DNI\n☑️ Celular\n☑️ Agencia de Shalom";
+    }
+
+    private String shalomValidationMessage(IllegalArgumentException error) {
+        String detail = error == null || blank(error.getMessage())
+                ? "Revisa los datos ingresados para el envio por Shalom."
+                : error.getMessage().trim() + ".";
+        return "No pude continuar porque uno de los datos de envio es incorrecto. " + detail
+                + " Corrige ese dato y vuelve a enviarme los datos de Shalom para continuar.";
     }
 
     private com.sistemapos.sistematextil.model.CrmWhatsappAgentSession requireSession(Long sessionId) {

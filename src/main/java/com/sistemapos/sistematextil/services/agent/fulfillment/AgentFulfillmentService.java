@@ -200,7 +200,8 @@ public class AgentFulfillmentService {
             }
 
             boolean personalComplete=!clean(f.getRecipientName()).isBlank()
-                    && clean(f.getDocumentNumber()).matches("\\d{8}")&&!clean(f.getPhone()).isBlank();
+                    && clean(f.getDocumentNumber()).matches("\\d{8}")
+                    && !CrmWhatsappPhoneUtils.normalizePeruvianMobile(f.getPhone()).isBlank();
             boolean agencyReady=!candidates.isEmpty();
             f.setDocumentType("DNI"); f.setConfirmedAt(null);
             f.setStatus(personalComplete&&agencyReady?CrmWhatsappFulfillmentStatus.AWAITING_AGENCY_CONFIRMATION
@@ -277,7 +278,7 @@ public class AgentFulfillmentService {
         return fulfillments.findByAgentSession_IdAgentSession(sessionId)
                 .filter(f -> !clean(f.getRecipientName()).isBlank()
                         && clean(f.getDocumentNumber()).matches("\\d{8}")
-                        && !clean(f.getPhone()).isBlank()).isPresent();
+                        && !CrmWhatsappPhoneUtils.normalizePeruvianMobile(f.getPhone()).isBlank()).isPresent();
     }
 
     private void saveProfile(CrmWhatsappAgentSession session,CrmWhatsappFulfillment f,ShalomAgency agency){
@@ -334,7 +335,7 @@ public class AgentFulfillmentService {
         return requested.stream().filter(Objects::nonNull).distinct().toList();}
     private String resolvePickupName(Cliente c,String supplied){String v=clean(supplied);if(v.isBlank()&&c!=null)v=clean(c.getNombres());return required(v,"El nombre para recojo",2,180);}
     private String resolvePickupPhone(Cliente c,String supplied){String v=clean(supplied);if(v.isBlank()&&c!=null)v=clean(c.getTelefono());return normalizePhone(v);}
-    private String normalizePhone(String v){String p=CrmWhatsappPhoneUtils.normalizePeruvianMobile(v);if(p.isBlank())throw new IllegalArgumentException("Ingresa un celular peruano valido");return p;}
+    private String normalizePhone(String v){String p=CrmWhatsappPhoneUtils.normalizePeruvianMobile(v);if(p.isBlank())throw new IllegalArgumentException("El celular es incorrecto. Ingresa un numero celular peruano valido de exactamente 9 digitos");return p;}
     private String required(String v,String label,int min,int max){String s=clean(v).replaceAll("\\s+"," ");if(s.length()<min)throw new IllegalArgumentException(label+" es obligatorio");if(s.length()>max)throw new IllegalArgumentException(label+" supera el maximo permitido");return s;}
     private String firstPresent(String supplied,String stored){return clean(supplied).isBlank()?stored:supplied;}
     private void clearShalom(CrmWhatsappFulfillment f){f.setDocumentType(null);f.setDocumentNumber(null);f.setRecipientName(null);f.setPhone(null);

@@ -107,6 +107,19 @@ class AgentFulfillmentServiceTest {
     }
 
     @Test
+    void rejectsShalomPhoneUnlessItHasExactlyNinePeruvianMobileDigits(){
+        session.setState(CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM);
+        when(fulfillments.findForUpdateBySessionId(41L)).thenReturn(Optional.of(fulfillment));
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> service.saveShalomData(41L, "Cristhofer Leonardo Quispe Mamani", "75132958",
+                        "9338889985", "Agencia Montenegro", "invalid-phone"));
+
+        assertEquals("El celular es incorrecto. Ingresa un numero celular peruano valido de exactamente 9 digitos",
+                error.getMessage());
+    }
+
+    @Test
     void selectingShalomPrefillsTheSavedProfileAsAnEditableDraft(){
         ShalomAgency agency=agency(9L,"AREQUIPA / AV JESUS","AV. JESUS 1100");
         CrmWhatsappShalomProfile profile=new CrmWhatsappShalomProfile();profile.setCliente(session.getCliente());

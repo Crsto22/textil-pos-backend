@@ -76,6 +76,9 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
               accion cuando, despues de ver candidatos, rechaza esas opciones y pide buscar otra ciudad, distrito,
               sede, direccion o referencia. Conserva la nueva busqueda en shalomAgency aunque los datos personales
               ya esten guardados y no vuelvan a aparecer en el ultimo mensaje.
+              Extrae los datos aunque alguno tenga formato invalido: Java los validara y pedira corregir solamente
+              el campo incorrecto. Mientras se solicitan, validan, corrigen o confirman datos de Shalom, nunca uses
+              REQUEST_SUPPORT por un error de formato ni establezcas requiresHumanHelp=true.
             - EDIT_SHALOM_DATA: desea reemplazar uno o varios datos Shalom guardados. Completa shalomFieldsToChange
               con NAME, DNI, PHONE, AGENCY o ALL segun el significado completo. Si proporciona el nuevo valor,
               colocalo tambien en customerName, documentNumber, customerPhone o shalomAgency. Si solo anuncia el

@@ -10,19 +10,24 @@ import com.sistemapos.sistematextil.model.CrmWhatsappAgentSession;
 import com.sistemapos.sistematextil.model.CrmWhatsappAgentState;
 import com.sistemapos.sistematextil.model.CrmWhatsappConversation;
 import com.sistemapos.sistematextil.model.CrmWhatsappMessage;
+import com.sistemapos.sistematextil.model.CrmWhatsappFilmStatus;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappAgentSessionRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappConversationRepository;
+import com.sistemapos.sistematextil.repositories.CrmWhatsappFilmAddonRepository;
 
 @Service
 public class AgentSessionResolver {
     private final CrmWhatsappConversationRepository conversationRepository;
     private final CrmWhatsappAgentSessionRepository sessionRepository;
+    private final CrmWhatsappFilmAddonRepository filmAddons;
 
     public AgentSessionResolver(
             CrmWhatsappConversationRepository conversationRepository,
-            CrmWhatsappAgentSessionRepository sessionRepository) {
+            CrmWhatsappAgentSessionRepository sessionRepository,
+            CrmWhatsappFilmAddonRepository filmAddons) {
         this.conversationRepository = conversationRepository;
         this.sessionRepository = sessionRepository;
+        this.filmAddons = filmAddons;
     }
 
     public Optional<CrmWhatsappAgentSession> resolveForIncoming(CrmWhatsappMessage message) {
@@ -38,7 +43,8 @@ public class AgentSessionResolver {
         CrmWhatsappAgentSession session = sessionRepository
                 .findByConversation_IdConversationAndActiveSlotTrue(conversation.getIdConversation())
                 .orElseGet(() -> newSession(conversation));
-        if (session.getState() == CrmWhatsappAgentState.VENTA_PENDIENTE_REVISION) {
+        if (session.getState() == CrmWhatsappAgentState.VENTA_PENDIENTE_REVISION
+                && !hasPendingFilmPayment(session)) {
             // La venta anterior permanece vinculada a su sesion historica para la
             // revision humana. El siguiente contacto inicia un carrito independiente.
             session.setActiveSlot(null);
@@ -51,6 +57,13 @@ public class AgentSessionResolver {
             session.setLastActivityAt(activityAt);
         }
         return Optional.of(sessionRepository.saveAndFlush(session));
+    }
+
+    private boolean hasPendingFilmPayment(CrmWhatsappAgentSession session) {
+        if (filmAddons == null || session == null || session.getIdAgentSession() == null) return false;
+        return filmAddons.findByAgentSession_IdAgentSession(session.getIdAgentSession())
+                .map(addon -> addon.getStatus() == CrmWhatsappFilmStatus.AWAITING_PAYMENT)
+                .orElse(false);
     }
 
     private CrmWhatsappAgentSession newSession(CrmWhatsappConversation conversation) {

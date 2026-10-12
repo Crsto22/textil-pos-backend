@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import com.sistemapos.sistematextil.model.CrmWhatsappAgentSession;
+import com.sistemapos.sistematextil.model.CrmWhatsappAgentState;
 import com.sistemapos.sistematextil.model.CrmWhatsappConversation;
 import com.sistemapos.sistematextil.model.CrmWhatsappMessage;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappAgentSessionRepository;
@@ -31,6 +32,32 @@ import com.sistemapos.sistematextil.services.agent.config.AgentRuntimeConfigServ
 import com.sistemapos.sistematextil.services.agent.outbox.AgentOutboxService;
 
 class AgentTurnFinalizerTest {
+    @Test
+    void resumesAnOldHelpSessionWhenCustomerReturnsToAutomaticSales() {
+        AgentOutboxService outbox=mock(AgentOutboxService.class);
+        CrmWhatsappAgentSessionRepository sessions=mock(CrmWhatsappAgentSessionRepository.class);
+        CrmWhatsappAgentSession session=new CrmWhatsappAgentSession();session.setIdAgentSession(8L);
+        session.setActiveSlot(true);session.setState(CrmWhatsappAgentState.REQUIERE_AYUDA);
+        session.setResumeState(CrmWhatsappAgentState.EXPLORANDO_PRODUCTOS);
+        CrmWhatsappConversation conversation=new CrmWhatsappConversation();conversation.setIdConversation(20L);
+        session.setConversation(conversation);
+        CrmWhatsappMessage anchor=new CrmWhatsappMessage();anchor.setIdMessage(99L);session.setLastCustomerMessage(anchor);
+        when(sessions.findForUpdate(8L)).thenReturn(java.util.Optional.of(session));
+        JdbcTemplate jdbc=mock(JdbcTemplate.class);
+        when(jdbc.queryForObject(anyString(),eq(Long.class),eq(20L),eq(99L))).thenReturn(2L);
+        AgentTurnFinalizer finalizer=new AgentTurnFinalizer(outbox,mock(AgentCatalogQueryService.class),sessions,
+                mock(CrmWhatsappAgentStateMachine.class),mock(AgentRuntimeConfigService.class),jdbc);
+        JobLease lease=new JobLease(41L,8L,99L,1,"worker:lease",LocalDateTime.now());
+        GeneratedTurn turn=new GeneratedTurn("Claro, ¿que producto buscas?","Nueva compra",false,
+                "GEMINI","gemini",10,0,"fp",List.of());
+
+        finalizer.finalizeTurn(lease,turn);
+
+        org.junit.jupiter.api.Assertions.assertEquals(CrmWhatsappAgentState.EXPLORANDO_PRODUCTOS,session.getState());
+        org.junit.jupiter.api.Assertions.assertEquals(null,session.getResumeState());
+        verify(outbox).enqueueText(8L,41L,99L,0,"Claro, ¿que producto buscas?");
+    }
+
     @Test
     void appendsAdvisorPhoneToEveryHumanHandoff() {
         AgentOutboxService outbox=mock(AgentOutboxService.class);CrmWhatsappAgentSessionRepository sessions=mock(CrmWhatsappAgentSessionRepository.class);

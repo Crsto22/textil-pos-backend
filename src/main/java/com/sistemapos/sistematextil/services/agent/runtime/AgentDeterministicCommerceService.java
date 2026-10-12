@@ -192,6 +192,7 @@ public class AgentDeterministicCommerceService {
             case REUSE_SHALOM_PROFILE -> reuseShalomProfile(sessionId, operation);
             case ACCEPT_FILM -> acceptFilm(sessionId);
             case DECLINE_FILM -> declineFilm(sessionId);
+            case SHARE_ADVISOR_CONTACT -> advisorContact();
             case CHANGE_CART -> beginCartEdit(sessionId);
             default -> Outcome.notHandled();
         };
@@ -203,7 +204,7 @@ public class AgentDeterministicCommerceService {
                     RETRY_PAYMENT,
                     PROVIDE_CUSTOMER_DATA, CONFIRM_EXISTING_CUSTOMER, SELECT_PICKUP, SELECT_SHALOM,
                     PROVIDE_SHALOM_DATA, EDIT_SHALOM_DATA, CONFIRM_SHALOM_AGENCY, REUSE_SHALOM_PROFILE,
-                    ACCEPT_FILM, DECLINE_FILM -> true;
+                    ACCEPT_FILM, DECLINE_FILM, SHARE_ADVISOR_CONTACT -> true;
             default -> false;
         };
     }
@@ -607,6 +608,11 @@ public class AgentDeterministicCommerceService {
     private Outcome declineFilm(Long sessionId) {
         return Outcome.executed("El film protector de S/2 es obligatorio para los envíos por Shalom. "
                 + "Si necesitas ayuda con el pago, comunícate con nuestra asesora al 933918047.");
+    }
+
+    private Outcome advisorContact() {
+        return Outcome.message("Claro que si, bella. Puedes comunicarte con nuestra asesora al 933918047. "
+                + "Yo tambien puedo seguir ayudandote por aqui con productos, colores, tallas, stock y tu compra.");
     }
 
     private String mandatoryFilmMessage(AgentFulfillmentService.FulfillmentResult result, Integer saleId,

@@ -88,7 +88,12 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
             - CONFIRM_SHALOM_AGENCY: confirma una de las agencias ofrecidas; repite en shalomAgency el nombre exacto elegido.
             - REUSE_SHALOM_PROFILE: confirma reutilizar los datos Shalom guardados mostrados por el sistema.
             - ACCEPT_FILM y DECLINE_FILM son acciones históricas: no las uses. El film de Shalom es obligatorio y se cobra automáticamente después de crear la venta.
-            - REQUEST_SUPPORT: comunica un problema que necesita revision humana; establece requiresHumanHelp=true.
+            - SHARE_ADVISOR_CONTACT: pide hablar, comunicarse o contactar a una asesora. Esta accion solo comparte
+              el numero de contacto y no pausa la atencion automatica: establece requiresHumanHelp=false. Si luego
+              consulta, pide informacion o quiere comprar, interpreta normalmente la nueva intencion y continua.
+            - REQUEST_SUPPORT: existe un bloqueo operativo o tecnico real que necesita intervencion humana y la IA
+              no puede continuar el flujo; establece requiresHumanHelp=true. No uses esta accion solamente porque
+              la clienta pidio el contacto de una asesora.
             Usa NONE cuando solo conversa o la accion no esta suficientemente clara.
             Una solicitud de promociones o combos nunca es PRODUCT_SEARCH, PRODUCT_DETAILS ni
             BUSINESS_INFORMATION. No concluyas si existen: Java lo consultara en la base de datos.

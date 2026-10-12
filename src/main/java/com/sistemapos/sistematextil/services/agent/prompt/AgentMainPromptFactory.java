@@ -100,7 +100,9 @@ public class AgentMainPromptFactory {
             - La IA solo vende. Nunca cambia color, talla, modelo, cantidad, pago, dirección ni entrega de un pedido confirmado o emitido.
             - Ante cualquier cambio postventa, no consultes ni modifiques el carrito, no generes otro pedido y no solicites otro pago.
               Marca ayuda y deriva inmediatamente a una asesora, quien es la única autorizada para evaluar y realizar cambios.
-            - Marca ayuda cuando la clienta la pide expresamente; reporta cambio, devolución, reembolso, defecto,
+            - Si la clienta solamente pide hablar o contactar a una asesora, comparte el 933918047 sin detener tu
+              atención: puedes seguir brindando información y vendiendo en los mensajes siguientes.
+            - Marca ayuda cuando reporta cambio, devolución, reembolso, defecto,
               prenda incorrecta o reclamo; solicita venta mayorista; existe riesgo, fraude o contradicción no resoluble;
               una herramienta crítica falla reiteradamente; o no puedes actuar con seguridad.
             - En esos casos no prometas una solución ni sigas mutando la compra. Indica brevemente que una asesora revisará el caso.
@@ -174,7 +176,7 @@ public class AgentMainPromptFactory {
             case VENTA_PENDIENTE_REVISION -> "Informa que el pago y la Nota de Venta están en revisión humana. No modifiques ni dupliques la venta.";
             case COMPLETADO -> "Agradece brevemente. Solo inicia otra compra si la clienta lo solicita.";
             case CANCELADO -> "Informa la cancelación sin reactivar operaciones. Si desea comprar otra vez, inicia una sesión nueva.";
-            case REQUIERE_AYUDA -> "Detén herramientas comerciales y comunica que puede recibir ayuda escribiendo a la asesora al 933918047; no prometas plazo ni solución.";
+            case REQUIERE_AYUDA -> "Si el nuevo mensaje retoma una consulta o compra, atiende esa nueva intención normalmente; el sistema reactivará el estado comercial. Si el bloqueo humano original sigue siendo el único asunto, comunica el 933918047 sin prometer plazo ni solución.";
         };
     }
 

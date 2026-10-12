@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.sistemapos.sistematextil.model.CrmWhatsappAgentEvent;
 import com.sistemapos.sistematextil.model.CrmWhatsappAgentSession;
+import com.sistemapos.sistematextil.model.CrmWhatsappAgentState;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappAgentSessionRepository;
 import com.sistemapos.sistematextil.services.agent.CrmWhatsappAgentStateMachine;
 import com.sistemapos.sistematextil.services.agent.batch.AgentJobStore.GeneratedTurn;
@@ -50,6 +51,7 @@ public class AgentTurnFinalizer {
         if (escalated) {
             escalate(session, lease.jobId(), "La IA determino que el caso requiere revision humana");
         } else {
+            resumeAutomaticAttention(session);
             markAgentActive(session);
         }
         sessions.save(session);
@@ -165,6 +167,18 @@ public class AgentTurnFinalizer {
                     waiting_detail=NULL, assigned_user_id=NULL, assigned_at=NULL, updated_at=?
                 WHERE id_conversation=?
                 """, LocalDateTime.now(), session.getConversation().getIdConversation());
+    }
+
+    private void resumeAutomaticAttention(CrmWhatsappAgentSession session) {
+        if (session.getState() != CrmWhatsappAgentState.REQUIERE_AYUDA) return;
+        CrmWhatsappAgentState resume = session.getResumeState();
+        if (resume == null || resume == CrmWhatsappAgentState.REQUIERE_AYUDA) {
+            resume = CrmWhatsappAgentState.IDLE;
+        }
+        session.setState(resume);
+        session.setResumeState(null);
+        session.setLastEvent(CrmWhatsappAgentEvent.AYUDA_RESUELTA);
+        session.setStateChangedAt(LocalDateTime.now());
     }
 
     private String clean(String value) { return value == null ? "" : value.trim(); }

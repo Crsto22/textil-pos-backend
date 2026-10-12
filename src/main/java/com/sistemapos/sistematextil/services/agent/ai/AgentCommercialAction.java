@@ -29,5 +29,6 @@ public enum AgentCommercialAction {
     REUSE_SHALOM_PROFILE,
     ACCEPT_FILM,
     DECLINE_FILM,
+    SHARE_ADVISOR_CONTACT,
     REQUEST_SUPPORT
 }

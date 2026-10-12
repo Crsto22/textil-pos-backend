@@ -568,7 +568,7 @@ public class CrmWhatsappAgentSchemaMigration implements ApplicationRunner {
                   id_payment_evidence BIGINT NOT NULL,
                   id_payment_request BIGINT NOT NULL,
                   id_agent_session BIGINT NULL,
-                  id_conversation BIGINT NOT NULL,
+                  id_conversation BIGINT NULL,
                   id_venta INT NOT NULL,
                   reviewed_by INT NOT NULL,
                   action VARCHAR(20) NOT NULL,

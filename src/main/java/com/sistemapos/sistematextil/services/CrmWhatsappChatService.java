@@ -1688,6 +1688,7 @@ public class CrmWhatsappChatService {
         conversation.setWaitingDetail("Mensaje nuevo pendiente de atencion humana");
     }
 
+    @Transactional(readOnly = true)
     public MediaDownload descargarMedia(Long messageId, Usuario usuarioSesion) {
         Usuario actor = requireCrmUser(usuarioSesion);
         CrmWhatsappMessage message = messageRepository.findById(messageId)

@@ -1042,16 +1042,22 @@ List<ProductoColorImagen> imagenesActuales = productoColorImagenRepository.findB
         if (!Boolean.TRUE.equals(preventa)) {
             producto.setPreventa(Boolean.FALSE);
             producto.setFechaEnvioPreventa(null);
+            producto.setFechaInicioRotacionPreventa(null);
             return;
         }
         if (fechaEnvioPreventa == null) {
             throw new RuntimeException("Ingrese la fecha de envio de preventa");
         }
-        if (!fechaEnvioPreventa.isAfter(LocalDate.now())) {
+        boolean configuracionNueva = !Boolean.TRUE.equals(producto.getPreventa())
+                || !Objects.equals(producto.getFechaEnvioPreventa(), fechaEnvioPreventa);
+        if (configuracionNueva && !fechaEnvioPreventa.isAfter(LocalDate.now())) {
             throw new RuntimeException("La fecha de envio de preventa debe ser futura");
         }
         producto.setPreventa(Boolean.TRUE);
         producto.setFechaEnvioPreventa(fechaEnvioPreventa);
+        if (configuracionNueva || producto.getFechaInicioRotacionPreventa() == null) {
+            producto.setFechaInicioRotacionPreventa(LocalDate.now());
+        }
     }
 
     private boolean preventaActiva(Producto producto) {

@@ -4,6 +4,7 @@ import java.text.Normalizer;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -100,7 +101,7 @@ public class AgentCatalogQueryService {
         List<VariantSummary> availableVariants = variants.stream().filter(VariantSummary::available).toList();
         return new ProductDetail(
                 product.getIdProducto(), product.getNombre(), product.getDescripcion(), categoryName(product),
-                activePreorder, activePreorder ? product.getFechaEnvioPreventa() : null,
+                activePreorder, activePreorder ? effectivePreorderShippingDate(product) : null,
                 product.getGuiaTallasUrl(), product.getGuiaTallasThumbUrl(),
                 availableVariants.stream().map(VariantSummary::color).filter(value -> value != null && !value.isBlank())
                         .distinct().toList(),
@@ -279,19 +280,30 @@ public class AgentCatalogQueryService {
             stock += safeStock(row);
         }
         return new ProductSummary(product.getIdProducto(), product.getNombre(), product.getDescripcion(),
-                categoryName(product), activePreorder, activePreorder ? product.getFechaEnvioPreventa() : null,
+                categoryName(product), activePreorder, activePreorder ? effectivePreorderShippingDate(product) : null,
                 prices.stream().min(Double::compareTo).orElse(null), stock, List.copyOf(colors), List.copyOf(sizes),
                 groupAvailabilityFromStock(availableRows));
     }
 
-    /**
-     * La marca almacenada conserva la configuracion historica, pero comercialmente
-     * la preventa termina al llegar su fecha de despacho en la zona de Kiments.
-     */
     private boolean isActivePreorder(Producto product) {
         if (product == null || !Boolean.TRUE.equals(product.getPreventa())) return false;
-        LocalDate shippingDate = product.getFechaEnvioPreventa();
+        LocalDate shippingDate = effectivePreorderShippingDate(product);
         return shippingDate == null || shippingDate.isAfter(LocalDate.now(BUSINESS_ZONE));
+    }
+
+    /**
+     * La fecha configurada no se modifica. La fecha comunicada por la IA avanza
+     * un dia por cada dia transcurrido desde que se configuro la preventa.
+     */
+    private LocalDate effectivePreorderShippingDate(Producto product) {
+        if (product == null || product.getFechaEnvioPreventa() == null) return null;
+        LocalDate referenceDate = product.getFechaInicioRotacionPreventa();
+        LocalDate today = LocalDate.now(BUSINESS_ZONE);
+        if (referenceDate == null || !today.isAfter(referenceDate)) {
+            return product.getFechaEnvioPreventa();
+        }
+        long elapsedDays = ChronoUnit.DAYS.between(referenceDate, today);
+        return product.getFechaEnvioPreventa().plusDays(elapsedDays);
     }
 
     private List<ColorAvailability> groupAvailabilityFromStock(List<SucursalStock> rows) {

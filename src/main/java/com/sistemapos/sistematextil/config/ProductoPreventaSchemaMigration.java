@@ -46,6 +46,20 @@ public class ProductoPreventaSchemaMigration implements ApplicationRunner {
                         """);
                 log.info("Columna {}.fecha_envio_preventa creada", TABLE_NAME);
             }
+            if (!columnExists(connection, TABLE_NAME, "fecha_inicio_rotacion_preventa")) {
+                statement.execute("""
+                        ALTER TABLE producto
+                        ADD COLUMN fecha_inicio_rotacion_preventa DATE DEFAULT NULL AFTER fecha_envio_preventa
+                        """);
+                log.info("Columna {}.fecha_inicio_rotacion_preventa creada", TABLE_NAME);
+            }
+            statement.executeUpdate("""
+                    UPDATE producto
+                    SET fecha_inicio_rotacion_preventa = CURRENT_DATE
+                    WHERE preventa = 1
+                      AND fecha_envio_preventa IS NOT NULL
+                      AND fecha_inicio_rotacion_preventa IS NULL
+                    """);
         }
     }
 

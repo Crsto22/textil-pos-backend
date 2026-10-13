@@ -143,6 +143,9 @@ public class AgentConversationOrchestrator {
                         - El campo preorder de la evidencia es la unica autoridad para afirmar que un producto esta
                           en preventa. Si preorder=false, no lo llames preventa ni comuniques una antigua fecha de
                           despacho aunque la descripcion comercial conserve texto historico.
+                        - Para preventas, di "despachos a partir de [fecha]". La fecha es referencial y el despacho
+                          depende del volumen de pedidos. Nunca digas "llega el [fecha]" ni garantices que saldra
+                          exactamente ese dia.
                         - Si la clienta solicita todos los productos de un grupo, incluye todos los productos presentes
                           en la evidencia; no agregues modelos, tipos de prenda ni variantes que no aparezcan alli.
                         - Cuando exista promotions, responde la consulta usando esa lista real. Solo puedes afirmar que

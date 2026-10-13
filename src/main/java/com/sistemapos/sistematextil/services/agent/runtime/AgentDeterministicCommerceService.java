@@ -248,9 +248,9 @@ public class AgentDeterministicCommerceService {
             var product = catalog.getProduct(sessionId, stock.productId());
             if (product.preorder()) {
                 preorder = true;
-                text.append("  Preventa: despachos desde");
+                text.append("  Preventa: despachos a partir de");
                 if (product.preorderShippingDate() != null) {
-                    text.append(" el ").append(product.preorderShippingDate().format(DATE));
+                    text.append("l ").append(product.preorderShippingDate().format(DATE));
                 } else {
                     text.append(" la fecha indicada");
                 }
@@ -284,10 +284,11 @@ public class AgentDeterministicCommerceService {
         }
         text.append("*Total: ").append(money(cart.total())).append("*\n\n");
         if (preorder && regular) {
-            text.append("Los productos en preventa serán despachados desde la fecha indicada. ")
-                    .append("Los demás productos tienen un plazo aproximado de 1 a 3 días.\n\n");
+            text.append("📅 La fecha de preventa es referencial; el despacho depende del volumen de pedidos. ")
+                    .append("Puedes recibir todo junto o coordinar el envío anticipado de la prenda disponible ")
+                    .append("con el área de envíos, así que no te preocupes.\n\n");
         } else if (preorder) {
-            text.append("El pedido será despachado desde la fecha de preventa indicada.\n\n");
+            text.append("📅 Los despachos comienzan a partir de la fecha indicada y dependen del volumen de pedidos.\n\n");
         } else {
             text.append("Envío aproximado: 1 a 3 días, según el volumen de pedidos.\n\n");
         }

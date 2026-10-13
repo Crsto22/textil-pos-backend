@@ -37,7 +37,7 @@ public class AgentRuntimeConfigService {
             Por favor, asegúrate de elegir correctamente tu *talla, modelo y color* antes de continuar. Si tienes alguna duda, consúltanos antes de confirmar tu compra.
 
             🎨 Los tonos pueden variar ligeramente según la iluminación o la pantalla.
-            📅 Los productos en preventa se despachan desde la fecha indicada.
+            📅 Los despachos de preventa comienzan a partir de la fecha indicada y dependen del volumen de pedidos.
             🚚 Realizamos envíos mediante Shalom.
             🏬 También puedes recoger tu pedido en nuestra tienda de Gamarra.
             """.trim();

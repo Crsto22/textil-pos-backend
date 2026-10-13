@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 
 import java.util.Optional;
 import java.util.List;
+import java.time.LocalDate;
 
 import org.junit.jupiter.api.Test;
 
@@ -32,6 +33,10 @@ import com.sistemapos.sistematextil.services.agent.customer.AgentCustomerService
 import com.sistemapos.sistematextil.services.agent.fulfillment.AgentFulfillmentService;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.CartPromotionView;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.CartResult;
+import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.CartItemView;
+import com.sistemapos.sistematextil.services.agent.catalog.AgentCatalogQueryService;
+import com.sistemapos.sistematextil.services.agent.catalog.AgentCatalogQueryService.ProductDetail;
+import com.sistemapos.sistematextil.services.agent.catalog.AgentCatalogQueryService.StockResult;
 import java.math.BigDecimal;
 import com.sistemapos.sistematextil.util.cliente.TipoDocumento;
 
@@ -96,6 +101,38 @@ class AgentDeterministicCommerceServiceTest {
         assertFalse(message.contains("logística de Shalom"));
         assertTrue(message.contains("penalidad de S/10"));
         assertFalse(message.contains("🛍️"));
+    }
+
+    @Test
+    void explainsMixedPreorderShippingWithoutPromisingAnExactDispatchDate() {
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        AgentDeterministicCommerceService service = new AgentDeterministicCommerceService(
+                null, null, null, catalog, null, null, null, null, null, null, null);
+        LocalDate preorderDate = LocalDate.of(2026, 10, 16);
+        when(catalog.getStock(41L, 101, 1)).thenReturn(
+                new StockResult(101, 10, "LIA RAYAS", "Negro", "L", 7, 1, true, 1, true));
+        when(catalog.getStock(41L, 201, 1)).thenReturn(
+                new StockResult(201, 20, "MELINA", "TOPO", "L", 7, 1, true, 1, true));
+        when(catalog.getProduct(41L, 10)).thenReturn(new ProductDetail(
+                10, "LIA RAYAS", "", "CONJUNTOS", false, null, null, null,
+                List.of("Negro"), List.of("L"), 1, 75.0, 1));
+        when(catalog.getProduct(41L, 20)).thenReturn(new ProductDetail(
+                20, "MELINA", "", "CONJUNTOS", true, preorderDate, null, null,
+                List.of("TOPO"), List.of("L"), 1, 79.0, 1));
+        CartResult cart = new CartResult(1L, "ACTIVE", "PEN", BigDecimal.valueOf(154),
+                BigDecimal.ZERO, BigDecimal.valueOf(154), List.of(
+                        new CartItemView(1L, 101, "LIA RAYAS", "Negro", "L", 1,
+                                BigDecimal.valueOf(75), BigDecimal.ZERO, BigDecimal.valueOf(75)),
+                        new CartItemView(2L, 201, "MELINA", "TOPO", "L", 1,
+                                BigDecimal.valueOf(79), BigDecimal.ZERO, BigDecimal.valueOf(79))), List.of());
+
+        String message = service.cartTemplate(41L, cart, true);
+
+        assertTrue(message.contains("Preventa: despachos a partir del 16 de octubre de 2026"));
+        assertTrue(message.contains("La fecha de preventa es referencial"));
+        assertTrue(message.contains("depende del volumen de pedidos"));
+        assertTrue(message.contains("coordinar el envío anticipado"));
+        assertFalse(message.contains("serán despachados desde"));
     }
 
     @Test

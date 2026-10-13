@@ -67,9 +67,6 @@ public class Producto {
     @Column(name = "fecha_envio_preventa")
     private LocalDate fechaEnvioPreventa;
 
-    @Column(name = "fecha_inicio_rotacion_preventa")
-    private LocalDate fechaInicioRotacionPreventa;
-
     @Column(nullable = false)
     private String estado;
 

@@ -8,7 +8,6 @@ import static org.mockito.Mockito.when;
 
 import java.util.List;
 import java.time.LocalDate;
-import java.time.ZoneId;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -136,23 +135,6 @@ class AgentCatalogQueryServiceTest {
         var result = service.searchProducts(41L, "", 20, AgentCatalogAvailability.PREORDER_ONLY);
 
         assertEquals(0, result.products().size());
-    }
-
-    @Test
-    void advancesCommunicatedPreorderDateWithoutChangingConfiguredDate() {
-        LocalDate today = LocalDate.now(ZoneId.of("America/Lima"));
-        LocalDate configuredDate = today.plusDays(3);
-        SucursalStock row = stock(20, "ALESSIA ENTERO", 201, "NEGRO", "S", 5);
-        Producto product = row.getProductoVariante().getProducto();
-        product.setPreventa(true);
-        product.setFechaEnvioPreventa(configuredDate);
-        product.setFechaInicioRotacionPreventa(today.minusDays(2));
-        when(catalogRepository.findCatalogByBranch(7)).thenReturn(List.of(row));
-
-        var result = service.searchProducts(41L, "", 20, AgentCatalogAvailability.PREORDER_ONLY);
-
-        assertEquals(configuredDate.plusDays(2), result.products().getFirst().preorderShippingDate());
-        assertEquals(configuredDate, product.getFechaEnvioPreventa());
     }
 
     @Test

@@ -123,6 +123,7 @@ public class VentaService {
     private static final BigDecimal MONTO_MAXIMO_BOLETA_ANONIMA = BigDecimal.valueOf(700);
     private static final BigDecimal CIEN = BigDecimal.valueOf(100);
     private static final BigDecimal CERO_MONETARIO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+    private static final String CORREO_USUARIO_IA_KIMENTS = "ia-kiments@system.local";
     private static final String CODIGO_IGV_GRAVADO = "10";
     private static final String CODIGO_IGV_INAFECTO = "30";
     private static final DateTimeFormatter FECHA_HORA_EXCEL = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
@@ -294,6 +295,63 @@ public class VentaService {
                 tiposComprobante,
                 incluirAnuladas,
                 correoUsuarioAutenticado);
+        List<Integer> ventaIds = reporte.detalleVentas().stream()
+                .map(VentaReporteResponse.DetalleItem::idVenta)
+                .filter(id -> id != null)
+                .toList();
+        List<VentaDetalle> detallesVenta = ventaIds.isEmpty()
+                ? List.of()
+                : ventaDetalleRepository.findActivosByVentaIds(ventaIds);
+        List<Pago> pagosVenta = ventaIds.isEmpty()
+                ? List.of()
+                : pagoRepository.findActivosByVentaIds(ventaIds);
+        Map<Integer, List<VentaDetalle>> detallesPorVenta = agruparDetallesPorVenta(detallesVenta);
+        Map<Integer, List<Pago>> pagosPorVenta = agruparPagosPorVenta(pagosVenta);
+        Map<Integer, EcommercePedido> pedidosWebPorVenta = buscarPedidosWebPorVenta(ventaIds);
+        return construirPdfReporteVentas(reporte, detallesPorVenta, pagosPorVenta, pedidosWebPorVenta);
+    }
+
+    public byte[] exportarReportePdfEnviosIa(
+            String agrupar,
+            String periodo,
+            LocalDate desde,
+            LocalDate hasta,
+            Integer idSucursal,
+            Integer idCliente,
+            List<String> tiposComprobante,
+            boolean incluirAnuladas,
+            String correoUsuarioAutenticado) {
+        Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
+        validarRolLectura(usuarioAutenticado);
+
+        FiltroReporteVentas filtroBase = resolverFiltroReporteVentas(
+                usuarioAutenticado,
+                agrupar,
+                periodo,
+                desde,
+                hasta,
+                null,
+                idSucursal,
+                idCliente,
+                tiposComprobante);
+        Usuario usuarioIa = usuarioRepository.findByCorreoAndDeletedAtIsNull(CORREO_USUARIO_IA_KIMENTS)
+                .orElseThrow(() -> new RuntimeException("El usuario IA Kiments no esta configurado"));
+        FiltroReporteVentas filtroIa = new FiltroReporteVentas(
+                filtroBase.agrupacion(),
+                filtroBase.periodoFiltro(),
+                filtroBase.desde(),
+                filtroBase.hasta(),
+                filtroBase.idSucursal(),
+                filtroBase.nombreSucursal(),
+                usuarioIa.getIdUsuario(),
+                nombreUsuario(usuarioIa),
+                filtroBase.idCliente(),
+                filtroBase.tiposComprobante());
+        List<Venta> ventasIa = buscarVentasParaReporte(filtroIa, incluirAnuladas).stream()
+                .filter(venta -> "CRM_WHATSAPP".equalsIgnoreCase(valorTexto(venta.getOrigen())))
+                .toList();
+        VentaReporteResponse reporte = construirReporteVentas(ventasIa, filtroIa, incluirAnuladas);
+
         List<Integer> ventaIds = reporte.detalleVentas().stream()
                 .map(VentaReporteResponse.DetalleItem::idVenta)
                 .filter(id -> id != null)

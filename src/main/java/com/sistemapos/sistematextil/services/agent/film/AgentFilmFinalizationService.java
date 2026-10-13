@@ -63,7 +63,9 @@ public class AgentFilmFinalizationService {
         if (f.getShalomAgencyAddress() != null && !f.getShalomAgencyAddress().isBlank())
             text.append("\n🏠 ").append(f.getShalomAgencyAddress());
         return text.append("\n\n🧾 *Número de pedido: ").append(saleId)
-                .append("*\n\nSi necesitas ayuda, comunícate con nuestra asesora al 933918047.")
+                .append("*\n\n📦 Una asesora del área de envíos se comunicará contigo para corroborar tus datos ")
+                .append("y coordinar el despacho de tu pedido.")
+                .append("\n\nSi necesitas ayuda, comunícate con nuestra asesora al 933918047.")
                 .append("\n\nGracias por confiar en Kiments 💛").toString();
     }
     public record FinalResult(Integer saleId, String message) {}

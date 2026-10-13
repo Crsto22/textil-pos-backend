@@ -501,6 +501,8 @@ public class AgentDeterministicCommerceService {
                 + "• Domingos: cerrado.\n"
                 + "• Feriados: cerrado.\n\n"
                 + "🧾 *Tu número de pedido es " + saleId + ".*\n\n"
+                + "🏬 Una asesora del área de envíos se comunicará contigo para corroborar tus datos "
+                + "y coordinar el recojo de tu pedido.\n\n"
                 + "Si necesitas ayuda, comunícate con nuestra asesora al 933918047.\n\n"
                 + "Gracias por confiar en Kiments 💛";
     }

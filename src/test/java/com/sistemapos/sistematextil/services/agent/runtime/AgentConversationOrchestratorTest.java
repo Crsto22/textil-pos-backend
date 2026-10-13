@@ -235,6 +235,37 @@ class AgentConversationOrchestratorTest {
                 turn.getValue().customerMessage());
     }
 
+    @Test
+    void detectsAnInventedExtraChargeForSplitPreorderShipments() {
+        String correction = AgentConversationOrchestrator.mixedPreorderShippingCorrectionInstruction(
+                "Si se envía cada prenda conforme esté disponible, serían envíos independientes con costo adicional.");
+
+        assertTrue(correction.contains("sin costo adicional"));
+        assertEquals("", AgentConversationOrchestrator.mixedPreorderShippingCorrectionInstruction(
+                "Podemos coordinar el envío anticipado de lo disponible sin costo adicional."));
+    }
+
+    @Test
+    void usesSafeMessageWhenGeminiRepeatsTheInventedExtraCharge() {
+        Fixture fixture = new Fixture();
+        fixture.current(true, true, true);
+        AgentTurnResponse invalid = new AgentTurnResponse(
+                "Podemos enviarlo por separado, pero tendría un costo adicional.",
+                "Pedido mixto", false, java.util.List.of());
+        when(fixture.gateway.respond(eq(7L), any(), eq(12)))
+                .thenReturn(new AgentResponseResult("GEMINI", "gemini", 100, 2, invalid))
+                .thenReturn(new AgentResponseResult("GEMINI", "gemini", 90, 0, invalid));
+
+        assertEquals(AgentConversationOrchestrator.Outcome.COMPLETED,
+                fixture.orchestrator.process(fixture.lease));
+
+        verify(fixture.gateway, times(2)).respond(eq(7L), any(), eq(12));
+        ArgumentCaptor<GeneratedTurn> turn = ArgumentCaptor.forClass(GeneratedTurn.class);
+        verify(fixture.jobs).saveGeneratedTurn(eq(41L), eq("worker:lease"), turn.capture(), any());
+        assertEquals(AgentConversationOrchestrator.MIXED_PREORDER_SHIPPING_SAFE_MESSAGE,
+                turn.getValue().customerMessage());
+    }
+
     private static final class Fixture {
         final AgentJobCoordinator coordinator = mock(AgentJobCoordinator.class);
         final AgentJobStore jobs = mock(AgentJobStore.class);

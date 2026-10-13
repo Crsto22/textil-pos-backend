@@ -14,6 +14,7 @@ import com.sistemapos.sistematextil.services.agent.ai.AgentResponseGateway;
 import com.sistemapos.sistematextil.services.agent.ai.AgentCommercialAction;
 import com.sistemapos.sistematextil.services.agent.ai.AgentDecisionIntent;
 import com.sistemapos.sistematextil.services.agent.ai.AgentMediaRequest;
+import com.sistemapos.sistematextil.services.agent.ai.AgentTurnResponse;
 import com.sistemapos.sistematextil.services.agent.batch.AgentJobCoordinator;
 import com.sistemapos.sistematextil.services.agent.batch.AgentJobStore;
 import com.sistemapos.sistematextil.services.agent.batch.AgentJobStore.GeneratedTurn;
@@ -46,6 +47,9 @@ public class AgentConversationOrchestrator {
     static final String GENERAL_DOCUMENT_MESSAGE = """
             Recibí tu archivo, bella 💛
             Por el momento no puedo revisar su contenido directamente. Cuéntame brevemente qué contiene o qué deseas consultar.""";
+
+    static final String MIXED_PREORDER_SHIPPING_SAFE_MESSAGE = """
+            Sí, puedes recibir todo junto cuando el producto en preventa esté listo. También puedes coordinar con el área de envíos el despacho anticipado de los productos disponibles, sin costo adicional. Así que no te preocupes 💛""";
 
     private final AgentProductPriceResponseValidator priceValidator = new AgentProductPriceResponseValidator();
     private final AgentPromotionResponseValidator promotionValidator = new AgentPromotionResponseValidator();
@@ -146,6 +150,10 @@ public class AgentConversationOrchestrator {
                         - Para preventas, di "despachos a partir de [fecha]". La fecha es referencial y el despacho
                           depende del volumen de pedidos. Nunca digas "llega el [fecha]" ni garantices que saldra
                           exactamente ese dia.
+                        - Si el pedido combina productos disponibles y en preventa, la clienta puede recibir todo
+                          junto o coordinar con el area de envios el despacho anticipado de lo disponible. Separar
+                          esos despachos no genera costo adicional. Nunca afirmes que requiere un pago, cobro o
+                          costo extra.
                         - Si la clienta solicita todos los productos de un grupo, incluye todos los productos presentes
                           en la evidencia; no agregues modelos, tipos de prenda ni variantes que no aparezcan alli.
                         - Cuando exista promotions, responde la consulta usando esa lista real. Solo puedes afirmar que
@@ -164,11 +172,14 @@ public class AgentConversationOrchestrator {
         var promotionValidation = promotionValidator.validate(
                 grounding.evidenceJson(), response.customerMessage());
         String mediaCorrection = mediaCorrectionInstruction(grounding, response.customerMessage());
-        if (!priceValidation.valid() || !promotionValidation.valid() || !mediaCorrection.isBlank()) {
+        String shippingCorrection = mixedPreorderShippingCorrectionInstruction(response.customerMessage());
+        if (!priceValidation.valid() || !promotionValidation.valid() || !mediaCorrection.isBlank()
+                || !shippingCorrection.isBlank()) {
             String correctionInstruction = String.join("\n",
                     priceValidation.valid() ? "" : priceValidation.correctionInstruction(),
                     promotionValidation.valid() ? "" : promotionValidation.correctionInstruction(),
-                    mediaCorrection).trim();
+                    mediaCorrection,
+                    shippingCorrection).trim();
             AgentMainPrompt correctionPrompt = groundingCorrectionPrompt(
                     prompt, response.customerMessage(), correctionInstruction);
             var corrected = gateway.respond(context.connectionId(), correctionPrompt, maxTools);
@@ -191,6 +202,10 @@ public class AgentConversationOrchestrator {
                     corrected.provider(), corrected.model(), generated.latencyMs() + corrected.latencyMs(),
                     generated.toolCalls() + corrected.toolCalls(), correctedResponse);
             response = correctedResponse;
+        }
+        if (!mixedPreorderShippingCorrectionInstruction(response.customerMessage()).isBlank()) {
+            response = new AgentTurnResponse(MIXED_PREORDER_SHIPPING_SAFE_MESSAGE,
+                    response.conversationSummary(), response.requiresHumanHelp(), List.of());
         }
         // Gemini redacta el texto, pero solo Java puede autorizar archivos. Esto evita
         // fotos repetidas o no solicitadas durante recomendaciones y reintentos.
@@ -318,6 +333,44 @@ public class AgentConversationOrchestrator {
         if (!mentionsMedia || !claimsDelivery) return "";
         return "No hay archivos verificados para adjuntar. No afirmes que envias, compartes o muestras fotos; "
                 + "explica brevemente la opcion disponible o solicita precisar el modelo.";
+    }
+
+    static String mixedPreorderShippingCorrectionInstruction(String customerMessage) {
+        String normalized = normalizeText(customerMessage);
+        boolean splitShipment = normalized.contains("por separado")
+                || normalized.contains("envio separado")
+                || normalized.contains("envios separados")
+                || normalized.contains("despacho separado")
+                || normalized.contains("despachos separados")
+                || normalized.contains("envio independiente")
+                || normalized.contains("envios independientes")
+                || normalized.contains("despacho independiente")
+                || normalized.contains("despachos independientes")
+                || normalized.contains("envio anticipado")
+                || normalized.contains("despacho anticipado")
+                || normalized.contains("cada prenda")
+                || normalized.contains("primero lo disponible")
+                || normalized.contains("dos envios");
+        String chargeClaims = normalized
+                .replace("sin costo adicional", "")
+                .replace("sin coste adicional", "")
+                .replace("sin costo extra", "")
+                .replace("no genera costo adicional", "")
+                .replace("no tiene costo adicional", "")
+                .replace("no se cobra costo adicional", "")
+                .replace("ningun costo adicional", "");
+        boolean extraCharge = chargeClaims.contains("costo adicional")
+                || chargeClaims.contains("coste adicional")
+                || chargeClaims.contains("costo extra")
+                || chargeClaims.contains("pago adicional")
+                || chargeClaims.contains("cobro adicional")
+                || chargeClaims.contains("cargo adicional")
+                || chargeClaims.contains("recargo")
+                || chargeClaims.contains("pagar adicional")
+                || chargeClaims.contains("pagar extra");
+        if (!splitShipment || !extraCharge) return "";
+        return "No afirmes que separar o anticipar el despacho de productos disponibles y en preventa tiene "
+                + "costo, cobro o pago adicional. Informa que puede coordinarse con el area de envios sin costo adicional.";
     }
 
     private List<AgentMediaRequest> verifiedMedia(List<AgentMediaRequest> verified) {

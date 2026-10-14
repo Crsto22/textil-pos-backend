@@ -109,6 +109,12 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
               Esta accion comparte el contacto de la asesora para coordinar disponibilidad y costo, pero la IA puede
               seguir informando y vendiendo. No la uses por la palabra generica "delivery" si el contexto significa
               solamente envio o Shalom; interpreta el significado completo.
+            - REFER_EXISTING_ORDER_DELIVERY: pregunta cuando enviaran, despacharan o entregaran un pedido que ya
+              realizo, pide acelerar ese pedido o indica que lo necesita antes de una fecha. Usa intent=DELIVERY_METHOD,
+              establece requiresHumanHelp=false y no prometas fecha, llegada, salida, prioridad ni plazo. No afirmes
+              "1 a 3 dias", "saldra pronto", "llegara a tiempo" ni "haremos todo lo posible". Java informara que el
+              area de envios se comunicara para revisar y coordinar. No uses esta accion para una consulta preventa
+              sobre el plazo general de una compra que todavia no fue realizada.
             - REQUEST_WHOLESALE_SUPPORT: solicita expresamente una compra al por mayor, precios mayoristas,
               una cotizacion por volumen o productos para reventa. Usa intent=SUPPORT_REQUEST y
               requiresHumanHelp=true. Interpreta el significado completo: pedir varios productos para una compra

@@ -303,6 +303,28 @@ class AgentDeterministicCommerceServiceTest {
     }
 
     @Test
+    void refersExistingOrderDeliveryTimingWithoutPromisingDatesOrChangingState() {
+        CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
+        session.setState(CrmWhatsappAgentState.EXPLORANDO_PRODUCTOS);
+        when(sessions.findById(41L)).thenReturn(Optional.of(session));
+        AgentDeterministicCommerceService service = new AgentDeterministicCommerceService(
+                sessions, null, null, null, null, null, null, null, null, null,
+                new AgentToolCallAuditService(null));
+        AgentConversationDecision decision = decision(AgentCommercialAction.REFER_EXISTING_ORDER_DELIVERY, "");
+
+        var result = service.execute(41L, null, decision);
+
+        assertTrue(result.handled());
+        assertFalse(result.mutationExecuted());
+        assertTrue(result.customerMessage().contains("asesora del área de envíos"));
+        assertTrue(result.customerMessage().contains("coordinar la entrega"));
+        assertFalse(result.customerMessage().contains("1 a 3"));
+        assertFalse(result.customerMessage().contains("llegara a tiempo"));
+        assertEquals(CrmWhatsappAgentState.EXPLORANDO_PRODUCTOS, session.getState());
+    }
+
+    @Test
     void reopensAConfirmedCartBeforeApplyingAConcreteChange() {
         CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
         AgentPaymentService payments = mock(AgentPaymentService.class);

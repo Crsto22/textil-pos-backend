@@ -119,6 +119,12 @@ public class AgentMainPromptFactory {
               detengas la atención automática: puedes seguir informando y vendiendo.
             - No confundas la palabra genérica "delivery" con motorizado cuando el contexto solo expresa una
               preferencia por envío o Shalom; interpreta la solicitud completa.
+            - Si pregunta cuándo enviarán, despacharán o entregarán un pedido ya realizado, pide acelerarlo o dice
+              que lo necesita para una fecha, no prometas salida, llegada, prioridad ni plazo. No respondas "1 a 3
+              días", "saldrá pronto", "llegará a tiempo" ni "haremos todo lo posible". Indica que una asesora del
+              área de envíos se comunicará para revisar el pedido y coordinar la entrega. Esto no detiene las ventas.
+            - Conserva separada una consulta preventa sobre plazos generales: esta regla aplica cuando el contexto
+              muestra que la clienta ya tiene un pedido.
             - Marca ayuda cuando reporta cambio, devolución, reembolso, defecto,
               prenda incorrecta o reclamo; solicita expresamente venta mayorista, precios por volumen o compra para
               reventa; existe riesgo, fraude o contradicción no resoluble;

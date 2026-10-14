@@ -290,7 +290,7 @@ public class AgentDeterministicCommerceService {
         } else if (preorder) {
             text.append("📅 Los despachos comienzan a partir de la fecha indicada y dependen del volumen de pedidos.\n\n");
         } else {
-            text.append("Envío aproximado: 1 a 3 días, según el volumen de pedidos.\n\n");
+            text.append("Despacho del pedido: aproximadamente en 1 a 3 días, según el volumen de pedidos.\n\n");
         }
         if (requestConfirmation) {
             text.append("⚠️ Revisa bien el modelo, color y talla. Los cambios tienen una penalidad de S/10 y pueden demorar.\n\n")

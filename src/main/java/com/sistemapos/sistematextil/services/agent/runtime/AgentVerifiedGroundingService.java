@@ -93,6 +93,7 @@ public class AgentVerifiedGroundingService {
         if (decision == null || decision.intent() == null) {
             throw new IllegalStateException("Gemini no clasifico la solicitud actual");
         }
+        decision = enforceHumanHandoffRules(decision);
         if (commerce != null) {
             decision = commerce.normalizeShalomAgencyRefinement(sessionId, decision);
         }
@@ -182,6 +183,14 @@ public class AgentVerifiedGroundingService {
         int verifiedCalls = ordinal.get() - AUDIT_ORDINAL_BASE;
         return new Grounding(decision, write(evidence), List.copyOf(media), verifiedCalls,
                 mutationExecuted, customerMessage);
+    }
+
+    AgentConversationDecision enforceHumanHandoffRules(AgentConversationDecision decision) {
+        if (decision.commercialAction() == AgentCommercialAction.REQUEST_WHOLESALE_SUPPORT
+                && !decision.requiresHumanHelp()) {
+            return decision.withRequiresHumanHelp(true);
+        }
+        return decision;
     }
 
     private AgentConversationDecision normalizeIncompleteProductSelection(AgentConversationDecision decision) {

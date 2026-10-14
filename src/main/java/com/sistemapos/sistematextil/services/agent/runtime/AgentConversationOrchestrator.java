@@ -156,6 +156,9 @@ public class AgentConversationOrchestrator {
                           costo extra.
                         - Si la clienta solicita todos los productos de un grupo, incluye todos los productos presentes
                           en la evidencia; no agregues modelos, tipos de prenda ni variantes que no aparezcan alli.
+                        - Cuando commercialAction sea SHOW_PRODUCTS, incluye siempre https://kiments.com.pe/productos
+                          como galeria completa, ademas de responder con los productos reales de la evidencia. Redacta
+                          naturalmente y continua ayudando a elegir o comprar; no conviertas esta regla en una plantilla.
                         - Cuando exista promotions, responde la consulta usando esa lista real. Solo puedes afirmar que
                           no hay promociones cuando promotions este presente y su lista sea vacia.
                         - Si existe sizeRecommendationBusinessRule, el conjunto se vende en una sola talla: comunica
@@ -173,13 +176,15 @@ public class AgentConversationOrchestrator {
                 grounding.evidenceJson(), response.customerMessage());
         String mediaCorrection = mediaCorrectionInstruction(grounding, response.customerMessage());
         String shippingCorrection = mixedPreorderShippingCorrectionInstruction(response.customerMessage());
+        String catalogUrlCorrection = catalogUrlCorrectionInstruction(grounding, response.customerMessage());
         if (!priceValidation.valid() || !promotionValidation.valid() || !mediaCorrection.isBlank()
-                || !shippingCorrection.isBlank()) {
+                || !shippingCorrection.isBlank() || !catalogUrlCorrection.isBlank()) {
             String correctionInstruction = String.join("\n",
                     priceValidation.valid() ? "" : priceValidation.correctionInstruction(),
                     promotionValidation.valid() ? "" : promotionValidation.correctionInstruction(),
                     mediaCorrection,
-                    shippingCorrection).trim();
+                    shippingCorrection,
+                    catalogUrlCorrection).trim();
             AgentMainPrompt correctionPrompt = groundingCorrectionPrompt(
                     prompt, response.customerMessage(), correctionInstruction);
             var corrected = gateway.respond(context.connectionId(), correctionPrompt, maxTools);
@@ -191,12 +196,15 @@ public class AgentConversationOrchestrator {
                     grounding.evidenceJson(), correctedResponse.customerMessage());
             String correctedMediaValidation = mediaCorrectionInstruction(
                     grounding, correctedResponse.customerMessage());
+            String correctedCatalogUrlValidation = catalogUrlCorrectionInstruction(
+                    grounding, correctedResponse.customerMessage());
             if (!correctedValidation.valid() || !correctedPromotionValidation.valid()
-                    || !correctedMediaValidation.isBlank()) {
+                    || !correctedMediaValidation.isBlank() || !correctedCatalogUrlValidation.isBlank()) {
                 throw new IllegalStateException("Gemini contradijo la evidencia comercial despues de corregir la redaccion: "
                         + String.join(" ", correctedValidation.correctionInstruction(),
                                 correctedPromotionValidation.correctionInstruction(),
-                                correctedMediaValidation).trim());
+                                correctedMediaValidation,
+                                correctedCatalogUrlValidation).trim());
             }
             generated = new AgentResponseGateway.AgentResponseResult(
                     corrected.provider(), corrected.model(), generated.latencyMs() + corrected.latencyMs(),
@@ -211,7 +219,8 @@ public class AgentConversationOrchestrator {
         // fotos repetidas o no solicitadas durante recomendaciones y reintentos.
         List<AgentMediaRequest> media = verifiedMedia(grounding.media());
         GeneratedTurn turn = new GeneratedTurn(response.customerMessage(), response.conversationSummary(),
-                response.requiresHumanHelp(), generated.provider(), generated.model(), generated.latencyMs(),
+                response.requiresHumanHelp() || grounding.decision().requiresHumanHelp(),
+                generated.provider(), generated.model(), generated.latencyMs(),
                 generated.toolCalls() + grounding.verifiedToolCalls(), context.fingerprint(), media);
         return persistGeneratedTurn(lease, turn);
     }
@@ -333,6 +342,16 @@ public class AgentConversationOrchestrator {
         if (!mentionsMedia || !claimsDelivery) return "";
         return "No hay archivos verificados para adjuntar. No afirmes que envias, compartes o muestras fotos; "
                 + "explica brevemente la opcion disponible o solicita precisar el modelo.";
+    }
+
+    static String catalogUrlCorrectionInstruction(AgentVerifiedGroundingService.Grounding grounding,
+            String customerMessage) {
+        if (grounding == null || grounding.decision() == null
+                || grounding.decision().commercialAction() != AgentCommercialAction.SHOW_PRODUCTS) return "";
+        if (customerMessage != null && customerMessage.contains("https://kiments.com.pe/productos")) return "";
+        return "La clienta solicito el catalogo o la lista general de productos. Conserva la lista real y agrega "
+                + "https://kiments.com.pe/productos como galeria completa. Redacta naturalmente y sigue ayudando "
+                + "con la compra; no uses una plantilla fija.";
     }
 
     static String mixedPreorderShippingCorrectionInstruction(String customerMessage) {

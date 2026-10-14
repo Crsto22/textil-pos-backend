@@ -97,7 +97,8 @@ class AgentDeterministicCommerceServiceTest {
         assertTrue(message.contains("*10 x combo 29*"));
         assertTrue(message.contains("Precio normal: S/1300.00"));
         assertTrue(message.contains("Descuento: S/50.00"));
-        assertTrue(message.contains("Envío aproximado: 1 a 3 días"));
+        assertTrue(message.contains("Despacho del pedido: aproximadamente en 1 a 3 días"));
+        assertFalse(message.contains("tiempo de entrega"));
         assertFalse(message.contains("logística de Shalom"));
         assertTrue(message.contains("penalidad de S/10"));
         assertFalse(message.contains("🛍️"));

@@ -200,6 +200,14 @@ public class AgentKnowledgeRetriever {
         String normalized = normalize(question);
         if ((normalized.contains("envio") || normalized.contains("shalom") || normalized.contains("delivery"))
                 && containsAny(normalized, "costo", "precio", "tarifa", "cuanto cuesta")) return true;
+        boolean asksAboutDispatch = containsAny(normalized,
+                "cuando sale", "cuando envian", "cuando despachan", "fecha de envio", "fecha de despacho",
+                "sale el", "live", "tiktok")
+                && containsAny(normalized, "sale", "envio", "envian", "despach", "live", "tiktok");
+        if (asksAboutDispatch && !containsAny(normalized,
+                "precio", "stock", "talla", "color", "modelo", "promocion", "combo", "descuento")) {
+            return false;
+        }
         return COMMERCIAL_TERMS.stream().anyMatch(term -> containsTerm(normalized, term));
     }
 

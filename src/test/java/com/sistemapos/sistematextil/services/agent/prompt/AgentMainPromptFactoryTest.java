@@ -37,12 +37,19 @@ class AgentMainPromptFactoryTest {
         assertTrue(prompt.systemInstruction().contains("Eres IA Kiments"));
         assertTrue(prompt.systemInstruction().contains("objetivo comercial"));
         assertTrue(prompt.systemInstruction().contains("Antes de afirmar productos, precios, stock"));
+        assertTrue(prompt.systemInstruction().contains("https://kiments.com.pe/productos"));
+        assertTrue(prompt.systemInstruction().contains("galería completa"));
+        assertTrue(prompt.systemInstruction().contains("entrega a la logística"));
+        assertTrue(prompt.systemInstruction().contains("fecha anunciada en un live o TikTok"));
+        assertTrue(prompt.systemInstruction().contains("la chica de la transmisión en vivo le dará la fecha exacta"));
         assertTrue(prompt.systemInstruction().contains("No inventes"));
         assertTrue(prompt.systemInstruction().contains("termina con una sola pregunta"));
         assertTrue(prompt.systemInstruction().contains("No repitas saludos"));
         assertTrue(prompt.systemInstruction().contains("cambiar_variante_carrito"));
         assertTrue(prompt.systemInstruction().contains("Manejo de ambigüedades".toUpperCase()));
         assertTrue(prompt.systemInstruction().contains("AYUDA HUMANA"));
+        assertTrue(prompt.systemInstruction().contains("Tener varios productos en una compra personal no la convierte en mayorista"));
+        assertTrue(prompt.systemInstruction().contains("933918047"));
         assertTrue(prompt.systemInstruction().contains("ARMANDO_CARRITO"));
         assertEquals(44L, prompt.toolContext().get(AgentCatalogTools.SESSION_ID_CONTEXT_KEY));
     }

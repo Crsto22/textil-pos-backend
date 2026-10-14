@@ -69,6 +69,15 @@ public record AgentConversationDecision(
                 sizeGuideComponent, bodyMeasurements, fitPreference, confidence, requiresHumanHelp);
     }
 
+    public AgentConversationDecision withRequiresHumanHelp(boolean required) {
+        return new AgentConversationDecision(intent, customerGoal, productReference, colorReference,
+                sizeReference, quantity, promotionReference, promotionSelections, cartAction,
+                commercialAction, paymentMethodReference, paymentAccountReference, customerName,
+                customerPhone, deliveryMethod, documentNumber, shalomAgency, shalomDestination,
+                shalomFieldsToChange, catalogAvailability, sizeGuideComponent, bodyMeasurements,
+                fitPreference, confidence, required);
+    }
+
     public AgentConversationDecision(
             AgentDecisionIntent intent, String customerGoal, String productReference, String colorReference,
             String sizeReference, Integer quantity, String promotionReference,

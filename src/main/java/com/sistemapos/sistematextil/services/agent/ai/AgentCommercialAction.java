@@ -30,5 +30,6 @@ public enum AgentCommercialAction {
     ACCEPT_FILM,
     DECLINE_FILM,
     SHARE_ADVISOR_CONTACT,
+    REQUEST_WHOLESALE_SUPPORT,
     REQUEST_SUPPORT
 }

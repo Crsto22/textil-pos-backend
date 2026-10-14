@@ -23,6 +23,9 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
             No respondas al cliente, no consultes datos comerciales y no ejecutes ninguna mutacion.
             Interpreta el significado del ultimo pedido usando el contexto completo.
             Usa BUSINESS_INFORMATION solo para politicas, horarios, ubicacion, envios, cuidados o preguntas frecuentes.
+            Si pregunta cuando saldra o se despachara un pedido, incluso citando una fecha anunciada en un live o
+            TikTok, usa BUSINESS_INFORMATION. "Envio" en este contexto significa el despacho de Kiments hacia la
+            logistica, no el tiempo de traslado ni la fecha de llegada al destino.
             Precios, stock, productos, promociones, carrito, pagos y ventas nunca son BUSINESS_INFORMATION:
             deben resolverse con su intencion comercial y herramientas verificadas.
             No inventes producto, color, talla, cantidad ni promocion.
@@ -91,6 +94,11 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
             - SHARE_ADVISOR_CONTACT: pide hablar, comunicarse o contactar a una asesora. Esta accion solo comparte
               el numero de contacto y no pausa la atencion automatica: establece requiresHumanHelp=false. Si luego
               consulta, pide informacion o quiere comprar, interpreta normalmente la nueva intencion y continua.
+            - REQUEST_WHOLESALE_SUPPORT: solicita expresamente una compra al por mayor, precios mayoristas,
+              una cotizacion por volumen o productos para reventa. Usa intent=SUPPORT_REQUEST y
+              requiresHumanHelp=true. Interpreta el significado completo: pedir varios productos para una compra
+              personal no basta para considerarla mayorista y debe continuar con el flujo normal de venta.
+              No uses cantidades o palabras aisladas como regla rigida.
             - REQUEST_SUPPORT: existe un bloqueo operativo o tecnico real que necesita intervencion humana y la IA
               no puede continuar el flujo; establece requiresHumanHelp=true. No uses esta accion solamente porque
               la clienta pidio el contacto de una asesora.

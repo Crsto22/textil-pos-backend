@@ -172,6 +172,33 @@ class AgentConversationOrchestratorTest {
     }
 
     @Test
+    void preservesBackendWholesaleHandoffEvenWhenWriterReturnsFalse() {
+        Fixture fixture = new Fixture();
+        fixture.current(true, true, true);
+        AgentConversationDecision wholesale = new AgentConversationDecision(
+                AgentDecisionIntent.SUPPORT_REQUEST, "venta mayorista", "", "", "", 0, "",
+                java.util.List.of(),
+                com.sistemapos.sistematextil.services.agent.ai.AgentCartAction.NONE,
+                AgentCommercialAction.REQUEST_WHOLESALE_SUPPORT,
+                "", "", "", "", "", "", "", "",
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL, 99, true);
+        when(fixture.grounding.ground(eq(7L), eq(8L), eq(41L), any())).thenReturn(
+                new AgentVerifiedGroundingService.Grounding(
+                        wholesale, "{}", java.util.List.of(), 0, false));
+        when(fixture.gateway.respond(eq(7L), any(), eq(12))).thenReturn(new AgentResponseResult(
+                "GEMINI", "gemini", 100, 1,
+                new AgentTurnResponse("Una asesora puede ayudarte con la venta por mayor.",
+                        "Solicita venta mayorista", false, java.util.List.of())));
+
+        assertEquals(AgentConversationOrchestrator.Outcome.COMPLETED,
+                fixture.orchestrator.process(fixture.lease));
+
+        ArgumentCaptor<GeneratedTurn> turn = ArgumentCaptor.forClass(GeneratedTurn.class);
+        verify(fixture.jobs).saveGeneratedTurn(eq(41L), eq("worker:lease"), turn.capture(), any());
+        assertTrue(turn.getValue().requiresHumanHelp());
+    }
+
+    @Test
     void asksGeminiToRewriteNaturallyWhenAProductPriceWasOmitted() {
         Fixture fixture = new Fixture();
         fixture.current(true, true, true);
@@ -233,6 +260,40 @@ class AgentConversationOrchestratorTest {
         verify(fixture.jobs).saveGeneratedTurn(eq(41L), eq("worker:lease"), turn.capture(), any());
         assertEquals("Tengo Alessia Entero y Alessia Rayas. ¿Cual modelo deseas ver?",
                 turn.getValue().customerMessage());
+    }
+
+    @Test
+    void rewritesCatalogReplyWhenTheWebGalleryWasOmitted() {
+        Fixture fixture = new Fixture();
+        fixture.current(true, true, true);
+        AgentConversationDecision catalog = new AgentConversationDecision(
+                AgentDecisionIntent.PRODUCT_SEARCH, "mostrar catalogo", "", "", "", 0, "",
+                java.util.List.of(),
+                com.sistemapos.sistematextil.services.agent.ai.AgentCartAction.NONE,
+                AgentCommercialAction.SHOW_PRODUCTS,
+                "", "", "", "", "", "", "", "",
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL, 99, false);
+        when(fixture.grounding.ground(eq(7L), eq(8L), eq(41L), any())).thenReturn(
+                new AgentVerifiedGroundingService.Grounding(
+                        catalog,
+                        "{\"products\":[{\"name\":\"EMMA\",\"priceFrom\":65.0}]}",
+                        java.util.List.of(), 1, false));
+        when(fixture.gateway.respond(eq(7L), any(), eq(12)))
+                .thenReturn(new AgentResponseResult("GEMINI", "gemini", 100, 1,
+                        new AgentTurnResponse("Emma esta disponible a S/65.00.", "Catalogo", false,
+                                java.util.List.of())))
+                .thenReturn(new AgentResponseResult("GEMINI", "gemini", 90, 0,
+                        new AgentTurnResponse(
+                                "Emma esta disponible a S/65.00. Mira la galeria completa en https://kiments.com.pe/productos",
+                                "Catalogo", false, java.util.List.of())));
+
+        assertEquals(AgentConversationOrchestrator.Outcome.COMPLETED,
+                fixture.orchestrator.process(fixture.lease));
+
+        verify(fixture.gateway, times(2)).respond(eq(7L), any(), eq(12));
+        ArgumentCaptor<GeneratedTurn> turn = ArgumentCaptor.forClass(GeneratedTurn.class);
+        verify(fixture.jobs).saveGeneratedTurn(eq(41L), eq("worker:lease"), turn.capture(), any());
+        assertTrue(turn.getValue().customerMessage().contains("https://kiments.com.pe/productos"));
     }
 
     @Test

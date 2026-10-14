@@ -76,6 +76,22 @@ class AgentKnowledgeRetrieverTest {
     }
 
     @Test
+    void dispatchDateMentionedInLiveIsEligibleForShippingPolicyRag() {
+        String question = "En el live dijeron que mi pedido sale el jueves, ¿es correcto?";
+        when(embeddingGateway.embedQuery(7L, question)).thenReturn(List.of(1f, 0f, 0f));
+        when(chunkRepository.findSearchableByCategories(eq(7L), anyList(), anyList()))
+                .thenReturn(List.of(chunk(93L, CrmWhatsappAiKnowledgeCategory.ENVIOS,
+                        "La fecha anunciada en el live tiene prioridad como fecha de despacho a Shalom.",
+                        "[1.0,0.0,0.0]")));
+
+        var result = retriever.search(7L, question);
+
+        assertTrue(result.eligible());
+        assertEquals("INFORMATION_FOUND", result.reason());
+        assertTrue(result.sources().getFirst().content().contains("fecha de despacho"));
+    }
+
+    @Test
     void fallsBackToLexicalRetrievalWhenEmbeddingProviderFails() {
         when(embeddingGateway.embedQuery(7L, "¿Cuál es el horario de atención?"))
                 .thenThrow(new IllegalStateException("provider unavailable"));

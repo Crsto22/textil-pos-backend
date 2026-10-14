@@ -1,6 +1,7 @@
 package com.sistemapos.sistematextil.services.agent.runtime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -50,6 +51,35 @@ import com.sistemapos.sistematextil.services.agent.promotion.AgentPromotionQuery
 import com.sistemapos.sistematextil.services.agent.promotion.AgentPromotionQueryService.PromotionSummary;
 
 class AgentVerifiedGroundingServiceTest {
+    @Test
+    void wholesaleActionAlwaysRequiresHumanHelpWithoutRunningCommerceTools() {
+        AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        AgentPromotionQueryService promotions = mock(AgentPromotionQueryService.class);
+        AgentKnowledgeRetriever knowledge = mock(AgentKnowledgeRetriever.class);
+        AgentCartService cart = mock(AgentCartService.class);
+        AgentConversationDecision wholesale = new AgentConversationDecision(
+                AgentDecisionIntent.SUPPORT_REQUEST, "cotizacion para reventa", "", "", "", 0, "",
+                List.of(), AgentCartAction.NONE, AgentCommercialAction.REQUEST_WHOLESALE_SUPPORT,
+                "", "", "", "", "", "", "", "",
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL, 98, false);
+        when(decisions.interpret(4L, "Quiero comprar al por mayor para revender")).thenReturn(
+                new AgentInterpretationResult("GEMINI", "model", "DB", 10, 0, wholesale));
+
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
+                promotions, knowledge, cart, passThroughAudit());
+        var grounded = service.ground(4L, 9L, 30L, "Quiero comprar al por mayor para revender");
+
+        assertTrue(grounded.decision().requiresHumanHelp());
+        assertEquals(0, grounded.verifiedToolCalls());
+        org.mockito.Mockito.verifyNoInteractions(catalog, promotions, knowledge, cart);
+
+        AgentConversationDecision ordinaryMultiItem = wholesale
+                .withCommercialAction(AgentCommercialAction.ADD_PRODUCT)
+                .withRequiresHumanHelp(false);
+        assertFalse(service.enforceHumanHandoffRules(ordinaryMultiItem).requiresHumanHelp());
+    }
+
     @Test
     void promotionActionAlwaysUsesPromotionDataEvenWhenSecondaryIntentWasMisclassified() {
         AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);

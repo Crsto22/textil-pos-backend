@@ -43,7 +43,7 @@ public class AgentConversationOrchestrator {
             Para recibir ayuda con tu caso, comunícate con nuestra asesora al 933918047.""";
     static final String GENERAL_IMAGE_MESSAGE = """
             Recibí tu imagen, bella 💛
-            Para confirmar correctamente el producto, indícame el nombre del modelo que aparece en la foto.""";
+            Para ayudarte correctamente, indícame el nombre del modelo, el color y la talla que deseas.""";
     static final String GENERAL_DOCUMENT_MESSAGE = """
             Recibí tu archivo, bella 💛
             Por el momento no puedo revisar su contenido directamente. Cuéntame brevemente qué contiene o qué deseas consultar.""";
@@ -230,10 +230,24 @@ public class AgentConversationOrchestrator {
         if (batch == null || isReceiptWorkflow(state)) return null;
         boolean image = batch.messages().stream()
                 .anyMatch(item -> "IMAGE".equalsIgnoreCase(item.messageType()));
-        if (image) return GENERAL_IMAGE_MESSAGE;
+        if (image && !hasMeaningfulCustomerText(batch)) return GENERAL_IMAGE_MESSAGE;
         boolean document = batch.messages().stream()
                 .anyMatch(item -> "DOCUMENT".equalsIgnoreCase(item.messageType()));
         return document ? GENERAL_DOCUMENT_MESSAGE : null;
+    }
+
+    private static boolean hasMeaningfulCustomerText(AgentMessageBatch batch) {
+        return batch.messages().stream()
+                .map(AgentMessageBatch.Item::content)
+                .filter(content -> content != null && !content.isBlank())
+                .flatMap(content -> content.lines())
+                .map(String::trim)
+                .anyMatch(line -> !line.isBlank() && !isMediaMarker(line));
+    }
+
+    private static boolean isMediaMarker(String line) {
+        return line.startsWith("[") && line.endsWith("]")
+                && (line.contains("ADJUNT") || line.contains("PENDIENTE DE TRANSCRIPCION"));
     }
 
     static boolean isPostSaleChangeRequest(

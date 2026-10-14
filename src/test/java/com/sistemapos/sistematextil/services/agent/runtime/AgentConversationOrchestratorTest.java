@@ -113,6 +113,34 @@ class AgentConversationOrchestratorTest {
     }
 
     @Test
+    void letsTheAgentInterpretAnImageCaptionInsteadOfUsingTheGenericReply() {
+        AgentMessageBatch batch = new AgentMessageBatch(8L, 20L, 99L,
+                List.of(new AgentMessageBatch.Item(99L, "IMAGE",
+                        "Quiero el conjunto Alice en guinda talla XS\n[IMAGEN ADJUNTA]",
+                        true, false, false, LocalDateTime.now())),
+                "Quiero el conjunto Alice en guinda talla XS\n[IMAGEN ADJUNTA]",
+                true, false, false);
+
+        assertEquals(null, AgentConversationOrchestrator.generalMediaMessage(
+                batch, CrmWhatsappAgentState.EXPLORANDO_PRODUCTOS));
+    }
+
+    @Test
+    void letsTheAgentInterpretTextSentNextToAnImage() {
+        AgentMessageBatch batch = new AgentMessageBatch(8L, 20L, 100L,
+                List.of(
+                        new AgentMessageBatch.Item(99L, "IMAGE", "[IMAGEN ADJUNTA]",
+                                true, false, false, LocalDateTime.now()),
+                        new AgentMessageBatch.Item(100L, "TEXT", "¿A qué número se yapea?",
+                                false, false, false, LocalDateTime.now())),
+                "[IMAGEN ADJUNTA]\n¿A qué número se yapea?",
+                true, false, false);
+
+        assertEquals(null, AgentConversationOrchestrator.generalMediaMessage(
+                batch, CrmWhatsappAgentState.EXPLORANDO_PRODUCTOS));
+    }
+
+    @Test
     void generatesPersistsFinalizesAndCompletesOneCurrentJob() {
         Fixture fixture = new Fixture();
         fixture.current(true, true, true);

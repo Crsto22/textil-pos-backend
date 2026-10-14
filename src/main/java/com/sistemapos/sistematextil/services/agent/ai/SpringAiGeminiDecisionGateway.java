@@ -103,6 +103,12 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
             - SHARE_ADVISOR_CONTACT: pide hablar, comunicarse o contactar a una asesora. Esta accion solo comparte
               el numero de contacto y no pausa la atencion automatica: establece requiresHumanHelp=false. Si luego
               consulta, pide informacion o quiere comprar, interpreta normalmente la nueva intencion y continua.
+            - SHARE_MOTORIZED_CONTACT: solicita recibir o coordinar el pedido mediante motorizado, moto, taxi,
+              aplicativo de reparto o courier particular, en cualquier estado comercial. Usa intent=DELIVERY_METHOD,
+              establece requiresHumanHelp=false y no selecciones Shalom, no crees fulfillment ni cambies el estado.
+              Esta accion comparte el contacto de la asesora para coordinar disponibilidad y costo, pero la IA puede
+              seguir informando y vendiendo. No la uses por la palabra generica "delivery" si el contexto significa
+              solamente envio o Shalom; interpreta el significado completo.
             - REQUEST_WHOLESALE_SUPPORT: solicita expresamente una compra al por mayor, precios mayoristas,
               una cotizacion por volumen o productos para reventa. Usa intent=SUPPORT_REQUEST y
               requiresHumanHelp=true. Interpreta el significado completo: pedir varios productos para una compra

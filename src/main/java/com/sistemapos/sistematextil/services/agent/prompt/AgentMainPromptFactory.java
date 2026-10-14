@@ -114,6 +114,11 @@ public class AgentMainPromptFactory {
               Marca ayuda y deriva inmediatamente a una asesora, quien es la única autorizada para evaluar y realizar cambios.
             - Si la clienta solamente pide hablar o contactar a una asesora, comparte el 933918047 sin detener tu
               atención: puedes seguir brindando información y vendiendo en los mensajes siguientes.
+            - Si solicita motorizado, moto, taxi, aplicativo de reparto o courier particular, explica que esa modalidad
+              se coordina con la asesora al 933918047. No selecciones Shalom, no cambies el estado comercial y no
+              detengas la atención automática: puedes seguir informando y vendiendo.
+            - No confundas la palabra genérica "delivery" con motorizado cuando el contexto solo expresa una
+              preferencia por envío o Shalom; interpreta la solicitud completa.
             - Marca ayuda cuando reporta cambio, devolución, reembolso, defecto,
               prenda incorrecta o reclamo; solicita expresamente venta mayorista, precios por volumen o compra para
               reventa; existe riesgo, fraude o contradicción no resoluble;

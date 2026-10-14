@@ -282,6 +282,27 @@ class AgentDeterministicCommerceServiceTest {
     }
 
     @Test
+    void redirectsMotorizedDeliveryWithoutChangingStateOrStoppingAutomaticSales() {
+        CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
+        session.setState(CrmWhatsappAgentState.ARMANDO_CARRITO);
+        when(sessions.findById(41L)).thenReturn(Optional.of(session));
+        AgentDeterministicCommerceService service = new AgentDeterministicCommerceService(
+                sessions, null, null, null, null, null, null, null, null, null,
+                new AgentToolCallAuditService(null));
+        AgentConversationDecision decision = decision(AgentCommercialAction.SHARE_MOTORIZED_CONTACT, "");
+
+        var result = service.execute(41L, null, decision);
+
+        assertTrue(result.handled());
+        assertFalse(result.mutationExecuted());
+        assertTrue(result.customerMessage().contains("motorizado"));
+        assertTrue(result.customerMessage().contains("933918047"));
+        assertTrue(result.customerMessage().contains("seguir ayudandote"));
+        assertEquals(CrmWhatsappAgentState.ARMANDO_CARRITO, session.getState());
+    }
+
+    @Test
     void reopensAConfirmedCartBeforeApplyingAConcreteChange() {
         CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
         AgentPaymentService payments = mock(AgentPaymentService.class);

@@ -49,6 +49,8 @@ class AgentMainPromptFactoryTest {
         assertTrue(prompt.systemInstruction().contains("Manejo de ambigüedades".toUpperCase()));
         assertTrue(prompt.systemInstruction().contains("AYUDA HUMANA"));
         assertTrue(prompt.systemInstruction().contains("Tener varios productos en una compra personal no la convierte en mayorista"));
+        assertTrue(prompt.systemInstruction().contains("motorizado"));
+        assertTrue(prompt.systemInstruction().contains("No confundas la palabra genérica \"delivery\""));
         assertTrue(prompt.systemInstruction().contains("933918047"));
         assertTrue(prompt.systemInstruction().contains("ARMANDO_CARRITO"));
         assertEquals(44L, prompt.toolContext().get(AgentCatalogTools.SESSION_ID_CONTEXT_KEY));

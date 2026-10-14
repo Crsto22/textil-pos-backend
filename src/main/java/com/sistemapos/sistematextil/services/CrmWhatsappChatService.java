@@ -79,6 +79,7 @@ import com.sistemapos.sistematextil.util.venta.VentaDetalleCreateItem;
 import com.sistemapos.sistematextil.util.venta.VentaPagoCreateItem;
 import com.sistemapos.sistematextil.util.venta.VentaResponse;
 import com.sistemapos.sistematextil.services.agent.batch.AgentIncomingMessageStoredEvent;
+import com.sistemapos.sistematextil.services.agent.batch.AgentJobStore;
 import com.sistemapos.sistematextil.services.agent.config.AgentRuntimeConfigService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -119,6 +120,7 @@ public class CrmWhatsappChatService {
     private final S3StorageService storageService;
     private final ApplicationEventPublisher applicationEventPublisher;
     private final AgentRuntimeConfigService agentRuntimeConfigService;
+    private final AgentJobStore agentJobStore;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public CrmWhatsappChatService(
@@ -149,7 +151,8 @@ public class CrmWhatsappChatService {
             CrmWhatsappPaymentReservationService paymentReservationService,
             S3StorageService storageService,
             ApplicationEventPublisher applicationEventPublisher,
-            AgentRuntimeConfigService agentRuntimeConfigService) {
+            AgentRuntimeConfigService agentRuntimeConfigService,
+            AgentJobStore agentJobStore) {
         this.conversationRepository = conversationRepository;
         this.agentSessionRepository = agentSessionRepository;
         this.conversationTagRepository = conversationTagRepository;
@@ -178,6 +181,7 @@ public class CrmWhatsappChatService {
         this.storageService = storageService;
         this.applicationEventPublisher = applicationEventPublisher;
         this.agentRuntimeConfigService = agentRuntimeConfigService;
+        this.agentJobStore = agentJobStore;
     }
 
     public List<ConversationResponse> listarConversaciones(String status, Usuario usuarioSesion) {
@@ -365,6 +369,50 @@ public class CrmWhatsappChatService {
     }
 
     @Transactional
+    public EnableAgentResponse habilitarAgente(Long conversationId, Usuario usuarioSesion) {
+        Usuario actor = requireCrmUser(usuarioSesion);
+        CrmWhatsappConversation conversation = conversationRepository.findForUpdateById(conversationId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Conversacion no encontrada"));
+        if (RESUELTO.equals(conversation.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Reabre la conversacion antes de habilitar la IA");
+        }
+        if (conversation.getConnection() == null
+                || !agentRuntimeConfigService.isEnabled(conversation.getConnection().getIdConnection())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "IA Kiments no esta habilitada para esta conexion");
+        }
+        Usuario assigned = conversation.getAssignedUser();
+        boolean alreadyAgentActive = assigned == null
+                && conversation.getAttentionQueue() == CrmWhatsappAttentionQueue.AGENT_ACTIVE;
+        if (!alreadyAgentActive && assigned == null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Acepta el chat antes de habilitar la IA");
+        }
+        if (assigned != null && !isAdmin(actor) && !assigned.getIdUsuario().equals(actor.getIdUsuario())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Este chat esta asignado a " + fullName(assigned));
+        }
+
+        CrmWhatsappMessage pending = latestUnansweredIncoming(conversationId);
+        if (!alreadyAgentActive) {
+            conversation.setAssignedUser(null);
+            conversation.setAssignedAt(null);
+            conversation.setStatus(ESPERA);
+            conversation.setAttentionQueue(CrmWhatsappAttentionQueue.AGENT_ACTIVE);
+            conversation.setWaitingReason(null);
+            conversation.setWaitingDetail(null);
+            conversation = conversationRepository.saveAndFlush(conversation);
+            registrarMensajeSistema(conversation, fullName(actor) + " habilito IA Kiments.");
+        }
+        if (pending != null) {
+            applicationEventPublisher.publishEvent(new AgentIncomingMessageStoredEvent(pending.getIdMessage()));
+        } else {
+            invalidateAgentWork(conversationId, "La asesora ya respondio el ultimo mensaje del cliente");
+        }
+        ConversationResponse response = toConversationResponse(conversation, false);
+        publishRealtimeEvent("conversation.updated", conversation, null);
+        return new EnableAgentResponse(response, pending != null);
+    }
+
+    @Transactional
     public CrmWhatsappConversation asignarParaOperacion(Long conversationId, Usuario usuarioSesion) {
         Usuario actor = requireCrmUser(usuarioSesion);
         CrmWhatsappConversation conversation = conversationRepository.findForUpdateById(conversationId)
@@ -383,6 +431,7 @@ public class CrmWhatsappChatService {
             conversation.setStatus(ATENDIDO);
             conversation.setUnreadCount(0);
             conversation = conversationRepository.save(conversation);
+            invalidateAgentWork(conversationId, "La asesora tomo el control del chat");
             registrarMensajeSistema(conversation, fullName(actor) + " acepto el chat.");
         }
         return conversation;
@@ -1126,6 +1175,7 @@ public class CrmWhatsappChatService {
         conversation.setLastMessageAt(message.getCreatedAt());
         conversation = conversationRepository.save(conversation);
         MessageResponse messageResponse = toMessageResponse(messageRepository.save(message));
+        invalidateAgentWork(conversationId, "La asesora respondio manualmente el chat");
         publishRealtimeEvent("message.created", conversation, messageResponse);
         return messageResponse;
     }
@@ -1269,6 +1319,7 @@ public class CrmWhatsappChatService {
             conversation.setLastMessageAt(message.getCreatedAt());
             conversationRepository.save(conversation);
             MessageResponse result = toMessageResponse(message);
+            invalidateAgentWork(conversation.getIdConversation(), "La asesora respondio manualmente el chat");
             publishRealtimeEvent("message.created", conversation, result);
             return result;
         } catch (RuntimeException error) {
@@ -1422,6 +1473,7 @@ public class CrmWhatsappChatService {
             conversation.setLastMessageAt(message.getCreatedAt());
             conversation = conversationRepository.save(conversation);
             MessageResponse messageResponse = toMessageResponse(message);
+            invalidateAgentWork(conversationId, "La asesora respondio manualmente el chat");
             publishRealtimeEvent("message.created", conversation, messageResponse);
             return messageResponse;
         } catch (ResponseStatusException e) {
@@ -2971,6 +3023,20 @@ public class CrmWhatsappChatService {
         return value == null ? "" : value.trim();
     }
 
+    private CrmWhatsappMessage latestUnansweredIncoming(Long conversationId) {
+        CrmWhatsappMessage incoming = messageRepository.findLatestActiveIncoming(
+                conversationId, PageRequest.of(0, 1)).stream().findFirst().orElse(null);
+        if (incoming == null) return null;
+        return messageRepository.existsActiveOutgoingAfter(conversationId, incoming.getIdMessage())
+                ? null : incoming;
+    }
+
+    private void invalidateAgentWork(Long conversationId, String reason) {
+        agentSessionRepository.findByConversation_IdConversationAndActiveSlotTrue(conversationId)
+                .ifPresent(session -> agentJobStore.invalidateOpenWork(
+                        session.getIdAgentSession(), LocalDateTime.now(), reason));
+    }
+
     private String normalizeConversationStatus(String status) {
         String normalized = clean(status).toUpperCase();
         return switch (normalized) {
@@ -3033,6 +3099,11 @@ public class CrmWhatsappChatService {
             String agentState,
             LocalDateTime reservationExpiresAt,
             List<CrmConversationTagResponse> tags) {
+    }
+
+    public record EnableAgentResponse(
+            ConversationResponse conversation,
+            boolean pendingCustomerMessage) {
     }
 
     public record ConversationPageResponse(

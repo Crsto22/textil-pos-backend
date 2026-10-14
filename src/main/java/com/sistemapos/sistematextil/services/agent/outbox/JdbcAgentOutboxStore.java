@@ -95,6 +95,10 @@ public class JdbcAgentOutboxStore implements AgentOutboxStore {
                 SELECT o.id_agent_outbox
                 FROM crm_whatsapp_agent_outbox o
                 JOIN crm_whatsapp_agent_session s ON s.id_agent_session=o.id_agent_session
+                JOIN crm_whatsapp_conversation c
+                  ON c.id_conversation=o.id_conversation
+                 AND c.attention_queue='AGENT_ACTIVE'
+                 AND c.assigned_user_id IS NULL
                 JOIN crm_whatsapp_ai_config cfg ON cfg.id_connection=s.id_connection AND cfg.agent_enabled=TRUE
                 WHERE o.status IN ('PENDING', 'RETRY') AND o.available_at <= ?
                   AND NOT EXISTS (
@@ -124,6 +128,27 @@ public class JdbcAgentOutboxStore implements AgentOutboxStore {
                 """, (rs, row) -> new OutboxLease(mapEntry(rs), rs.getInt("attempts"), workerId,
                         timestamp(rs, "lease_until"), rs.getString("phone")), id, workerId);
         return rows.stream().findFirst();
+    }
+
+    @Override
+    public boolean isDeliverable(Long outboxId, String workerId) {
+        Long count = jdbc.queryForObject("""
+                SELECT COUNT(*)
+                FROM crm_whatsapp_agent_outbox o
+                JOIN crm_whatsapp_conversation c ON c.id_conversation=o.id_conversation
+                WHERE o.id_agent_outbox=? AND o.status='PROCESSING' AND o.locked_by=?
+                  AND c.attention_queue='AGENT_ACTIVE' AND c.assigned_user_id IS NULL
+                """, Long.class, outboxId, workerId);
+        return count != null && count == 1L;
+    }
+
+    @Override
+    public boolean cancel(Long outboxId, String workerId, LocalDateTime cancelledAt, String reason) {
+        return jdbc.update("""
+                UPDATE crm_whatsapp_agent_outbox
+                SET status='CANCELLED', locked_by=NULL, lease_until=NULL, last_error=?, updated_at=?
+                WHERE id_agent_outbox=? AND status='PROCESSING' AND locked_by=?
+                """, reason, cancelledAt, outboxId, workerId) == 1;
     }
 
     @Override

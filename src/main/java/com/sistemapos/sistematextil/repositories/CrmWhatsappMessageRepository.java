@@ -122,6 +122,31 @@ public interface CrmWhatsappMessageRepository extends JpaRepository<CrmWhatsappM
     Optional<CrmWhatsappMessage> findLatestByConversationId(@Param("idConversation") Long idConversation);
 
     @Query("""
+            SELECT m
+            FROM CrmWhatsappMessage m
+            WHERE m.conversation.idConversation = :conversationId
+              AND m.direction = 'INCOMING'
+              AND m.deletedAt IS NULL
+            ORDER BY m.idMessage DESC
+            """)
+    List<CrmWhatsappMessage> findLatestActiveIncoming(
+            @Param("conversationId") Long conversationId,
+            Pageable pageable);
+
+    @Query("""
+            SELECT CASE WHEN COUNT(m) > 0 THEN true ELSE false END
+            FROM CrmWhatsappMessage m
+            WHERE m.conversation.idConversation = :conversationId
+              AND m.idMessage > :incomingMessageId
+              AND m.deletedAt IS NULL
+              AND m.direction = 'OUTGOING'
+              AND (m.origin IS NULL OR m.origin <> 'CRM_SYSTEM')
+            """)
+    boolean existsActiveOutgoingAfter(
+            @Param("conversationId") Long conversationId,
+            @Param("incomingMessageId") Long incomingMessageId);
+
+    @Query("""
             SELECT CASE WHEN COUNT(m) > 0 THEN true ELSE false END
             FROM CrmWhatsappMessage m
             WHERE m.conversation.idConversation = :conversationId

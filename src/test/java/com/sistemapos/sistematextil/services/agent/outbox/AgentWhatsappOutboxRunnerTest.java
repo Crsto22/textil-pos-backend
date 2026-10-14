@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 import java.time.LocalDateTime;
@@ -22,6 +23,7 @@ class AgentWhatsappOutboxRunnerTest {
         AgentOutboxStore.OutboxLease lease = new AgentOutboxStore.OutboxLease(entry, 1, "worker", LocalDateTime.now(), "51999@s.whatsapp.net");
         when(store.recoverExpired(any(), eq(5))).thenReturn(new AgentOutboxStore.RecoveryResult(0, 0));
         when(store.claimNext(anyString(), any(), any())).thenReturn(Optional.of(lease), Optional.empty());
+        when(store.isDeliverable(8L, "worker")).thenReturn(true);
         var receipt = new AgentWhatsappOutboxDeliveryService.DeliveryReceipt("wamid", "{}", "{}");
         when(delivery.send(lease)).thenReturn(receipt);
 
@@ -39,6 +41,7 @@ class AgentWhatsappOutboxRunnerTest {
         AgentOutboxStore.OutboxLease lease = new AgentOutboxStore.OutboxLease(entry(), 2, "worker", LocalDateTime.now(), "51999@s.whatsapp.net");
         when(store.recoverExpired(any(), eq(5))).thenReturn(new AgentOutboxStore.RecoveryResult(0, 0));
         when(store.claimNext(anyString(), any(), any())).thenReturn(Optional.of(lease), Optional.empty());
+        when(store.isDeliverable(8L, "worker")).thenReturn(true);
         when(delivery.send(lease)).thenThrow(new AgentWhatsappOutboxDeliveryService.DeliveryException("timeout", true));
         when(store.failOrRetry(eq(8L), anyString(), any(), any(), eq(5), eq("timeout"), eq(true)))
                 .thenReturn(AgentOutboxStore.FailureResult.RETRY_SCHEDULED);
@@ -46,6 +49,23 @@ class AgentWhatsappOutboxRunnerTest {
         new AgentWhatsappOutboxRunner(store, delivery, finalizer, 5, 90, 20).deliverReady();
 
         verify(store).failOrRetry(eq(8L), anyString(), any(), any(), eq(5), eq("timeout"), eq(true));
+    }
+
+    @Test
+    void cancelsAClaimedMessageWhenHumanAttentionTakesControl() {
+        AgentOutboxStore store = mock(AgentOutboxStore.class);
+        AgentWhatsappOutboxDeliveryService delivery = mock(AgentWhatsappOutboxDeliveryService.class);
+        AgentOutboxFinalizer finalizer = mock(AgentOutboxFinalizer.class);
+        AgentOutboxStore.OutboxLease lease = new AgentOutboxStore.OutboxLease(
+                entry(), 1, "worker", LocalDateTime.now(), "51999@s.whatsapp.net");
+        when(store.recoverExpired(any(), eq(5))).thenReturn(new AgentOutboxStore.RecoveryResult(0, 0));
+        when(store.claimNext(anyString(), any(), any())).thenReturn(Optional.of(lease), Optional.empty());
+        when(store.isDeliverable(8L, "worker")).thenReturn(false);
+
+        new AgentWhatsappOutboxRunner(store, delivery, finalizer, 5, 90, 20).deliverReady();
+
+        verify(delivery, never()).send(any());
+        verify(store).cancel(eq(8L), eq("worker"), any(), anyString());
     }
 
     private AgentOutboxStore.OutboxEntry entry() {

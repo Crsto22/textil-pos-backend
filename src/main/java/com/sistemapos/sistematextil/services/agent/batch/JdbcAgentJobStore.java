@@ -92,6 +92,10 @@ public class JdbcAgentJobStore implements AgentJobStore {
                   ON s.id_agent_session = j.id_agent_session
                  AND s.active_slot = 1
                  AND s.last_customer_message_id = j.id_anchor_message
+                INNER JOIN crm_whatsapp_conversation c
+                  ON c.id_conversation = s.id_conversation
+                 AND c.attention_queue = 'AGENT_ACTIVE'
+                 AND c.assigned_user_id IS NULL
                 INNER JOIN crm_whatsapp_ai_config cfg
                   ON cfg.id_connection = s.id_connection AND cfg.agent_enabled = TRUE
                 WHERE j.status = 'PENDING'
@@ -256,6 +260,10 @@ public class JdbcAgentJobStore implements AgentJobStore {
                 SELECT COUNT(*)
                 FROM crm_whatsapp_agent_job j
                 INNER JOIN crm_whatsapp_agent_session s ON s.id_agent_session = j.id_agent_session
+                INNER JOIN crm_whatsapp_conversation c
+                  ON c.id_conversation = s.id_conversation
+                 AND c.attention_queue = 'AGENT_ACTIVE'
+                 AND c.assigned_user_id IS NULL
                 WHERE j.id_agent_job = ?
                   AND j.obsolete_at IS NULL
                   AND j.status <> 'OBSOLETE'

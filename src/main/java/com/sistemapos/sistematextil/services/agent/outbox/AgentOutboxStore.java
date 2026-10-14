@@ -8,6 +8,10 @@ public interface AgentOutboxStore {
 
     Optional<OutboxLease> claimNext(String workerId, LocalDateTime now, LocalDateTime leaseUntil);
 
+    boolean isDeliverable(Long outboxId, String workerId);
+
+    boolean cancel(Long outboxId, String workerId, LocalDateTime cancelledAt, String reason);
+
     boolean complete(Long outboxId, String workerId, String whatsappMessageId, Long messageId, LocalDateTime sentAt);
 
     FailureResult failOrRetry(Long outboxId, String workerId, LocalDateTime now, LocalDateTime retryAt,

@@ -64,6 +64,11 @@ public class AgentWhatsappOutboxRunner {
     }
 
     private void deliver(AgentOutboxStore.OutboxLease lease) {
+        if (!store.isDeliverable(lease.entry().outboxId(), lease.workerId())) {
+            store.cancel(lease.entry().outboxId(), lease.workerId(), LocalDateTime.now(),
+                    "La conversacion esta bajo atencion humana");
+            return;
+        }
         try {
             var receipt = delivery.send(lease);
             finalizer.complete(lease, receipt, LocalDateTime.now());

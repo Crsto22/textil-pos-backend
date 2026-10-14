@@ -552,6 +552,11 @@ public class CrmWhatsappController {
         return ResponseEntity.ok(crmWhatsappChatService.aceptar(id, currentUser(authentication)));
     }
 
+    @PostMapping("/conversations/{id}/enable-agent")
+    public ResponseEntity<?> habilitarAgente(@PathVariable("id") Long id, Authentication authentication) {
+        return ResponseEntity.ok(crmWhatsappChatService.habilitarAgente(id, currentUser(authentication)));
+    }
+
     @PostMapping("/conversations/{id}/transfer")
     public ResponseEntity<?> transferir(
             @PathVariable("id") Long id,

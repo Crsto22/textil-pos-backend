@@ -26,7 +26,12 @@ public class CrmWhatsappFilmReviewService {
     public AgentFilmService.FilmResult reactivate(Long addonId,Usuario user){requireUser(user);return filmService.reactivate(addonId);}
 
     @Transactional
-    public AgentFilmService.FilmResult confirmManually(Long addonId,Usuario user){requireUser(user);return filmService.confirmManually(addonId);}
+    public AgentFilmService.FilmResult confirmManually(Long addonId,ManualConfirmationRequest request,Usuario user){
+        Usuario actor=requireUser(user);
+        if(request==null||!Boolean.TRUE.equals(request.confirmedExternal()))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Confirma que verificaste el pago del film o su cobertura en un pedido anterior");
+        return filmService.confirmManually(addonId,actor,request.coveredBySaleId());
+    }
 
     @Transactional(readOnly=true)
     public FilmEvidenceResponse get(Long id,Usuario user){requireUser(user);return response(requireEvidence(id));}
@@ -49,6 +54,7 @@ public class CrmWhatsappFilmReviewService {
     private FilmEvidenceResponse response(CrmWhatsappFilmEvidence e){return new FilmEvidenceResponse(e.getIdFilmEvidence(),e.getFilmAddon().getIdFilmAddon(),e.getValidationStatus().name(),e.getProcessingStatus().name(),e.getMimeType(),e.getFileName(),e.getDetectedAmount(),e.getOperationCode(),e.getOperationAt(),e.getConfidence(),e.getReviewNote(),e.getReviewedAt(),"/api/crm/whatsapp/film-evidences/"+e.getIdFilmEvidence()+"/media");}
     private String clean(String v){return v==null?"":v.trim();}
     public record DecisionRequest(String action,Boolean confirmedExternal,String note){}
+    public record ManualConfirmationRequest(Boolean confirmedExternal,Integer coveredBySaleId){}
     public record FilmEvidenceResponse(Long evidenceId,Long filmAddonId,String validationStatus,String processingStatus,String mimeType,String fileName,java.math.BigDecimal detectedAmount,String operationCode,LocalDateTime operationAt,Integer confidence,String reviewNote,LocalDateTime reviewedAt,String mediaUrl){}
     public record MediaDownload(byte[] bytes,String contentType,String fileName){}
 }

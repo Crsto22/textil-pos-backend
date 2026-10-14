@@ -6,6 +6,7 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.HexFormat;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -160,6 +161,67 @@ public class AgentFulfillmentService {
         });
     }
 
+    /**
+     * Guarda de forma acumulativa los datos de Shalom recibidos en uno o varios
+     * mensajes. Un campo inválido no revierte los demás campos válidos del mismo
+     * turno y la agencia encontrada se conserva hasta completar los datos
+     * personales.
+     */
+    @Transactional
+    public ShalomDataProgress savePartialShalomData(Long sessionId,String names,String dni,String phone,String agencyQuery){
+        CrmWhatsappAgentSession session=requireSession(sessionId,true);
+        if(session.getState()!=CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM)
+            throw new IllegalStateException("La sesion no esta esperando los datos de Shalom");
+        requireApprovedPayment(session);
+        CrmWhatsappFulfillment f=requireShalom(sessionId);
+        List<String> validationErrors=new ArrayList<>();
+
+        if(!clean(names).isBlank()) {
+            try { f.setRecipientName(validateName(names)); }
+            catch(IllegalArgumentException error) { validationErrors.add(error.getMessage()); }
+        }
+        if(!clean(dni).isBlank()) {
+            try { f.setDocumentNumber(validateDni(dni)); }
+            catch(IllegalArgumentException error) { validationErrors.add(error.getMessage()); }
+        }
+        if(!clean(phone).isBlank()) {
+            try { f.setPhone(normalizePhone(phone)); }
+            catch(IllegalArgumentException error) { validationErrors.add(error.getMessage()); }
+        }
+
+        boolean agencySearchAttempted=!clean(agencyQuery).isBlank();
+        List<AgencyView> candidates=existingCandidateViews(f);
+        if(agencySearchAttempted) {
+            f.setShalomAgencyReference(null);f.setShalomAgency(null);f.setShalomDestination(null);
+            f.setShalomAgencyAddress(null);f.setShalomCandidateIds(null);
+            try {
+                String query=required(agencyQuery,"La agencia Shalom",2,300);
+                candidates=agencySearch.search(query).candidates();
+                f.setShalomCandidateIds(joinIds(candidates));
+            } catch(IllegalArgumentException error) {
+                candidates=List.of();validationErrors.add(error.getMessage());
+            }
+        }
+
+        boolean personalComplete=!clean(f.getRecipientName()).isBlank()
+                && clean(f.getDocumentNumber()).matches("\\d{8}")
+                && !CrmWhatsappPhoneUtils.normalizePeruvianMobile(f.getPhone()).isBlank();
+        boolean agencyReady=!candidates.isEmpty();
+        f.setDocumentType("DNI");f.setConfirmedAt(null);
+        f.setStatus(personalComplete&&agencyReady?CrmWhatsappFulfillmentStatus.AWAITING_AGENCY_CONFIRMATION
+                :CrmWhatsappFulfillmentStatus.DRAFT);
+        f=fulfillments.save(f);
+        if(personalComplete&&agencyReady)apply(session,CrmWhatsappAgentEvent.DATOS_SHALOM_COMPLETADOS);
+
+        List<String> missing=new ArrayList<>();
+        if(clean(f.getRecipientName()).isBlank())missing.add("nombres y apellidos");
+        if(!clean(f.getDocumentNumber()).matches("\\d{8}"))missing.add("DNI");
+        if(CrmWhatsappPhoneUtils.normalizePeruvianMobile(f.getPhone()).isBlank())missing.add("celular");
+        if(!agencyReady)missing.add("agencia de Shalom");
+        return new ShalomDataProgress(result(f,session,candidates),List.copyOf(missing),
+                List.copyOf(validationErrors),agencySearchAttempted&&!agencyReady);
+    }
+
     @Transactional
     public FulfillmentResult editShalomData(Long sessionId,List<AgentShalomDataField> requestedFields,
             String names,String dni,String phone,String agencyQuery,String operationId){
@@ -304,6 +366,12 @@ public class AgentFulfillmentService {
     private List<Long> candidateIds(CrmWhatsappFulfillment f){if(f.getShalomCandidateIds()==null||f.getShalomCandidateIds().isBlank())return List.of();
         return List.of(f.getShalomCandidateIds().split(",")).stream().map(String::trim).filter(v->v.matches("\\d+"))
                 .map(Long::valueOf).toList();}
+    private List<AgencyView> existingCandidateViews(CrmWhatsappFulfillment f){
+        List<AgencyView> result=new ArrayList<>();
+        for(Long id:candidateIds(f))try{result.add(agencySearch.get(id));}catch(IllegalArgumentException ignored){ }
+        if(result.size()!=candidateIds(f).size())f.setShalomCandidateIds(joinIds(result));
+        return List.copyOf(result);
+    }
 
     private Scope lockDeliverySelection(Long id){CrmWhatsappAgentSession s=requireSession(id,true);
         if(s.getState()!=CrmWhatsappAgentState.ESPERANDO_METODO_ENTREGA)throw new IllegalStateException("La sesion no esta esperando el metodo de entrega");
@@ -370,4 +438,11 @@ public class AgentFulfillmentService {
             String documentType,String documentNumber,String phone,PickupBranch pickupBranch,Long shalomAgencyId,
             String shalomAgency,String shalomDestination,String shalomAgencyAddress,List<AgencyView> agencyCandidates,
             String agentState,SavedProfileView savedProfile){}
+    public record ShalomDataProgress(FulfillmentResult fulfillment,List<String> missingFields,
+            List<String> validationErrors,boolean agencyNotFound){
+        public ShalomDataProgress {
+            missingFields=missingFields==null?List.of():List.copyOf(missingFields);
+            validationErrors=validationErrors==null?List.of():List.copyOf(validationErrors);
+        }
+    }
 }

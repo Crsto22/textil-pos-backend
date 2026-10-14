@@ -208,11 +208,14 @@ class AgentDeterministicCommerceServiceTest {
         CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
         session.setState(CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM);
         when(sessions.findById(41L)).thenReturn(Optional.of(session));
-        when(fulfillment.hasCompletePendingShalomData(41L)).thenReturn(false);
-        when(fulfillment.saveShalomData(41L, "Cristhofer Leonardo Quispe Mamani", "75132958",
-                "9338889985", "Agencia Montenegro", "agent-job-null:provide_shalom_data"))
-                .thenThrow(new IllegalArgumentException(
-                        "El celular es incorrecto. Ingresa un numero celular peruano valido de exactamente 9 digitos"));
+        AgentFulfillmentService.FulfillmentResult partialResult = new AgentFulfillmentService.FulfillmentResult(
+                41L, 51L, "SHALOM", "DRAFT", "Cristhofer Leonardo Quispe Mamani", "DNI", "75132958",
+                null, null, null, null, null, null, List.of(), "ESPERANDO_DATOS_SHALOM", null);
+        when(fulfillment.savePartialShalomData(41L, "Cristhofer Leonardo Quispe Mamani", "75132958",
+                "9338889985", "Agencia Montenegro"))
+                .thenReturn(new AgentFulfillmentService.ShalomDataProgress(partialResult, List.of("celular"),
+                        List.of("El celular es incorrecto. Ingresa un numero celular peruano valido de exactamente 9 digitos"),
+                        false));
         AgentDeterministicCommerceService service = new AgentDeterministicCommerceService(
                 sessions, null, null, null, null, null, fulfillment, null, null, null,
                 new AgentToolCallAuditService(null));
@@ -225,9 +228,37 @@ class AgentDeterministicCommerceServiceTest {
         var result = service.execute(41L, null, decision);
 
         assertTrue(result.handled());
-        assertFalse(result.mutationExecuted());
+        assertTrue(result.mutationExecuted());
         assertTrue(result.customerMessage().contains("exactamente 9 digitos"));
         assertFalse(result.customerMessage().contains("asesora"));
+    }
+
+    @Test
+    void asksOnlyForTheRemainingShalomFieldsAfterAPartialMessage() {
+        CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        AgentFulfillmentService fulfillment = mock(AgentFulfillmentService.class);
+        CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
+        session.setState(CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM);
+        when(sessions.findById(41L)).thenReturn(Optional.of(session));
+        AgentFulfillmentService.FulfillmentResult partialResult = new AgentFulfillmentService.FulfillmentResult(
+                41L, 51L, "SHALOM", "DRAFT", "Jennifer Roxana Tapia Jara", "DNI", null,
+                null, null, null, null, null, null, List.of(), "ESPERANDO_DATOS_SHALOM", null);
+        when(fulfillment.savePartialShalomData(41L, "Jennifer Roxana Tapia Jara", "", "", ""))
+                .thenReturn(new AgentFulfillmentService.ShalomDataProgress(partialResult,
+                        List.of("DNI", "celular", "agencia de Shalom"), List.of(), false));
+        AgentDeterministicCommerceService service = new AgentDeterministicCommerceService(
+                sessions, null, null, null, null, null, fulfillment, null, null, null,
+                new AgentToolCallAuditService(null));
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.SHALOM_DATA, "datos para envio", "", "", "", 0, "",
+                AgentCartAction.NONE, AgentCommercialAction.PROVIDE_SHALOM_DATA, "", "",
+                "Jennifer Roxana Tapia Jara", "", "SHALOM", "", "", "",
+                AgentCatalogAvailability.ALL, 100, false);
+
+        var result = service.execute(41L, null, decision);
+
+        assertTrue(result.customerMessage().contains("DNI, celular, agencia de Shalom"));
+        assertFalse(result.customerMessage().contains("nombres y apellidos"));
     }
 
     @Test

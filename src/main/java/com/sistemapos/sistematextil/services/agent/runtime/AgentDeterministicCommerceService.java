@@ -73,6 +73,11 @@ public class AgentDeterministicCommerceService {
     public Outcome execute(Long sessionId, Long jobId, AgentConversationDecision decision) {
         AgentConversationDecision effectiveDecision = normalizeShalomAgencyRefinement(sessionId, decision);
         AgentCommercialAction action = effectiveCommercialAction(effectiveDecision);
+        if ((action == AgentCommercialAction.HAS_PREVIOUS_PENDING_ORDER
+                || action == AgentCommercialAction.NO_PREVIOUS_PENDING_ORDER)
+                && requireSession(sessionId).getState() != CrmWhatsappAgentState.ESPERANDO_PEDIDO_ANTERIOR) {
+            return Outcome.notHandled();
+        }
         boolean earlyDeliveryPreference = rememberEarlyDeliveryPreference(sessionId, effectiveDecision);
         if (action == AgentCommercialAction.SELECT_PICKUP
                 && requireSession(sessionId).getState() != CrmWhatsappAgentState.ESPERANDO_METODO_ENTREGA) {
@@ -172,6 +177,16 @@ public class AgentDeterministicCommerceService {
         if(waitingSavedData&&(decision.intent()==com.sistemapos.sistematextil.services.agent.ai.AgentDecisionIntent.SHALOM_DATA
                 ||decision.shalomFieldsToChange()!=null&&!decision.shalomFieldsToChange().isEmpty()
                 ||!blank(explicitAgency))) {
+            boolean explicitlyChangesAgency=!blank(explicitAgency)
+                    && normalize(decision.customerGoal()).matches(".*\\b(cambiar|cambio|modificar|corregir|reemplazar)\\b.*");
+            if(explicitlyChangesAgency)
+                return decision.withShalomDataEdit(List.of(AgentShalomDataField.AGENCY));
+            if(decision.intent()==com.sistemapos.sistematextil.services.agent.ai.AgentDecisionIntent.SHALOM_DATA
+                    &&(decision.shalomFieldsToChange()==null||decision.shalomFieldsToChange().isEmpty())) {
+                AgentConversationDecision partial=decision.withCommercialAction(AgentCommercialAction.PROVIDE_SHALOM_DATA)
+                        .withRequiresHumanHelp(false);
+                return blank(explicitAgency)?partial:partial.withShalomAgencySearch(explicitAgency);
+            }
             List<AgentShalomDataField> fields=decision.shalomFieldsToChange();
             if((fields==null||fields.isEmpty())&&!blank(explicitAgency))fields=List.of(AgentShalomDataField.AGENCY);
             return decision.withShalomDataEdit(fields);
@@ -200,6 +215,8 @@ public class AgentDeterministicCommerceService {
             case EDIT_SHALOM_DATA -> editShalomData(sessionId, decision, operation);
             case CONFIRM_SHALOM_AGENCY -> confirmShalomAgency(sessionId, decision, operation);
             case REUSE_SHALOM_PROFILE -> reuseShalomProfile(sessionId, operation);
+            case HAS_PREVIOUS_PENDING_ORDER -> confirmPreviousOrder(sessionId);
+            case NO_PREVIOUS_PENDING_ORDER -> confirmNoPreviousOrder(sessionId);
             case ACCEPT_FILM -> acceptFilm(sessionId);
             case DECLINE_FILM -> declineFilm(sessionId);
             case SHARE_ADVISOR_CONTACT -> advisorContact();
@@ -214,6 +231,7 @@ public class AgentDeterministicCommerceService {
                     RETRY_PAYMENT,
                     PROVIDE_CUSTOMER_DATA, CONFIRM_EXISTING_CUSTOMER, SELECT_PICKUP, SELECT_SHALOM,
                     PROVIDE_SHALOM_DATA, EDIT_SHALOM_DATA, CONFIRM_SHALOM_AGENCY, REUSE_SHALOM_PROFILE,
+                    HAS_PREVIOUS_PENDING_ORDER, NO_PREVIOUS_PENDING_ORDER,
                     ACCEPT_FILM, DECLINE_FILM, SHARE_ADVISOR_CONTACT -> true;
             default -> false;
         };
@@ -490,21 +508,13 @@ public class AgentDeterministicCommerceService {
     }
 
     private String pickupConfirmation(Integer saleId) {
-        return "✅ *Tu pedido fue registrado para recojo en tienda*\n\n"
-                + "📍 *Dirección:*\n"
-                + "Jr. Huánuco 1705-1707, piso 7, interior 701, Gamarra, La Victoria, Lima, Perú.\n\n"
-                + "🏢 *Referencia:*\n"
-                + "Frente al Parque Canepa, dentro de la Galería Plaza H.\n"
-                + "Ingresa a la Galería Plaza H y sube hasta el piso 7, interior 701.\n\n"
-                + "🕐 *Horario de atención:*\n"
-                + "• Lunes a sábado: de 10:00 a. m. a 6:00 p. m.\n"
-                + "• Domingos: cerrado.\n"
-                + "• Feriados: cerrado.\n\n"
-                + "🧾 *Tu número de pedido es " + saleId + ".*\n\n"
-                + "🏬 Una asesora del área de envíos se comunicará contigo para corroborar tus datos "
-                + "y coordinar el recojo de tu pedido.\n\n"
-                + "Si necesitas ayuda, comunícate con nuestra asesora al 933918047.\n\n"
-                + "Gracias por confiar en Kiments 💛";
+        return "Entendido 💛\n\n"
+                + "✅ Tu pedido fue registrado correctamente.\n"
+                + "🧾 Número de pedido: " + saleId + "\n"
+                + "🏬 Tipo de entrega: Recojo en tienda\n"
+                + "📍 Dirección: Jr. Huánuco 1705-1707, piso 7, interior 701, Gamarra, La Victoria, Lima, Perú.\n\n"
+                + "Una asesora del área de envíos se comunicará contigo para corroborar tus datos.\n\n"
+                + "¡Gracias por confiar en Kiments! 💛";
     }
 
     private Outcome selectShalom(Long sessionId, String operation) {
@@ -521,26 +531,22 @@ public class AgentDeterministicCommerceService {
     }
 
     private Outcome saveShalomData(Long sessionId, AgentConversationDecision decision, String operation) {
-        if (blank(decision.shalomAgency())) {
-            return Outcome.message(shalomDataRequest());
-        }
-        if (!fulfillment.hasCompletePendingShalomData(sessionId)
-                && (blank(decision.customerName()) || blank(decision.documentNumber())
-                    || blank(decision.customerPhone()))) {
-            return Outcome.message(shalomDataRequest());
-        }
-        AgentFulfillmentService.FulfillmentResult result;
-        try {
-            result = fulfillment.saveShalomData(sessionId, decision.customerName(), decision.documentNumber(),
-                    decision.customerPhone(), decision.shalomAgency(), operation);
-        } catch (IllegalArgumentException invalidData) {
-            return Outcome.message(shalomValidationMessage(invalidData));
-        }
-        if (result.agencyCandidates().isEmpty()) {
-            return Outcome.message("No encontré una agencia Shalom segura con esa referencia. "
-                    + "Indícame la ciudad, distrito o dirección de la agencia; conservaré tus otros datos.");
-        }
-        return Outcome.executed(agencyCandidatesMessage(result));
+        String agency=firstPresent(decision.shalomAgency(),decision.shalomDestination());
+        AgentFulfillmentService.ShalomDataProgress progress=fulfillment.savePartialShalomData(sessionId,
+                decision.customerName(),decision.documentNumber(),decision.customerPhone(),agency);
+        AgentFulfillmentService.FulfillmentResult result=progress.fulfillment();
+        if(progress.missingFields().isEmpty()&&!result.agencyCandidates().isEmpty())
+            return Outcome.executed(agencyCandidatesMessage(result));
+        StringBuilder message=new StringBuilder();
+        if(!progress.validationErrors().isEmpty())
+            message.append(String.join(" ",progress.validationErrors().stream()
+                    .map(value->value.endsWith(".")?value:value+".").toList())).append(" ");
+        if(progress.agencyNotFound())
+            message.append("No encontré una agencia Shalom segura con esa referencia. ");
+        if(!progress.missingFields().isEmpty())
+            message.append("Envíame únicamente: *")
+                    .append(String.join(", ",progress.missingFields())).append("*.");
+        return Outcome.executed(message.toString().trim());
     }
 
     private Outcome editShalomData(Long sessionId, AgentConversationDecision decision, String operation) {
@@ -593,15 +599,47 @@ public class AgentDeterministicCommerceService {
     private Outcome confirmShalomAgency(Long sessionId, AgentConversationDecision decision, String operation) {
         var confirmed = fulfillment.confirmShalomAgency(sessionId, decision.shalomAgency(), operation);
         var sale = sales.createSalesNote(sessionId, operation + ":sale");
-        var film = films.startMandatoryPayment(sessionId, sale.saleId());
-        return Outcome.executed(mandatoryFilmMessage(confirmed, sale.saleId(), film));
+        films.awaitPreviousOrderDecision(sessionId, sale.saleId());
+        return Outcome.executed(previousOrderQuestion(confirmed, sale.saleId()));
     }
 
     private Outcome reuseShalomProfile(Long sessionId, String operation) {
         var confirmed = fulfillment.reuseSavedProfile(sessionId, operation);
         var sale = sales.createSalesNote(sessionId, operation + ":sale");
-        var film = films.startMandatoryPayment(sessionId, sale.saleId());
-        return Outcome.executed(mandatoryFilmMessage(confirmed, sale.saleId(), film));
+        films.awaitPreviousOrderDecision(sessionId, sale.saleId());
+        return Outcome.executed(previousOrderQuestion(confirmed, sale.saleId()));
+    }
+
+    private Outcome confirmPreviousOrder(Long sessionId) {
+        var film = films.confirmPreviousOrder(sessionId);
+        return Outcome.executed(finalShalomMessage(film, true));
+    }
+
+    private Outcome confirmNoPreviousOrder(Long sessionId) {
+        var film = films.confirmNoPreviousOrder(sessionId);
+        if (film.accountNumber() == null) return Outcome.executed(finalShalomMessage(film, true));
+        String holder = blank(film.accountHolder()) ? "" : " — " + film.accountHolder();
+        return Outcome.executed("Entendido 💛\n\n📦 Corresponde el pago de S/2.00 por el film protector.\n"
+                + "💳 Yape: " + film.accountNumber() + holder
+                + "\nTienes 1 hora para enviar el comprobante por este chat.");
+    }
+
+    private String previousOrderQuestion(AgentFulfillmentService.FulfillmentResult result, Integer saleId) {
+        return "✅ Tu pedido fue registrado correctamente.\n"
+                + "🧾 Número de pedido: " + saleId + "\n"
+                + "📍 Agencia: " + result.shalomAgency() + "\n\n"
+                + "¿Tienes algún pedido anterior pendiente de envío para juntarlo con esta compra?";
+    }
+
+    private String finalShalomMessage(AgentFilmService.FilmResult film, boolean reviewPreviousOrders) {
+        String review = reviewPreviousOrders
+                ? "Una asesora del área de envíos se comunicará contigo para corroborar tus datos, revisar tus pedidos anteriores y verificar el film protector pendiente."
+                : "Una asesora del área de envíos se comunicará contigo para corroborar tus datos.";
+        return "Entendido 💛\n\n"
+                + "🧾 Número de pedido: " + film.saleId() + "\n"
+                + "🚌 Tipo de entrega: Envío por Shalom\n"
+                + "📍 Agencia: " + film.shalomAgency() + "\n\n"
+                + review + "\n\n¡Gracias por confiar en Kiments! 💛";
     }
 
     private Outcome acceptFilm(Long sessionId) {
@@ -614,7 +652,7 @@ public class AgentDeterministicCommerceService {
         String holder = blank(result.accountHolder()) ? "" : "\n👤 Titular: " + result.accountHolder();
         return Outcome.executed("📦 *Film protector para tu envío por Shalom*\n\n"
                 + "💰 Monto exacto: *S/2.00*\n📱 Yape: *" + result.accountNumber() + "*" + holder
-                + "\n\n⏱️ Tienes *12 horas* para enviar el comprobante por este chat. "
+                + "\n\n⏱️ Tienes *1 hora* para enviar el comprobante por este chat. "
                 + "Este pago no modifica el total de tu Nota de Venta.");
     }
 
@@ -640,7 +678,7 @@ public class AgentDeterministicCommerceService {
         }
         String holder = blank(film.accountHolder()) ? "" : "\nTitular: " + film.accountHolder();
         return registered + "\n\n📦 Pago obligatorio del film protector\nMonto exacto: S/2.00\nYape: "
-                + film.accountNumber() + holder + "\nTienes hasta 12 horas para enviar el comprobante por este chat.";
+                + film.accountNumber() + holder + "\nTienes hasta 1 hora para enviar el comprobante por este chat.";
     }
 
     private String filmOffer() {
@@ -692,7 +730,8 @@ public class AgentDeterministicCommerceService {
 
     private String shalomDataRequest() {
         return "Saludos 🤝🚌\nPara el envío por *SHALOM*, envíame:\n\n"
-                + "☑️ Nombres y apellidos\n☑️ DNI\n☑️ Celular\n☑️ Agencia de Shalom";
+                + "☑️ Nombres y apellidos\n☑️ DNI\n☑️ Celular\n☑️ Agencia de Shalom\n\n"
+                + "Puedes enviarlos juntos o uno por uno; guardaré cada dato válido y te indicaré únicamente lo que falte.";
     }
 
     private String shalomValidationMessage(IllegalArgumentException error) {

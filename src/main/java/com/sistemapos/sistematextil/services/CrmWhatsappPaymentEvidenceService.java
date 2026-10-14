@@ -38,6 +38,7 @@ import com.sistemapos.sistematextil.model.CrmWhatsappAgentEvent;
 import com.sistemapos.sistematextil.model.CrmWhatsappAgentSession;
 import com.sistemapos.sistematextil.model.CrmWhatsappAgentState;
 import com.sistemapos.sistematextil.model.CrmWhatsappFulfillment;
+import com.sistemapos.sistematextil.model.CrmWhatsappFilmAddon;
 import com.sistemapos.sistematextil.model.CrmWhatsappMessage;
 import com.sistemapos.sistematextil.model.CrmWhatsappPaymentEvidence;
 import com.sistemapos.sistematextil.model.CrmWhatsappPaymentEvidenceStatus;
@@ -745,20 +746,23 @@ public class CrmWhatsappPaymentEvidenceService {
         CrmWhatsappAgentState stateBefore = session.getState();
         CrmWhatsappPaymentReviewAction reviewAction;
         String saleStatusAfter;
+        CrmWhatsappFilmAddon filmAddon = filmAddonRepository == null ? null
+                : filmAddonRepository.findByVenta_IdVenta(sale.getIdVenta()).orElse(null);
+        boolean filmUnresolved = filmAddon != null
+                && filmAddon.getStatus() != CrmWhatsappFilmStatus.CONFIRMED
+                && filmAddon.getStatus() != CrmWhatsappFilmStatus.COVERED_BY_PREVIOUS_ORDER
+                && filmAddon.getStatus() != CrmWhatsappFilmStatus.ORDER_CANCELLED;
 
         if ("ACCEPT".equals(action)) {
-            if (filmAddonRepository != null && filmAddonRepository.findPendingForSale(sale.getIdVenta(),
-                    List.of(CrmWhatsappFilmStatus.PAID_PENDING_REVIEW)).isPresent()) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT,
-                        "Primero revisa el comprobante adicional del film protector");
-            }
             if (!Boolean.TRUE.equals(body == null ? null : body.confirmedExternal())) {
                 throw badRequest("Confirma que verificaste el abono antes de aceptar el pago");
             }
             review(evidence, actor, CrmWhatsappPaymentEvidenceStatus.VALIDADO, note);
             request.setStatus(CrmWhatsappPaymentRequestStatus.COMPLETED);
             request.setCompletedAt(LocalDateTime.now());
-            applyFinalAgentEvent(session, CrmWhatsappAgentEvent.PAGO_APROBADO_FINALMENTE);
+            if (!filmUnresolved && session.getState() == CrmWhatsappAgentState.VENTA_PENDIENTE_REVISION) {
+                applyFinalAgentEvent(session, CrmWhatsappAgentEvent.PAGO_APROBADO_FINALMENTE);
+            }
             reviewAction = CrmWhatsappPaymentReviewAction.ACCEPTED;
             saleStatusAfter = saleStatusBefore;
         } else {
@@ -790,9 +794,11 @@ public class CrmWhatsappPaymentEvidenceService {
                 saleStatusBefore, saleStatusAfter, stateBefore);
         publish("payment.request.updated", evidence.getConversation(), toResponse(request));
         publish("payment.evidence.updated", evidence.getConversation(), toResponse(evidence));
-        sendCustomerNotice(evidence.getConversation(), reviewAction == CrmWhatsappPaymentReviewAction.ACCEPTED
-                ? ORDER_REGISTERED_NOTICE
-                : "PEDIDO RECHAZADO");
+        if (reviewAction != CrmWhatsappPaymentReviewAction.ACCEPTED || filmAddon == null) {
+            sendCustomerNotice(evidence.getConversation(), reviewAction == CrmWhatsappPaymentReviewAction.ACCEPTED
+                    ? ORDER_REGISTERED_NOTICE
+                    : "PEDIDO RECHAZADO");
+        }
         return decisionResponse(evidence, null);
     }
 
@@ -812,7 +818,10 @@ public class CrmWhatsappPaymentEvidenceService {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "La venta automatica ya no esta pendiente de revision");
         }
-        if (session.getState() != CrmWhatsappAgentState.VENTA_PENDIENTE_REVISION) {
+        if (session.getState() != CrmWhatsappAgentState.VENTA_PENDIENTE_REVISION
+                && session.getState() != CrmWhatsappAgentState.ESPERANDO_PEDIDO_ANTERIOR
+                && session.getState() != CrmWhatsappAgentState.ESPERANDO_PAGO_FILM
+                && session.getState() != CrmWhatsappAgentState.REQUIERE_AYUDA) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "La sesion no esta pendiente de revision humana");
         }

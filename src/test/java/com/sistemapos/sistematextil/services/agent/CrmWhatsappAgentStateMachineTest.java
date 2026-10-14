@@ -28,6 +28,7 @@ import static com.sistemapos.sistematextil.model.CrmWhatsappAgentState.COMPLETAD
 import static com.sistemapos.sistematextil.model.CrmWhatsappAgentState.ESPERANDO_CONFIRMACION_AGENCIA_SHALOM;
 import static com.sistemapos.sistematextil.model.CrmWhatsappAgentState.ESPERANDO_DECISION_FILM;
 import static com.sistemapos.sistematextil.model.CrmWhatsappAgentState.ESPERANDO_PAGO_FILM;
+import static com.sistemapos.sistematextil.model.CrmWhatsappAgentState.ESPERANDO_PEDIDO_ANTERIOR;
 import static com.sistemapos.sistematextil.model.CrmWhatsappAgentState.ESPERANDO_COMPROBANTE;
 import static com.sistemapos.sistematextil.model.CrmWhatsappAgentState.ESPERANDO_DATOS_CLIENTE;
 import static com.sistemapos.sistematextil.model.CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM;
@@ -88,6 +89,22 @@ class CrmWhatsappAgentStateMachineTest {
         assertEquals(ESPERANDO_CONFIRMACION_AGENCIA_SHALOM, state);
         state = machine.transition(state, AGENCIA_SHALOM_CONFIRMADA);
         assertEquals(LISTO_PARA_VENTA, state);
+        state = machine.transition(state, NOTA_VENTA_CREADA);
+        state = machine.transition(state, CrmWhatsappAgentEvent.CONSULTA_PEDIDO_ANTERIOR_INICIADA);
+        assertEquals(ESPERANDO_PEDIDO_ANTERIOR, state);
+        state = machine.transition(state, CrmWhatsappAgentEvent.SIN_PEDIDO_ANTERIOR_CONFIRMADO);
+        assertEquals(ESPERANDO_PAGO_FILM, state);
+        state = machine.transition(state, PAGO_FILM_APROBADO);
+        assertEquals(VENTA_PENDIENTE_REVISION, state);
+    }
+
+    @Test
+    void previousOrderSkipsAutomaticFilmCharge() {
+        CrmWhatsappAgentState state = machine.transition(
+                VENTA_PENDIENTE_REVISION, CrmWhatsappAgentEvent.CONSULTA_PEDIDO_ANTERIOR_INICIADA);
+        assertEquals(ESPERANDO_PEDIDO_ANTERIOR, state);
+        assertEquals(VENTA_PENDIENTE_REVISION,
+                machine.transition(state, CrmWhatsappAgentEvent.PEDIDO_ANTERIOR_CONFIRMADO));
     }
 
     @Test

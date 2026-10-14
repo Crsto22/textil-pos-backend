@@ -59,6 +59,7 @@ public class CrmWhatsappAgentSchemaMigration implements ApplicationRunner {
                 createShalomAgencyTables(statement);
                 createFulfillmentAndSupportTables(statement);
                 createFilmTables(statement);
+                adaptFilmTables(connection, statement);
                 adaptShalomFulfillment(connection, statement);
                 adaptPaymentTables(connection, statement);
                 adaptPaymentReviewConversationReference(connection, statement);
@@ -85,6 +86,9 @@ public class CrmWhatsappAgentSchemaMigration implements ApplicationRunner {
                   expires_at DATETIME(6) NULL,
                   paid_at DATETIME(6) NULL,
                   resolved_at DATETIME(6) NULL,
+                  resolved_by INT NULL,
+                  resolution_source VARCHAR(40) NULL,
+                  covered_by_sale_id INT NULL,
                   final_message_sent_at DATETIME(6) NULL,
                   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
                   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -94,11 +98,15 @@ public class CrmWhatsappAgentSchemaMigration implements ApplicationRunner {
                   UNIQUE KEY uk_crm_film_idempotency (idempotency_key),
                   KEY idx_crm_film_status_expiry (status, expires_at),
                   KEY idx_crm_film_sale (id_venta),
+                  KEY idx_crm_film_resolved_by (resolved_by),
+                  KEY idx_crm_film_covered_sale (covered_by_sale_id),
                   CONSTRAINT fk_crm_film_session FOREIGN KEY (id_agent_session) REFERENCES crm_whatsapp_agent_session(id_agent_session) ON DELETE CASCADE,
                   CONSTRAINT fk_crm_film_fulfillment FOREIGN KEY (id_fulfillment) REFERENCES crm_whatsapp_fulfillment(id_fulfillment) ON DELETE CASCADE,
                   CONSTRAINT fk_crm_film_conversation FOREIGN KEY (id_conversation) REFERENCES crm_whatsapp_conversation(id_conversation) ON DELETE CASCADE,
                   CONSTRAINT fk_crm_film_account FOREIGN KEY (id_metodo_pago_cuenta) REFERENCES metodo_pago_cuenta(id_metodo_pago_cuenta) ON DELETE SET NULL,
-                  CONSTRAINT fk_crm_film_sale FOREIGN KEY (id_venta) REFERENCES venta(id_venta) ON DELETE SET NULL
+                  CONSTRAINT fk_crm_film_sale FOREIGN KEY (id_venta) REFERENCES venta(id_venta) ON DELETE SET NULL,
+                  CONSTRAINT fk_crm_film_resolved_by FOREIGN KEY (resolved_by) REFERENCES usuario(id_usuario) ON DELETE SET NULL,
+                  CONSTRAINT fk_crm_film_covered_sale FOREIGN KEY (covered_by_sale_id) REFERENCES venta(id_venta) ON DELETE SET NULL
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """);
         statement.execute("""
@@ -144,11 +152,13 @@ public class CrmWhatsappAgentSchemaMigration implements ApplicationRunner {
                   id_film_payment BIGINT NOT NULL AUTO_INCREMENT,
                   id_film_addon BIGINT NOT NULL,
                   id_venta INT NOT NULL,
-                  id_film_evidence BIGINT NOT NULL,
+                  id_film_evidence BIGINT NULL,
+                  confirmed_by INT NULL,
+                  confirmation_source VARCHAR(40) NOT NULL DEFAULT 'RECEIPT_AI',
                   amount DECIMAL(12,2) NOT NULL,
                   currency VARCHAR(3) NOT NULL,
                   provider VARCHAR(40) NOT NULL,
-                  operation_code VARCHAR(120) NOT NULL,
+                  operation_code VARCHAR(120) NULL,
                   paid_at DATETIME(6) NOT NULL,
                   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
                   PRIMARY KEY (id_film_payment),
@@ -156,11 +166,34 @@ public class CrmWhatsappAgentSchemaMigration implements ApplicationRunner {
                   UNIQUE KEY uk_crm_film_payment_evidence (id_film_evidence),
                   UNIQUE KEY uk_crm_film_payment_operation (provider, operation_code),
                   KEY idx_crm_film_payment_sale (id_venta),
+                  KEY idx_crm_film_payment_reviewer (confirmed_by),
                   CONSTRAINT fk_crm_film_payment_addon FOREIGN KEY (id_film_addon) REFERENCES crm_whatsapp_film_addon(id_film_addon),
                   CONSTRAINT fk_crm_film_payment_sale FOREIGN KEY (id_venta) REFERENCES venta(id_venta),
-                  CONSTRAINT fk_crm_film_payment_evidence FOREIGN KEY (id_film_evidence) REFERENCES crm_whatsapp_film_evidence(id_film_evidence)
+                  CONSTRAINT fk_crm_film_payment_evidence FOREIGN KEY (id_film_evidence) REFERENCES crm_whatsapp_film_evidence(id_film_evidence),
+                  CONSTRAINT fk_crm_film_payment_reviewer FOREIGN KEY (confirmed_by) REFERENCES usuario(id_usuario) ON DELETE SET NULL
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """);
+    }
+
+    private void adaptFilmTables(Connection connection, Statement statement) throws Exception {
+        addColumnIfMissing(connection, statement, "crm_whatsapp_film_addon", "resolved_by", "INT NULL");
+        addColumnIfMissing(connection, statement, "crm_whatsapp_film_addon", "resolution_source", "VARCHAR(40) NULL");
+        addColumnIfMissing(connection, statement, "crm_whatsapp_film_addon", "covered_by_sale_id", "INT NULL");
+        addIndexIfMissing(connection, statement, "crm_whatsapp_film_addon", "idx_crm_film_resolved_by", "(resolved_by)");
+        addIndexIfMissing(connection, statement, "crm_whatsapp_film_addon", "idx_crm_film_covered_sale", "(covered_by_sale_id)");
+        addForeignKeyIfMissing(connection, statement, "crm_whatsapp_film_addon", "fk_crm_film_resolved_by",
+                "FOREIGN KEY (resolved_by) REFERENCES usuario(id_usuario) ON DELETE SET NULL");
+        addForeignKeyIfMissing(connection, statement, "crm_whatsapp_film_addon", "fk_crm_film_covered_sale",
+                "FOREIGN KEY (covered_by_sale_id) REFERENCES venta(id_venta) ON DELETE SET NULL");
+        addColumnIfMissing(connection, statement, "crm_whatsapp_film_payment", "confirmed_by", "INT NULL");
+        addColumnIfMissing(connection, statement, "crm_whatsapp_film_payment", "confirmation_source",
+                "VARCHAR(40) NOT NULL DEFAULT 'RECEIPT_AI'");
+        statement.execute("ALTER TABLE crm_whatsapp_film_payment MODIFY COLUMN id_film_evidence BIGINT NULL");
+        statement.execute("ALTER TABLE crm_whatsapp_film_payment MODIFY COLUMN operation_code VARCHAR(120) NULL");
+        addIndexIfMissing(connection, statement, "crm_whatsapp_film_payment", "idx_crm_film_payment_reviewer",
+                "(confirmed_by)");
+        addForeignKeyIfMissing(connection, statement, "crm_whatsapp_film_payment", "fk_crm_film_payment_reviewer",
+                "FOREIGN KEY (confirmed_by) REFERENCES usuario(id_usuario) ON DELETE SET NULL");
     }
 
     static boolean isMysqlDatabase(String url) {

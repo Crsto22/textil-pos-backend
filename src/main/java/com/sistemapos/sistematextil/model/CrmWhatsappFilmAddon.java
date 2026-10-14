@@ -39,6 +39,11 @@ public class CrmWhatsappFilmAddon {
     @Column(name = "expires_at") private LocalDateTime expiresAt;
     @Column(name = "paid_at") private LocalDateTime paidAt;
     @Column(name = "resolved_at") private LocalDateTime resolvedAt;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "resolved_by") private Usuario resolvedBy;
+    @Column(name = "resolution_source", length = 40) private String resolutionSource;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "covered_by_sale_id") private Venta coveredBySale;
     @Column(name = "final_message_sent_at") private LocalDateTime finalMessageSentAt;
     @Column(name = "created_at", nullable = false, updatable = false) private LocalDateTime createdAt;
     @Column(name = "updated_at", nullable = false) private LocalDateTime updatedAt;

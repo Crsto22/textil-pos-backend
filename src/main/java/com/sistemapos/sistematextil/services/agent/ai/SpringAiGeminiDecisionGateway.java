@@ -75,7 +75,10 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
               SHALOM en deliveryMethod y conserva como commercialAction la acción pendiente del estado (por ejemplo,
               ADD_PRODUCT o CONFIRM_CART). Si solo consulta si existen envíos, usa BUSINESS_INFORMATION y deja
               deliveryMethod vacío. Interpreta el significado completo; no decidas por palabras aisladas.
-            - PROVIDE_SHALOM_DATA: envia nombre, DNI, celular y referencia de agencia para Shalom. Tambien usa esta
+            - PROVIDE_SHALOM_DATA: envía uno, varios o todos los datos de Shalom: nombre, DNI, celular y referencia
+              de agencia. Acepta que los entregue juntos o en mensajes separados. Extrae únicamente los datos que
+              realmente aparecen y deja vacíos los demás; Java conservará lo ya validado y pedirá solo lo pendiente.
+              También usa esta
               accion cuando, despues de ver candidatos, rechaza esas opciones y pide buscar otra ciudad, distrito,
               sede, direccion o referencia. Conserva la nueva busqueda en shalomAgency aunque los datos personales
               ya esten guardados y no vuelvan a aparecer en el ultimo mensaje.
@@ -90,7 +93,13 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
               y conservan en shalomFieldsToChange solamente los campos que están siendo reemplazados.
             - CONFIRM_SHALOM_AGENCY: confirma una de las agencias ofrecidas; repite en shalomAgency el nombre exacto elegido.
             - REUSE_SHALOM_PROFILE: confirma reutilizar los datos Shalom guardados mostrados por el sistema.
-            - ACCEPT_FILM y DECLINE_FILM son acciones históricas: no las uses. El film de Shalom es obligatorio y se cobra automáticamente después de crear la venta.
+            - HAS_PREVIOUS_PENDING_ORDER: solamente cuando ESTADO_ACTUAL sea ESPERANDO_PEDIDO_ANTERIOR,
+              confirma que tiene otra compra o pedido pendiente para enviarlo junto. Interpreta expresiones naturales
+              como "compre ayer", "tengo otro del live" o "quiero juntarlo"; no decidas por una palabra aislada.
+            - NO_PREVIOUS_PENDING_ORDER: solamente cuando ESTADO_ACTUAL sea ESPERANDO_PEDIDO_ANTERIOR,
+              confirma que no tiene otro pedido pendiente y corresponde solicitar el film de esta compra.
+              Interpreta expresiones naturales como "es el unico", "no tengo otro" o "solo este pedido".
+            - ACCEPT_FILM y DECLINE_FILM son acciones históricas: no las uses. El film de Shalom se resuelve después de preguntar si existe otro pedido pendiente.
             - SHARE_ADVISOR_CONTACT: pide hablar, comunicarse o contactar a una asesora. Esta accion solo comparte
               el numero de contacto y no pausa la atencion automatica: establece requiresHumanHelp=false. Si luego
               consulta, pide informacion o quiere comprar, interpreta normalmente la nueva intencion y continua.

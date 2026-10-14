@@ -93,7 +93,7 @@ public class AgentFilmEvidenceService {
             completion=tx.execute(status->complete(evidenceId,result.extraction(),result.provider()));
         } catch(RuntimeException ex) { tx.executeWithoutResult(status->fail(evidenceId,ex)); return; }
         if(completion!=null&&completion.approved()) {
-            finalizer.finalizeSale(completion.addonId(), true, "✅ Pago adicional validado correctamente.");
+            finalizer.finalizeSale(completion.addonId(), true, "✅ Pago del film protector confirmado.");
         }
     }
 
@@ -121,7 +121,8 @@ public class AgentFilmEvidenceService {
             return new Completion(addon.getIdFilmAddon(),false);
         }
         e.setValidationStatus(CrmWhatsappPaymentEvidenceStatus.VALIDADO); evidence.save(e);
-        addon.setStatus(CrmWhatsappFilmStatus.CONFIRMED);addon.setPaidAt(LocalDateTime.now());addon.setResolvedAt(LocalDateTime.now());addons.save(addon);
+        addon.setStatus(CrmWhatsappFilmStatus.CONFIRMED);addon.setPaidAt(LocalDateTime.now());addon.setResolvedAt(LocalDateTime.now());
+        addon.setResolutionSource("RECEIPT_AI");addons.save(addon);
         jdbc.update("""
                 INSERT INTO crm_whatsapp_film_payment
                   (id_film_addon,id_venta,id_film_evidence,amount,currency,provider,operation_code,paid_at)
@@ -144,7 +145,7 @@ public class AgentFilmEvidenceService {
         if(!"YAPE".equalsIgnoreCase(clean(x.paymentMethod())))errors.add("el proveedor debe ser Yape");
         if(clean(e.getOperationCode()).isBlank())errors.add("no se encontró el código de operación");
         if(e.getConfidence()==null||e.getConfidence()<config.forSession(addon.getAgentSession().getIdAgentSession()).receiptMinimumConfidence())errors.add("la imagen no se lee con suficiente claridad");
-        if(e.getMessage().getCreatedAt()==null||addon.getExpiresAt()==null||e.getMessage().getCreatedAt().isAfter(addon.getExpiresAt()))errors.add("el comprobante llegó después del plazo de 12 horas");
+        if(e.getMessage().getCreatedAt()==null||addon.getExpiresAt()==null||e.getMessage().getCreatedAt().isAfter(addon.getExpiresAt()))errors.add("el comprobante llegó después del plazo de 1 hora");
         if(e.getOperationAt()==null||e.getOperationAt().isBefore(addon.getPaymentStartedAt().minusMinutes(15))||e.getOperationAt().isAfter(e.getMessage().getCreatedAt().plusMinutes(15)))errors.add("la fecha u hora no corresponde a esta solicitud");
         if(!mainEvidence.findOtherByHash(-1L,e.getSha256(),company,PageRequest.of(0,1)).isEmpty()||!evidence.findOtherByHash(e.getIdFilmEvidence(),e.getSha256(),company,PageRequest.of(0,1)).isEmpty())errors.add("el archivo del comprobante ya fue utilizado");
         if(!clean(e.getOperationCode()).isBlank()&&(!mainEvidence.findOtherByOperation(-1L,e.getOperationCode(),company,PageRequest.of(0,1)).isEmpty()||!evidence.findOtherByOperation(e.getIdFilmEvidence(),e.getOperationCode(),company,PageRequest.of(0,1)).isEmpty()))errors.add("el código de operación ya fue utilizado");

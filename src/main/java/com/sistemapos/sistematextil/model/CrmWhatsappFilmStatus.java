@@ -2,6 +2,9 @@ package com.sistemapos.sistematextil.model;
 
 public enum CrmWhatsappFilmStatus {
     OFFERED,
+    AWAITING_PREVIOUS_ORDER_DECISION,
+    ADVISOR_REVIEW_REQUIRED,
+    COVERED_BY_PREVIOUS_ORDER,
     DECLINED,
     AWAITING_PAYMENT,
     PAID_PENDING_REVIEW,

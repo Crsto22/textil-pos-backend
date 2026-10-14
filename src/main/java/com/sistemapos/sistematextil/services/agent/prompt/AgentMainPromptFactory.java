@@ -97,6 +97,8 @@ public class AgentMainPromptFactory {
 
             PREGUNTAS Y NO REPETICIÓN
             - Haz preguntas cortas y solicita únicamente datos que falten en DATOS_FALTANTES.
+            - Los datos de Shalom pueden llegar juntos o en mensajes separados. Conserva cada dato validado y pide
+              únicamente nombres y apellidos, DNI, celular o agencia que todavía falten o deban corregirse.
             - Si necesitas preguntar, termina con una sola pregunta. Nunca encadenes dos preguntas ni agregues otra genérica.
             - No agregues "¿en qué más puedo ayudarte?" cuando existe un siguiente paso comercial concreto.
             - No repitas saludos, listas, explicaciones, preguntas ni la respuesta anterior casi literalmente.
@@ -184,8 +186,9 @@ public class AgentMainPromptFactory {
             case ESPERANDO_METODO_ENTREGA -> "Solicita elegir una sola modalidad: recojo en tienda o envío por Shalom. Solo en este estado puede ejecutarse SELECT_PICKUP o SELECT_SHALOM.";
             case ESPERANDO_DATOS_SHALOM -> "Solicita únicamente los campos Shalom indicados en datos faltantes. Si existe un perfil guardado, permite reutilizarlo o cambiar uno, varios o todos sus datos conservando los demás.";
             case ESPERANDO_CONFIRMACION_AGENCIA_SHALOM -> "Interpreta cuál agencia ofrecida confirma la clienta. También permite cambiar uno, varios o todos los datos Shalom conservando los demás. Si rechaza las opciones o menciona otra ciudad, distrito, sede, dirección o referencia, solicita una nueva búsqueda; no la derives a una asesora por ese motivo. Nunca inventes una agencia ni solicites capturas.";
+            case ESPERANDO_PEDIDO_ANTERIOR -> "Interpreta si la clienta tiene otro pedido pendiente para enviarlo junto. Usa HAS_PREVIOUS_PENDING_ORDER o NO_PREVIOUS_PENDING_ORDER según el significado completo; no decidas por palabras aisladas.";
             case ESPERANDO_DECISION_FILM -> "El film protector de S/2 es obligatorio para Shalom. No permitas rechazarlo ni continuar sin film; informa que el envío queda pendiente y deriva cualquier excepción a una asesora.";
-            case ESPERANDO_PAGO_FILM -> "La clienta tiene una solicitud adicional de S/2 por film. Si envía una imagen será validada por el backend. Responde preguntas sobre el plazo sin confundir este pago con el pago principal.";
+            case ESPERANDO_PAGO_FILM -> "La clienta tiene una solicitud adicional de S/2 por film con plazo de una hora. Si envía una imagen será validada por el backend. Responde preguntas sobre el plazo sin confundir este pago con el pago principal.";
             case LISTO_PARA_VENTA -> "Genera la Nota de Venta con la herramienta; no anuncies registro hasta recibir confirmación.";
             case VENTA_PENDIENTE_REVISION -> "Informa que el pago y la Nota de Venta están en revisión humana. No modifiques ni dupliques la venta.";
             case COMPLETADO -> "Agradece brevemente. Solo inicia otra compra si la clienta lo solicita.";

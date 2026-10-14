@@ -120,6 +120,72 @@ class AgentFulfillmentServiceTest {
     }
 
     @Test
+    void savesInitialShalomDataOneByOneAndRequestsOnlyWhatIsMissing(){
+        session.setState(CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM);
+        when(fulfillments.findForUpdateBySessionId(41L)).thenReturn(Optional.of(fulfillment));
+        when(fulfillments.findByAgentSession_IdAgentSession(41L)).thenReturn(Optional.of(fulfillment));
+        AgencyView view=new AgencyView(9L,7,"AREQUIPA / AV PARRA 379","AQP","AREQUIPA","AREQUIPA",
+                "AV PARRA 379","AV. PARRA 379 - Arequipa","01 5007878","LUNES A VIERNES",.98);
+        when(search.search("Arequipa Parra")).thenReturn(new SearchResult("MATCH",List.of(view)));
+
+        var name=service.savePartialShalomData(41L,"Ana Perez","","","");
+        assertEquals(List.of("DNI","celular","agencia de Shalom"),name.missingFields());
+        assertEquals("Ana Perez",fulfillment.getRecipientName());
+
+        var dni=service.savePartialShalomData(41L,"","12345678","","");
+        assertEquals(List.of("celular","agencia de Shalom"),dni.missingFields());
+        assertEquals("12345678",fulfillment.getDocumentNumber());
+
+        var phone=service.savePartialShalomData(41L,"","","999111222","");
+        assertEquals(List.of("agencia de Shalom"),phone.missingFields());
+        assertEquals("999111222",fulfillment.getPhone());
+
+        var agency=service.savePartialShalomData(41L,"","","","Arequipa Parra");
+        assertEquals(List.of(),agency.missingFields());
+        assertEquals(List.of(view),agency.fulfillment().agencyCandidates());
+        assertEquals(CrmWhatsappAgentState.ESPERANDO_CONFIRMACION_AGENCIA_SHALOM,session.getState());
+    }
+
+    @Test
+    void acceptsAllInitialShalomDataInOneMessage(){
+        session.setState(CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM);
+        when(fulfillments.findForUpdateBySessionId(41L)).thenReturn(Optional.of(fulfillment));
+        when(fulfillments.findByAgentSession_IdAgentSession(41L)).thenReturn(Optional.of(fulfillment));
+        AgencyView view=new AgencyView(9L,7,"AREQUIPA / AV PARRA 379","AQP","AREQUIPA","AREQUIPA",
+                "AV PARRA 379","AV. PARRA 379 - Arequipa","01 5007878","LUNES A VIERNES",.98);
+        when(search.search("Arequipa Parra")).thenReturn(new SearchResult("MATCH",List.of(view)));
+
+        var progress=service.savePartialShalomData(41L,"Ana Perez","12345678","999111222","Arequipa Parra");
+
+        assertEquals(List.of(),progress.missingFields());
+        assertEquals(List.of(),progress.validationErrors());
+        assertEquals(List.of(view),progress.fulfillment().agencyCandidates());
+        assertEquals(CrmWhatsappAgentState.ESPERANDO_CONFIRMACION_AGENCIA_SHALOM,session.getState());
+    }
+
+    @Test
+    void keepsValidShalomFieldsWhenAnotherFieldIsInvalid(){
+        session.setState(CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM);
+        when(fulfillments.findForUpdateBySessionId(41L)).thenReturn(Optional.of(fulfillment));
+        when(fulfillments.findByAgentSession_IdAgentSession(41L)).thenReturn(Optional.of(fulfillment));
+        AgencyView view=new AgencyView(9L,7,"AREQUIPA / AV PARRA 379","AQP","AREQUIPA","AREQUIPA",
+                "AV PARRA 379","AV. PARRA 379 - Arequipa","01 5007878","LUNES A VIERNES",.98);
+        when(search.search("Arequipa Parra")).thenReturn(new SearchResult("MATCH",List.of(view)));
+        when(search.get(9L)).thenReturn(view);
+
+        var invalid=service.savePartialShalomData(41L,"Ana Perez","12345678","9338889985","Arequipa Parra");
+        assertEquals(List.of("celular"),invalid.missingFields());
+        assertEquals(1,invalid.validationErrors().size());
+        assertEquals("Ana Perez",fulfillment.getRecipientName());
+        assertEquals("12345678",fulfillment.getDocumentNumber());
+        assertEquals("9",fulfillment.getShalomCandidateIds());
+
+        var corrected=service.savePartialShalomData(41L,"","","999111222","");
+        assertEquals(List.of(),corrected.missingFields());
+        assertEquals(CrmWhatsappAgentState.ESPERANDO_CONFIRMACION_AGENCIA_SHALOM,session.getState());
+    }
+
+    @Test
     void selectingShalomPrefillsTheSavedProfileAsAnEditableDraft(){
         ShalomAgency agency=agency(9L,"AREQUIPA / AV JESUS","AV. JESUS 1100");
         CrmWhatsappShalomProfile profile=new CrmWhatsappShalomProfile();profile.setCliente(session.getCliente());

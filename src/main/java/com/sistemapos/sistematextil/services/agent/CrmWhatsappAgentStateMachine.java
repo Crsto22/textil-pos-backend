@@ -155,9 +155,20 @@ public class CrmWhatsappAgentStateMachine {
                 entry(CrmWhatsappAgentEvent.CANCELACION_SOLICITADA, CrmWhatsappAgentState.REQUIERE_AYUDA),
                 entry(CrmWhatsappAgentEvent.AYUDA_REQUERIDA, CrmWhatsappAgentState.REQUIERE_AYUDA));
 
+        register(result, CrmWhatsappAgentState.ESPERANDO_PEDIDO_ANTERIOR,
+                entry(CrmWhatsappAgentEvent.PEDIDO_ANTERIOR_CONFIRMADO,
+                        CrmWhatsappAgentState.VENTA_PENDIENTE_REVISION),
+                entry(CrmWhatsappAgentEvent.SIN_PEDIDO_ANTERIOR_CONFIRMADO,
+                        CrmWhatsappAgentState.ESPERANDO_PAGO_FILM),
+                entry(CrmWhatsappAgentEvent.PAGO_RECHAZADO_Y_VENTA_ANULADA,
+                        CrmWhatsappAgentState.CANCELADO),
+                entry(CrmWhatsappAgentEvent.AYUDA_REQUERIDA, CrmWhatsappAgentState.REQUIERE_AYUDA));
+
         register(result, CrmWhatsappAgentState.ESPERANDO_PAGO_FILM,
-                entry(CrmWhatsappAgentEvent.PAGO_FILM_APROBADO, CrmWhatsappAgentState.LISTO_PARA_VENTA),
-                entry(CrmWhatsappAgentEvent.PAGO_FILM_EXPIRADO, CrmWhatsappAgentState.LISTO_PARA_VENTA),
+                entry(CrmWhatsappAgentEvent.PAGO_FILM_APROBADO, CrmWhatsappAgentState.VENTA_PENDIENTE_REVISION),
+                entry(CrmWhatsappAgentEvent.PAGO_FILM_EXPIRADO, CrmWhatsappAgentState.VENTA_PENDIENTE_REVISION),
+                entry(CrmWhatsappAgentEvent.PAGO_FILM_NO_DISPONIBLE, CrmWhatsappAgentState.VENTA_PENDIENTE_REVISION),
+                entry(CrmWhatsappAgentEvent.PAGO_RECHAZADO_Y_VENTA_ANULADA, CrmWhatsappAgentState.CANCELADO),
                 entry(CrmWhatsappAgentEvent.FILM_RECHAZADO, CrmWhatsappAgentState.LISTO_PARA_VENTA),
                 entry(CrmWhatsappAgentEvent.CANCELACION_SOLICITADA, CrmWhatsappAgentState.REQUIERE_AYUDA),
                 entry(CrmWhatsappAgentEvent.AYUDA_REQUERIDA, CrmWhatsappAgentState.REQUIERE_AYUDA));
@@ -171,7 +182,10 @@ public class CrmWhatsappAgentStateMachine {
                 entry(CrmWhatsappAgentEvent.AYUDA_REQUERIDA, CrmWhatsappAgentState.REQUIERE_AYUDA));
 
         register(result, CrmWhatsappAgentState.VENTA_PENDIENTE_REVISION,
+                entry(CrmWhatsappAgentEvent.CONSULTA_PEDIDO_ANTERIOR_INICIADA,
+                        CrmWhatsappAgentState.ESPERANDO_PEDIDO_ANTERIOR),
                 entry(CrmWhatsappAgentEvent.FILM_ACEPTADO, CrmWhatsappAgentState.ESPERANDO_PAGO_FILM),
+                entry(CrmWhatsappAgentEvent.PAGO_FILM_APROBADO, CrmWhatsappAgentState.VENTA_PENDIENTE_REVISION),
                 entry(CrmWhatsappAgentEvent.PAGO_APROBADO_FINALMENTE, CrmWhatsappAgentState.COMPLETADO),
                 entry(CrmWhatsappAgentEvent.PAGO_RECHAZADO_Y_VENTA_ANULADA, CrmWhatsappAgentState.CANCELADO),
                 entry(CrmWhatsappAgentEvent.AYUDA_REQUERIDA, CrmWhatsappAgentState.REQUIERE_AYUDA));
@@ -185,6 +199,8 @@ public class CrmWhatsappAgentStateMachine {
                 entry(CrmWhatsappAgentEvent.NUEVA_COMPRA_INICIADA, CrmWhatsappAgentState.IDLE));
 
         register(result, CrmWhatsappAgentState.REQUIERE_AYUDA,
+                entry(CrmWhatsappAgentEvent.PAGO_FILM_APROBADO, CrmWhatsappAgentState.VENTA_PENDIENTE_REVISION),
+                entry(CrmWhatsappAgentEvent.PAGO_RECHAZADO_Y_VENTA_ANULADA, CrmWhatsappAgentState.CANCELADO),
                 entry(CrmWhatsappAgentEvent.AYUDA_RESUELTA, CrmWhatsappAgentState.IDLE),
                 entry(CrmWhatsappAgentEvent.NUEVA_COMPRA_INICIADA, CrmWhatsappAgentState.IDLE));
 

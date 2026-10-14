@@ -519,7 +519,9 @@ public class CrmWhatsappController {
     public ResponseEntity<?> reactivarCobroFilm(@PathVariable Long addonId,Authentication authentication){return ResponseEntity.ok(crmWhatsappFilmReviewService.reactivate(addonId,currentUser(authentication)));}
 
     @PostMapping("/film-addons/{addonId}/manual-confirm")
-    public ResponseEntity<?> confirmarFilmManualmente(@PathVariable Long addonId,Authentication authentication){return ResponseEntity.ok(crmWhatsappFilmReviewService.confirmManually(addonId,currentUser(authentication)));}
+    public ResponseEntity<?> confirmarFilmManualmente(@PathVariable Long addonId,
+            @RequestBody(required=false) CrmWhatsappFilmReviewService.ManualConfirmationRequest request,
+            Authentication authentication){return ResponseEntity.ok(crmWhatsappFilmReviewService.confirmManually(addonId,request,currentUser(authentication)));}
 
     @GetMapping(value="/film-evidences/{evidenceId}/media",produces=MediaType.ALL_VALUE)
     public ResponseEntity<byte[]> descargarEvidenciaFilm(@PathVariable Long evidenceId,Authentication authentication){var media=crmWhatsappFilmReviewService.download(evidenceId,currentUser(authentication));return ResponseEntity.ok().contentType(MediaType.parseMediaType(media.contentType())).header(HttpHeaders.CONTENT_DISPOSITION,"inline; filename=\""+media.fileName().replace("\"","")+"\"").body(media.bytes());}

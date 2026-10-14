@@ -61,7 +61,7 @@ public class AgentFulfillmentTools {
         return fulfillment.savedProfile(sessionId(context));
     }
 
-    @Tool(name = "guardar_datos_shalom", description = "Valida nombres y apellidos, DNI, celular y busca la agencia indicada. Devuelve hasta tres agencias reales para que la clienta confirme una.")
+    @Tool(name = "guardar_datos_shalom", description = "Valida nombres y apellidos, DNI, celular y busca la agencia indicada cuando la clienta envía todos los datos juntos. El flujo automático también admite guardarlos progresivamente en mensajes separados.")
     public FulfillmentResult guardarDatosShalom(
             @ToolParam(description = "Nombres y apellidos completos del destinatario") String nombresApellidos,
             @ToolParam(description = "DNI peruano de 8 digitos") String dni,

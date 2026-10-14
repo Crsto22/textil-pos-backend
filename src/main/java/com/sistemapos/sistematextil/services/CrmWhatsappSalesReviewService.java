@@ -35,8 +35,8 @@ public class CrmWhatsappSalesReviewService {
         String status = reviewStatus == null ? "ALL" : reviewStatus.trim().toUpperCase();
         String like = "%" + term + "%";
         String reviewFilter = switch (status) {
-            case "PENDING" -> " AND ((pe.validation_status = 'ACEPTABLE' AND pr.status = 'UNDER_REVIEW') OR fe.validation_status = 'ACEPTABLE') ";
-            case "ACCEPTED" -> " AND pe.validation_status = 'VALIDADO' AND (fe.id_film_evidence IS NULL OR fe.validation_status <> 'ACEPTABLE') ";
+            case "PENDING" -> " AND ((pe.validation_status = 'ACEPTABLE' AND pr.status = 'UNDER_REVIEW') OR fe.validation_status = 'ACEPTABLE' OR fa.status IN ('AWAITING_PREVIOUS_ORDER_DECISION','ADVISOR_REVIEW_REQUIRED','AWAITING_PAYMENT','PAYMENT_OVERDUE','PAYMENT_CONFIGURATION_REQUIRED')) ";
+            case "ACCEPTED" -> " AND pe.validation_status = 'VALIDADO' AND (fe.id_film_evidence IS NULL OR fe.validation_status <> 'ACEPTABLE') AND (fa.id_film_addon IS NULL OR fa.status IN ('CONFIRMED','COVERED_BY_PREVIOUS_ORDER','ORDER_CANCELLED')) ";
             case "REJECTED" -> " AND (pe.validation_status = 'RECHAZADO' OR v.estado = 'ANULADA') ";
             default -> "";
         };
@@ -66,6 +66,7 @@ public class CrmWhatsappSalesReviewService {
                     FROM crm_whatsapp_payment_evidence pe2
                     WHERE pe2.id_payment_request = pr.id_payment_request)
                 LEFT JOIN crm_whatsapp_film_addon fa ON fa.id_venta = v.id_venta
+                LEFT JOIN usuario fur ON fur.id_usuario = fa.resolved_by
                 LEFT JOIN crm_whatsapp_film_evidence fe ON fe.id_film_evidence = (
                     SELECT MAX(fe2.id_film_evidence) FROM crm_whatsapp_film_evidence fe2
                     WHERE fe2.id_film_addon = fa.id_film_addon)
@@ -85,7 +86,10 @@ public class CrmWhatsappSalesReviewService {
                        pe.confidence, pe.review_note, pe.reviewed_at, mp.nombre AS payment_method,
                        cv.id_conversation, cv.phone_number, ag.id_agent_session,
                        f.method AS delivery_method, f.shalom_agency, f.shalom_agency_address,
-                       fa.status AS film_status, fa.amount AS film_amount, fa.expires_at AS film_expires_at,
+                       fa.id_film_addon, fa.status AS film_status, fa.amount AS film_amount,
+                       fa.expires_at AS film_expires_at, fa.resolution_source AS film_resolution_source,
+                       fa.covered_by_sale_id, fa.resolved_at AS film_resolved_at,
+                       CONCAT_WS(' ', fur.nombre, fur.apellido) AS film_resolved_by,
                        fe.id_film_evidence, fe.validation_status AS film_validation_status,
                        fe.processing_status AS film_processing_status, fe.detected_amount AS film_detected_amount,
                        fe.operation_code AS film_operation_code, fe.operation_at AS film_operation_at,
@@ -104,7 +108,10 @@ public class CrmWhatsappSalesReviewService {
         int saleId = rs.getInt("id_venta");
         Long evidenceId = nullableLong(rs, "id_payment_evidence");
         String mainEvidenceStatus=clean(rs.getString("validation_status"));
-        String reviewStatus = "ACEPTABLE".equals(clean(rs.getString("film_validation_status"))) ? "PENDING"
+        String filmStatus=clean(rs.getString("film_status"));
+        boolean unresolvedFilm=List.of("AWAITING_PREVIOUS_ORDER_DECISION","ADVISOR_REVIEW_REQUIRED",
+                "AWAITING_PAYMENT","PAYMENT_OVERDUE","PAYMENT_CONFIGURATION_REQUIRED").contains(filmStatus);
+        String reviewStatus = ("ACEPTABLE".equals(clean(rs.getString("film_validation_status")))||unresolvedFilm) ? "PENDING"
                 : evidenceId == null ? "NO_EVIDENCE" : switch (mainEvidenceStatus) {
             case "VALIDADO" -> "ACCEPTED";
             case "RECHAZADO" -> "REJECTED";
@@ -126,7 +133,9 @@ public class CrmWhatsappSalesReviewService {
                 dateTime(rs, "reviewed_at"), rs.getString("payment_method"),
                 rs.getString("delivery_method"),
                 rs.getString("shalom_agency"), rs.getString("shalom_agency_address"),
-                rs.getString("film_status"), rs.getBigDecimal("film_amount"), dateTime(rs,"film_expires_at"),
+                nullableLong(rs,"id_film_addon"),rs.getString("film_status"), rs.getBigDecimal("film_amount"),
+                dateTime(rs,"film_expires_at"),rs.getString("film_resolution_source"),
+                nullableLong(rs,"covered_by_sale_id"),dateTime(rs,"film_resolved_at"),rs.getString("film_resolved_by"),
                 filmEvidence(rs),
                 findItems(saleId));
     }
@@ -195,8 +204,9 @@ public class CrmWhatsappSalesReviewService {
             String mainEvidenceStatus, String reviewStatus, String processingStatus, BigDecimal detectedAmount, String detectedProvider,
             String operationCode, LocalDateTime operationAt, Integer confidence, String reviewNote,
             LocalDateTime reviewedAt, String paymentMethod, String deliveryMethod,
-            String shalomAgency, String shalomAgencyAddress, String filmStatus, BigDecimal filmAmount,
-            LocalDateTime filmExpiresAt, FilmEvidenceRow filmEvidence, List<SaleItem> items) {}
+            String shalomAgency, String shalomAgencyAddress, Long filmAddonId, String filmStatus, BigDecimal filmAmount,
+            LocalDateTime filmExpiresAt, String filmResolutionSource, Long coveredBySaleId,
+            LocalDateTime filmResolvedAt, String filmResolvedBy, FilmEvidenceRow filmEvidence, List<SaleItem> items) {}
     public record FilmEvidenceRow(Long evidenceId,String validationStatus,String processingStatus,
             BigDecimal detectedAmount,String operationCode,LocalDateTime operationAt,Integer confidence,
             String reviewNote,LocalDateTime reviewedAt,String mediaUrl) {}

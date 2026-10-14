@@ -10,7 +10,6 @@ import org.springframework.transaction.annotation.Transactional;
 import com.sistemapos.sistematextil.model.*;
 import com.sistemapos.sistematextil.repositories.*;
 import com.sistemapos.sistematextil.services.agent.CrmWhatsappAgentStateMachine;
-import com.sistemapos.sistematextil.services.agent.outbox.AgentOutboxService;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,7 +20,6 @@ public class AgentFilmExpiryRunner {
     private final CrmWhatsappFilmEvidenceRepository evidence;
     private final CrmWhatsappAgentSessionRepository sessions;
     private final CrmWhatsappAgentStateMachine stateMachine;
-    private final AgentOutboxService outbox;
     private final AgentFilmEscalationService escalation;
 
     @Scheduled(initialDelayString="${crm.whatsapp.agent.film-expiry.initial-delay-ms:5000}",fixedDelayString="${crm.whatsapp.agent.film-expiry.delay-ms:5000}")
@@ -36,8 +34,5 @@ public class AgentFilmExpiryRunner {
         addon.getFulfillment().setStatus(CrmWhatsappFulfillmentStatus.FILM_PAYMENT_OVERDUE);addons.save(addon);
         CrmWhatsappAgentSession s=sessions.findForUpdate(addon.getAgentSession().getIdAgentSession()).orElseThrow();
         if(s.getState()==CrmWhatsappAgentState.ESPERANDO_PAGO_FILM){s.setState(stateMachine.transition(s.getState(),CrmWhatsappAgentEvent.PAGO_FILM_EXPIRADO));s.setLastEvent(CrmWhatsappAgentEvent.PAGO_FILM_EXPIRADO);s.setStateChangedAt(LocalDateTime.now());sessions.save(s);}
-        escalation.escalate(s.getIdAgentSession(),id,"Venció el plazo de 12 horas para pagar el film obligatorio");
-        if(addon.getFinalMessageSentAt()==null){outbox.enqueueOperationalText(s.getIdAgentSession(),null,null,92_001,
-                "⏱️ Venció el plazo de 12 horas para pagar el film protector. Tu pedido permanece registrado, pero la preparación del envío está pendiente. Para recibir ayuda con tu caso, comunícate con nuestra asesora al 933918047.");
-            addon.setFinalMessageSentAt(LocalDateTime.now());addons.save(addon);}}
+        escalation.escalate(s.getIdAgentSession(),id,"Venció el plazo de 1 hora para pagar el film obligatorio");}
 }

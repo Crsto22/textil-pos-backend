@@ -76,6 +76,9 @@ public class CrmWhatsappAgentSession {
     @Column(name = "summary", columnDefinition = "TEXT")
     private String summary;
 
+    @Column(name = "catalog_preview_sent_at")
+    private LocalDateTime catalogPreviewSentAt;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "last_event", length = 60)
     private CrmWhatsappAgentEvent lastEvent;

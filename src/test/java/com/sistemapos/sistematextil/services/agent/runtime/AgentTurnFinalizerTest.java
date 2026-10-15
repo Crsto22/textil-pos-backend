@@ -252,6 +252,7 @@ class AgentTurnFinalizerTest {
         CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
         session.setIdAgentSession(8L);
         session.setActiveSlot(true);
+        session.setCatalogPreviewSentAt(LocalDateTime.now().minusMinutes(5));
         CrmWhatsappConversation conversation = new CrmWhatsappConversation();
         conversation.setIdConversation(20L);
         session.setConversation(conversation);
@@ -277,6 +278,89 @@ class AgentTurnFinalizerTest {
         verify(outbox).enqueueText(8L, 41L, 99L, 1, "Aquí tienes el color negro");
         verify(jdbc, times(0)).queryForObject(anyString(), eq(Long.class), eq(20L),
                 eq("/storage/productos/melina-negro.webp"));
+    }
+
+    @Test
+    void doesNotSendCatalogPreviewImagesMoreThanOncePerConversation() {
+        AgentOutboxService outbox = mock(AgentOutboxService.class);
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
+        session.setIdAgentSession(8L);
+        session.setActiveSlot(true);
+        session.setCatalogPreviewSentAt(LocalDateTime.now().minusMinutes(5));
+        CrmWhatsappConversation conversation = new CrmWhatsappConversation();
+        conversation.setIdConversation(20L);
+        session.setConversation(conversation);
+        CrmWhatsappMessage anchor = new CrmWhatsappMessage();
+        anchor.setIdMessage(99L);
+        session.setLastCustomerMessage(anchor);
+        when(sessions.findForUpdate(8L)).thenReturn(java.util.Optional.of(session));
+        when(jdbc.queryForObject(anyString(), eq(Long.class), eq(20L), eq(99L))).thenReturn(1L);
+        AgentTurnFinalizer finalizer = new AgentTurnFinalizer(outbox, catalog, sessions,
+                mock(CrmWhatsappAgentStateMachine.class), mock(AgentRuntimeConfigService.class), jdbc);
+        JobLease lease = new JobLease(41L, 8L, 99L, 1, "worker:lease", LocalDateTime.now());
+        GeneratedTurn turn = new GeneratedTurn("Aquí tienes el catálogo", "Catálogo", false,
+                "JAVA_DETERMINISTIC", "catalog", 10, 2, "fingerprint",
+                List.of(
+                        new AgentMediaRequest(MediaType.PRODUCT_IMAGE, 78, "", false, true),
+                        new AgentMediaRequest(MediaType.PRODUCT_IMAGE, 79, "", false, true),
+                        new AgentMediaRequest(MediaType.PRODUCT_IMAGE, 80, "", false, true)));
+
+        finalizer.finalizeTurn(lease, turn);
+
+        verify(outbox, times(0)).enqueueImage(eq(8L), eq(41L), eq(99L), eq(0),
+                anyString(), anyString(), anyString(), anyString());
+        verify(outbox).enqueueText(8L, 41L, 99L, 0, "Aquí tienes el catálogo");
+        org.mockito.Mockito.verifyNoInteractions(catalog);
+    }
+
+    @Test
+    void sendsThreeGlobalCatalogImagesAndMarksThePreviewAsSent() {
+        AgentOutboxService outbox = mock(AgentOutboxService.class);
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
+        session.setIdAgentSession(8L);
+        session.setActiveSlot(true);
+        CrmWhatsappConversation conversation = new CrmWhatsappConversation();
+        conversation.setIdConversation(20L);
+        session.setConversation(conversation);
+        CrmWhatsappMessage anchor = new CrmWhatsappMessage();
+        anchor.setIdMessage(99L);
+        session.setLastCustomerMessage(anchor);
+        when(sessions.findForUpdate(8L)).thenReturn(java.util.Optional.of(session));
+        when(jdbc.queryForObject(anyString(), eq(Long.class), eq(20L), eq(99L))).thenReturn(1L);
+        when(catalog.getProductImage(8L, 78, "")).thenReturn(new ProductImageResult(
+                78, "MELINA", "", "/productos/melina-global.webp", null,
+                List.of(new ProductImage("NEGRO", "/productos/melina-negro.webp", null, true))));
+        when(catalog.getProductImage(8L, 79, "")).thenReturn(new ProductImageResult(
+                79, "ANNIE", "", "/productos/annie-global.webp", null, List.of()));
+        when(catalog.getProductImage(8L, 80, "")).thenReturn(new ProductImageResult(
+                80, "LYANA", "", "/productos/lyana-global.webp", null, List.of()));
+        AgentTurnFinalizer finalizer = new AgentTurnFinalizer(outbox, catalog, sessions,
+                mock(CrmWhatsappAgentStateMachine.class), mock(AgentRuntimeConfigService.class), jdbc);
+        JobLease lease = new JobLease(41L, 8L, 99L, 1, "worker:lease", LocalDateTime.now());
+        GeneratedTurn turn = new GeneratedTurn("Aquí tienes el catálogo", "Catálogo", false,
+                "JAVA_DETERMINISTIC", "catalog", 10, 2, "fingerprint",
+                List.of(
+                        new AgentMediaRequest(MediaType.PRODUCT_IMAGE, 78, "", false, true),
+                        new AgentMediaRequest(MediaType.PRODUCT_IMAGE, 79, "", false, true),
+                        new AgentMediaRequest(MediaType.PRODUCT_IMAGE, 80, "", false, true)));
+
+        finalizer.finalizeTurn(lease, turn);
+
+        org.mockito.InOrder order = inOrder(outbox);
+        order.verify(outbox).enqueueImage(8L, 41L, 99L, 0,
+                "/productos/melina-global.webp", "melina-global.webp", "image/webp", "MELINA");
+        order.verify(outbox).enqueueImage(8L, 41L, 99L, 1,
+                "/productos/annie-global.webp", "annie-global.webp", "image/webp", "ANNIE");
+        order.verify(outbox).enqueueImage(8L, 41L, 99L, 2,
+                "/productos/lyana-global.webp", "lyana-global.webp", "image/webp", "LYANA");
+        order.verify(outbox).enqueueText(8L, 41L, 99L, 3, "Aquí tienes el catálogo");
+        org.junit.jupiter.api.Assertions.assertNotNull(session.getCatalogPreviewSentAt());
     }
 
     @Test

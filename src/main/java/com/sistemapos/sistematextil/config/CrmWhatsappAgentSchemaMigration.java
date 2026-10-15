@@ -217,6 +217,7 @@ public class CrmWhatsappAgentSchemaMigration implements ApplicationRunner {
                   preferred_fulfillment_method VARCHAR(20) NULL,
                   active_slot TINYINT(1) NULL DEFAULT 1,
                   summary TEXT NULL,
+                  catalog_preview_sent_at DATETIME(6) NULL,
                   last_event VARCHAR(60) NULL,
                   lock_version BIGINT NOT NULL DEFAULT 0,
                   started_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -257,6 +258,8 @@ public class CrmWhatsappAgentSchemaMigration implements ApplicationRunner {
                 "INT NULL");
         addColumnIfMissing(connection, statement, "crm_whatsapp_agent_session", "selected_payment_account_id",
                 "INT NULL");
+        addColumnIfMissing(connection, statement, "crm_whatsapp_agent_session", "catalog_preview_sent_at",
+                "DATETIME(6) NULL");
         addIndexIfMissing(connection, statement, "crm_whatsapp_agent_session",
                 "idx_crm_agent_session_payment_method", "(selected_payment_method_id)");
         addIndexIfMissing(connection, statement, "crm_whatsapp_agent_session",

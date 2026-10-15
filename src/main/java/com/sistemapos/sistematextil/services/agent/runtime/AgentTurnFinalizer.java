@@ -81,8 +81,11 @@ public class AgentTurnFinalizer {
     private int enqueueValidatedMedia(CrmWhatsappAgentSession session, JobLease lease, GeneratedTurn turn, int ordinal) {
         if (turn.media() == null) return ordinal;
         Set<String> queuedSources = new HashSet<>();
+        boolean catalogPreviewAlreadySent = session.getCatalogPreviewSentAt() != null;
+        boolean catalogPreviewQueued = false;
         for (AgentMediaRequest request : turn.media()) {
             if (request == null || request.type() == null || request.productId() == null) continue;
+            if (request.catalogPreview() && catalogPreviewAlreadySent) continue;
             String source;
             String caption = null;
             if (request.type() == AgentMediaRequest.MediaType.SIZE_GUIDE) {
@@ -90,9 +93,14 @@ public class AgentTurnFinalizer {
                 source = product.sizeGuideUrl();
             } else {
                 var images = catalog.getProductImage(lease.sessionId(), request.productId(), request.color());
-                boolean exactColorRequested = request.color() != null && !request.color().isBlank();
-                if (exactColorRequested && images.colorImages().isEmpty()) continue;
-                source = images.colorImages().isEmpty() ? images.globalImageUrl() : images.colorImages().getFirst().url();
+                if (request.catalogPreview()) {
+                    source = images.globalImageUrl();
+                } else {
+                    boolean exactColorRequested = request.color() != null && !request.color().isBlank();
+                    if (exactColorRequested && images.colorImages().isEmpty()) continue;
+                    source = images.colorImages().isEmpty()
+                            ? images.globalImageUrl() : images.colorImages().getFirst().url();
+                }
                 caption = productImageCaption(images.productName(), request.color());
             }
             if (source == null || source.isBlank()) continue;
@@ -100,6 +108,11 @@ public class AgentTurnFinalizer {
             if (request.suppressIfRecentlySent() && wasRecentlySent(session, source)) continue;
             outbox.enqueueImage(lease.sessionId(), lease.jobId(), lease.anchorMessageId(), ordinal++, source,
                     fileName(source, request.type()), mimeType(source), caption);
+            if (request.catalogPreview()) catalogPreviewQueued = true;
+        }
+        if (catalogPreviewQueued) {
+            session.setCatalogPreviewSentAt(LocalDateTime.now());
+            sessions.save(session);
         }
         return ordinal;
     }

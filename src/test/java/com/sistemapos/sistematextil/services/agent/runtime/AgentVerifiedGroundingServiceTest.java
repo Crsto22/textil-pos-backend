@@ -627,19 +627,36 @@ class AgentVerifiedGroundingServiceTest {
                 false, null, 95D, 6, List.of("PERLA"), List.of("XS", "M"));
         ProductSummary emma = new ProductSummary(20, "EMMA", "ARUBA", "CONJUNTO",
                 false, null, 65D, 3, List.of("CAMEL"), List.of("S"));
+        ProductSummary lia = new ProductSummary(30, "LIA RAYAS", "ARUBA", "CONJUNTO",
+                false, null, 75D, 4, List.of("NEGRO"), List.of("M"));
+        ProductSummary lyana = new ProductSummary(40, "LYANA", "ARUBA", "CONJUNTO",
+                false, null, 70D, 5, List.of("TOPO"), List.of("L"));
         when(catalog.searchProducts(9L, "", 20,
                 com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.READY_STOCK_ONLY))
                 .thenReturn(new ProductSearchResult("", 7,
                         com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.READY_STOCK_ONLY,
-                        List.of(alice, emma), false));
+                        List.of(alice, emma, lia, lyana), false));
+        when(catalog.getProductImage(9L, 10, "")).thenReturn(new ProductImageResult(
+                10, "ALICE RAYAS", "", "/productos/alice-rayas.webp", null, List.of()));
+        when(catalog.getProductImage(9L, 20, "")).thenReturn(new ProductImageResult(
+                20, "EMMA", "", "/productos/emma.webp", null, List.of()));
+        when(catalog.getProductImage(9L, 30, "")).thenReturn(new ProductImageResult(
+                30, "LIA RAYAS", "", "/productos/lia-rayas.webp", null, List.of()));
+        when(catalog.getProductImage(9L, 40, "")).thenReturn(new ProductImageResult(
+                40, "LYANA", "", "/productos/lyana.webp", null, List.of()));
         AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
                 mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
                 mock(AgentCartService.class), passThroughAudit());
 
         var result = service.ground(4L, 9L, 30L, "quiero todos los productos que no son preventa");
 
-        assertEquals(1, result.verifiedToolCalls());
+        assertEquals(4, result.verifiedToolCalls());
         assertEquals(null, result.customerMessage());
+        assertEquals(3, result.media().size());
+        assertEquals(3, result.media().stream().map(
+                com.sistemapos.sistematextil.services.agent.ai.AgentMediaRequest::productId).distinct().count());
+        assertTrue(result.media().stream().allMatch(
+                com.sistemapos.sistematextil.services.agent.ai.AgentMediaRequest::catalogPreview));
         assertTrue(result.evidenceJson().contains("READY_STOCK_ONLY"));
         verify(catalog).searchProducts(9L, "", 20,
                 com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.READY_STOCK_ONLY);

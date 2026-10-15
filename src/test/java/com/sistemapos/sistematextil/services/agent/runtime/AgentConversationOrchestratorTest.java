@@ -200,6 +200,33 @@ class AgentConversationOrchestratorTest {
     }
 
     @Test
+    void sendsAtMostFiveBackendVerifiedProductImages() {
+        Fixture fixture = new Fixture();
+        fixture.current(true, true, true);
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.CART_CHANGE, "agregar variantes", "MELINA", "", "", 0, "",
+                java.util.List.of(),
+                com.sistemapos.sistematextil.services.agent.ai.AgentCartAction.ADD_PRODUCT,
+                AgentCommercialAction.ADD_PRODUCT,
+                "", "", "", "", "", "", "", "",
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL, 99, false);
+        java.util.List<AgentMediaRequest> verified = java.util.stream.IntStream.rangeClosed(1, 6)
+                .mapToObj(index -> new AgentMediaRequest(
+                        AgentMediaRequest.MediaType.PRODUCT_IMAGE, 78, "COLOR " + index))
+                .toList();
+        when(fixture.grounding.ground(eq(7L), eq(8L), eq(41L), any())).thenReturn(
+                new AgentVerifiedGroundingService.Grounding(decision, "{}", verified, 6, true));
+
+        assertEquals(AgentConversationOrchestrator.Outcome.COMPLETED,
+                fixture.orchestrator.process(fixture.lease));
+
+        ArgumentCaptor<GeneratedTurn> turn = ArgumentCaptor.forClass(GeneratedTurn.class);
+        verify(fixture.jobs).saveGeneratedTurn(eq(41L), eq("worker:lease"), turn.capture(), any());
+        assertEquals(5, turn.getValue().media().size());
+        assertEquals("COLOR 5", turn.getValue().media().getLast().color());
+    }
+
+    @Test
     void preservesBackendWholesaleHandoffEvenWhenWriterReturnsFalse() {
         Fixture fixture = new Fixture();
         fixture.current(true, true, true);

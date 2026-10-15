@@ -558,6 +558,9 @@ class AgentVerifiedGroundingServiceTest {
                 new VariantResult(45, "BELEN", "AZUL", "XS", List.of(variant)));
         when(catalog.getStock(9L, 4501, 1)).thenReturn(
                 new StockResult(4501, 45, "BELEN", "AZUL", "XS", 1, 3, true, 1, true));
+        when(catalog.getProductImage(9L, 45, "AZUL")).thenReturn(new ProductImageResult(
+                45, "BELEN", "AZUL", "/productos/belen.webp", null,
+                List.of(new ProductImage("AZUL", "/productos/belen-azul.webp", null, true))));
         CartResult cartResult = new CartResult(70L, "DRAFT", "PEN", BigDecimal.valueOf(75),
                 BigDecimal.ZERO, BigDecimal.valueOf(75), List.of(), List.of());
         when(cart.addProduct(9L, 4501, 1, "agent-job-30:verified-add-product")).thenReturn(cartResult);
@@ -568,7 +571,9 @@ class AgentVerifiedGroundingServiceTest {
         var result = service.ground(4L, 9L, 30L, "Si deseo 1 unidad por favor");
 
         assertTrue(result.mutationExecuted());
-        assertEquals(4, result.verifiedToolCalls());
+        assertEquals(5, result.verifiedToolCalls());
+        assertEquals(List.of(new com.sistemapos.sistematextil.services.agent.ai.AgentMediaRequest(
+                MediaType.PRODUCT_IMAGE, 45, "AZUL", true)), result.media());
         assertTrue(result.evidenceJson().contains("\"executed\":true"));
         verify(cart).addProduct(9L, 4501, 1, "agent-job-30:verified-add-product");
     }
@@ -590,6 +595,8 @@ class AgentVerifiedGroundingServiceTest {
         when(catalog.getVariants(9L,45,"HUESO","XS")).thenReturn(new VariantResult(45,"BELEN","HUESO","XS",List.of(hueso)));
         when(catalog.getStock(9L,1417,1)).thenReturn(new StockResult(1417,45,"BELEN","TOPO","S",1,9,true,1,true));
         when(catalog.getStock(9L,1402,1)).thenReturn(new StockResult(1402,45,"BELEN","HUESO","XS",1,4,true,1,true));
+        when(catalog.getProductImage(9L,45,"TOPO")).thenReturn(new ProductImageResult(45,"BELEN","TOPO","/productos/belen.webp",null,List.of(new ProductImage("TOPO","/productos/belen-topo.webp",null,true))));
+        when(catalog.getProductImage(9L,45,"HUESO")).thenReturn(new ProductImageResult(45,"BELEN","HUESO","/productos/belen.webp",null,List.of(new ProductImage("HUESO","/productos/belen-hueso.webp",null,true))));
         CartResult first=new CartResult(70L,"DRAFT","PEN",BigDecimal.valueOf(75),BigDecimal.ZERO,BigDecimal.valueOf(75),List.of(),List.of());
         CartResult both=new CartResult(70L,"DRAFT","PEN",BigDecimal.valueOf(150),BigDecimal.ZERO,BigDecimal.valueOf(150),List.of(),List.of());
         when(cart.addProduct(9L,1417,1,"agent-job-30:verified-add-product:0")).thenReturn(first);
@@ -599,6 +606,9 @@ class AgentVerifiedGroundingServiceTest {
         var result=service.ground(4L,9L,30L,"Si\nEnvio");
 
         assertTrue(result.mutationExecuted());verify(cart).addProduct(9L,1417,1,"agent-job-30:verified-add-product:0");verify(cart).addProduct(9L,1402,1,"agent-job-30:verified-add-product:1");
+        assertEquals(2,result.media().size());
+        assertEquals("TOPO",result.media().get(0).color());
+        assertEquals("HUESO",result.media().get(1).color());
     }
 
     @Test

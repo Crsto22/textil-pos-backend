@@ -56,7 +56,7 @@ public class AgentTurnFinalizer {
         }
         sessions.save(session);
         int ordinal = enqueueWelcomeForNewConversation(session, lease, 0);
-        ordinal = enqueueValidatedMedia(lease, turn, ordinal);
+        ordinal = enqueueValidatedMedia(session, lease, turn, ordinal);
         String customerMessage=turn.customerMessage().trim();
         if(escalated&&!customerMessage.contains("933918047"))customerMessage=customerMessage+"\n\n"+ADVISOR_CONTACT;
         outbox.enqueueText(lease.sessionId(), lease.jobId(), lease.anchorMessageId(), ordinal,customerMessage);
@@ -78,25 +78,55 @@ public class AgentTurnFinalizer {
         return ordinal + 1;
     }
 
-    private int enqueueValidatedMedia(JobLease lease, GeneratedTurn turn, int ordinal) {
+    private int enqueueValidatedMedia(CrmWhatsappAgentSession session, JobLease lease, GeneratedTurn turn, int ordinal) {
         if (turn.media() == null) return ordinal;
         Set<String> queuedSources = new HashSet<>();
         for (AgentMediaRequest request : turn.media()) {
             if (request == null || request.type() == null || request.productId() == null) continue;
             String source;
+            String caption = null;
             if (request.type() == AgentMediaRequest.MediaType.SIZE_GUIDE) {
                 var product = catalog.getProduct(lease.sessionId(), request.productId());
                 source = product.sizeGuideUrl();
             } else {
                 var images = catalog.getProductImage(lease.sessionId(), request.productId(), request.color());
+                boolean exactColorRequested = request.color() != null && !request.color().isBlank();
+                if (exactColorRequested && images.colorImages().isEmpty()) continue;
                 source = images.colorImages().isEmpty() ? images.globalImageUrl() : images.colorImages().getFirst().url();
+                caption = productImageCaption(images.productName(), request.color());
             }
             if (source == null || source.isBlank()) continue;
             if (!queuedSources.add(source.trim())) continue;
+            if (request.suppressIfRecentlySent() && wasRecentlySent(session, source)) continue;
             outbox.enqueueImage(lease.sessionId(), lease.jobId(), lease.anchorMessageId(), ordinal++, source,
-                    fileName(source, request.type()), mimeType(source), null);
+                    fileName(source, request.type()), mimeType(source), caption);
         }
         return ordinal;
+    }
+
+    private boolean wasRecentlySent(CrmWhatsappAgentSession session, String source) {
+        if (session.getConversation() == null || session.getConversation().getIdConversation() == null
+                || source == null || source.isBlank()) return false;
+        Long matches = jdbc.queryForObject("""
+                SELECT COUNT(*)
+                FROM (
+                    SELECT media_storage_path
+                    FROM crm_whatsapp_message
+                    WHERE id_conversation=? AND direction='OUTGOING' AND deleted_at IS NULL
+                      AND media_storage_path IS NOT NULL
+                    ORDER BY id_message DESC
+                    LIMIT 20
+                ) recent_media
+                WHERE media_storage_path=?
+                """, Long.class, session.getConversation().getIdConversation(), source.trim());
+        return matches != null && matches > 0;
+    }
+
+    private String productImageCaption(String productName, String color) {
+        String product = clean(productName);
+        String selectedColor = clean(color);
+        if (product.isBlank()) return selectedColor.isBlank() ? null : selectedColor;
+        return selectedColor.isBlank() ? product : product + " — " + selectedColor;
     }
 
     private String fileName(String source, AgentMediaRequest.MediaType type) {

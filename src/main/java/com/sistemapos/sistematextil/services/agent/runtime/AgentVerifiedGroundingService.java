@@ -52,6 +52,7 @@ import com.sistemapos.sistematextil.services.agent.sizeguide.ProductSizeGuideQue
 @Service
 public class AgentVerifiedGroundingService {
     private static final int AUDIT_ORDINAL_BASE = 10_000;
+    private static final int MAX_CART_COLOR_IMAGES = 5;
 
     private final AgentDecisionGateway decisions;
     private final AgentCatalogQueryService catalog;
@@ -122,12 +123,12 @@ public class AgentVerifiedGroundingService {
                 && decision.cartAction() != null && decision.cartAction() != AgentCartAction.NONE;
         if (concreteCartEdit) {
             CartMutation mutation = groundCartChange(
-                    sessionId, jobId, decision, conversation, ordinal, evidence);
+                    sessionId, jobId, decision, conversation, ordinal, evidence, media);
             mutationExecuted = mutationExecuted || mutation.executed();
             customerMessage = mutation.message();
         } else if (!commercial.handled() && decision.commercialAction() == AgentCommercialAction.ADD_PRODUCT) {
             CartMutation mutation = groundCartChange(
-                    sessionId, jobId, decision, conversation, ordinal, evidence);
+                    sessionId, jobId, decision, conversation, ordinal, evidence, media);
             mutationExecuted = mutation.executed();
             customerMessage = mutation.message();
         } else if (!commercial.handled()
@@ -159,7 +160,7 @@ public class AgentVerifiedGroundingService {
             }
             case CART_CHANGE -> {
                 CartMutation mutation = groundCartChange(
-                        sessionId, jobId, decision, conversation, ordinal, evidence);
+                        sessionId, jobId, decision, conversation, ordinal, evidence, media);
                 mutationExecuted = mutation.executed();
                 customerMessage = mutation.message();
             }
@@ -275,7 +276,8 @@ public class AgentVerifiedGroundingService {
     }
 
     private CartMutation groundCartChange(Long sessionId, Long jobId, AgentConversationDecision decision,
-            String conversation, AtomicInteger ordinal, Map<String, Object> evidence) {
+            String conversation, AtomicInteger ordinal, Map<String, Object> evidence,
+            List<AgentMediaRequest> media) {
         if (commerce != null) commerce.prepareCartMutation(sessionId);
         AgentCartAction action = decision.cartAction() == null ? AgentCartAction.NONE : decision.cartAction();
         if (action == AgentCartAction.ADD_PROMOTION) {
@@ -283,7 +285,7 @@ public class AgentVerifiedGroundingService {
         }
         if (action == AgentCartAction.ADD_PRODUCT && decision.promotionSelections() != null
                 && decision.promotionSelections().size() > 1) {
-            return groundMultipleProductAdd(sessionId, jobId, decision, ordinal, evidence);
+            return groundMultipleProductAdd(sessionId, jobId, decision, ordinal, evidence, media);
         }
         if (action == AgentCartAction.CLEAR_CART) {
             CartResult result = verified(sessionId, jobId, ordinal,
@@ -340,6 +342,8 @@ public class AgentVerifiedGroundingService {
                 "agregar_producto_carrito", Map.of("varianteId", variantId, "cantidad", quantity),
                 CartResult.class, () -> cart.addProduct(sessionId, variantId, quantity, operationId));
         evidence.put("cartOperation", Map.of("executed", true, "result", result));
+        queueVerifiedCartColorImage(sessionId, jobId, selected.productId(), selected.name(),
+                variants.variants().getFirst().color(), ordinal, evidence, media);
         String message = commerce == null
                 ? "Producto agregado correctamente al carrito."
                 : commerce.cartTemplate(sessionId, result, true);
@@ -347,8 +351,8 @@ public class AgentVerifiedGroundingService {
     }
 
     private CartMutation groundMultipleProductAdd(Long sessionId,Long jobId,AgentConversationDecision decision,
-            AtomicInteger ordinal,Map<String,Object> evidence){
-        CartResult result=null;int index=0;
+            AtomicInteger ordinal,Map<String,Object> evidence,List<AgentMediaRequest> media){
+        CartResult result=null;int index=0;List<CartImageCandidate> imageCandidates=new ArrayList<>();
         for(PromotionSelection selection:decision.promotionSelections()){
             int quantity=selection.quantity()==null||selection.quantity()<1?1:selection.quantity();
             ProductSearchResult search=verified(sessionId,jobId,ordinal,"buscar_productos",
@@ -367,9 +371,36 @@ public class AgentVerifiedGroundingService {
             String operation="agent-job-"+jobId+":verified-add-product:"+(index++);
             result=verified(sessionId,jobId,ordinal,"agregar_producto_carrito",Map.of("varianteId",variantId,"cantidad",quantity),
                     CartResult.class,()->cart.addProduct(sessionId,variantId,quantity,operation));
+            imageCandidates.add(new CartImageCandidate(product.productId(),product.name(),variants.variants().getFirst().color()));
         }
         evidence.put("cartOperation",Map.of("executed",true,"result",result));
+        for(CartImageCandidate candidate:imageCandidates){
+            queueVerifiedCartColorImage(sessionId,jobId,candidate.productId(),candidate.productName(),candidate.color(),
+                    ordinal,evidence,media);
+        }
         return new CartMutation(true,commerce==null?"Productos agregados correctamente al carrito.":commerce.cartTemplate(sessionId,result,true));
+    }
+
+    private void queueVerifiedCartColorImage(Long sessionId, Long jobId, Integer productId,
+            String productName, String color, AtomicInteger ordinal, Map<String, Object> evidence,
+            List<AgentMediaRequest> media) {
+        String requestedColor = color == null ? "" : color.trim();
+        if (productId == null || requestedColor.isBlank() || media.size() >= MAX_CART_COLOR_IMAGES) return;
+        boolean duplicate = media.stream().anyMatch(item -> item.type() == MediaType.PRODUCT_IMAGE
+                && productId.equals(item.productId())
+                && normalize(item.color()).equals(normalize(requestedColor)));
+        if (duplicate) return;
+        ProductImageResult images = verified(sessionId, jobId, ordinal,
+                "obtener_imagen_producto", nullableMap("productoId", productId, "color", requestedColor),
+                ProductImageResult.class,
+                () -> catalog.getProductImage(sessionId, productId, requestedColor));
+        evidence.put("cartProductImage" + productId + normalize(requestedColor), nullableMap(
+                "productId", productId, "productName", productName, "color", requestedColor,
+                "exactColorImageAvailable", images != null && images.colorImages() != null
+                        && !images.colorImages().isEmpty()));
+        if (images != null && images.colorImages() != null && !images.colorImages().isEmpty()) {
+            media.add(new AgentMediaRequest(MediaType.PRODUCT_IMAGE, productId, requestedColor, true));
+        }
     }
 
     private CartMutation groundPromotionAdd(Long sessionId, Long jobId, AgentConversationDecision decision,
@@ -646,7 +677,7 @@ public class AgentVerifiedGroundingService {
                     && !decision.colorReference().isBlank();
             if (imagesRequested && !requestedSpecificColor) {
                 List<Map<String, Object>> imageEvidence = new ArrayList<>();
-                for (var candidate : search.products().stream().limit(3).toList()) {
+                for (var candidate : search.products().stream().limit(5).toList()) {
                     Integer candidateId = candidate.productId();
                     ProductImageResult candidateImages = verified(sessionId, jobId, ordinal,
                             "obtener_imagen_producto", nullableMap("productoId", candidateId, "color", ""),
@@ -663,7 +694,7 @@ public class AgentVerifiedGroundingService {
                     }
                 }
                 evidence.put("matchingProductImages", imageEvidence);
-                evidence.put("matchingProductImagesTruncated", search.products().size() > 3);
+                evidence.put("matchingProductImagesTruncated", search.products().size() > 5);
             } else if (imagesRequested) {
                 evidence.put("productSelectionRequiredBeforeColorImage", true);
             }
@@ -792,6 +823,9 @@ public class AgentVerifiedGroundingService {
     }
 
     private record CartMutation(boolean executed, String message) {
+    }
+
+    private record CartImageCandidate(Integer productId, String productName, String color) {
     }
 
     private record RequiredPromotionProduct(Integer productId, String productName, int quantity) {

@@ -409,11 +409,15 @@ public class AgentConversationOrchestrator {
     private List<AgentMediaRequest> verifiedMedia(List<AgentMediaRequest> verified) {
         List<AgentMediaRequest> result = new ArrayList<>();
         if (verified != null) for (AgentMediaRequest item : verified) addMedia(result, item);
-        return List.copyOf(result.stream().limit(3).toList());
+        return List.copyOf(result.stream().limit(5).toList());
     }
 
     private void addMedia(List<AgentMediaRequest> target, AgentMediaRequest item) {
-        if (item != null && !target.contains(item)) target.add(item);
+        if (item == null) return;
+        boolean duplicate = target.stream().anyMatch(existing -> existing.type() == item.type()
+                && java.util.Objects.equals(existing.productId(), item.productId())
+                && normalize(existing.color()).equals(normalize(item.color())));
+        if (!duplicate) target.add(item);
     }
 
     private String normalize(String value) {

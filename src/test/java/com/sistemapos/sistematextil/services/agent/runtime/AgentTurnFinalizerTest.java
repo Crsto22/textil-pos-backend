@@ -141,7 +141,7 @@ class AgentTurnFinalizerTest {
         order.verify(outbox).enqueueImage(8L, 41L, 99L, 0, "/storage/guias/emma.webp",
                 "emma.webp", "image/webp", null);
         order.verify(outbox).enqueueImage(8L, 41L, 99L, 1, "/storage/productos/emma-camel.webp",
-                "emma-camel.webp", "image/webp", null);
+                "emma-camel.webp", "image/webp", "EMMA — CAMEL");
         order.verify(outbox).enqueueText(8L, 41L, 99L, 2, "¿Qué talla deseas?");
     }
 
@@ -174,8 +174,109 @@ class AgentTurnFinalizerTest {
         finalizer.finalizeTurn(lease, turn);
 
         verify(outbox, times(1)).enqueueImage(8L, 41L, 99L, 0,
-                "/storage/productos/alessia-azul.webp", "alessia-azul.webp", "image/webp", null);
+                "/storage/productos/alessia-azul.webp", "alessia-azul.webp", "image/webp", "ALESSIA RAYAS");
         verify(outbox).enqueueText(8L, 41L, 99L, 1, "Alessia Rayas");
+    }
+
+    @Test
+    void doesNotReplaceAMissingExactColorImageWithTheGlobalImage() {
+        AgentOutboxService outbox = mock(AgentOutboxService.class);
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
+        session.setIdAgentSession(8L);
+        session.setActiveSlot(true);
+        CrmWhatsappMessage anchor = new CrmWhatsappMessage();
+        anchor.setIdMessage(99L);
+        session.setLastCustomerMessage(anchor);
+        when(sessions.findForUpdate(8L)).thenReturn(java.util.Optional.of(session));
+        when(catalog.getProductImage(8L, 78, "NEGRO")).thenReturn(new ProductImageResult(
+                78, "MELINA", "NEGRO", "/storage/productos/melina.webp", null, List.of()));
+        AgentTurnFinalizer finalizer = new AgentTurnFinalizer(outbox, catalog, sessions,
+                mock(CrmWhatsappAgentStateMachine.class), mock(AgentRuntimeConfigService.class),
+                mock(JdbcTemplate.class));
+        JobLease lease = new JobLease(41L, 8L, 99L, 1, "worker:lease", LocalDateTime.now());
+        GeneratedTurn turn = new GeneratedTurn("Pedido actualizado", "MELINA negra", false,
+                "JAVA_DETERMINISTIC", "cart", 10, 2, "fingerprint",
+                List.of(new AgentMediaRequest(MediaType.PRODUCT_IMAGE, 78, "NEGRO")));
+
+        finalizer.finalizeTurn(lease, turn);
+
+        verify(outbox, times(0)).enqueueImage(8L, 41L, 99L, 0,
+                "/storage/productos/melina.webp", "melina.webp", "image/webp", "MELINA — NEGRO");
+        verify(outbox).enqueueText(8L, 41L, 99L, 0, "Pedido actualizado");
+    }
+
+    @Test
+    void doesNotResendAnAutomaticProductImageShownAmongTheLastTwentyOutgoingMediaMessages() {
+        AgentOutboxService outbox = mock(AgentOutboxService.class);
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
+        session.setIdAgentSession(8L);
+        session.setActiveSlot(true);
+        CrmWhatsappConversation conversation = new CrmWhatsappConversation();
+        conversation.setIdConversation(20L);
+        session.setConversation(conversation);
+        CrmWhatsappMessage anchor = new CrmWhatsappMessage();
+        anchor.setIdMessage(99L);
+        session.setLastCustomerMessage(anchor);
+        when(sessions.findForUpdate(8L)).thenReturn(java.util.Optional.of(session));
+        when(catalog.getProductImage(8L, 78, "NEGRO")).thenReturn(new ProductImageResult(
+                78, "MELINA", "NEGRO", "/storage/productos/melina.webp", null,
+                List.of(new ProductImage("NEGRO", "/storage/productos/melina-negro.webp", null, true))));
+        when(jdbc.queryForObject(anyString(), eq(Long.class), eq(20L), eq(99L))).thenReturn(1L);
+        when(jdbc.queryForObject(anyString(), eq(Long.class), eq(20L),
+                eq("/storage/productos/melina-negro.webp"))).thenReturn(1L);
+        AgentTurnFinalizer finalizer = new AgentTurnFinalizer(outbox, catalog, sessions,
+                mock(CrmWhatsappAgentStateMachine.class), mock(AgentRuntimeConfigService.class), jdbc);
+        JobLease lease = new JobLease(41L, 8L, 99L, 1, "worker:lease", LocalDateTime.now());
+        GeneratedTurn turn = new GeneratedTurn("Pedido actualizado", "MELINA negra", false,
+                "JAVA_DETERMINISTIC", "cart", 10, 2, "fingerprint",
+                List.of(new AgentMediaRequest(MediaType.PRODUCT_IMAGE, 78, "NEGRO", true)));
+
+        finalizer.finalizeTurn(lease, turn);
+
+        verify(outbox, times(0)).enqueueImage(8L, 41L, 99L, 0,
+                "/storage/productos/melina-negro.webp", "melina-negro.webp", "image/webp", "MELINA — NEGRO");
+        verify(outbox).enqueueText(8L, 41L, 99L, 0, "Pedido actualizado");
+    }
+
+    @Test
+    void resendsARecentlyShownProductImageWhenTheCustomerExplicitlyRequestsIt() {
+        AgentOutboxService outbox = mock(AgentOutboxService.class);
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
+        session.setIdAgentSession(8L);
+        session.setActiveSlot(true);
+        CrmWhatsappConversation conversation = new CrmWhatsappConversation();
+        conversation.setIdConversation(20L);
+        session.setConversation(conversation);
+        CrmWhatsappMessage anchor = new CrmWhatsappMessage();
+        anchor.setIdMessage(99L);
+        session.setLastCustomerMessage(anchor);
+        when(sessions.findForUpdate(8L)).thenReturn(java.util.Optional.of(session));
+        when(catalog.getProductImage(8L, 78, "NEGRO")).thenReturn(new ProductImageResult(
+                78, "MELINA", "NEGRO", "/storage/productos/melina.webp", null,
+                List.of(new ProductImage("NEGRO", "/storage/productos/melina-negro.webp", null, true))));
+        when(jdbc.queryForObject(anyString(), eq(Long.class), eq(20L), eq(99L))).thenReturn(1L);
+        AgentTurnFinalizer finalizer = new AgentTurnFinalizer(outbox, catalog, sessions,
+                mock(CrmWhatsappAgentStateMachine.class), mock(AgentRuntimeConfigService.class), jdbc);
+        JobLease lease = new JobLease(41L, 8L, 99L, 1, "worker:lease", LocalDateTime.now());
+        GeneratedTurn turn = new GeneratedTurn("Aquí tienes el color negro", "MELINA negra", false,
+                "JAVA_DETERMINISTIC", "catalog", 10, 2, "fingerprint",
+                List.of(new AgentMediaRequest(MediaType.PRODUCT_IMAGE, 78, "NEGRO")));
+
+        finalizer.finalizeTurn(lease, turn);
+
+        verify(outbox).enqueueImage(8L, 41L, 99L, 0,
+                "/storage/productos/melina-negro.webp", "melina-negro.webp", "image/webp", "MELINA — NEGRO");
+        verify(outbox).enqueueText(8L, 41L, 99L, 1, "Aquí tienes el color negro");
+        verify(jdbc, times(0)).queryForObject(anyString(), eq(Long.class), eq(20L),
+                eq("/storage/productos/melina-negro.webp"));
     }
 
     @Test

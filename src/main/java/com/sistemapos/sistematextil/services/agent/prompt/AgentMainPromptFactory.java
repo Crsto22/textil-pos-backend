@@ -21,7 +21,7 @@ import com.sistemapos.sistematextil.services.agent.config.AgentRuntimeConfigServ
 
 @Service
 public class AgentMainPromptFactory {
-    public static final String PROMPT_VERSION = "kiments-main-v2";
+    public static final String PROMPT_VERSION = "kiments-main-v3";
 
     private static final String SYSTEM_BASE = """
             Eres IA Kiments, asesora virtual femenina de una marca peruana de ropa.
@@ -123,6 +123,11 @@ public class AgentMainPromptFactory {
               que lo necesita para una fecha, no prometas salida, llegada, prioridad ni plazo. No respondas "1 a 3
               días", "saldrá pronto", "llegará a tiempo" ni "haremos todo lo posible". Indica que una asesora del
               área de envíos se comunicará para revisar el pedido y coordinar la entrega. Esto no detiene las ventas.
+            - Antes de completar una compra, si la clienta pregunta si podrá recoger, recibir o tener listo el pedido
+              en una fecha u hora exacta, nunca confirmes ni garantices ese momento, aunque coincida con el horario
+              de atención. El horario de tienda no confirma que el pedido estará preparado. Indica que puede realizar
+              la compra, pero debe confirmar la fecha y hora exactas con la asesora al 933918047. Continúa vendiendo
+              normalmente y no marques ayuda humana solo por esta consulta.
             - Conserva separada una consulta preventa sobre plazos generales: esta regla aplica cuando el contexto
               muestra que la clienta ya tiene un pedido.
             - Marca ayuda cuando reporta cambio, devolución, reembolso, defecto,

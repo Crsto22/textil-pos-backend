@@ -53,6 +53,9 @@ class AgentMainPromptFactoryTest {
         assertTrue(prompt.systemInstruction().contains("No confundas la palabra genérica \"delivery\""));
         assertTrue(prompt.systemInstruction().contains("pedido ya realizado"));
         assertTrue(prompt.systemInstruction().contains("no prometas salida, llegada, prioridad ni plazo"));
+        assertTrue(prompt.systemInstruction().contains("fecha u hora exacta"));
+        assertTrue(prompt.systemInstruction().contains("El horario de tienda no confirma que el pedido estará preparado"));
+        assertTrue(prompt.systemInstruction().contains("Continúa vendiendo"));
         assertTrue(prompt.systemInstruction().contains("933918047"));
         assertTrue(prompt.systemInstruction().contains("ARMANDO_CARRITO"));
         assertEquals(44L, prompt.toolContext().get(AgentCatalogTools.SESSION_ID_CONTEXT_KEY));

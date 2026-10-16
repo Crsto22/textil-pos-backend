@@ -68,6 +68,7 @@ public class AgentVerifiedGroundingService {
     private final AgentCartService cart;
     private final AgentDeterministicCommerceService commerce;
     private final ProductSizeGuideQueryService sizeGuides;
+    private final AgentOrderDeliveryQueryService orderDelivery;
     private final AgentToolCallAuditService audit;
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
 
@@ -79,6 +80,7 @@ public class AgentVerifiedGroundingService {
             AgentCartService cart,
             AgentDeterministicCommerceService commerce,
             ProductSizeGuideQueryService sizeGuides,
+            AgentOrderDeliveryQueryService orderDelivery,
             AgentToolCallAuditService audit) {
         this.decisions = decisions;
         this.catalog = catalog;
@@ -87,13 +89,25 @@ public class AgentVerifiedGroundingService {
         this.cart = cart;
         this.commerce = commerce;
         this.sizeGuides = sizeGuides;
+        this.orderDelivery = orderDelivery;
         this.audit = audit;
+    }
+
+    AgentVerifiedGroundingService(AgentDecisionGateway decisions,
+            AgentCatalogQueryService catalog,
+            AgentPromotionQueryService promotions,
+            AgentKnowledgeRetriever knowledge,
+            AgentCartService cart,
+            AgentDeterministicCommerceService commerce,
+            ProductSizeGuideQueryService sizeGuides,
+            AgentToolCallAuditService audit) {
+        this(decisions, catalog, promotions, knowledge, cart, commerce, sizeGuides, null, audit);
     }
 
     AgentVerifiedGroundingService(AgentDecisionGateway decisions, AgentCatalogQueryService catalog,
             AgentPromotionQueryService promotions, AgentKnowledgeRetriever knowledge,
             AgentCartService cart, AgentToolCallAuditService audit) {
-        this(decisions, catalog, promotions, knowledge, cart, null, null, audit);
+        this(decisions, catalog, promotions, knowledge, cart, null, null, null, audit);
     }
 
     public Grounding ground(Long connectionId, Long sessionId, Long jobId, String conversation) {
@@ -111,6 +125,7 @@ public class AgentVerifiedGroundingService {
         decision = reconcileExplicitCatalogReferences(
                 sessionId, jobId, decision, conversation, ordinal, evidence);
         decision = normalizeIncompleteProductSelection(decision);
+        decision = normalizeAvailabilitySelection(decision);
         boolean earlyDeliveryPreference = commerce != null
                 && commerce.rememberEarlyDeliveryPreference(sessionId, decision);
         evidence.put("decision", decision);
@@ -162,6 +177,9 @@ public class AgentVerifiedGroundingService {
                 || decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT
                 || decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT_IMAGES)) {
             groundCatalog(sessionId, jobId, decision, conversation, ordinal, evidence, media);
+        } else if (!commercial.handled()
+                && decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY) {
+            customerMessage = groundProductAvailability(sessionId, jobId, decision, ordinal, evidence);
         } else if (!commercial.handled()) switch (decision.intent()) {
             case PRODUCT_SEARCH, PRODUCT_DETAILS -> groundCatalog(
                     sessionId, jobId, decision, conversation, ordinal, evidence, media);
@@ -214,6 +232,22 @@ public class AgentVerifiedGroundingService {
 
     private String groundDeliveryTiming(Long sessionId, Long jobId, AgentConversationDecision decision,
             AtomicInteger ordinal, Map<String, Object> evidence) {
+        if (decision.commercialAction() == AgentCommercialAction.REFER_EXISTING_ORDER_DELIVERY) {
+            AgentOrderDeliveryQueryService.OrderDeliveryGuidance guidance = orderDelivery == null
+                    ? new AgentOrderDeliveryQueryService.OrderDeliveryGuidance(false, null,
+                            AgentOrderDeliveryQueryService.DeliveryPolicy.NOT_LINKED_TO_AGENT, List.of())
+                    : orderDelivery.findForAgentSession(sessionId);
+            evidence.put("orderDeliveryGuidance", Map.of(
+                    "agentSaleFound", guidance.agentSaleFound(),
+                    "saleId", guidance.saleId() == null ? "" : guidance.saleId(),
+                    "policy", guidance.policy().name(),
+                    "products", guidance.products(),
+                    "readyStockDispatch", "1 a 3 días según el volumen de pedidos y el orden de atención",
+                    "preorderDispatch", "según la fecha indicada en la preventa",
+                    "advisorPhone", "933918047",
+                    "shippingAreaWillContact", guidance.agentSaleFound()));
+            return null;
+        }
         String generic = deliveryTimingPolicy(decision.shalomDestination());
         String reference = decision.productReference() == null ? "" : decision.productReference().trim();
         if (reference.isBlank()) return generic;
@@ -260,6 +294,138 @@ public class AgentVerifiedGroundingService {
             return decision.withCommercialAction(AgentCommercialAction.SHOW_PRODUCT);
         }
         return decision;
+    }
+
+    private AgentConversationDecision normalizeAvailabilitySelection(AgentConversationDecision decision) {
+        boolean hasRequestedSize = decision.sizeReference() != null && !decision.sizeReference().isBlank();
+        if (decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT && hasRequestedSize) {
+            return decision.withCommercialAction(AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY);
+        }
+        return decision;
+    }
+
+    private String groundProductAvailability(Long sessionId, Long jobId, AgentConversationDecision decision,
+            AtomicInteger ordinal, Map<String, Object> evidence) {
+        List<String> references = decision.productReferences() == null
+                ? new ArrayList<>() : new ArrayList<>(decision.productReferences());
+        if (references.isEmpty() && decision.productReference() != null
+                && !decision.productReference().isBlank()) {
+            references.add(decision.productReference().trim());
+        }
+        if (references.isEmpty()) return null;
+
+        Map<Integer, AgentCatalogQueryService.ProductSummary> products = new LinkedHashMap<>();
+        List<Map<String, Object>> searches = new ArrayList<>();
+        List<String> unresolved = new ArrayList<>();
+        for (String reference : references) {
+            ProductSearchResult search = verified(sessionId, jobId, ordinal,
+                    "buscar_productos", Map.of("consulta", reference, "limite", 20,
+                            "disponibilidad", decision.catalogAvailability().name()),
+                    ProductSearchResult.class,
+                    () -> catalog.searchProducts(sessionId, reference, 20, decision.catalogAvailability()));
+            List<AgentCatalogQueryService.ProductSummary> resolved = new ArrayList<>();
+            var exact = unambiguousProduct(search, reference);
+            if (exact != null) resolved.add(exact);
+            else resolved.addAll(requestedProducts(search, List.of(reference)));
+            searches.add(Map.of("reference", reference, "resolvedProducts",
+                    resolved.stream().map(AgentCatalogQueryService.ProductSummary::name).toList()));
+            if (resolved.isEmpty()) unresolved.add(reference);
+            resolved.forEach(product -> products.putIfAbsent(product.productId(), product));
+        }
+        evidence.put("availabilitySearches", searches);
+
+        List<ProductAvailabilityView> availability = new ArrayList<>();
+        for (var product : products.values()) {
+            VariantResult variants = verified(sessionId, jobId, ordinal,
+                    "consultar_variantes", nullableMap("productoId", product.productId(), "color",
+                            decision.colorReference(), "talla", decision.sizeReference()),
+                    VariantResult.class, () -> catalog.getVariants(sessionId, product.productId(),
+                            decision.colorReference(), decision.sizeReference()));
+            List<AgentCatalogQueryService.VariantSummary> availableVariants = variants.variants() == null
+                    ? List.of() : variants.variants().stream()
+                            .filter(AgentCatalogQueryService.VariantSummary::available)
+                            .filter(variant -> variant.stock() > 0)
+                            .toList();
+            Double price = availableVariants.stream()
+                    .map(AgentCatalogQueryService.VariantSummary::effectivePrice)
+                    .filter(Objects::nonNull)
+                    .min(Double::compareTo)
+                    .orElse(product.priceFrom());
+            availability.add(new ProductAvailabilityView(
+                    product.productId(), product.name(), price, availableVariants));
+        }
+        evidence.put("requestedVariantAvailability", Map.of(
+                "requestedSize", clean(decision.sizeReference()),
+                "requestedColor", clean(decision.colorReference()),
+                "products", availability,
+                "unresolvedReferences", unresolved));
+        return productAvailabilityMessage(availability, unresolved,
+                decision.sizeReference(), decision.colorReference());
+    }
+
+    private String productAvailabilityMessage(List<ProductAvailabilityView> products, List<String> unresolved,
+            String requestedSize, String requestedColor) {
+        String size = clean(requestedSize);
+        String color = clean(requestedColor);
+        StringBuilder message = new StringBuilder("Claro que s\u00ed, hermosa \uD83D\uDC9B ");
+        if (!size.isBlank() && color.isBlank()) {
+            message.append("Estos son los colores disponibles en talla ").append(size).append(":");
+        } else if (!size.isBlank()) {
+            message.append("Esta es la disponibilidad en color ").append(color)
+                    .append(" y talla ").append(size).append(":");
+        } else if (!color.isBlank()) {
+            message.append("Esta es la disponibilidad en color ").append(color).append(":");
+        } else {
+            message.append("Estas son las opciones disponibles:");
+        }
+
+        for (ProductAvailabilityView product : products) {
+            message.append("\n\n\u2728 **").append(product.name()).append("**");
+            if (product.price() != null) {
+                message.append(" (S/ ").append(String.format(Locale.US, "%.2f", product.price())).append(")");
+            }
+            if (product.variants().isEmpty()) {
+                message.append("\n- Actualmente no cuenta con stock disponible");
+                if (!color.isBlank()) message.append(" en color ").append(color);
+                if (!size.isBlank()) message.append(" en talla ").append(size);
+                message.append(".");
+                continue;
+            }
+
+            Map<String, List<String>> sizesByColor = new LinkedHashMap<>();
+            for (var variant : product.variants()) {
+                sizesByColor.computeIfAbsent(variant.color(), ignored -> new ArrayList<>());
+                List<String> sizes = sizesByColor.get(variant.color());
+                if (variant.size() != null && !variant.size().isBlank() && !sizes.contains(variant.size())) {
+                    sizes.add(variant.size());
+                }
+            }
+            for (var entry : sizesByColor.entrySet()) {
+                message.append("\n- ").append(entry.getKey());
+                if (size.isBlank() && !entry.getValue().isEmpty()) {
+                    message.append(" — tallas ").append(humanList(entry.getValue()));
+                }
+            }
+        }
+        if (!unresolved.isEmpty()) {
+            message.append("\n\nNo encontr\u00e9 en el cat\u00e1logo: ").append(humanList(unresolved)).append(".");
+        }
+        if (products.size() == 1) {
+            if (!color.isBlank() && size.isBlank()) {
+                message.append("\n\n\u00bfQu\u00e9 talla deseas elegir? \uD83D\uDC9B");
+            } else if (!size.isBlank() && color.isBlank()) {
+                message.append("\n\n\u00bfQu\u00e9 color deseas elegir? \uD83D\uDC9B");
+            } else if (!size.isBlank()) {
+                message.append("\n\n\u00bfDeseas agregarlo a tu pedido? \uD83D\uDC9B");
+            } else {
+                message.append("\n\n\u00bfQu\u00e9 color y talla deseas elegir? \uD83D\uDC9B");
+            }
+        } else if (!color.isBlank() && size.isBlank()) {
+            message.append("\n\n\u00bfCu\u00e1l modelo y talla deseas elegir? \uD83D\uDC9B");
+        } else {
+            message.append("\n\n\u00bfCu\u00e1l modelo y color deseas elegir? \uD83D\uDC9B");
+        }
+        return message.toString();
     }
 
     private void groundSizeRecommendation(Long sessionId, Long jobId, AgentConversationDecision decision,
@@ -934,6 +1100,7 @@ public class AgentVerifiedGroundingService {
                 || decision.intent() == AgentDecisionIntent.PRODUCT_DETAILS
                 || decision.intent() == AgentDecisionIntent.CART_CHANGE
                 || decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT
+                || decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY
                 || decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT_IMAGES
                 || decision.commercialAction() == AgentCommercialAction.SHOW_SIZE_GUIDE
                 || decision.commercialAction() == AgentCommercialAction.RECOMMEND_SIZE
@@ -1152,6 +1319,10 @@ public class AgentVerifiedGroundingService {
         return "";
     }
 
+    private String clean(String value) {
+        return value == null ? "" : value.trim();
+    }
+
     private String normalize(String value) {
         if (value == null) return "";
         return Normalizer.normalize(value, Normalizer.Form.NFD).replaceAll("\\p{M}+", "")
@@ -1162,6 +1333,16 @@ public class AgentVerifiedGroundingService {
     }
 
     private record CartImageCandidate(Integer productId, String productName, String color) {
+    }
+
+    private record ProductAvailabilityView(
+            Integer productId,
+            String name,
+            Double price,
+            List<AgentCatalogQueryService.VariantSummary> variants) {
+        private ProductAvailabilityView {
+            variants = variants == null ? List.of() : List.copyOf(variants);
+        }
     }
 
     private record RequiredPromotionProduct(Integer productId, String productName, int quantity) {

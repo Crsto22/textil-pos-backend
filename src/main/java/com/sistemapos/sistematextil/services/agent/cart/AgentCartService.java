@@ -343,12 +343,24 @@ public class AgentCartService {
         LocalDateTime now = LocalDateTime.now();
         for (CartItemRow line : existing) {
             SucursalStock stock = stocks.get(line.variantId());
-            if (stock == null) throw new IllegalStateException("Un producto del carrito ya no esta disponible en esta sucursal");
-            validateStock(stock, line.quantity());
+            // A draft cart may survive for days while real stock keeps moving. A
+            // stale line must not prevent a new, valid selection from being added.
+            // The customer will see the recalculated cart without that unavailable
+            // line and can choose a replacement normally.
+            if (stock == null || safeStock(stock) < line.quantity()) {
+                store.deleteItem(cart.id(), line.variantId());
+                continue;
+            }
             PricedCartItem priced = price(stock, line.quantity(), scope.branchId());
             store.upsertItem(cart.id(), priced, now);
             pricedLines.add(new PricedLine(priced.variantId(),
                     stock.getProductoVariante().getProducto().getIdProducto(), priced.quantity(), priced.unitPrice()));
+        }
+
+        if (pricedLines.isEmpty()) {
+            store.replacePromotions(cart.id(), List.of(), now);
+            store.updateTotals(cart.id(), ZERO, ZERO, ZERO, now);
+            return new CartResult(cart.id(), status, cart.currency(), ZERO, ZERO, ZERO, List.of(), List.of());
         }
 
         Map<Integer, Integer> stockByProduct = catalogRepository.findCatalogByBranch(scope.branchId()).stream()

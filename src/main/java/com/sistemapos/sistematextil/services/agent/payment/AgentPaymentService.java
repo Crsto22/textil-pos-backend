@@ -274,6 +274,38 @@ public class AgentPaymentService {
         sessionRepository.save(session);
     }
 
+    /**
+     * Starts a genuinely new purchase after a previous flow reached a terminal
+     * state. Payment requests keep their own immutable item snapshots, so the
+     * reusable conversational cart can be safely cleared without altering the
+     * expired request or an already-created sale.
+     */
+    @Transactional
+    public void beginNewPurchase(Long sessionId) {
+        CrmWhatsappAgentSession session = requireSession(sessionId, true);
+        if (session.getState() != CrmWhatsappAgentState.CANCELADO
+                && session.getState() != CrmWhatsappAgentState.COMPLETADO) {
+            return;
+        }
+        LocalDateTime now = now();
+        Optional<CartRow> current = cartStore.lockActiveCart(sessionId);
+        if (current.isPresent()) {
+            CartRow cart = current.get();
+            if ("CONFIRMED".equals(cart.status())) {
+                cartStore.reopen(cart.id(), now);
+            } else if (!"DRAFT".equals(cart.status())) {
+                throw new IllegalStateException("El carrito anterior no puede reutilizarse");
+            }
+            cartStore.clearCart(cart.id());
+            cartStore.updateTotals(cart.id(), BigDecimal.ZERO.setScale(2),
+                    BigDecimal.ZERO.setScale(2), BigDecimal.ZERO.setScale(2), now);
+        }
+        applyEvent(session, CrmWhatsappAgentEvent.NUEVA_COMPRA_INICIADA, now);
+        session.setSelectedPaymentMethod(null);
+        session.setSelectedPaymentAccount(null);
+        sessionRepository.save(session);
+    }
+
     /** Reabre el paso de pago conservando el carrito confirmado tras vencer la reserva. */
     @Transactional
     public RetryPaymentResult retryExpiredPayment(Long sessionId, String operationId) {

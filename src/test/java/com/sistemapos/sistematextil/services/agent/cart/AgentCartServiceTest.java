@@ -227,6 +227,28 @@ class AgentCartServiceTest {
         assertEquals(56, result.promotions().getFirst().promotionId());
     }
 
+    @Test
+    void removesAnUnavailableOldLineWithoutBlockingANewValidProduct() {
+        SucursalStock staleStock = stock(60, "LYANA", 303, 70, 0, "VINO", "S");
+        CartItemRow staleItem = new CartItemRow(8L, 303, 1, "LYANA", "VINO", "S",
+                new BigDecimal("70.00"), zero(), new BigDecimal("70.00"));
+        CartItemRow newItem = new CartItemRow(9L, 101, 1, "EMMA", "NEGRO", "M",
+                new BigDecimal("60.00"), new BigDecimal("5.00"), new BigDecimal("60.00"));
+        when(store.findItems(5L)).thenReturn(
+                List.of(staleItem),
+                List.of(staleItem, newItem),
+                List.of(newItem));
+        when(catalogRepository.findVariantsByBranch(7, List.of(303, 101)))
+                .thenReturn(List.of(staleStock, stock));
+        when(catalogRepository.findCatalogByBranch(7)).thenReturn(List.of(staleStock, stock));
+
+        CartResult result = service.addProduct(41L, 101, 1, "op-replace-stale");
+
+        assertEquals(1, result.items().size());
+        assertEquals(101, result.items().getFirst().variantId());
+        verify(store).deleteItem(5L, 303);
+    }
+
     private EcommercePromocionCombo combo(int id, String name, BigDecimal price,
             List<RequiredProduct> products) {
         EcommercePromocionCombo promotion = new EcommercePromocionCombo();

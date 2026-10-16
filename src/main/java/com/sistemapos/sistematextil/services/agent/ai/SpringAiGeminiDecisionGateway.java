@@ -23,8 +23,9 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
             No respondas al cliente, no consultes datos comerciales y no ejecutes ninguna mutacion.
             Interpreta el significado del ultimo pedido usando el contexto completo.
             Usa BUSINESS_INFORMATION solo para politicas, horarios, ubicacion, envios, cuidados o preguntas frecuentes.
-            Si pregunta cuándo saldrá, llegará, estará listo o se despachará un pedido, usa
-            SHARE_DELIVERY_TIMING_CONTACT. Aplica antes y después de comprar, incluso si cita un live o TikTok.
+            Si pregunta cuándo saldrá, llegará, estará listo o se despachará algo, distingue el contexto:
+            usa SHARE_DELIVERY_TIMING_CONTACT antes de comprar y REFER_EXISTING_ORDER_DELIVERY cuando habla de
+            una compra o pedido que ya realizó. Aplica también si cita un live o TikTok.
             Conserva el modelo mencionado en productReference para verificar si está en preventa y la ciudad o
             destino mencionado en shalomDestination.
             Precios, stock, productos, promociones, carrito, pagos y ventas nunca son BUSINESS_INFORMATION:
@@ -36,11 +37,16 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
             commercialAction es una accion semantica, no una palabra clave. Determinala por el significado,
             el ESTADO_ACTUAL y el ultimo mensaje. Usa el historial solo para resolver referencias.
             - SHOW_PRODUCTS: pide catalogo o pregunta que productos existen.
-            - SHOW_PRODUCT: pide datos, colores, tallas o detalles de un modelo. Conserva literalmente cada modelo
+            - SHOW_PRODUCT: pide datos o detalles generales de un modelo. Conserva literalmente cada modelo
               mencionado en productReferences y el primero en productReference. No sustituyas un nombre escrito
-              por otro parecido; Java contrastara el mensaje actual con las familias reales del catalogo. Si el cliente elige un modelo y
-              solicita un color que podria no existir, o aun no proporciona talla, usa SHOW_PRODUCT para comprobar
-              primero el catalogo. Los errores ortograficos no cambian esta regla.
+              por otro parecido; Java contrastara el mensaje actual con las familias reales del catalogo. Si el cliente
+              esta eligiendo para comprar y aun faltan color o talla, usa SHOW_PRODUCT para comprobar primero el
+              catalogo. Las preguntas sobre existencia, colores, tallas o stock usan SHOW_PRODUCT_AVAILABILITY,
+              aunque falte color o talla. Los errores ortograficos no cambian esta regla.
+            - SHOW_PRODUCT_AVAILABILITY: pregunta que colores o tallas quedan, si existe stock, o solicita la
+              disponibilidad de uno o varios modelos. Conserva todos los modelos en productReferences, el primero
+              en productReference y cualquier color o talla mencionados. No calcules la disponibilidad: Java
+              consultara cada producto y variante por separado y construira la respuesta completa.
             - SHOW_PRODUCT_IMAGES: pide expresamente fotos o imagenes de uno o varios modelos. Conserva todos los
               nombres o familias solicitados en productReferences y el primero en productReference. Si tambien
               solicita un color, conservalo en colorReference; Java decidira si primero debe precisar el modelo.
@@ -60,6 +66,9 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
             - ADD_PRODUCT: ya eligio producto, color, talla y cantidad o acepta la cantidad propuesta. Si el último
               mensaje confirma varios productos ofrecidos por el asistente, reúne todos en promotionSelections
               aunque no pertenezcan a una promoción; cada selección debe conservar producto, color, talla y cantidad.
+              Haz lo mismo cuando la clienta solicite directamente dos o más productos en un solo mensaje. Conserva
+              la asociación individual expresada por ella: cada color, talla y cantidad pertenece únicamente al
+              producto que acompaña, sin reutilizar esos atributos para otro modelo.
               No uses
               CHANGE_CART cuando apenas esta eligiendo un modelo o color y todavia no existe una edicion concreta.
             - CHANGE_CART: quiere quitar un producto, vaciar el carrito, cambiar cantidad, color o talla.
@@ -128,16 +137,19 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
               Esta accion comparte el contacto de la asesora para coordinar disponibilidad y costo, pero la IA puede
               seguir informando y vendiendo. No la uses por la palabra generica "delivery" si el contexto significa
               solamente envio o Shalom; interpreta el significado completo.
-            - SHARE_DELIVERY_TIMING_CONTACT: pregunta cuando enviaran, despacharan, entregaran o tendran listo un
-              pedido; pide urgencia; desea recibir o recoger en un dia u hora; o pregunta si llegara para un evento.
-              Aplica antes y despues de comprar. Usa intent=DELIVERY_METHOD, requiresHumanHelp=false y conserva en
+            - SHARE_DELIVERY_TIMING_CONTACT: antes de comprar pregunta cuando enviarian, despacharian, entregarian
+              o tendrian listo un producto; pide urgencia; desea recibir o recoger en un dia u hora; o pregunta si
+              llegaria para un evento. Usa intent=DELIVERY_METHOD, requiresHumanHelp=false y conserva en
               productReference el modelo mencionado para que Java consulte su preventa. Conserva una ciudad o
               destino mencionado en shalomDestination. Java comunicara que los productos con disponibilidad
               inmediata se despachan aproximadamente en 1 a 4 dias segun el volumen de pedidos, o la fecha verificada
               de inicio de despacho si es preventa. Ese plazo corresponde al despacho desde Kiments, nunca al tiempo
               de traslado o llegada. No prometas un dia exacto de llegada, prioridad ni entrega: despues del despacho
               el tiempo depende de Shalom. Una fecha mencionada por la clienta, un live o TikTok no se confirma.
-            - REFER_EXISTING_ORDER_DELIVERY es una accion historica: no la uses para decisiones nuevas.
+            - REFER_EXISTING_ORDER_DELIVERY: la clienta habla de su compra o pedido ya realizado y pregunta cuando
+              lo enviaran, despacharan o entregaran, o solicita conocer su estado logistico. Usa
+              intent=DELIVERY_METHOD y requiresHumanHelp=false. Java comprobara si la venta fue registrada por esta
+              asistente; no supongas que existe por lo dicho en el mensaje.
             - REQUEST_WHOLESALE_SUPPORT: solicita expresamente una compra al por mayor, precios mayoristas,
               catalogo mayorista, una cotizacion por volumen o productos para negocio o reventa. Usa
               intent=SUPPORT_REQUEST y requiresHumanHelp=false. Interpreta el significado completo: pedir varios productos para una compra

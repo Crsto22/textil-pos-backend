@@ -352,6 +352,52 @@ class AgentConversationOrchestratorTest {
         assertTrue(turn.getValue().customerMessage().contains("https://kiments.com.pe/productos"));
     }
 
+    @Test
+    void validatesReadyStockDeliveryGuidanceForAnAgentSale() {
+        var grounding = deliveryGrounding("READY_STOCK");
+
+        assertEquals("", AgentConversationOrchestrator.deliveryTimingCorrectionInstruction(
+                grounding,
+                "Tu pedido se despacha aproximadamente en 1 a 3 días. El área de envíos se comunicará contigo."));
+        assertFalse(AgentConversationOrchestrator.deliveryTimingCorrectionInstruction(
+                grounding, "Mañana saldrá tu pedido.").isBlank());
+    }
+
+    @Test
+    void preventsAnExactDateForARegisteredPreorder() {
+        var grounding = deliveryGrounding("PREORDER");
+
+        assertEquals("", AgentConversationOrchestrator.deliveryTimingCorrectionInstruction(
+                grounding,
+                "Tu pedido se enviará según la fecha indicada en la preventa y el área de envíos se comunicará contigo."));
+        assertFalse(AgentConversationOrchestrator.deliveryTimingCorrectionInstruction(
+                grounding,
+                "Tu pedido saldrá el 21 de octubre y el área de envíos se comunicará contigo.").isBlank());
+    }
+
+    @Test
+    void refersAnOrderNotLinkedToTheAgentWithoutPromisingShippingContact() {
+        var grounding = deliveryGrounding("NOT_LINKED_TO_AGENT");
+
+        assertEquals("", AgentConversationOrchestrator.deliveryTimingCorrectionInstruction(
+                grounding, "Para revisar ese pedido, comunícate con nuestra asesora al 933918047."));
+        assertFalse(AgentConversationOrchestrator.deliveryTimingCorrectionInstruction(
+                grounding, "El área de envíos se comunicará contigo en 1 a 3 días.").isBlank());
+    }
+
+    private AgentVerifiedGroundingService.Grounding deliveryGrounding(String policy) {
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.DELIVERY_METHOD, "consultar pedido", "", "", "", 0, "",
+                java.util.List.of(),
+                com.sistemapos.sistematextil.services.agent.ai.AgentCartAction.NONE,
+                AgentCommercialAction.REFER_EXISTING_ORDER_DELIVERY,
+                "", "", "", "", "", "", "", "",
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL, 99, false);
+        return new AgentVerifiedGroundingService.Grounding(
+                decision, "{\"orderDeliveryGuidance\":{\"policy\":\"" + policy + "\"}}",
+                java.util.List.of(), 0, false);
+    }
+
     private static final class Fixture {
         final AgentJobCoordinator coordinator = mock(AgentJobCoordinator.class);
         final AgentJobStore jobs = mock(AgentJobStore.class);

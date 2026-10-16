@@ -386,7 +386,34 @@ class AgentTurnFinalizerTest {
 
         int expectedOrdinal = Math.floorMod(java.util.Objects.hash("AGENT_FAILURE", 41L), Integer.MAX_VALUE);
         verify(outbox).enqueueText(8L, null, 99L, expectedOrdinal,
-                "No entendi bien tu mensaje, bella. ¿Puedes indicarme nuevamente "
-                + "el producto, color o talla que deseas?");
+                "No pude completar esta acción, bella. Tu mensaje sí fue recibido; "
+                + "puedes intentarlo nuevamente o elegir otro producto.");
+    }
+
+    @Test
+    void explainsRealStockFailureInsteadOfClaimingTheMessageWasNotUnderstood() {
+        AgentOutboxService outbox = mock(AgentOutboxService.class);
+        CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        AgentRuntimeConfigService runtime = mock(AgentRuntimeConfigService.class);
+        CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
+        session.setIdAgentSession(8L);
+        session.setActiveSlot(true);
+        CrmWhatsappConversation conversation = new CrmWhatsappConversation();
+        conversation.setIdConversation(20L);
+        session.setConversation(conversation);
+        when(sessions.findForUpdate(8L)).thenReturn(java.util.Optional.of(session));
+        when(runtime.forSession(8L)).thenReturn(new AgentRuntimeConfigService.RuntimeConfig(false,
+                com.sistemapos.sistematextil.model.CrmWhatsappAgentActivationStage.AUTOMATIC_SALES,
+                java.util.Set.of(), 100, 5000, 240, 85, false, 3, 5, 15, 12, 6));
+        AgentTurnFinalizer finalizer = new AgentTurnFinalizer(outbox, mock(AgentCatalogQueryService.class), sessions,
+                mock(CrmWhatsappAgentStateMachine.class), runtime, mock(JdbcTemplate.class));
+        JobLease lease = new JobLease(42L, 8L, 100L, 1, "worker:lease", LocalDateTime.now());
+
+        finalizer.failPermanently(lease, "Stock insuficiente; disponible: 0");
+
+        int expectedOrdinal = Math.floorMod(java.util.Objects.hash("AGENT_FAILURE", 42L), Integer.MAX_VALUE);
+        verify(outbox).enqueueText(8L, null, 100L, expectedOrdinal,
+                "El producto seleccionado ya no cuenta con stock suficiente, bella. "
+                + "Puedes elegir otro color, talla o modelo y continuaré con tu pedido.");
     }
 }

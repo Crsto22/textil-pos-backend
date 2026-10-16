@@ -81,9 +81,22 @@ public class AgentJobCoordinator {
                 : runtimeConfig.forSession(lease.sessionId()).jobMaxAttempts();
         if (error instanceof AiProviderException providerError && !providerError.isRetryable()) {
             effectiveMax = 1;
+        } else if (isDeterministicBusinessError(error)) {
+            // Business/state validation errors are deterministic. Repeating the
+            // same turn cannot heal them and previously produced three identical
+            // tool calls before showing a misleading generic response.
+            effectiveMax = 1;
         }
         return jobStore.failOrRetry(
                 lease.jobId(), lease.workerId(), now, retryAt, effectiveMax, safeMessage(error));
+    }
+
+    private boolean isDeterministicBusinessError(Throwable error) {
+        if (error instanceof IllegalArgumentException) return true;
+        if (!(error instanceof IllegalStateException)) return false;
+        String message = safeMessage(error).toLowerCase(java.util.Locale.ROOT);
+        return message.contains("carrito") || message.contains("sesion") || message.contains("sesión")
+                || message.contains("stock") || message.contains("reserva") || message.contains("pago");
     }
 
     public RecoveryResult recoverExpired() {

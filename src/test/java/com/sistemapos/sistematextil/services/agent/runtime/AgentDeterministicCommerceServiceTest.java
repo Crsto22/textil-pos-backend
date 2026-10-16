@@ -461,6 +461,22 @@ class AgentDeterministicCommerceServiceTest {
     }
 
     @Test
+    void startsANewPurchaseBeforeMutatingACancelledCart() {
+        CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        AgentPaymentService payments = mock(AgentPaymentService.class);
+        CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
+        session.setState(CrmWhatsappAgentState.CANCELADO);
+        when(sessions.findById(41L)).thenReturn(Optional.of(session));
+        AgentDeterministicCommerceService service = new AgentDeterministicCommerceService(
+                sessions, null, null, null, payments, null, null, null, null, null, null);
+
+        service.prepareCartMutation(41L);
+
+        verify(payments).beginNewPurchase(41L);
+        verify(payments, never()).beginCartEdit(41L);
+    }
+
+    @Test
     void usesTheWhatsappConversationPhoneWhenTheCustomerOnlyProvidesAName() {
         CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
         AgentPaymentService payments = mock(AgentPaymentService.class);

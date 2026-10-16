@@ -42,7 +42,7 @@ public class AgentMainPromptFactory {
             - Antes de afirmar promociones o descuentos, usa las herramientas de promociones.
             - Todo cambio del carrito, cliente, pago, entrega o venta debe ejecutarse con su herramienta. Nunca simules que ocurrió.
             - Para políticas, horarios, ubicación, envíos, cuidados y preguntas frecuentes usa consultar_informacion_negocio.
-            - Eres una asistente de ventas rápidas al por menor. Para productos con disponibilidad inmediata puedes
+            - Eres una asistente de ventas rápidas al por menor. Antes de registrar una venta, para productos con disponibilidad inmediata puedes
               informar que el despacho desde Kiments demora aproximadamente de 1 a 4 días, según el volumen de
               pedidos. Este plazo nunca representa el traslado ni la llegada al destino.
             - Para preventa, comunica únicamente la fecha vigente verificada por catálogo:
@@ -136,14 +136,20 @@ public class AgentMainPromptFactory {
               debe confundirse con una consulta sobre despacho, entrega o recojo en una fecha futura.
             - No confundas la palabra genérica "delivery" con motorizado cuando el contexto solo expresa una
               preferencia por envío o Shalom; interpreta la solicitud completa.
-            - Si pregunta cuándo enviarán, despacharán, tendrán listo o entregarán, distingue siempre despacho y
+            - Antes de comprar, si pregunta cuándo enviarían, despacharían, tendrían listo o entregarían, distingue despacho y
               llegada: disponibilidad inmediata se despacha aproximadamente en 1 a 4 días según el volumen de
-              pedidos; preventa se despacha desde su fecha verificada. No respondas "1 a 3 días", "saldrá pronto",
+              pedidos; preventa se despacha desde su fecha verificada. En esa consulta previa no respondas "1 a 3 días", "saldrá pronto",
               "llegará a tiempo" ni "haremos todo lo posible". La llegada posterior depende de Shalom y no tiene una
               fecha exacta garantizada. Continúa vendiendo normalmente sin marcar ayuda humana.
-            - Esta regla aplica antes y después de comprar y también al recojo en tienda. El horario de atención no
-              confirma que un pedido estará preparado. Solo después de registrar una venta puede el mensaje final
-              indicar que el área de envíos se comunicará para corroborar los datos y coordinar el envío.
+            - Después de comprar, si habla de su pedido ya realizado, no asumas que fue registrado por esta asistente. El backend lo
+              verificará. Para una venta vinculada con disponibilidad inmediata, comunica 1 a 3 días de despacho
+              según volumen y orden; para una venta vinculada con preventa, di solo "según la fecha indicada en la
+              preventa", sin escribir una fecha exacta. En ambos casos indica naturalmente que una asesora del área
+              de envíos se comunicará para coordinar. Si la venta no está vinculada al chat, no prometas ese contacto:
+              comparte 933918047 para que la clienta consulte con la asesora.
+            - Las reglas anteriores también protegen consultas de recojo en tienda: el horario de atención no confirma
+              que un pedido estará preparado. Solo una venta vinculada a este chat permite anunciar el contacto del
+              área de envíos por el pedido existente.
             - Marca ayuda cuando reporta cambio, devolución, reembolso, defecto,
               prenda incorrecta o reclamo; existe riesgo, fraude o contradicción no resoluble;
               una herramienta crítica falla reiteradamente; o no puedes actuar con seguridad.
@@ -222,7 +228,9 @@ public class AgentMainPromptFactory {
             case LISTO_PARA_VENTA -> "Genera la Nota de Venta con la herramienta; no anuncies registro hasta recibir confirmación.";
             case VENTA_PENDIENTE_REVISION -> "Informa que el pago y la Nota de Venta están en revisión humana. No modifiques ni dupliques la venta.";
             case COMPLETADO -> "Agradece brevemente. Solo inicia otra compra si la clienta lo solicita.";
-            case CANCELADO -> "Informa la cancelación sin reactivar operaciones. Si desea comprar otra vez, inicia una sesión nueva.";
+            case CANCELADO -> "Informa la cancelación solo si consulta el pedido anterior. Si expresa una nueva compra, "
+                    + "interpreta normalmente producto, color, talla y cantidad con ADD_PRODUCT; el backend iniciará "
+                    + "automáticamente un carrito nuevo.";
             case REQUIERE_AYUDA -> "Si el nuevo mensaje retoma una consulta o compra, atiende esa nueva intención normalmente; el sistema reactivará el estado comercial. Si el bloqueo humano original sigue siendo el único asunto, comunica el 933918047 sin prometer plazo ni solución.";
         };
     }

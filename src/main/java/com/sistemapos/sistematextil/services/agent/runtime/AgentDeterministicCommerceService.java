@@ -223,7 +223,8 @@ public class AgentDeterministicCommerceService {
             case SHARE_ADVISOR_CONTACT -> advisorContact();
             case SHARE_INVOICE_CONTACT -> invoiceContact();
             case SHARE_MOTORIZED_CONTACT -> motorizedContact();
-            case SHARE_DELIVERY_TIMING_CONTACT, REFER_EXISTING_ORDER_DELIVERY -> deliveryTimingContact();
+            case SHARE_DELIVERY_TIMING_CONTACT -> deliveryTimingContact();
+            case REFER_EXISTING_ORDER_DELIVERY -> Outcome.notHandled();
             case REQUEST_WHOLESALE_SUPPORT -> wholesaleContact();
             case CHANGE_CART -> beginCartEdit(sessionId);
             default -> Outcome.notHandled();
@@ -239,7 +240,7 @@ public class AgentDeterministicCommerceService {
                     HAS_PREVIOUS_PENDING_ORDER, NO_PREVIOUS_PENDING_ORDER,
                     ACCEPT_FILM, DECLINE_FILM, SHARE_ADVISOR_CONTACT, SHARE_INVOICE_CONTACT,
                     SHARE_MOTORIZED_CONTACT,
-                    SHARE_DELIVERY_TIMING_CONTACT, REFER_EXISTING_ORDER_DELIVERY,
+                    SHARE_DELIVERY_TIMING_CONTACT,
                     REQUEST_WHOLESALE_SUPPORT -> true;
             default -> false;
         };
@@ -254,7 +255,10 @@ public class AgentDeterministicCommerceService {
     /** Reabre el carrito confirmado antes de ejecutar una mutación concreta. */
     public void prepareCartMutation(Long sessionId) {
         CrmWhatsappAgentState state = requireSession(sessionId).getState();
-        if (state == CrmWhatsappAgentState.ESPERANDO_METODO_PAGO
+        if (state == CrmWhatsappAgentState.CANCELADO
+                || state == CrmWhatsappAgentState.COMPLETADO) {
+            payments.beginNewPurchase(sessionId);
+        } else if (state == CrmWhatsappAgentState.ESPERANDO_METODO_PAGO
                 || state == CrmWhatsappAgentState.ESPERANDO_COMPROBANTE) {
             payments.beginCartEdit(sessionId);
         }

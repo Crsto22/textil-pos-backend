@@ -53,11 +53,14 @@ class AgentMainPromptFactoryTest {
         assertTrue(prompt.systemInstruction().contains("Tener varios productos en una compra personal no la convierte en mayorista"));
         assertTrue(prompt.systemInstruction().contains("motorizado"));
         assertTrue(prompt.systemInstruction().contains("No confundas la palabra genérica \"delivery\""));
-        assertTrue(prompt.systemInstruction().contains("antes y después de comprar"));
+        assertTrue(prompt.systemInstruction().contains("Antes de comprar"));
+        assertTrue(prompt.systemInstruction().contains("Después de comprar"));
         assertTrue(prompt.systemInstruction().contains("1 a 4 días"));
+        assertTrue(prompt.systemInstruction().contains("1 a 3 días de despacho"));
+        assertTrue(prompt.systemInstruction().contains("según la fecha indicada en la"));
         assertTrue(prompt.systemInstruction().contains("Este plazo nunca representa el traslado ni la llegada"));
         assertTrue(prompt.systemInstruction().contains("el tiempo de llegada depende de Shalom"));
-        assertTrue(prompt.systemInstruction().contains("El horario de atención no"));
+        assertTrue(prompt.systemInstruction().contains("el horario de atención no"));
         assertTrue(prompt.systemInstruction().contains("Continúa vendiendo"));
         assertTrue(prompt.systemInstruction().contains("933918047"));
         assertTrue(prompt.systemInstruction().contains("catálogo mayorista"));

@@ -22,6 +22,9 @@ public interface CrmWhatsappFulfillmentRepository extends JpaRepository<CrmWhats
 
     Optional<CrmWhatsappFulfillment> findByAgentSession_IdAgentSession(Long sessionId);
 
+    Optional<CrmWhatsappFulfillment> findFirstByConversation_IdConversationAndVentaIsNotNullOrderByIdFulfillmentDesc(
+            Long conversationId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("""
             select f from CrmWhatsappFulfillment f

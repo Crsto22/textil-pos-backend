@@ -62,12 +62,29 @@ class AgentJobCoordinatorTest {
         when(store.failOrRetry(eq(2L), eq("worker-1:lease-2"), eq(NOW), any(), eq(3), eq("fallo temporal")))
                 .thenReturn(FailureResult.RETRY_SCHEDULED);
 
-        FailureResult result = coordinator.fail(secondAttempt, new IllegalStateException("fallo temporal"));
+        FailureResult result = coordinator.fail(secondAttempt, new RuntimeException("fallo temporal"));
 
         assertEquals(FailureResult.RETRY_SCHEDULED, result);
         ArgumentCaptor<LocalDateTime> retryAt = ArgumentCaptor.forClass(LocalDateTime.class);
         verify(store).failOrRetry(eq(2L), eq("worker-1:lease-2"), eq(NOW), retryAt.capture(), eq(3), eq("fallo temporal"));
         assertEquals(NOW.plusSeconds(4), retryAt.getValue());
+    }
+
+    @Test
+    void doesNotRetryDeterministicBusinessOrStateErrors() {
+        AgentJobStore store = mock(AgentJobStore.class);
+        AgentJobCoordinator coordinator = coordinator(store);
+        JobLease lease = new JobLease(2L, 10L, 100L, 1, "worker-1:lease-2", NOW.plusSeconds(90));
+        when(store.failOrRetry(eq(2L), eq("worker-1:lease-2"), eq(NOW), any(), eq(1),
+                eq("El carrito no puede modificarse en el estado CANCELADO")))
+                .thenReturn(FailureResult.FAILED_PERMANENTLY);
+
+        FailureResult result = coordinator.fail(lease,
+                new IllegalStateException("El carrito no puede modificarse en el estado CANCELADO"));
+
+        assertEquals(FailureResult.FAILED_PERMANENTLY, result);
+        verify(store).failOrRetry(eq(2L), eq("worker-1:lease-2"), eq(NOW), any(), eq(1),
+                eq("El carrito no puede modificarse en el estado CANCELADO"));
     }
 
     @Test

@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -237,5 +238,27 @@ class AgentPaymentServiceTest {
         assertEquals(88L, result.expiredRequestId());
         assertEquals(CrmWhatsappAgentState.ESPERANDO_METODO_PAGO, session.getState());
         assertEquals(CrmWhatsappAgentEvent.SOLICITUD_PAGO_REINTENTADA, session.getLastEvent());
+    }
+
+    @Test
+    void startsANewPurchaseAfterExpiryWithoutReusingThePreviousCartItems() {
+        session.setState(CrmWhatsappAgentState.CANCELADO);
+        session.setLastEvent(CrmWhatsappAgentEvent.SOLICITUD_PAGO_EXPIRADA);
+        session.setSelectedPaymentMethod(methodConfig.getMetodoPago());
+        session.setSelectedPaymentAccount(account);
+        CartRow cart = new CartRow(5L, 41L, "CONFIRMED", "PEN",
+                new BigDecimal("70.00"), BigDecimal.ZERO, new BigDecimal("70.00"), 1L);
+        when(cartStore.lockActiveCart(41L)).thenReturn(Optional.of(cart));
+
+        service.beginNewPurchase(41L);
+
+        assertEquals(CrmWhatsappAgentState.IDLE, session.getState());
+        assertEquals(CrmWhatsappAgentEvent.NUEVA_COMPRA_INICIADA, session.getLastEvent());
+        assertNull(session.getSelectedPaymentMethod());
+        assertNull(session.getSelectedPaymentAccount());
+        verify(cartStore).reopen(any(), any());
+        verify(cartStore).clearCart(5L);
+        verify(cartStore).updateTotals(eq(5L), eq(BigDecimal.ZERO.setScale(2)),
+                eq(BigDecimal.ZERO.setScale(2)), eq(BigDecimal.ZERO.setScale(2)), any());
     }
 }

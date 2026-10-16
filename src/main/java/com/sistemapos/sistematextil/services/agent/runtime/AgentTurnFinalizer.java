@@ -173,10 +173,24 @@ public class AgentTurnFinalizer {
             // orden completo del outbox de la conversacion.
             int ordinal = Math.floorMod(Objects.hash("AGENT_FAILURE", lease.jobId()), Integer.MAX_VALUE);
             outbox.enqueueText(lease.sessionId(), null, lease.anchorMessageId(), ordinal,
-                    "No entendi bien tu mensaje, bella. ¿Puedes indicarme nuevamente "
-                    + "el producto, color o talla que deseas?");
+                    recoverableCustomerMessage(reason));
         }
         sessions.save(session);
+    }
+
+    private String recoverableCustomerMessage(String reason) {
+        String normalized = clean(reason).toLowerCase(java.util.Locale.ROOT);
+        if (normalized.contains("stock insuficiente") || normalized.contains("ya no esta disponible")) {
+            return "El producto seleccionado ya no cuenta con stock suficiente, bella. "
+                    + "Puedes elegir otro color, talla o modelo y continuaré con tu pedido.";
+        }
+        if (normalized.contains("carrito no puede modificarse")
+                || normalized.contains("carrito anterior no puede reutilizarse")) {
+            return "Tu compra anterior ya finalizó. Envíame nuevamente el producto, color y talla "
+                    + "que deseas para iniciar un pedido nuevo, bella.";
+        }
+        return "No pude completar esta acción, bella. Tu mensaje sí fue recibido; "
+                + "puedes intentarlo nuevamente o elegir otro producto.";
     }
 
     private void escalate(CrmWhatsappAgentSession session, Long jobId, String reason) {

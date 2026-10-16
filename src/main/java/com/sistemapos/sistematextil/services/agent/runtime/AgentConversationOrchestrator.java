@@ -154,10 +154,17 @@ public class AgentConversationOrchestrator {
                         - Para preventas, di "despachos a partir de [fecha]". La fecha es referencial y el despacho
                           depende del volumen de pedidos. Nunca digas "llega el [fecha]" ni garantices que saldra
                           exactamente ese dia.
-                        - Para disponibilidad inmediata, el único plazo permitido es el despacho aproximado desde
-                          Kiments en 1 a 4 días según el volumen de pedidos. Para preventa, usa únicamente el inicio
-                          referencial verificado. Nunca presentes esos plazos como tiempo de traslado o llegada:
-                          después del despacho, la llegada depende de Shalom y no tiene un día exacto garantizado.
+                        - Cuando NO existe orderDeliveryGuidance, se trata de una consulta previa a la compra: para
+                          disponibilidad inmediata, el plazo permitido es el despacho aproximado desde Kiments en
+                          1 a 4 días según el volumen de pedidos; para preventa, usa el inicio referencial verificado.
+                          Nunca presentes esos plazos como tiempo de traslado o llegada: después del despacho, la
+                          llegada depende de Shalom y no tiene un día exacto garantizado.
+                        - Si existe orderDeliveryGuidance, redacta una respuesta breve y natural siguiendo solo su
+                          policy. READY_STOCK comunica despacho aproximado de 1 a 3 días según volumen y orden de
+                          atención. PREORDER dice solamente que el envío se realizará según la fecha indicada en la
+                          preventa; no escribas una fecha exacta. En ambos casos indica que una asesora del área de
+                          envíos se comunicará para coordinar. NOT_LINKED_TO_AGENT no informa plazos ni promete
+                          contacto: explica que no encontraste una venta registrada por este chat y comparte 933918047.
                         - Si la clienta solicita todos los productos de un grupo, incluye todos los productos presentes
                           en la evidencia; no agregues modelos, tipos de prenda ni variantes que no aparezcan alli.
                         - Cuando commercialAction sea SHOW_PRODUCTS, incluye siempre https://kiments.com.pe/productos
@@ -180,13 +187,15 @@ public class AgentConversationOrchestrator {
                 grounding.evidenceJson(), response.customerMessage());
         String mediaCorrection = mediaCorrectionInstruction(grounding, response.customerMessage());
         String catalogUrlCorrection = catalogUrlCorrectionInstruction(grounding, response.customerMessage());
+        String deliveryCorrection = deliveryTimingCorrectionInstruction(grounding, response.customerMessage());
         if (!priceValidation.valid() || !promotionValidation.valid() || !mediaCorrection.isBlank()
-                || !catalogUrlCorrection.isBlank()) {
+                || !catalogUrlCorrection.isBlank() || !deliveryCorrection.isBlank()) {
             String correctionInstruction = String.join("\n",
                     priceValidation.valid() ? "" : priceValidation.correctionInstruction(),
                     promotionValidation.valid() ? "" : promotionValidation.correctionInstruction(),
                     mediaCorrection,
-                    catalogUrlCorrection).trim();
+                    catalogUrlCorrection,
+                    deliveryCorrection).trim();
             AgentMainPrompt correctionPrompt = groundingCorrectionPrompt(
                     prompt, response.customerMessage(), correctionInstruction);
             var corrected = gateway.respond(context.connectionId(), correctionPrompt, maxTools);
@@ -200,13 +209,17 @@ public class AgentConversationOrchestrator {
                     grounding, correctedResponse.customerMessage());
             String correctedCatalogUrlValidation = catalogUrlCorrectionInstruction(
                     grounding, correctedResponse.customerMessage());
+            String correctedDeliveryValidation = deliveryTimingCorrectionInstruction(
+                    grounding, correctedResponse.customerMessage());
             if (!correctedValidation.valid() || !correctedPromotionValidation.valid()
-                    || !correctedMediaValidation.isBlank() || !correctedCatalogUrlValidation.isBlank()) {
+                    || !correctedMediaValidation.isBlank() || !correctedCatalogUrlValidation.isBlank()
+                    || !correctedDeliveryValidation.isBlank()) {
                 throw new IllegalStateException("Gemini contradijo la evidencia comercial despues de corregir la redaccion: "
                         + String.join(" ", correctedValidation.correctionInstruction(),
                                 correctedPromotionValidation.correctionInstruction(),
                                 correctedMediaValidation,
-                                correctedCatalogUrlValidation).trim());
+                                correctedCatalogUrlValidation,
+                                correctedDeliveryValidation).trim());
             }
             generated = new AgentResponseGateway.AgentResponseResult(
                     corrected.provider(), corrected.model(), generated.latencyMs() + corrected.latencyMs(),
@@ -364,6 +377,45 @@ public class AgentConversationOrchestrator {
         return "La clienta solicito el catalogo o la lista general de productos. Conserva la lista real y agrega "
                 + "https://kiments.com.pe/productos como galeria completa. Redacta naturalmente y sigue ayudando "
                 + "con la compra; no uses una plantilla fija.";
+    }
+
+    static String deliveryTimingCorrectionInstruction(AgentVerifiedGroundingService.Grounding grounding,
+            String customerMessage) {
+        if (grounding == null || grounding.decision() == null
+                || grounding.decision().commercialAction()
+                        != AgentCommercialAction.REFER_EXISTING_ORDER_DELIVERY) return "";
+        String evidence = grounding.evidenceJson() == null ? "" : grounding.evidenceJson();
+        String response = normalizeText(customerMessage);
+        if (evidence.contains("NOT_LINKED_TO_AGENT")) {
+            if (response.contains("933918047") && !response.contains("1 a 3")
+                    && !containsShippingContact(response)) return "";
+            return "No existe una venta vinculada a este chat. No informes plazos ni prometas contacto del area "
+                    + "de envios; comparte el 933918047 para que una asesora revise el pedido.";
+        }
+        if (evidence.contains("READY_STOCK")) {
+            if (response.contains("1 a 3") && containsShippingContact(response)) return "";
+            return "La venta fue registrada por la asistente y es de disponibilidad inmediata. Comunica despacho "
+                    + "aproximado de 1 a 3 dias segun volumen y orden, e indica que una asesora del area de envios "
+                    + "contactara a la clienta para coordinar. Redacta naturalmente, sin copiar una plantilla fija.";
+        }
+        if (evidence.contains("PREORDER")) {
+            boolean exactDate = response.matches(".*\\b(enero|febrero|marzo|abril|mayo|junio|julio|agosto|"
+                    + "septiembre|octubre|noviembre|diciembre)\\b.*")
+                    || response.matches(".*\\b\\d{1,2}[/\\-]\\d{1,2}([/\\-]\\d{2,4})?\\b.*");
+            if (response.contains("fecha indicada") && containsShippingContact(response)
+                    && !response.contains("1 a 3") && !response.contains("1 a 4") && !exactDate) return "";
+            return "La venta registrada incluye preventa. Di solamente que el envio se realizara segun la fecha "
+                    + "indicada en la preventa y que una asesora del area de envios contactara a la clienta para "
+                    + "coordinar. No escribas una fecha exacta ni un plazo de dias. Redacta naturalmente.";
+        }
+        return "";
+    }
+
+    private static boolean containsShippingContact(String response) {
+        if (response == null || !response.contains("envios")) return false;
+        return response.contains("comunicara") || response.contains("contactara")
+                || response.contains("escribira") || response.contains("llamara")
+                || response.contains("pondra en contacto") || response.contains("coordinara contigo");
     }
 
     private List<AgentMediaRequest> verifiedMedia(List<AgentMediaRequest> verified) {

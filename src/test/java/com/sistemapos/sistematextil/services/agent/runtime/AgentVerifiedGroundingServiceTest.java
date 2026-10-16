@@ -202,6 +202,92 @@ class AgentVerifiedGroundingServiceTest {
     }
 
     @Test
+    void buildsCompleteAvailabilityForEveryRequestedProductAndSizeWithoutGeminiRedaction() {
+        AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.PRODUCT_DETAILS, "colores disponibles en talla S", "ALICE LISO",
+                List.of("ALICE LISO", "LYANA", "EMMA"), "", "S", 0, "", List.of(),
+                AgentCartAction.NONE, AgentCommercialAction.SHOW_PRODUCT,
+                "", "", "", "", "", "", "", "", List.of(),
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL,
+                "", List.of(), "", 99, false);
+        String conversation = "LOTE_ACTUAL_AGRUPADO:\n"
+                + "Que colores le queda en Alice Liso y Lyana y Emma talla S";
+        when(decisions.interpret(4L, conversation)).thenReturn(
+                new AgentInterpretationResult("GEMINI", "model", "DB", 10, 0, decision));
+
+        ProductSummary alice = new ProductSummary(46, "ALICE LISO", "", "CONJUNTO",
+                false, null, 90D, 12, List.of("GUINDA", "MARRON", "PERLA", "PLATA"), List.of("S"));
+        ProductSummary lyana = new ProductSummary(60, "LYANA", "", "CONJUNTO",
+                false, null, 70D, 14,
+                List.of("AZUL", "CAMEL", "GRIS OSCURO", "HUESO", "MARRON", "NUDE", "PERLA"),
+                List.of("S"));
+        ProductSummary emma = new ProductSummary(59, "EMMA", "", "CONJUNTO",
+                false, null, 67D, 20,
+                List.of("AZUL", "BEIGE CLARO", "CAMEL CLARO", "CHOCOLATE", "GRIS OSCURO"),
+                List.of("S"));
+        ProductSummary aliceRayas = new ProductSummary(58, "ALICE RAYAS", "", "CONJUNTO",
+                false, null, 90D, 20, List.of("AZUL"), List.of("S"));
+
+        when(catalog.searchProducts(9L, "ALICE LISO", 20,
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL)).thenReturn(
+                new ProductSearchResult("ALICE LISO", 1, List.of(alice, aliceRayas), false));
+        when(catalog.searchProducts(9L, "LYANA", 20,
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL)).thenReturn(
+                new ProductSearchResult("LYANA", 1, List.of(lyana), false));
+        when(catalog.searchProducts(9L, "EMMA", 20,
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL)).thenReturn(
+                new ProductSearchResult("EMMA", 1, List.of(emma), false));
+
+        when(catalog.getVariants(9L, 46, "", "S")).thenReturn(new VariantResult(
+                46, "ALICE LISO", "", "S", List.of(
+                availableVariant(4601, "GUINDA", "S", 90D, 1),
+                availableVariant(4602, "MARRON", "S", 90D, 2),
+                availableVariant(4603, "PERLA", "S", 90D, 6),
+                availableVariant(4604, "PLATA", "S", 90D, 3))));
+        when(catalog.getVariants(9L, 60, "", "S")).thenReturn(new VariantResult(
+                60, "LYANA", "", "S", List.of(
+                availableVariant(6001, "AZUL", "S", 70D, 1),
+                availableVariant(6002, "CAMEL", "S", 70D, 3),
+                availableVariant(6003, "GRIS OSCURO", "S", 70D, 2),
+                availableVariant(6004, "HUESO", "S", 70D, 2),
+                availableVariant(6005, "MARRON", "S", 70D, 2),
+                availableVariant(6006, "NUDE", "S", 70D, 2),
+                availableVariant(6007, "PERLA", "S", 70D, 2),
+                new VariantSummary(6008, "LY-NEG-S", "NEGRO", "S", 70D, 70D, 0, false))));
+        when(catalog.getVariants(9L, 59, "", "S")).thenReturn(new VariantResult(
+                59, "EMMA", "", "S", List.of(
+                availableVariant(5901, "AZUL", "S", 67D, 10),
+                availableVariant(5902, "BEIGE CLARO", "S", 67D, 2),
+                availableVariant(5903, "CAMEL CLARO", "S", 67D, 9),
+                availableVariant(5904, "CHOCOLATE", "S", 67D, 11),
+                availableVariant(5905, "GRIS OSCURO", "S", 67D, 3))));
+
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
+                mock(AgentCartService.class), passThroughAudit());
+
+        var result = service.ground(4L, 9L, 30L, conversation);
+
+        assertEquals(AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY,
+                result.decision().commercialAction());
+        assertEquals(6, result.verifiedToolCalls());
+        assertTrue(result.media().isEmpty());
+        assertTrue(result.customerMessage().contains("**ALICE LISO** (S/ 90.00)"));
+        assertTrue(result.customerMessage().contains("**LYANA** (S/ 70.00)"));
+        assertTrue(result.customerMessage().contains("- NUDE"));
+        assertTrue(result.customerMessage().contains("- PERLA"));
+        assertTrue(result.customerMessage().contains("**EMMA** (S/ 67.00)"));
+        assertTrue(result.customerMessage().contains("- BEIGE CLARO"));
+        assertTrue(result.customerMessage().contains("- CAMEL CLARO"));
+        assertTrue(result.customerMessage().contains("- GRIS OSCURO"));
+        assertFalse(result.customerMessage().contains("ALICE RAYAS"));
+        assertFalse(result.customerMessage().contains("LYANA** (S/ 70.00)\n- Actualmente"));
+        assertTrue(result.evidenceJson().contains("requestedVariantAvailability"));
+    }
+
+    @Test
     void wholesaleActionKeepsAutomaticRetailAttentionAvailable() {
         AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
         AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
@@ -622,6 +708,8 @@ class AgentVerifiedGroundingServiceTest {
                     () -> mock(AgentDeterministicCommerceService.class));
             context.registerBean(ProductSizeGuideQueryService.class,
                     () -> mock(ProductSizeGuideQueryService.class));
+            context.registerBean(AgentOrderDeliveryQueryService.class,
+                    () -> mock(AgentOrderDeliveryQueryService.class));
             context.registerBean(AgentToolCallAuditService.class, () -> mock(AgentToolCallAuditService.class));
             context.register(AgentVerifiedGroundingService.class);
             context.refresh();
@@ -974,6 +1062,11 @@ class AgentVerifiedGroundingServiceTest {
     private ProductDetail productWithGuide(Integer id, String name, String guideUrl) {
         return new ProductDetail(id, name, "", "CONJUNTO", false, null, guideUrl, null,
                 List.of(), List.of("S"), 10, 75D, 1);
+    }
+
+    private VariantSummary availableVariant(
+            Integer id, String color, String size, Double price, int stock) {
+        return new VariantSummary(id, "SKU-" + id, color, size, price, price, stock, stock > 0);
     }
 
     private AgentToolCallAuditService passThroughAudit() {

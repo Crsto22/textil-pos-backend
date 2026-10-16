@@ -26,7 +26,7 @@ class AgentRuntimeConfigServiceTest {
 
         assertFalse(config.enabled());
         assertEquals(5000, config.messageGroupingMs());
-        assertEquals(240, config.paymentReservationSeconds());
+        assertEquals(360, config.paymentReservationSeconds());
         assertEquals(AgentRuntimeConfigService.DEFAULT_WELCOME_MESSAGE, config.welcomeMessage());
     }
 

@@ -58,8 +58,8 @@ public class CrmWhatsappAgentConfigService {
                     "Vincula una sucursal de venta antes de activar el agente");
         }
         int grouping = range(request.messageGroupingMs(), 500, 60000, "Agrupacion de mensajes");
-        int reservation = request.paymentReservationSeconds() == null ? 240 : request.paymentReservationSeconds();
-        if (reservation != 240) throw badRequest("La reserva de pago debe mantenerse en cuatro minutos");
+        int reservation = request.paymentReservationSeconds() == null ? 360 : request.paymentReservationSeconds();
+        if (reservation != 360) throw badRequest("La reserva de pago debe mantenerse en seis minutos");
         int confidence = range(request.receiptMinimumConfidence(), 50, 100, "Confianza del comprobante");
         int jobAttempts = range(request.jobMaxAttempts(), 1, 10, "Reintentos de interpretacion");
         int outboxAttempts = range(request.outboxMaxAttempts(), 1, 10, "Reintentos de envio");

@@ -141,7 +141,7 @@ public class AgentRuntimeConfigService {
 
         public static RuntimeConfig defaults() {
             return new RuntimeConfig(false, CrmWhatsappAgentActivationStage.LOCAL_TEST, Set.of(), 10,
-                    5000, 240, 85, false, 3, 5, 15, 12, 6, DEFAULT_WELCOME_MESSAGE,
+                    5000, 360, 85, false, 3, 5, 15, 12, 6, DEFAULT_WELCOME_MESSAGE,
                     DEFAULT_AGENT_BEHAVIOR_INSTRUCTIONS);
         }
 

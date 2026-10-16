@@ -34,7 +34,7 @@ public class AgentPaymentTools {
         return payments.selectMethod(sessionId(context), metodoPagoId, cuentaId, operationId(context));
     }
 
-    @Tool(name = "crear_solicitud_pago", description = "Crea la solicitud desde el carrito confirmado, reserva stock real y fija un vencimiento exacto de cuatro minutos. No acepta montos, precios ni productos del modelo.")
+    @Tool(name = "crear_solicitud_pago", description = "Crea la solicitud desde el carrito confirmado, reserva stock real y fija un vencimiento exacto de seis minutos. No acepta montos, precios ni productos del modelo.")
     public PaymentRequestResult crearSolicitudPago(ToolContext context) {
         return payments.createRequest(sessionId(context), operationId(context));
     }

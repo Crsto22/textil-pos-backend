@@ -121,7 +121,7 @@ public class CrmWhatsappAiConfig {
         if (activationStage == null) activationStage = CrmWhatsappAgentActivationStage.LOCAL_TEST;
         if (limitedConversationsPerHour == null) limitedConversationsPerHour = 10;
         if (messageGroupingMs == null) messageGroupingMs = 5000;
-        if (paymentReservationSeconds == null) paymentReservationSeconds = 240;
+        if (paymentReservationSeconds == null) paymentReservationSeconds = 360;
         if (receiptMinimumConfidence == null) receiptMinimumConfidence = 85;
         if (advisorAttentionEnabled == null) advisorAttentionEnabled = false;
         if (jobMaxAttempts == null) jobMaxAttempts = 3;

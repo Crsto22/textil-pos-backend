@@ -75,7 +75,7 @@ class AgentPaymentExpiryServiceTest {
 
         verify(reservationService).release(request, userRepository
                 .findByCorreoAndDeletedAtIsNull("ia-kiments@system.local").orElseThrow(),
-                "Solicitud de pago vencida a los cuatro minutos");
+                "Solicitud de pago vencida a los seis minutos");
         assertTrue(request.getStatus() == CrmWhatsappPaymentRequestStatus.EXPIRED);
         assertTrue(session.getState() == CrmWhatsappAgentState.CANCELADO);
         assertTrue(session.getLastEvent() == CrmWhatsappAgentEvent.SOLICITUD_PAGO_EXPIRADA);

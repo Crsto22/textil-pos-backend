@@ -161,7 +161,7 @@ public class CrmWhatsappSchemaMigration implements ApplicationRunner {
                       test_phone_numbers VARCHAR(1000) NULL,
                       limited_conversations_per_hour INT NOT NULL DEFAULT 10,
                       message_grouping_ms INT NOT NULL DEFAULT 5000,
-                      payment_reservation_seconds INT NOT NULL DEFAULT 240,
+                      payment_reservation_seconds INT NOT NULL DEFAULT 360,
                       receipt_minimum_confidence INT NOT NULL DEFAULT 85,
                       advisor_attention_enabled BOOLEAN NOT NULL DEFAULT FALSE,
                       job_max_attempts INT NOT NULL DEFAULT 3,
@@ -239,7 +239,16 @@ public class CrmWhatsappSchemaMigration implements ApplicationRunner {
             addColumnIfMissing(connection, statement, "crm_whatsapp_ai_config", "message_grouping_ms",
                     "INT NOT NULL DEFAULT 5000");
             addColumnIfMissing(connection, statement, "crm_whatsapp_ai_config", "payment_reservation_seconds",
-                    "INT NOT NULL DEFAULT 240");
+                    "INT NOT NULL DEFAULT 360");
+            statement.execute("""
+                    ALTER TABLE crm_whatsapp_ai_config
+                    MODIFY payment_reservation_seconds INT NOT NULL DEFAULT 360
+                    """);
+            statement.executeUpdate("""
+                    UPDATE crm_whatsapp_ai_config
+                    SET payment_reservation_seconds = 360
+                    WHERE payment_reservation_seconds = 240
+                    """);
             addColumnIfMissing(connection, statement, "crm_whatsapp_ai_config", "receipt_minimum_confidence",
                     "INT NOT NULL DEFAULT 85");
             addColumnIfMissing(connection, statement, "crm_whatsapp_ai_config", "advisor_attention_enabled",

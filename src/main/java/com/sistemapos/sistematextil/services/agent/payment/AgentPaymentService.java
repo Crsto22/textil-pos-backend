@@ -50,7 +50,7 @@ import com.sistemapos.sistematextil.util.venta.VentaPagoCreateItem;
 
 @Service
 public class AgentPaymentService {
-    static final Duration PAYMENT_WINDOW = Duration.ofMinutes(4);
+    static final Duration PAYMENT_WINDOW = Duration.ofMinutes(6);
     private static final String AGENT_USER_EMAIL = "ia-kiments@system.local";
     private static final List<CrmWhatsappPaymentRequestStatus> ACTIVE_REQUESTS = List.of(
             CrmWhatsappPaymentRequestStatus.PENDING_EVIDENCE,
@@ -226,7 +226,7 @@ public class AgentPaymentService {
 
     /**
      * Relaciona el cliente recopilado despues de aprobar el comprobante. La
-     * solicitud se crea sin cliente para que los cuatro minutos empiecen apenas
+     * solicitud se crea sin cliente para que los seis minutos empiecen apenas
      * se elige el metodo de pago, no mientras la clienta completa sus datos.
      */
     @Transactional

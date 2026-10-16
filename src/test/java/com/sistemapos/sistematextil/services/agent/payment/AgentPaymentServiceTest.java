@@ -198,8 +198,8 @@ class AgentPaymentServiceTest {
 
         assertEquals(77L, result.paymentRequestId());
         assertEquals(new BigDecimal("140.00"), result.expectedAmount());
-        assertEquals(LocalDateTime.of(2026, 10, 8, 14, 4), result.expiresAt());
-        assertEquals(240L, result.expiresInSeconds());
+        assertEquals(LocalDateTime.of(2026, 10, 8, 14, 6), result.expiresAt());
+        assertEquals(360L, result.expiresInSeconds());
         assertEquals("ACTIVE", result.reservationStatus());
         assertEquals(CrmWhatsappAgentState.ESPERANDO_COMPROBANTE, session.getState());
         assertEquals(CrmWhatsappAgentEvent.SOLICITUD_PAGO_CREADA, session.getLastEvent());

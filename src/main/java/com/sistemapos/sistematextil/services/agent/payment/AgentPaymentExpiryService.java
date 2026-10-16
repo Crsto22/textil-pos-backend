@@ -100,7 +100,7 @@ public class AgentPaymentExpiryService {
                 .or(() -> userRepository.findByCorreoAndDeletedAtIsNull("sistema@gmail.com"))
                 .orElseThrow(() -> new IllegalStateException(
                         "No existe un usuario tecnico para liberar la reserva vencida"));
-        reservationService.release(request, actor, "Solicitud de pago vencida a los cuatro minutos");
+        reservationService.release(request, actor, "Solicitud de pago vencida a los seis minutos");
         request.setStatus(CrmWhatsappPaymentRequestStatus.EXPIRED);
         requestRepository.save(request);
 

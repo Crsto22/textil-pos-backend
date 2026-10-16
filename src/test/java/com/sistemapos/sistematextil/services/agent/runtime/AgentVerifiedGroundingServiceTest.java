@@ -649,8 +649,8 @@ class AgentVerifiedGroundingServiceTest {
         when(catalog.getProduct(9L, 20)).thenReturn(new ProductDetail(20, "ANNIE RAYAS", "ARUBA",
                 "CONJUNTO", false, null, "/guias/annie.webp", null,
                 List.of("ROSA"), List.of("S", "M"), 10, 75D, 2));
-        when(catalog.getProductImage(9L, 20, "rosa")).thenReturn(new ProductImageResult(20,
-                "ANNIE RAYAS", "rosa", "/productos/annie.webp", null,
+        when(catalog.getProductImage(9L, 20, "ROSA")).thenReturn(new ProductImageResult(20,
+                "ANNIE RAYAS", "ROSA", "/productos/annie.webp", null,
                 List.of(new ProductImage("ROSA", "/productos/annie-rosa.webp", null, true))));
 
         AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
@@ -664,6 +664,50 @@ class AgentVerifiedGroundingServiceTest {
         assertEquals(null, result.customerMessage());
         assertTrue(result.evidenceJson().contains("ANNIE RAYAS"));
         assertTrue(result.evidenceJson().contains("annie-rosa.webp"));
+    }
+
+    @Test
+    void sendsUpToFiveAvailableColorImagesAndKeepsEveryAvailableColorInEvidence() {
+        AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.PRODUCT_DETAILS, "mostrar colores de Melina en imagenes", "Melina", "", "",
+                0, "", AgentCartAction.NONE, AgentCommercialAction.SHOW_PRODUCT_IMAGES,
+                "", "", "", "", "", "", "", "",
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL, 99, false);
+        when(decisions.interpret(4L, "Muestrame los colores de Melina en imagenes")).thenReturn(
+                new AgentInterpretationResult("GEMINI", "model", "DB", 10, 0, decision));
+        List<String> availableColors = List.of(
+                "NEGRO", "TOPO", "PLATA", "ROSADO", "VINO", "CAMEL", "CHOCOLATE");
+        ProductSummary summary = new ProductSummary(88, "MELINA", "ARUBA", "CONJUNTO",
+                false, null, 79D, 50, availableColors, List.of("XS", "S", "M", "L"));
+        when(catalog.searchProducts(9L, "Melina", 20,
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL)).thenReturn(
+                new ProductSearchResult("Melina", 1, List.of(summary), false));
+        when(catalog.getProduct(9L, 88)).thenReturn(new ProductDetail(88, "MELINA", "ARUBA", "CONJUNTO",
+                false, null, null, null, availableColors, List.of("XS", "S", "M", "L"), 50, 79D, 28));
+        when(catalog.getProductImage(9L, 88, "")).thenReturn(new ProductImageResult(
+                88, "MELINA", "", "/productos/melina.webp", null, List.of(
+                new ProductImage("NEGRO", "/productos/melina-negro.webp", null, true),
+                new ProductImage("TOPO", "/productos/melina-topo.webp", null, true),
+                new ProductImage("PLATA", "/productos/melina-plata.webp", null, true),
+                new ProductImage("ROSADO", "/productos/melina-rosado.webp", null, true),
+                new ProductImage("VINO", "/productos/melina-vino.webp", null, true),
+                new ProductImage("CAMEL", "/productos/melina-camel.webp", null, true))));
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
+                mock(AgentCartService.class), passThroughAudit());
+
+        var result = service.ground(4L, 9L, 30L, "Muestrame los colores de Melina en imagenes");
+
+        assertEquals(3, result.verifiedToolCalls());
+        assertEquals(5, result.media().size());
+        assertEquals(List.of("NEGRO", "TOPO", "PLATA", "ROSADO", "VINO"),
+                result.media().stream().map(media -> media.color()).toList());
+        assertTrue(result.evidenceJson().contains("productColorGallery"));
+        assertTrue(result.evidenceJson().contains("CHOCOLATE"));
+        assertTrue(result.evidenceJson().contains("colorsWithoutImage"));
+        assertTrue(result.evidenceJson().contains("\"hasMoreColors\":true"));
     }
 
     @Test
@@ -703,6 +747,8 @@ class AgentVerifiedGroundingServiceTest {
         assertEquals(3, result.verifiedToolCalls());
         assertTrue(result.evidenceJson().contains("ANNIE ENTERO"));
         assertTrue(result.evidenceJson().contains("BEIGE CLARO"));
+        assertTrue(result.evidenceJson().contains("requestedColorAvailability"));
+        assertTrue(result.evidenceJson().contains("\"available\":false"));
         assertTrue(result.media().isEmpty());
     }
 

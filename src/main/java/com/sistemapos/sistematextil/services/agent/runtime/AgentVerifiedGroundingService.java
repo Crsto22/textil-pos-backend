@@ -26,6 +26,7 @@ import com.sistemapos.sistematextil.services.agent.ai.AgentMediaRequest;
 import com.sistemapos.sistematextil.services.agent.ai.AgentMediaRequest.MediaType;
 import com.sistemapos.sistematextil.services.agent.catalog.AgentCatalogQueryService;
 import com.sistemapos.sistematextil.services.agent.catalog.AgentCatalogQueryService.ProductDetail;
+import com.sistemapos.sistematextil.services.agent.catalog.AgentCatalogQueryService.ProductImage;
 import com.sistemapos.sistematextil.services.agent.catalog.AgentCatalogQueryService.ProductImageResult;
 import com.sistemapos.sistematextil.services.agent.catalog.AgentCatalogQueryService.ProductSearchResult;
 import com.sistemapos.sistematextil.services.agent.catalog.AgentCatalogQueryService.StockResult;
@@ -55,6 +56,7 @@ import com.sistemapos.sistematextil.services.agent.sizeguide.ProductSizeGuideQue
 public class AgentVerifiedGroundingService {
     private static final int AUDIT_ORDINAL_BASE = 10_000;
     private static final int MAX_CART_COLOR_IMAGES = 5;
+    private static final int MAX_PRODUCT_COLOR_GALLERY_IMAGES = 5;
     private static final int MAX_INITIAL_CATALOG_IMAGES = 3;
     private static final DateTimeFormatter DELIVERY_DATE = DateTimeFormatter.ofPattern(
             "d 'de' MMMM 'de' uuuu", Locale.forLanguageTag("es-PE"));
@@ -786,20 +788,92 @@ public class AgentVerifiedGroundingService {
         ProductDetail detail = verified(sessionId, jobId, ordinal,
                 "obtener_producto", Map.of("productoId", productId),
                 ProductDetail.class, () -> catalog.getProduct(sessionId, productId));
+        boolean requestedSpecificColor = decision.colorReference() != null
+                && !decision.colorReference().isBlank();
+        String availableRequestedColor = requestedSpecificColor
+                ? matchingAvailableColor(detail.colors(), decision.colorReference()) : "";
+        String imageColor = requestedSpecificColor && !availableRequestedColor.isBlank()
+                ? availableRequestedColor : decision.colorReference();
         ProductImageResult images = verified(sessionId, jobId, ordinal,
-                "obtener_imagen_producto", nullableMap("productoId", productId, "color", decision.colorReference()),
+                "obtener_imagen_producto", nullableMap("productoId", productId, "color", imageColor),
                 ProductImageResult.class,
-                () -> catalog.getProductImage(sessionId, productId, decision.colorReference()));
+                () -> catalog.getProductImage(sessionId, productId, imageColor));
         evidence.put("selectedProduct", detail);
         evidence.put("selectedProductImages", images);
 
+        if (imagesRequested && !requestedSpecificColor) {
+            queueAvailableColorGallery(productId, detail, images, evidence, media);
+            return;
+        }
+
         boolean hasRequestedColorImage = images.colorImages() != null && !images.colorImages().isEmpty();
         boolean hasGlobalImage = images.globalImageUrl() != null && !images.globalImageUrl().isBlank();
-        boolean requestedSpecificColor = decision.colorReference() != null
-                && !decision.colorReference().isBlank();
-        if (hasRequestedColorImage || (!requestedSpecificColor && hasGlobalImage)) {
-            media.add(new AgentMediaRequest(MediaType.PRODUCT_IMAGE, productId, decision.colorReference()));
+        boolean requestedColorAvailable = !requestedSpecificColor || !availableRequestedColor.isBlank();
+        if (requestedSpecificColor) {
+            evidence.put("requestedColorAvailability", Map.of(
+                    "requestedColor", decision.colorReference(),
+                    "available", requestedColorAvailable,
+                    "matchedColor", availableRequestedColor,
+                    "availableColors", detail.colors()));
         }
+        if (requestedColorAvailable
+                && (hasRequestedColorImage || (!requestedSpecificColor && hasGlobalImage))) {
+            media.add(new AgentMediaRequest(MediaType.PRODUCT_IMAGE, productId, imageColor));
+        }
+    }
+
+    private void queueAvailableColorGallery(Integer productId, ProductDetail detail, ProductImageResult images,
+            Map<String, Object> evidence, List<AgentMediaRequest> media) {
+        List<String> availableColors = detail.colors() == null ? List.of() : detail.colors().stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(color -> !color.isBlank())
+                .distinct()
+                .toList();
+        List<ProductImage> configuredImages = images.colorImages() == null ? List.of() : images.colorImages();
+        List<String> displayedColors = new ArrayList<>();
+        List<String> colorsWithoutImage = new ArrayList<>();
+
+        for (String availableColor : availableColors) {
+            ProductImage configured = configuredImages.stream()
+                    .filter(image -> image != null && image.url() != null && !image.url().isBlank())
+                    .filter(image -> sameColor(image.color(), availableColor))
+                    .findFirst().orElse(null);
+            if (configured == null) {
+                colorsWithoutImage.add(availableColor);
+                continue;
+            }
+            if (displayedColors.size() >= MAX_PRODUCT_COLOR_GALLERY_IMAGES) continue;
+            displayedColors.add(availableColor);
+            media.add(new AgentMediaRequest(MediaType.PRODUCT_IMAGE, productId, availableColor));
+        }
+
+        evidence.put("productColorGallery", Map.of(
+                "productId", productId,
+                "productName", detail.name(),
+                "availableColors", availableColors,
+                "displayedColors", displayedColors,
+                "colorsWithoutImage", colorsWithoutImage,
+                "imageLimit", MAX_PRODUCT_COLOR_GALLERY_IMAGES,
+                "hasMoreColors", availableColors.size() > displayedColors.size()));
+    }
+
+    private String matchingAvailableColor(List<String> availableColors, String requestedColor) {
+        if (availableColors == null || requestedColor == null || requestedColor.isBlank()) return "";
+        String requested = normalize(requestedColor);
+        return availableColors.stream()
+                .filter(Objects::nonNull)
+                .filter(color -> sameColor(color, requested))
+                .findFirst().orElse("");
+    }
+
+    private boolean sameColor(String left, String right) {
+        String normalizedLeft = normalize(left);
+        String normalizedRight = normalize(right);
+        return !normalizedLeft.isBlank() && !normalizedRight.isBlank()
+                && (normalizedLeft.equals(normalizedRight)
+                || normalizedLeft.contains(normalizedRight)
+                || normalizedRight.contains(normalizedLeft));
     }
 
     private void queueInitialCatalogImages(Long sessionId, Long jobId, ProductSearchResult search,

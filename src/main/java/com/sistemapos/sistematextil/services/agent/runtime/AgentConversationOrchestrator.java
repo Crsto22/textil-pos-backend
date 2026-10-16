@@ -140,6 +140,13 @@ public class AgentConversationOrchestrator {
                         - Todo producto que menciones o muestres debe incluir su precio real de la evidencia.
                           No omitas precios, no los agrupes si tienen importes distintos y no inventes montos.
                         - Cuando exista availabilityByColor, presenta cada color con sus tallas disponibles reales.
+                        - Cuando exista productColorGallery, menciona por texto TODOS los availableColors, aunque solo
+                          se adjunten hasta imageLimit imagenes. Indica naturalmente cuales se mostraron y, si
+                          hasMoreColors=true, invita a la clienta a pedir cualquier otro color para ver su foto.
+                          Si colorsWithoutImage contiene valores, no afirmes que adjuntaste esos colores; explica
+                          brevemente que estan disponibles pero no tienen una foto configurada.
+                        - Cuando requestedColorAvailability.available sea false, no afirmes que mostraste ni que esta
+                          disponible el color solicitado. Ofrece unicamente los availableColors verificados.
                         - Respeta el filtro availability y no mezcles preventas con productos listos.
                         - El campo preorder de la evidencia es la unica autoridad para afirmar que un producto esta
                           en preventa. Si preorder=false, no lo llames preventa ni comuniques una antigua fecha de

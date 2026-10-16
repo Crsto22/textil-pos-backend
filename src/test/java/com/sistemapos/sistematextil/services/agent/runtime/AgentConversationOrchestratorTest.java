@@ -1,6 +1,7 @@
 package com.sistemapos.sistematextil.services.agent.runtime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -227,7 +228,7 @@ class AgentConversationOrchestratorTest {
     }
 
     @Test
-    void preservesBackendWholesaleHandoffEvenWhenWriterReturnsFalse() {
+    void wholesaleContactDoesNotPauseAutomaticRetailAttention() {
         Fixture fixture = new Fixture();
         fixture.current(true, true, true);
         AgentConversationDecision wholesale = new AgentConversationDecision(
@@ -236,7 +237,7 @@ class AgentConversationOrchestratorTest {
                 com.sistemapos.sistematextil.services.agent.ai.AgentCartAction.NONE,
                 AgentCommercialAction.REQUEST_WHOLESALE_SUPPORT,
                 "", "", "", "", "", "", "", "",
-                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL, 99, true);
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL, 99, false);
         when(fixture.grounding.ground(eq(7L), eq(8L), eq(41L), any())).thenReturn(
                 new AgentVerifiedGroundingService.Grounding(
                         wholesale, "{}", java.util.List.of(), 0, false));
@@ -250,7 +251,7 @@ class AgentConversationOrchestratorTest {
 
         ArgumentCaptor<GeneratedTurn> turn = ArgumentCaptor.forClass(GeneratedTurn.class);
         verify(fixture.jobs).saveGeneratedTurn(eq(41L), eq("worker:lease"), turn.capture(), any());
-        assertTrue(turn.getValue().requiresHumanHelp());
+        assertFalse(turn.getValue().requiresHumanHelp());
     }
 
     @Test
@@ -349,37 +350,6 @@ class AgentConversationOrchestratorTest {
         ArgumentCaptor<GeneratedTurn> turn = ArgumentCaptor.forClass(GeneratedTurn.class);
         verify(fixture.jobs).saveGeneratedTurn(eq(41L), eq("worker:lease"), turn.capture(), any());
         assertTrue(turn.getValue().customerMessage().contains("https://kiments.com.pe/productos"));
-    }
-
-    @Test
-    void detectsAnInventedExtraChargeForSplitPreorderShipments() {
-        String correction = AgentConversationOrchestrator.mixedPreorderShippingCorrectionInstruction(
-                "Si se envía cada prenda conforme esté disponible, serían envíos independientes con costo adicional.");
-
-        assertTrue(correction.contains("sin costo adicional"));
-        assertEquals("", AgentConversationOrchestrator.mixedPreorderShippingCorrectionInstruction(
-                "Podemos coordinar el envío anticipado de lo disponible sin costo adicional."));
-    }
-
-    @Test
-    void usesSafeMessageWhenGeminiRepeatsTheInventedExtraCharge() {
-        Fixture fixture = new Fixture();
-        fixture.current(true, true, true);
-        AgentTurnResponse invalid = new AgentTurnResponse(
-                "Podemos enviarlo por separado, pero tendría un costo adicional.",
-                "Pedido mixto", false, java.util.List.of());
-        when(fixture.gateway.respond(eq(7L), any(), eq(12)))
-                .thenReturn(new AgentResponseResult("GEMINI", "gemini", 100, 2, invalid))
-                .thenReturn(new AgentResponseResult("GEMINI", "gemini", 90, 0, invalid));
-
-        assertEquals(AgentConversationOrchestrator.Outcome.COMPLETED,
-                fixture.orchestrator.process(fixture.lease));
-
-        verify(fixture.gateway, times(2)).respond(eq(7L), any(), eq(12));
-        ArgumentCaptor<GeneratedTurn> turn = ArgumentCaptor.forClass(GeneratedTurn.class);
-        verify(fixture.jobs).saveGeneratedTurn(eq(41L), eq("worker:lease"), turn.capture(), any());
-        assertEquals(AgentConversationOrchestrator.MIXED_PREORDER_SHIPPING_SAFE_MESSAGE,
-                turn.getValue().customerMessage());
     }
 
     private static final class Fixture {

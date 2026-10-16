@@ -97,7 +97,7 @@ class AgentDeterministicCommerceServiceTest {
         assertTrue(message.contains("*10 x combo 29*"));
         assertTrue(message.contains("Precio normal: S/1300.00"));
         assertTrue(message.contains("Descuento: S/50.00"));
-        assertTrue(message.contains("Despacho del pedido: aproximadamente en 1 a 3 días"));
+        assertFalse(message.contains("1 a 3 días"));
         assertFalse(message.contains("tiempo de entrega"));
         assertFalse(message.contains("logística de Shalom"));
         assertTrue(message.contains("penalidad de S/10"));
@@ -130,9 +130,9 @@ class AgentDeterministicCommerceServiceTest {
         String message = service.cartTemplate(41L, cart, true);
 
         assertTrue(message.contains("Preventa: despachos a partir del 16 de octubre de 2026"));
-        assertTrue(message.contains("La fecha de preventa es referencial"));
-        assertTrue(message.contains("depende del volumen de pedidos"));
-        assertTrue(message.contains("coordinar el envío anticipado"));
+        assertTrue(message.contains("Los despachos del pedido comienzan cuando los productos en preventa estén disponibles"));
+        assertTrue(message.contains("según el volumen de pedidos"));
+        assertFalse(message.contains("envío anticipado"));
         assertFalse(message.contains("serán despachados desde"));
     }
 
@@ -303,7 +303,28 @@ class AgentDeterministicCommerceServiceTest {
     }
 
     @Test
-    void refersExistingOrderDeliveryTimingWithoutPromisingDatesOrChangingState() {
+    void redirectsInvoiceRequestsWithoutChangingStateOrStoppingAutomaticSales() {
+        CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
+        session.setState(CrmWhatsappAgentState.ARMANDO_CARRITO);
+        when(sessions.findById(41L)).thenReturn(Optional.of(session));
+        AgentDeterministicCommerceService service = new AgentDeterministicCommerceService(
+                sessions, null, null, null, null, null, null, null, null, null,
+                new AgentToolCallAuditService(null));
+        AgentConversationDecision decision = decision(AgentCommercialAction.SHARE_INVOICE_CONTACT, "");
+
+        var result = service.execute(41L, null, decision);
+
+        assertTrue(result.handled());
+        assertFalse(result.mutationExecuted());
+        assertTrue(result.customerMessage().contains("factura"));
+        assertTrue(result.customerMessage().contains("933918047"));
+        assertTrue(result.customerMessage().contains("seguir ayudandote"));
+        assertEquals(CrmWhatsappAgentState.ARMANDO_CARRITO, session.getState());
+    }
+
+    @Test
+    void explainsDispatchTimingWithoutPromisingArrivalOrChangingState() {
         CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
         CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
         session.setState(CrmWhatsappAgentState.EXPLORANDO_PRODUCTOS);
@@ -311,17 +332,102 @@ class AgentDeterministicCommerceServiceTest {
         AgentDeterministicCommerceService service = new AgentDeterministicCommerceService(
                 sessions, null, null, null, null, null, null, null, null, null,
                 new AgentToolCallAuditService(null));
-        AgentConversationDecision decision = decision(AgentCommercialAction.REFER_EXISTING_ORDER_DELIVERY, "");
+        AgentConversationDecision decision = decision(AgentCommercialAction.SHARE_DELIVERY_TIMING_CONTACT, "");
 
         var result = service.execute(41L, null, decision);
 
         assertTrue(result.handled());
         assertFalse(result.mutationExecuted());
-        assertTrue(result.customerMessage().contains("asesora del área de envíos"));
-        assertTrue(result.customerMessage().contains("coordinar la entrega"));
+        assertTrue(result.customerMessage().contains("1 a 4 días"));
+        assertTrue(result.customerMessage().contains("Preventa"));
+        assertTrue(result.customerMessage().contains("tiempo de llegada depende de Shalom"));
+        assertTrue(result.customerMessage().contains("no podemos confirmar un día exacto"));
         assertFalse(result.customerMessage().contains("1 a 3"));
         assertFalse(result.customerMessage().contains("llegara a tiempo"));
+        assertFalse(result.customerMessage().contains("área de envíos se comunicará"));
         assertEquals(CrmWhatsappAgentState.EXPLORANDO_PRODUCTOS, session.getState());
+    }
+
+    @Test
+    void redirectsWholesaleRequestsWithoutChangingStateOrStoppingAutomaticSales() {
+        CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
+        session.setState(CrmWhatsappAgentState.EXPLORANDO_PRODUCTOS);
+        when(sessions.findById(41L)).thenReturn(Optional.of(session));
+        AgentDeterministicCommerceService service = new AgentDeterministicCommerceService(
+                sessions, null, null, null, null, null, null, null, null, null,
+                new AgentToolCallAuditService(null));
+        AgentConversationDecision decision = decision(AgentCommercialAction.REQUEST_WHOLESALE_SUPPORT, "");
+
+        var result = service.execute(41L, null, decision);
+
+        assertTrue(result.handled());
+        assertFalse(result.mutationExecuted());
+        assertTrue(result.customerMessage().contains("compras rápidas al por menor"));
+        assertTrue(result.customerMessage().contains("catálogo mayorista"));
+        assertTrue(result.customerMessage().contains("933918047"));
+        assertEquals(CrmWhatsappAgentState.EXPLORANDO_PRODUCTOS, session.getState());
+    }
+
+    @Test
+    void explainsImmediatePaymentPolicyWithoutReservingAnEditableCart() {
+        CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        AgentPaymentService payments = mock(AgentPaymentService.class);
+        CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
+        session.setState(CrmWhatsappAgentState.ARMANDO_CARRITO);
+        when(sessions.findById(41L)).thenReturn(Optional.of(session));
+        AgentDeterministicCommerceService service = new AgentDeterministicCommerceService(
+                sessions, null, null, null, payments, null, null, null, null, null,
+                new AgentToolCallAuditService(null));
+        AgentConversationDecision decision = decision(AgentCommercialAction.EXPLAIN_IMMEDIATE_PAYMENT_POLICY, "");
+
+        var result = service.execute(41L, null, decision);
+
+        assertTrue(result.handled());
+        assertFalse(result.mutationExecuted());
+        assertTrue(result.customerMessage().contains("el pago debe realizarse ahora"));
+        assertTrue(result.customerMessage().contains("no reservamos productos para otro día"));
+        assertTrue(result.customerMessage().contains("realizar nuevamente tu pedido"));
+        assertTrue(result.customerMessage().contains("asistente virtual de Kiments"));
+        assertTrue(result.customerMessage().contains("933918047"));
+        verify(payments, never()).beginCartEdit(41L);
+    }
+
+    @Test
+    void releasesAnActivePaymentReservationWhenCustomerPostponesPayment() {
+        CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        AgentPaymentService payments = mock(AgentPaymentService.class);
+        CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
+        session.setState(CrmWhatsappAgentState.ESPERANDO_COMPROBANTE);
+        when(sessions.findById(41L)).thenReturn(Optional.of(session));
+        AgentDeterministicCommerceService service = new AgentDeterministicCommerceService(
+                sessions, null, null, null, payments, null, null, null, null, null,
+                new AgentToolCallAuditService(null));
+        AgentConversationDecision decision = decision(AgentCommercialAction.EXPLAIN_IMMEDIATE_PAYMENT_POLICY, "");
+
+        var result = service.execute(41L, null, decision);
+
+        assertTrue(result.handled());
+        assertTrue(result.mutationExecuted());
+        verify(payments).beginCartEdit(41L);
+    }
+
+    @Test
+    void ignoresDeferredPaymentPolicyAfterPaymentWasApproved() {
+        CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        AgentPaymentService payments = mock(AgentPaymentService.class);
+        CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
+        session.setState(CrmWhatsappAgentState.ESPERANDO_DATOS_CLIENTE);
+        when(sessions.findById(41L)).thenReturn(Optional.of(session));
+        AgentDeterministicCommerceService service = new AgentDeterministicCommerceService(
+                sessions, null, null, null, payments, null, null, null, null, null,
+                new AgentToolCallAuditService(null));
+        AgentConversationDecision decision = decision(AgentCommercialAction.EXPLAIN_IMMEDIATE_PAYMENT_POLICY, "");
+
+        var result = service.execute(41L, null, decision);
+
+        assertFalse(result.handled());
+        verify(payments, never()).beginCartEdit(41L);
     }
 
     @Test

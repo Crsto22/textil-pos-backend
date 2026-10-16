@@ -23,25 +23,31 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
             No respondas al cliente, no consultes datos comerciales y no ejecutes ninguna mutacion.
             Interpreta el significado del ultimo pedido usando el contexto completo.
             Usa BUSINESS_INFORMATION solo para politicas, horarios, ubicacion, envios, cuidados o preguntas frecuentes.
-            Si pregunta cuando saldra o se despachara un pedido, incluso citando una fecha anunciada en un live o
-            TikTok, usa BUSINESS_INFORMATION. "Envio" en este contexto significa el despacho de Kiments hacia la
-            logistica, no el tiempo de traslado ni la fecha de llegada al destino.
+            Si pregunta cuándo saldrá, llegará, estará listo o se despachará un pedido, usa
+            SHARE_DELIVERY_TIMING_CONTACT. Aplica antes y después de comprar, incluso si cita un live o TikTok.
+            Conserva el modelo mencionado en productReference para verificar si está en preventa y la ciudad o
+            destino mencionado en shalomDestination.
             Precios, stock, productos, promociones, carrito, pagos y ventas nunca son BUSINESS_INFORMATION:
             deben resolverse con su intencion comercial y herramientas verificadas.
             No inventes producto, color, talla, cantidad ni promocion.
             El esquema no admite valores null: usa cadena vacia para referencias ausentes, 0 para cantidad ausente
-            y una lista vacia en promotionSelections salvo cuando confirme varios productos o una promocion.
+            y listas vacias en productReferences y promotionSelections cuando no correspondan.
             Devuelve siempre todos los campos del esquema. Nunca omitas campos y nunca escribas null.
             commercialAction es una accion semantica, no una palabra clave. Determinala por el significado,
             el ESTADO_ACTUAL y el ultimo mensaje. Usa el historial solo para resolver referencias.
             - SHOW_PRODUCTS: pide catalogo o pregunta que productos existen.
-            - SHOW_PRODUCT: pide datos, colores, tallas o detalles de un modelo. Si el cliente elige un modelo y
+            - SHOW_PRODUCT: pide datos, colores, tallas o detalles de un modelo. Conserva literalmente cada modelo
+              mencionado en productReferences y el primero en productReference. No sustituyas un nombre escrito
+              por otro parecido; Java contrastara el mensaje actual con las familias reales del catalogo. Si el cliente elige un modelo y
               solicita un color que podria no existir, o aun no proporciona talla, usa SHOW_PRODUCT para comprobar
               primero el catalogo. Los errores ortograficos no cambian esta regla.
-            - SHOW_PRODUCT_IMAGES: pide expresamente fotos o imagenes de uno o varios modelos. Conserva en
-              productReference el nombre o familia solicitada aunque coincida con varios productos. Si tambien
+            - SHOW_PRODUCT_IMAGES: pide expresamente fotos o imagenes de uno o varios modelos. Conserva todos los
+              nombres o familias solicitados en productReferences y el primero en productReference. Si tambien
               solicita un color, conservalo en colorReference; Java decidira si primero debe precisar el modelo.
-            - SHOW_SIZE_GUIDE: pide expresamente ver o recibir la imagen de la guia de tallas de un modelo.
+            - SHOW_SIZE_GUIDE: pide una tabla, guia o medidas del producto, incluso con frases naturales como
+              "para medirme". Conserva todos los modelos solicitados en productReferences y el primero en
+              productReference. Una familia generica como Annie o Lia debe conservarse sin elegir arbitrariamente
+              Entero, Rayas o Liso; Java enviara las guias de todas sus variantes.
             - RECOMMEND_SIZE: comunica una o varias medidas corporales o pregunta que talla le corresponde.
               Conserva el producto en productReference, la pieza opcional en sizeGuideComponent y todas las
               medidas conocidas en bodyMeasurements con name, value y unit CM o IN. fitPreference puede ser
@@ -67,6 +73,15 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
               el carrito pero exigira elegir exactamente uno antes de reservar.
             - PAYMENT_TIME_REMAINING: pregunta cuanto tiempo le queda para pagar.
             - RETRY_PAYMENT: despues de vencer la reserva pide reactivarla o continuar con la compra.
+            - EXPLAIN_IMMEDIATE_PAYMENT_POLICY: antes de que exista un pago aprobado, pide anotar, separar o
+              reservar productos para pagarlos despues, mañana u otro dia; o afirma que completara el pago mas
+              adelante. Usa intent=PAYMENT_METHOD y requiresHumanHelp=false. Interpreta la intención completa, no
+              palabras aisladas. Esta acción tiene prioridad sobre mostrar cuentas cuando la clienta posterga
+              expresamente el pago, aunque también pregunte por BCP, Yape u otro método. No la uses si quiere pagar
+              ahora, solo consulta los métodos disponibles, ya envió su comprobante o el pago fue aprobado. Tampoco
+              la uses para preguntas sobre recibir, recoger o despachar mañana: esas corresponden a
+              SHARE_DELIVERY_TIMING_CONTACT. Java liberará cualquier reserva de pago vigente, informará que no se
+              separa stock sin pago y permitirá que la atención minorista continúe.
             - PROVIDE_CUSTOMER_DATA: envia nombre y/o celular despues del comprobante aprobado.
             - CONFIRM_EXISTING_CUSTOMER: confirma los datos existentes mostrados.
             - SELECT_PICKUP o SELECT_SHALOM: elige modalidad de entrega solamente cuando ESTADO_ACTUAL sea
@@ -103,23 +118,32 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
             - SHARE_ADVISOR_CONTACT: pide hablar, comunicarse o contactar a una asesora. Esta accion solo comparte
               el numero de contacto y no pausa la atencion automatica: establece requiresHumanHelp=false. Si luego
               consulta, pide informacion o quiere comprar, interpreta normalmente la nueva intencion y continua.
+            - SHARE_INVOICE_CONTACT: solicita factura, facturacion o comprobante con RUC, antes o despues de comprar.
+              Usa intent=BUSINESS_INFORMATION y requiresHumanHelp=false. La IA no emite ni promete la factura:
+              Java compartira el 933918047 para coordinarla con una asesora y la atencion automatica puede continuar.
+              Interpreta el significado completo y no dependas de una palabra exacta.
             - SHARE_MOTORIZED_CONTACT: solicita recibir o coordinar el pedido mediante motorizado, moto, taxi,
               aplicativo de reparto o courier particular, en cualquier estado comercial. Usa intent=DELIVERY_METHOD,
               establece requiresHumanHelp=false y no selecciones Shalom, no crees fulfillment ni cambies el estado.
               Esta accion comparte el contacto de la asesora para coordinar disponibilidad y costo, pero la IA puede
               seguir informando y vendiendo. No la uses por la palabra generica "delivery" si el contexto significa
               solamente envio o Shalom; interpreta el significado completo.
-            - REFER_EXISTING_ORDER_DELIVERY: pregunta cuando enviaran, despacharan o entregaran un pedido que ya
-              realizo, pide acelerar ese pedido o indica que lo necesita antes de una fecha. Usa intent=DELIVERY_METHOD,
-              establece requiresHumanHelp=false y no prometas fecha, llegada, salida, prioridad ni plazo. No afirmes
-              "1 a 3 dias", "saldra pronto", "llegara a tiempo" ni "haremos todo lo posible". Java informara que el
-              area de envios se comunicara para revisar y coordinar. No uses esta accion para una consulta preventa
-              sobre el plazo general de una compra que todavia no fue realizada.
+            - SHARE_DELIVERY_TIMING_CONTACT: pregunta cuando enviaran, despacharan, entregaran o tendran listo un
+              pedido; pide urgencia; desea recibir o recoger en un dia u hora; o pregunta si llegara para un evento.
+              Aplica antes y despues de comprar. Usa intent=DELIVERY_METHOD, requiresHumanHelp=false y conserva en
+              productReference el modelo mencionado para que Java consulte su preventa. Conserva una ciudad o
+              destino mencionado en shalomDestination. Java comunicara que los productos con disponibilidad
+              inmediata se despachan aproximadamente en 1 a 4 dias segun el volumen de pedidos, o la fecha verificada
+              de inicio de despacho si es preventa. Ese plazo corresponde al despacho desde Kiments, nunca al tiempo
+              de traslado o llegada. No prometas un dia exacto de llegada, prioridad ni entrega: despues del despacho
+              el tiempo depende de Shalom. Una fecha mencionada por la clienta, un live o TikTok no se confirma.
+            - REFER_EXISTING_ORDER_DELIVERY es una accion historica: no la uses para decisiones nuevas.
             - REQUEST_WHOLESALE_SUPPORT: solicita expresamente una compra al por mayor, precios mayoristas,
-              una cotizacion por volumen o productos para reventa. Usa intent=SUPPORT_REQUEST y
-              requiresHumanHelp=true. Interpreta el significado completo: pedir varios productos para una compra
+              catalogo mayorista, una cotizacion por volumen o productos para negocio o reventa. Usa
+              intent=SUPPORT_REQUEST y requiresHumanHelp=false. Interpreta el significado completo: pedir varios productos para una compra
               personal no basta para considerarla mayorista y debe continuar con el flujo normal de venta.
-              No uses cantidades o palabras aisladas como regla rigida.
+              No uses cantidades o palabras aisladas como regla rigida. Java compartira el 933918047 sin pausar la
+              atencion automatica. Una consulta de catalogo, precios o promociones minoristas sigue su flujo normal.
             - REQUEST_SUPPORT: existe un bloqueo operativo o tecnico real que necesita intervencion humana y la IA
               no puede continuar el flujo; establece requiresHumanHelp=true. No uses esta accion solamente porque
               la clienta pidio el contacto de una asesora.

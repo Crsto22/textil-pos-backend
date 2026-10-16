@@ -7,6 +7,7 @@ public record AgentConversationDecision(
         AgentDecisionIntent intent,
         String customerGoal,
         String productReference,
+        List<String> productReferences,
         String colorReference,
         String sizeReference,
         Integer quantity,
@@ -31,6 +32,13 @@ public record AgentConversationDecision(
         boolean requiresHumanHelp) {
 
     public AgentConversationDecision {
+        productReferences = productReferences == null ? List.of()
+                : productReferences.stream()
+                        .filter(java.util.Objects::nonNull)
+                        .map(String::trim)
+                        .filter(value -> !value.isBlank())
+                        .distinct()
+                        .toList();
         promotionSelections = promotionSelections == null ? List.of()
                 : promotionSelections.stream().filter(java.util.Objects::nonNull).toList();
         sizeGuideComponent = sizeGuideComponent == null ? "" : sizeGuideComponent;
@@ -42,7 +50,7 @@ public record AgentConversationDecision(
     }
 
     public AgentConversationDecision withShalomAgencySearch(String agencyReference) {
-        return new AgentConversationDecision(intent, customerGoal, productReference, colorReference,
+        return new AgentConversationDecision(intent, customerGoal, productReference, productReferences, colorReference,
                 sizeReference, quantity, promotionReference, promotionSelections, cartAction,
                 AgentCommercialAction.PROVIDE_SHALOM_DATA, paymentMethodReference,
                 paymentAccountReference, customerName, customerPhone, deliveryMethod, documentNumber,
@@ -52,7 +60,7 @@ public record AgentConversationDecision(
     }
 
     public AgentConversationDecision withShalomDataEdit(List<AgentShalomDataField> fields) {
-        return new AgentConversationDecision(intent, customerGoal, productReference, colorReference,
+        return new AgentConversationDecision(intent, customerGoal, productReference, productReferences, colorReference,
                 sizeReference, quantity, promotionReference, promotionSelections, cartAction,
                 AgentCommercialAction.EDIT_SHALOM_DATA, paymentMethodReference,
                 paymentAccountReference, customerName, customerPhone, deliveryMethod, documentNumber,
@@ -61,7 +69,7 @@ public record AgentConversationDecision(
     }
 
     public AgentConversationDecision withCommercialAction(AgentCommercialAction action) {
-        return new AgentConversationDecision(intent, customerGoal, productReference, colorReference,
+        return new AgentConversationDecision(intent, customerGoal, productReference, productReferences, colorReference,
                 sizeReference, quantity, promotionReference, promotionSelections, cartAction,
                 action == null ? AgentCommercialAction.NONE : action, paymentMethodReference,
                 paymentAccountReference, customerName, customerPhone, deliveryMethod, documentNumber,
@@ -70,12 +78,53 @@ public record AgentConversationDecision(
     }
 
     public AgentConversationDecision withRequiresHumanHelp(boolean required) {
-        return new AgentConversationDecision(intent, customerGoal, productReference, colorReference,
+        return new AgentConversationDecision(intent, customerGoal, productReference, productReferences, colorReference,
                 sizeReference, quantity, promotionReference, promotionSelections, cartAction,
                 commercialAction, paymentMethodReference, paymentAccountReference, customerName,
                 customerPhone, deliveryMethod, documentNumber, shalomAgency, shalomDestination,
                 shalomFieldsToChange, catalogAvailability, sizeGuideComponent, bodyMeasurements,
                 fitPreference, confidence, required);
+    }
+
+    public AgentConversationDecision withProductReferences(String primaryReference, List<String> references) {
+        return new AgentConversationDecision(intent, customerGoal, primaryReference, references, colorReference,
+                sizeReference, quantity, promotionReference, promotionSelections, cartAction, commercialAction,
+                paymentMethodReference, paymentAccountReference, customerName, customerPhone, deliveryMethod,
+                documentNumber, shalomAgency, shalomDestination, shalomFieldsToChange, catalogAvailability,
+                sizeGuideComponent, bodyMeasurements, fitPreference, confidence, requiresHumanHelp);
+    }
+
+    public AgentConversationDecision(
+            AgentDecisionIntent intent,
+            String customerGoal,
+            String productReference,
+            String colorReference,
+            String sizeReference,
+            Integer quantity,
+            String promotionReference,
+            List<PromotionSelection> promotionSelections,
+            AgentCartAction cartAction,
+            AgentCommercialAction commercialAction,
+            String paymentMethodReference,
+            String paymentAccountReference,
+            String customerName,
+            String customerPhone,
+            String deliveryMethod,
+            String documentNumber,
+            String shalomAgency,
+            String shalomDestination,
+            List<AgentShalomDataField> shalomFieldsToChange,
+            AgentCatalogAvailability catalogAvailability,
+            String sizeGuideComponent,
+            List<BodyMeasurementSelection> bodyMeasurements,
+            String fitPreference,
+            int confidence,
+            boolean requiresHumanHelp) {
+        this(intent, customerGoal, productReference, singleReference(productReference), colorReference,
+                sizeReference, quantity, promotionReference, promotionSelections, cartAction, commercialAction,
+                paymentMethodReference, paymentAccountReference, customerName, customerPhone, deliveryMethod,
+                documentNumber, shalomAgency, shalomDestination, shalomFieldsToChange, catalogAvailability,
+                sizeGuideComponent, bodyMeasurements, fitPreference, confidence, requiresHumanHelp);
     }
 
     public AgentConversationDecision(
@@ -86,7 +135,7 @@ public record AgentConversationDecision(
             String paymentAccountReference, String customerName, String customerPhone,
             String deliveryMethod, String documentNumber, String shalomAgency, String shalomDestination,
             AgentCatalogAvailability catalogAvailability, int confidence, boolean requiresHumanHelp) {
-        this(intent, customerGoal, productReference, colorReference, sizeReference, quantity,
+        this(intent, customerGoal, productReference, singleReference(productReference), colorReference, sizeReference, quantity,
                 promotionReference, promotionSelections, cartAction, commercialAction, paymentMethodReference,
                 paymentAccountReference, customerName, customerPhone, deliveryMethod, documentNumber,
                 shalomAgency, shalomDestination, List.of(), catalogAvailability, "", List.of(), "",
@@ -115,7 +164,7 @@ public record AgentConversationDecision(
             AgentCatalogAvailability catalogAvailability,
             int confidence,
             boolean requiresHumanHelp) {
-        this(intent, customerGoal, productReference, colorReference, sizeReference, quantity,
+        this(intent, customerGoal, productReference, singleReference(productReference), colorReference, sizeReference, quantity,
                 promotionReference, List.of(), cartAction, commercialAction, paymentMethodReference,
                 paymentAccountReference, customerName, customerPhone, deliveryMethod, documentNumber,
                 shalomAgency, shalomDestination, List.of(), catalogAvailability, "", List.of(), "",
@@ -135,7 +184,7 @@ public record AgentConversationDecision(
             String ignoredNextAction,
             int confidence,
             boolean requiresHumanHelp) {
-        this(intent, customerGoal, productReference, colorReference, sizeReference, quantity,
+        this(intent, customerGoal, productReference, singleReference(productReference), colorReference, sizeReference, quantity,
                 promotionReference, List.of(), cartAction,
                 cartAction == AgentCartAction.ADD_PRODUCT ? AgentCommercialAction.ADD_PRODUCT
                         : cartAction == AgentCartAction.CONFIRM_CART ? AgentCommercialAction.CONFIRM_CART
@@ -143,6 +192,11 @@ public record AgentConversationDecision(
                 "", "", "", "", "", "", "", "", List.of(), AgentCatalogAvailability.ALL,
                 "", List.of(), "",
                 confidence, requiresHumanHelp);
+    }
+
+    private static List<String> singleReference(String productReference) {
+        return productReference == null || productReference.isBlank()
+                ? List.of() : List.of(productReference.trim());
     }
 
     public record PromotionSelection(

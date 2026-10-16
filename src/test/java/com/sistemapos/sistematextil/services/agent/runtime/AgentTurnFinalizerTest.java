@@ -139,7 +139,7 @@ class AgentTurnFinalizerTest {
 
         var order = inOrder(outbox);
         order.verify(outbox).enqueueImage(8L, 41L, 99L, 0, "/storage/guias/emma.webp",
-                "emma.webp", "image/webp", null);
+                "emma.webp", "image/webp", "Guía de tallas — EMMA");
         order.verify(outbox).enqueueImage(8L, 41L, 99L, 1, "/storage/productos/emma-camel.webp",
                 "emma-camel.webp", "image/webp", "EMMA — CAMEL");
         order.verify(outbox).enqueueText(8L, 41L, 99L, 2, "¿Qué talla deseas?");

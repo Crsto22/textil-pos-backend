@@ -34,15 +34,17 @@ class AgentMainPromptFactoryTest {
         AgentMainPrompt prompt = factory.create(context(CrmWhatsappAgentState.ARMANDO_CARRITO));
 
         assertEquals(AgentMainPromptFactory.PROMPT_VERSION, prompt.version());
-        assertTrue(prompt.systemInstruction().contains("Eres IA Kiments"));
+        assertTrue(prompt.systemInstruction().contains("Eres la asistente virtual de Kiments"));
         assertTrue(prompt.systemInstruction().contains("objetivo comercial"));
         assertTrue(prompt.systemInstruction().contains("Antes de afirmar productos, precios, stock"));
         assertTrue(prompt.systemInstruction().contains("https://kiments.com.pe/productos"));
         assertTrue(prompt.systemInstruction().contains("galería completa"));
-        assertTrue(prompt.systemInstruction().contains("entrega a la logística"));
-        assertTrue(prompt.systemInstruction().contains("fecha anunciada en un live o TikTok"));
-        assertTrue(prompt.systemInstruction().contains("la chica de la transmisión en vivo le dará la fecha exacta"));
+        assertTrue(prompt.systemInstruction().contains("ventas rápidas al por menor"));
+        assertTrue(prompt.systemInstruction().contains("aunque la clienta mencione una fecha anunciada"));
+        assertFalse(prompt.systemInstruction().contains("la chica de la transmisión en vivo le dará la fecha exacta"));
         assertTrue(prompt.systemInstruction().contains("No inventes"));
+        assertTrue(prompt.systemInstruction().contains("contrastará dinámicamente con el catálogo real"));
+        assertTrue(prompt.systemInstruction().contains("tablas o guías de varios modelos"));
         assertTrue(prompt.systemInstruction().contains("termina con una sola pregunta"));
         assertTrue(prompt.systemInstruction().contains("No repitas saludos"));
         assertTrue(prompt.systemInstruction().contains("cambiar_variante_carrito"));
@@ -51,12 +53,18 @@ class AgentMainPromptFactoryTest {
         assertTrue(prompt.systemInstruction().contains("Tener varios productos en una compra personal no la convierte en mayorista"));
         assertTrue(prompt.systemInstruction().contains("motorizado"));
         assertTrue(prompt.systemInstruction().contains("No confundas la palabra genérica \"delivery\""));
-        assertTrue(prompt.systemInstruction().contains("pedido ya realizado"));
-        assertTrue(prompt.systemInstruction().contains("no prometas salida, llegada, prioridad ni plazo"));
-        assertTrue(prompt.systemInstruction().contains("fecha u hora exacta"));
-        assertTrue(prompt.systemInstruction().contains("El horario de tienda no confirma que el pedido estará preparado"));
+        assertTrue(prompt.systemInstruction().contains("antes y después de comprar"));
+        assertTrue(prompt.systemInstruction().contains("1 a 4 días"));
+        assertTrue(prompt.systemInstruction().contains("Este plazo nunca representa el traslado ni la llegada"));
+        assertTrue(prompt.systemInstruction().contains("el tiempo de llegada depende de Shalom"));
+        assertTrue(prompt.systemInstruction().contains("El horario de atención no"));
         assertTrue(prompt.systemInstruction().contains("Continúa vendiendo"));
         assertTrue(prompt.systemInstruction().contains("933918047"));
+        assertTrue(prompt.systemInstruction().contains("catálogo mayorista"));
+        assertTrue(prompt.systemInstruction().contains("factura"));
+        assertTrue(prompt.systemInstruction().contains("no anotes, separes ni reserves prendas"));
+        assertTrue(prompt.systemInstruction().contains("realizar nuevamente el pedido"));
+        assertTrue(prompt.systemInstruction().contains("no por palabras aisladas"));
         assertTrue(prompt.systemInstruction().contains("ARMANDO_CARRITO"));
         assertEquals(44L, prompt.toolContext().get(AgentCatalogTools.SESSION_ID_CONTEXT_KEY));
     }

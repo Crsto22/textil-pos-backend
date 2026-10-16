@@ -207,6 +207,7 @@ public class AgentDeterministicCommerceService {
             case SELECT_PAYMENT_METHOD -> selectPaymentMethod(sessionId, decision, operation);
             case PAYMENT_TIME_REMAINING -> paymentTimeRemaining(sessionId);
             case RETRY_PAYMENT -> retryPayment(sessionId, operation);
+            case EXPLAIN_IMMEDIATE_PAYMENT_POLICY -> immediatePaymentPolicy(sessionId);
             case PROVIDE_CUSTOMER_DATA -> provideCustomer(sessionId, decision, operation);
             case CONFIRM_EXISTING_CUSTOMER -> confirmExistingCustomer(sessionId, operation);
             case SELECT_PICKUP -> selectPickup(sessionId, operation);
@@ -220,8 +221,10 @@ public class AgentDeterministicCommerceService {
             case ACCEPT_FILM -> acceptFilm(sessionId);
             case DECLINE_FILM -> declineFilm(sessionId);
             case SHARE_ADVISOR_CONTACT -> advisorContact();
+            case SHARE_INVOICE_CONTACT -> invoiceContact();
             case SHARE_MOTORIZED_CONTACT -> motorizedContact();
-            case REFER_EXISTING_ORDER_DELIVERY -> existingOrderDeliveryCoordination();
+            case SHARE_DELIVERY_TIMING_CONTACT, REFER_EXISTING_ORDER_DELIVERY -> deliveryTimingContact();
+            case REQUEST_WHOLESALE_SUPPORT -> wholesaleContact();
             case CHANGE_CART -> beginCartEdit(sessionId);
             default -> Outcome.notHandled();
         };
@@ -230,12 +233,14 @@ public class AgentDeterministicCommerceService {
     private boolean handledByJava(AgentCommercialAction action) {
         return switch (action) {
             case CHANGE_CART, CONFIRM_CART, SHOW_PAYMENT_METHODS, SELECT_PAYMENT_METHOD, PAYMENT_TIME_REMAINING,
-                    RETRY_PAYMENT,
+                    RETRY_PAYMENT, EXPLAIN_IMMEDIATE_PAYMENT_POLICY,
                     PROVIDE_CUSTOMER_DATA, CONFIRM_EXISTING_CUSTOMER, SELECT_PICKUP, SELECT_SHALOM,
                     PROVIDE_SHALOM_DATA, EDIT_SHALOM_DATA, CONFIRM_SHALOM_AGENCY, REUSE_SHALOM_PROFILE,
                     HAS_PREVIOUS_PENDING_ORDER, NO_PREVIOUS_PENDING_ORDER,
-                    ACCEPT_FILM, DECLINE_FILM, SHARE_ADVISOR_CONTACT, SHARE_MOTORIZED_CONTACT,
-                    REFER_EXISTING_ORDER_DELIVERY -> true;
+                    ACCEPT_FILM, DECLINE_FILM, SHARE_ADVISOR_CONTACT, SHARE_INVOICE_CONTACT,
+                    SHARE_MOTORIZED_CONTACT,
+                    SHARE_DELIVERY_TIMING_CONTACT, REFER_EXISTING_ORDER_DELIVERY,
+                    REQUEST_WHOLESALE_SUPPORT -> true;
             default -> false;
         };
     }
@@ -305,13 +310,10 @@ public class AgentDeterministicCommerceService {
         }
         text.append("*Total: ").append(money(cart.total())).append("*\n\n");
         if (preorder && regular) {
-            text.append("📅 La fecha de preventa es referencial; el despacho depende del volumen de pedidos. ")
-                    .append("Puedes recibir todo junto o coordinar el envío anticipado de la prenda disponible ")
-                    .append("con el área de envíos, así que no te preocupes.\n\n");
+            text.append("📅 Los despachos del pedido comienzan cuando los productos en preventa estén disponibles, ")
+                    .append("a partir de la fecha indicada y según el volumen de pedidos.\n\n");
         } else if (preorder) {
             text.append("📅 Los despachos comienzan a partir de la fecha indicada y dependen del volumen de pedidos.\n\n");
-        } else {
-            text.append("Despacho del pedido: aproximadamente en 1 a 3 días, según el volumen de pedidos.\n\n");
         }
         if (requestConfirmation) {
             text.append("⚠️ Revisa bien el modelo, color y talla. Los cambios tienen una penalidad de S/10 y pueden demorar.\n\n")
@@ -669,16 +671,53 @@ public class AgentDeterministicCommerceService {
                 + "Yo tambien puedo seguir ayudandote por aqui con productos, colores, tallas, stock y tu compra.");
     }
 
+    private Outcome invoiceContact() {
+        return Outcome.message("Para solicitar una factura, comunicate con nuestra asesora al 933918047. "
+                + "Ella te ayudara a coordinar los datos de facturacion. "
+                + "Yo tambien puedo seguir ayudandote por aqui con tus productos y tu compra.");
+    }
+
     private Outcome motorizedContact() {
         return Outcome.message("Para coordinar el envio por motorizado, comunicate con nuestra asesora al "
                 + "933918047. Ella te ayudara a revisar la disponibilidad y el costo del servicio. "
                 + "Yo tambien puedo seguir ayudandote por aqui con tus productos y tu compra.");
     }
 
-    private Outcome existingOrderDeliveryCoordination() {
-        return Outcome.message("Entiendo, hermosa 💛 En unos momentos, una asesora del área de envíos se "
-                + "comunicará contigo para revisar el estado de tu pedido y coordinar la entrega. Ella podrá "
-                + "brindarte la información correspondiente.");
+    private Outcome deliveryTimingContact() {
+        return Outcome.message("Sí realizamos envíos por Shalom, hermosa 💛\n"
+                + "La fecha de despacho depende del producto:\n"
+                + "• Disponibilidad inmediata: despachamos aproximadamente en 1 a 4 días, según el volumen de pedidos.\n"
+                + "• Preventa: el despacho comienza desde la fecha indicada para el producto.\n\n"
+                + "Después del despacho, el tiempo de llegada depende de Shalom, por eso no podemos confirmar un día "
+                + "exacto de entrega.");
+    }
+
+    private Outcome wholesaleContact() {
+        return Outcome.message("Hermosa, soy la asistente virtual de Kiments y atiendo compras rápidas al por menor. "
+                + "Para solicitar el catálogo mayorista, precios por mayor o realizar una compra para negocio, "
+                + "comunícate con nuestra asesora al 933918047. 💛");
+    }
+
+    private Outcome immediatePaymentPolicy(Long sessionId) {
+        CrmWhatsappAgentState state = requireSession(sessionId).getState();
+        if (!allowsImmediatePaymentPolicy(state)) return Outcome.notHandled();
+        boolean releasedReservation = state == CrmWhatsappAgentState.ESPERANDO_METODO_PAGO
+                || state == CrmWhatsappAgentState.ESPERANDO_COMPROBANTE;
+        if (releasedReservation) payments.beginCartEdit(sessionId);
+        String message = "Entiendo, bella 💛 Para registrar tu pedido y separar las prendas, el pago debe realizarse "
+                + "ahora, ya que no reservamos productos para otro día y el stock cambia diariamente. Si deseas pagar "
+                + "más adelante, deberás realizar nuevamente tu pedido para verificar la disponibilidad.\n\n"
+                + "Soy la asistente virtual de Kiments y puedo ayudarte a realizar tu compra de forma rápida y segura. "
+                + "Si necesitas una atención más personalizada, puedes comunicarte con nuestra asesora al 933918047. 💛";
+        return releasedReservation ? Outcome.executed(message) : Outcome.message(message);
+    }
+
+    private boolean allowsImmediatePaymentPolicy(CrmWhatsappAgentState state) {
+        return state == CrmWhatsappAgentState.IDLE
+                || state == CrmWhatsappAgentState.EXPLORANDO_PRODUCTOS
+                || state == CrmWhatsappAgentState.ARMANDO_CARRITO
+                || state == CrmWhatsappAgentState.ESPERANDO_METODO_PAGO
+                || state == CrmWhatsappAgentState.ESPERANDO_COMPROBANTE;
     }
 
     private String mandatoryFilmMessage(AgentFulfillmentService.FulfillmentResult result, Integer saleId,

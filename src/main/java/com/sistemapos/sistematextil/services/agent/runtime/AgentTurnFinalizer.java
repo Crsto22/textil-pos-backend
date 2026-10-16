@@ -91,6 +91,7 @@ public class AgentTurnFinalizer {
             if (request.type() == AgentMediaRequest.MediaType.SIZE_GUIDE) {
                 var product = catalog.getProduct(lease.sessionId(), request.productId());
                 source = product.sizeGuideUrl();
+                caption = "Guía de tallas — " + product.name();
             } else {
                 var images = catalog.getProductImage(lease.sessionId(), request.productId(), request.color());
                 if (request.catalogPreview()) {

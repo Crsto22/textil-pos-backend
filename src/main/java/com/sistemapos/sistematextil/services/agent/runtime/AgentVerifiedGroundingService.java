@@ -1,6 +1,7 @@
 package com.sistemapos.sistematextil.services.agent.runtime;
 
 import java.text.Normalizer;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -55,6 +56,8 @@ public class AgentVerifiedGroundingService {
     private static final int AUDIT_ORDINAL_BASE = 10_000;
     private static final int MAX_CART_COLOR_IMAGES = 5;
     private static final int MAX_INITIAL_CATALOG_IMAGES = 3;
+    private static final DateTimeFormatter DELIVERY_DATE = DateTimeFormatter.ofPattern(
+            "d 'de' MMMM 'de' uuuu", Locale.forLanguageTag("es-PE"));
 
     private final AgentDecisionGateway decisions;
     private final AgentCatalogQueryService catalog;
@@ -100,18 +103,26 @@ public class AgentVerifiedGroundingService {
         if (commerce != null) {
             decision = commerce.normalizeShalomAgencyRefinement(sessionId, decision);
         }
-        decision = normalizeIncompleteProductSelection(decision);
-        boolean earlyDeliveryPreference = commerce != null
-                && commerce.rememberEarlyDeliveryPreference(sessionId, decision);
 
         AtomicInteger ordinal = new AtomicInteger(AUDIT_ORDINAL_BASE);
         Map<String, Object> evidence = new LinkedHashMap<>();
+        decision = reconcileExplicitCatalogReferences(
+                sessionId, jobId, decision, conversation, ordinal, evidence);
+        decision = normalizeIncompleteProductSelection(decision);
+        boolean earlyDeliveryPreference = commerce != null
+                && commerce.rememberEarlyDeliveryPreference(sessionId, decision);
         evidence.put("decision", decision);
         List<AgentMediaRequest> media = new ArrayList<>();
         boolean mutationExecuted = false;
         String customerMessage = null;
 
-        var commercial = commerce == null
+        boolean deliveryTiming = decision.commercialAction() == AgentCommercialAction.SHARE_DELIVERY_TIMING_CONTACT
+                || decision.commercialAction() == AgentCommercialAction.REFER_EXISTING_ORDER_DELIVERY;
+        if (deliveryTiming) {
+            customerMessage = groundDeliveryTiming(sessionId, jobId, decision, ordinal, evidence);
+        }
+
+        var commercial = commerce == null || deliveryTiming
                 ? AgentDeterministicCommerceService.Outcome.notHandled()
                 : commerce.execute(sessionId, jobId, decision);
         if (commercial.handled()) {
@@ -138,7 +149,8 @@ public class AgentVerifiedGroundingService {
             groundSizeRecommendation(sessionId, jobId, decision, conversation, ordinal, evidence);
         } else if (!commercial.handled()
                 && decision.commercialAction() == AgentCommercialAction.SHOW_SIZE_GUIDE) {
-            groundSizeGuide(sessionId, jobId, decision, conversation, ordinal, evidence, media);
+            customerMessage = groundSizeGuide(
+                    sessionId, jobId, decision, conversation, ordinal, evidence, media);
         } else if (!commercial.handled()
                 && (decision.commercialAction() == AgentCommercialAction.SHOW_PROMOTIONS
                 || decision.intent() == AgentDecisionIntent.PROMOTION_SEARCH)) {
@@ -189,11 +201,50 @@ public class AgentVerifiedGroundingService {
     }
 
     AgentConversationDecision enforceHumanHandoffRules(AgentConversationDecision decision) {
-        if (decision.commercialAction() == AgentCommercialAction.REQUEST_WHOLESALE_SUPPORT
-                && !decision.requiresHumanHelp()) {
-            return decision.withRequiresHumanHelp(true);
+        if ((decision.commercialAction() == AgentCommercialAction.REQUEST_WHOLESALE_SUPPORT
+                || decision.commercialAction() == AgentCommercialAction.SHARE_DELIVERY_TIMING_CONTACT
+                || decision.commercialAction() == AgentCommercialAction.REFER_EXISTING_ORDER_DELIVERY)
+                && decision.requiresHumanHelp()) {
+            return decision.withRequiresHumanHelp(false);
         }
         return decision;
+    }
+
+    private String groundDeliveryTiming(Long sessionId, Long jobId, AgentConversationDecision decision,
+            AtomicInteger ordinal, Map<String, Object> evidence) {
+        String generic = deliveryTimingPolicy(decision.shalomDestination());
+        String reference = decision.productReference() == null ? "" : decision.productReference().trim();
+        if (reference.isBlank()) return generic;
+
+        ProductSearchResult search = verified(sessionId, jobId, ordinal,
+                "buscar_productos", Map.of("consulta", reference, "limite", 10), ProductSearchResult.class,
+                () -> catalog.searchProducts(sessionId, reference, 10));
+        evidence.put("deliveryTimingCatalog", search);
+        AgentCatalogQueryService.ProductSummary product = unambiguousProduct(search, reference);
+        if (product == null) return generic;
+        if (!product.preorder() || product.preorderShippingDate() == null) {
+            return "Hermosa, el conjunto " + product.name() + " tiene disponibilidad inmediata. Su despacho desde "
+                    + "Kiments demora aproximadamente de 1 a 4 días, según el volumen de pedidos. Después del "
+                    + "despacho, el tiempo de llegada depende de Shalom, por eso no podemos confirmar un día exacto "
+                    + "de entrega. 💛";
+        }
+
+        return "Hermosa, el conjunto " + product.name() + " está en preventa y sus despachos comienzan a partir "
+                + "del " + DELIVERY_DATE.format(product.preorderShippingDate()) + ", según el volumen de pedidos. "
+                + "No es posible enviarlo antes de esa fecha. Después del despacho, el tiempo de llegada depende "
+                + "de Shalom, por eso no podemos confirmar un día exacto de entrega. 💛";
+    }
+
+    private String deliveryTimingPolicy(String destination) {
+        String place = destination == null || destination.isBlank()
+                ? "por Shalom"
+                : "a " + destination.trim() + " por Shalom";
+        return "Sí realizamos envíos " + place + ", hermosa 💛\n"
+                + "La fecha de despacho depende del producto:\n"
+                + "• Disponibilidad inmediata: despachamos aproximadamente en 1 a 4 días, según el volumen de pedidos.\n"
+                + "• Preventa: el despacho comienza desde la fecha indicada para el producto.\n\n"
+                + "Después del despacho, el tiempo de llegada depende de Shalom, por eso no podemos confirmar un día "
+                + "exacto de entrega.";
     }
 
     private AgentConversationDecision normalizeIncompleteProductSelection(AgentConversationDecision decision) {
@@ -246,22 +297,45 @@ public class AgentVerifiedGroundingService {
         }
     }
 
-    private void groundSizeGuide(Long sessionId, Long jobId, AgentConversationDecision decision,
+    private String groundSizeGuide(Long sessionId, Long jobId, AgentConversationDecision decision,
             String conversation, AtomicInteger ordinal, Map<String, Object> evidence,
             List<AgentMediaRequest> media) {
-        if (sizeGuides == null) return;
-        String query = firstPresent(decision.productReference(), decision.customerGoal(), conversation);
+        String currentInput = currentGroupedInput(conversation);
+        List<String> references = requestedProductReferences(decision, currentInput);
+        String query = references.isEmpty()
+                ? firstPresent(decision.customerGoal(), currentInput, conversation)
+                : String.join(" ", references);
         ProductSearchResult search = verified(sessionId, jobId, ordinal,
                 "buscar_productos", Map.of("consulta", query, "limite", 10), ProductSearchResult.class,
                 () -> catalog.searchProducts(sessionId, query, 10));
         evidence.put("productSearch", search);
-        var selected = unambiguousProduct(search, decision.productReference());
-        if (selected == null) return;
-        SizeGuideResult guide = verified(sessionId, jobId, ordinal,
-                "obtener_guia_tallas", Map.of("productoId", selected.productId()),
-                SizeGuideResult.class, () -> sizeGuides.getGuide(sessionId, selected.productId()));
-        evidence.put("sizeGuide", guide);
-        media.add(new AgentMediaRequest(MediaType.SIZE_GUIDE, selected.productId(), null));
+        List<AgentCatalogQueryService.ProductSummary> selected = requestedProducts(search, references);
+        if (selected.isEmpty()) {
+            var single = unambiguousProduct(search, decision.productReference());
+            if (single != null) selected = List.of(single);
+        }
+        if (selected.isEmpty()) return null;
+
+        List<String> sent = new ArrayList<>();
+        List<String> missing = new ArrayList<>();
+        List<Map<String, Object>> guideEvidence = new ArrayList<>();
+        for (var product : selected) {
+            ProductDetail detail = verified(sessionId, jobId, ordinal,
+                    "obtener_producto", Map.of("productoId", product.productId()),
+                    ProductDetail.class, () -> catalog.getProduct(sessionId, product.productId()));
+            boolean available = detail.sizeGuideUrl() != null && !detail.sizeGuideUrl().isBlank();
+            guideEvidence.add(Map.of("productId", product.productId(), "productName", product.name(),
+                    "sizeGuideAvailable", available));
+            if (available) {
+                media.add(new AgentMediaRequest(MediaType.SIZE_GUIDE, product.productId(), null, false));
+                sent.add(product.name());
+            } else {
+                missing.add(product.name());
+            }
+        }
+        evidence.put("requestedSizeGuides", guideEvidence);
+        evidence.put("sizeGuideRepeatSuppression", false);
+        return sizeGuideMessage(sent, missing);
     }
 
     private void groundPromotions(Long sessionId, Long jobId, AgentConversationDecision decision,
@@ -654,8 +728,10 @@ public class AgentVerifiedGroundingService {
             List<AgentMediaRequest> media) {
         boolean browsingCatalog = decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCTS;
         boolean imagesRequested = decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT_IMAGES;
+        String multipleReferences = decision.productReferences() == null
+                ? "" : String.join(" ", decision.productReferences());
         String query = browsingCatalog ? firstPresent(decision.productReference())
-                : firstPresent(decision.productReference(), decision.customerGoal(), conversation);
+                : firstPresent(multipleReferences, decision.productReference(), decision.customerGoal(), conversation);
         ProductSearchResult search = verified(sessionId, jobId, ordinal,
                 "buscar_productos", Map.of("consulta", query, "limite", 20,
                         "disponibilidad", decision.catalogAvailability().name()),
@@ -747,6 +823,164 @@ public class AgentVerifiedGroundingService {
         }
         evidence.put("initialCatalogPreviewImages", imageEvidence);
         evidence.put("initialCatalogPreviewImageCount", media.size());
+    }
+
+    private AgentConversationDecision reconcileExplicitCatalogReferences(
+            Long sessionId, Long jobId, AgentConversationDecision decision, String conversation,
+            AtomicInteger ordinal, Map<String, Object> evidence) {
+        String currentInput = currentGroupedInput(conversation);
+        if (currentInput.isBlank() || !usesCatalogProductReference(decision)) return decision;
+
+        List<String> interpreted = new ArrayList<>(decision.productReferences());
+        if (interpreted.isEmpty() && decision.productReference() != null
+                && !decision.productReference().isBlank()) {
+            interpreted.add(decision.productReference());
+        }
+        boolean allReflectedInCurrentMessage = !interpreted.isEmpty() && interpreted.stream()
+                .allMatch(reference -> containsPhrase(normalize(currentInput), normalize(reference)));
+        if (allReflectedInCurrentMessage) return decision;
+
+        ProductSearchResult search = verified(sessionId, jobId, ordinal,
+                "buscar_productos", Map.of("consulta", currentInput, "limite", 20,
+                        "disponibilidad", decision.catalogAvailability().name()),
+                ProductSearchResult.class,
+                () -> catalog.searchProducts(sessionId, currentInput, 20, decision.catalogAvailability()));
+        List<String> exactReferences = exactCatalogReferences(search, currentInput);
+        evidence.put("explicitProductReferenceSearch", search);
+        evidence.put("explicitProductReferences", exactReferences);
+        if (exactReferences.isEmpty()) return decision;
+        return decision.withProductReferences(exactReferences.getFirst(), exactReferences);
+    }
+
+    private boolean usesCatalogProductReference(AgentConversationDecision decision) {
+        if (decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCTS
+                || decision.commercialAction() == AgentCommercialAction.SHOW_PROMOTIONS
+                || decision.intent() == AgentDecisionIntent.PROMOTION_SEARCH) return false;
+        return decision.intent() == AgentDecisionIntent.PRODUCT_SEARCH
+                || decision.intent() == AgentDecisionIntent.PRODUCT_DETAILS
+                || decision.intent() == AgentDecisionIntent.CART_CHANGE
+                || decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT
+                || decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT_IMAGES
+                || decision.commercialAction() == AgentCommercialAction.SHOW_SIZE_GUIDE
+                || decision.commercialAction() == AgentCommercialAction.RECOMMEND_SIZE
+                || decision.commercialAction() == AgentCommercialAction.ADD_PRODUCT
+                || decision.commercialAction() == AgentCommercialAction.CHANGE_CART
+                || decision.commercialAction() == AgentCommercialAction.SHARE_DELIVERY_TIMING_CONTACT;
+    }
+
+    private List<String> exactCatalogReferences(ProductSearchResult search, String currentInput) {
+        if (search == null || search.products() == null || search.products().isEmpty()) return List.of();
+        String message = normalize(currentInput);
+        Map<String, List<PrefixMatch>> byFirstToken = new LinkedHashMap<>();
+        for (var product : search.products()) {
+            List<String> tokens = List.of(normalize(product.name()).split("\\s+"));
+            if (tokens.isEmpty() || tokens.getFirst().isBlank()) continue;
+            int matchedTokens = longestContainedPrefix(message, tokens);
+            if (matchedTokens < 1) continue;
+            byFirstToken.computeIfAbsent(tokens.getFirst(), ignored -> new ArrayList<>())
+                    .add(new PrefixMatch(product, tokens, matchedTokens));
+        }
+
+        Map<String, String> references = new LinkedHashMap<>();
+        for (List<PrefixMatch> familyMatches : byFirstToken.values()) {
+            int longest = familyMatches.stream().mapToInt(PrefixMatch::matchedTokens).max().orElse(0);
+            boolean hasCompleteProductName = familyMatches.stream()
+                    .anyMatch(match -> match.matchedTokens() == match.tokens().size());
+            for (PrefixMatch match : familyMatches) {
+                boolean include = hasCompleteProductName
+                        ? match.matchedTokens() == match.tokens().size()
+                        : match.matchedTokens() == longest;
+                if (!include) continue;
+                String reference = String.join(" ", match.tokens().subList(0, match.matchedTokens()));
+                references.putIfAbsent(reference, reference.toUpperCase(Locale.ROOT));
+            }
+        }
+        return references.values().stream().toList();
+    }
+
+    private int longestContainedPrefix(String message, List<String> productNameTokens) {
+        for (int length = productNameTokens.size(); length >= 1; length--) {
+            String prefix = String.join(" ", productNameTokens.subList(0, length));
+            if (containsPhrase(message, prefix)) return length;
+        }
+        return 0;
+    }
+
+    private List<String> requestedProductReferences(
+            AgentConversationDecision decision, String currentInput) {
+        Map<String, String> unique = new LinkedHashMap<>();
+        for (String reference : decision.productReferences()) {
+            if (reference != null && !reference.isBlank()) unique.putIfAbsent(normalize(reference), reference.trim());
+        }
+        if (decision.productReference() != null && !decision.productReference().isBlank()) {
+            unique.putIfAbsent(normalize(decision.productReference()), decision.productReference().trim());
+        }
+        if (currentInput != null && !currentInput.isBlank()) {
+            unique.putIfAbsent(normalize(currentInput), currentInput.trim());
+        }
+        return unique.values().stream().toList();
+    }
+
+    private List<AgentCatalogQueryService.ProductSummary> requestedProducts(
+            ProductSearchResult search, List<String> references) {
+        if (search == null || search.products() == null || search.products().isEmpty()) return List.of();
+        String requested = normalize(String.join(" ", references));
+        if (requested.isBlank()) return List.of();
+
+        Map<String, List<AgentCatalogQueryService.ProductSummary>> byFamily = new LinkedHashMap<>();
+        for (var product : search.products()) {
+            String normalizedName = normalize(product.name());
+            String family = normalizedName.contains(" ")
+                    ? normalizedName.substring(0, normalizedName.indexOf(' ')) : normalizedName;
+            byFamily.computeIfAbsent(family, ignored -> new ArrayList<>()).add(product);
+        }
+
+        Map<Integer, AgentCatalogQueryService.ProductSummary> selected = new LinkedHashMap<>();
+        for (var family : byFamily.entrySet()) {
+            List<AgentCatalogQueryService.ProductSummary> exactVariants = family.getValue().stream()
+                    .filter(product -> containsPhrase(requested, normalize(product.name())))
+                    .toList();
+            if (!exactVariants.isEmpty()) {
+                exactVariants.forEach(product -> selected.putIfAbsent(product.productId(), product));
+            } else if (containsWord(requested, family.getKey())) {
+                family.getValue().forEach(product -> selected.putIfAbsent(product.productId(), product));
+            }
+        }
+        return selected.values().stream().toList();
+    }
+
+    private String sizeGuideMessage(List<String> sent, List<String> missing) {
+        if (sent.isEmpty()) {
+            return "Hermosa, estos productos no tienen una guía de tallas en imagen disponible: "
+                    + humanList(missing) + ".";
+        }
+        String message = "Aquí tienes las guías de tallas de " + humanList(sent)
+                + ", hermosa 💛 Revísalas para elegir la talla que mejor se adapte a tus medidas.";
+        if (!missing.isEmpty()) {
+            message += " No encontré una guía en imagen disponible para " + humanList(missing) + ".";
+        }
+        return message;
+    }
+
+    private String humanList(List<String> values) {
+        if (values == null || values.isEmpty()) return "los modelos solicitados";
+        if (values.size() == 1) return values.getFirst();
+        return String.join(", ", values.subList(0, values.size() - 1)) + " y " + values.getLast();
+    }
+
+    private String currentGroupedInput(String conversation) {
+        if (conversation == null || conversation.isBlank()) return "";
+        String marker = "LOTE_ACTUAL_AGRUPADO:";
+        int markerIndex = conversation.lastIndexOf(marker);
+        return markerIndex < 0 ? conversation.trim()
+                : conversation.substring(markerIndex + marker.length()).trim();
+    }
+
+    private boolean containsWord(String value, String word) {
+        String normalizedValue = normalize(value);
+        String normalizedWord = normalize(word);
+        return !normalizedWord.isBlank()
+                && (" " + normalizedValue + " ").contains(" " + normalizedWord + " ");
     }
 
     private AgentCatalogQueryService.ProductSummary unambiguousProduct(
@@ -857,6 +1091,10 @@ public class AgentVerifiedGroundingService {
     }
 
     private record RequiredPromotionProduct(Integer productId, String productName, int quantity) {
+    }
+
+    private record PrefixMatch(
+            AgentCatalogQueryService.ProductSummary product, List<String> tokens, int matchedTokens) {
     }
 
     public record Grounding(

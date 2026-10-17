@@ -32,6 +32,7 @@ public record AgentConversationDecision(
         boolean requiresHumanHelp) {
 
     public AgentConversationDecision {
+        colorReference = AgentColorReferenceNormalizer.canonicalize(colorReference);
         productReferences = productReferences == null ? List.of()
                 : productReferences.stream()
                         .filter(java.util.Objects::nonNull)
@@ -215,7 +216,7 @@ public record AgentConversationDecision(
             Integer quantity) {
         public PromotionSelection {
             productReference = productReference == null ? "" : productReference;
-            colorReference = colorReference == null ? "" : colorReference;
+            colorReference = AgentColorReferenceNormalizer.canonicalize(colorReference);
             sizeReference = sizeReference == null ? "" : sizeReference;
             quantity = quantity == null ? 0 : quantity;
         }

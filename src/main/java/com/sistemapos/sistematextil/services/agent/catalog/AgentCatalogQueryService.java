@@ -31,6 +31,7 @@ import com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability;
 
 @Service
 public class AgentCatalogQueryService {
+    private static final String PRODUCT_PAGE_BASE_URL = "https://kiments.com.pe/productos/";
     private static final int DEFAULT_LIMIT = 10;
     private static final int MAX_LIMIT = 20;
     private static final ZoneId BUSINESS_ZONE = ZoneId.of("America/Lima");
@@ -107,7 +108,7 @@ public class AgentCatalogQueryService {
                 availableVariants.stream().map(VariantSummary::size).filter(value -> value != null && !value.isBlank())
                         .distinct().toList(),
                 availableVariants.stream().mapToInt(VariantSummary::stock).sum(), minimumPrice(availableVariants),
-                variants.size(), groupAvailability(availableVariants));
+                variants.size(), groupAvailability(availableVariants), productPageUrl(product));
     }
 
     @Transactional(readOnly = true)
@@ -281,7 +282,12 @@ public class AgentCatalogQueryService {
         return new ProductSummary(product.getIdProducto(), product.getNombre(), product.getDescripcion(),
                 categoryName(product), activePreorder, activePreorder ? product.getFechaEnvioPreventa() : null,
                 prices.stream().min(Double::compareTo).orElse(null), stock, List.copyOf(colors), List.copyOf(sizes),
-                groupAvailabilityFromStock(availableRows));
+                groupAvailabilityFromStock(availableRows), productPageUrl(product));
+    }
+
+    private String productPageUrl(Producto product) {
+        if (product == null || product.getSlug() == null || product.getSlug().isBlank()) return "";
+        return PRODUCT_PAGE_BASE_URL + product.getSlug().trim();
     }
 
     /**
@@ -393,24 +399,41 @@ public class AgentCatalogQueryService {
 
     public record ProductSummary(Integer productId, String name, String description, String category,
             boolean preorder, LocalDate preorderShippingDate, Double priceFrom, int totalStock,
-            List<String> colors, List<String> sizes, List<ColorAvailability> availabilityByColor) {
+            List<String> colors, List<String> sizes, List<ColorAvailability> availabilityByColor,
+            String productPageUrl) {
         public ProductSummary(Integer productId, String name, String description, String category,
                 boolean preorder, LocalDate preorderShippingDate, Double priceFrom, int totalStock,
                 List<String> colors, List<String> sizes) {
             this(productId, name, description, category, preorder, preorderShippingDate, priceFrom, totalStock,
-                    colors, sizes, List.of());
+                    colors, sizes, List.of(), "");
+        }
+
+        public ProductSummary(Integer productId, String name, String description, String category,
+                boolean preorder, LocalDate preorderShippingDate, Double priceFrom, int totalStock,
+                List<String> colors, List<String> sizes, List<ColorAvailability> availabilityByColor) {
+            this(productId, name, description, category, preorder, preorderShippingDate, priceFrom, totalStock,
+                    colors, sizes, availabilityByColor, "");
         }
     }
 
     public record ProductDetail(Integer productId, String name, String description, String category,
             boolean preorder, LocalDate preorderShippingDate, String sizeGuideUrl, String sizeGuideThumbnailUrl,
             List<String> colors, List<String> sizes, int totalStock, Double priceFrom, int variantCount,
-            List<ColorAvailability> availabilityByColor) {
+            List<ColorAvailability> availabilityByColor, String productPageUrl) {
         public ProductDetail(Integer productId, String name, String description, String category,
                 boolean preorder, LocalDate preorderShippingDate, String sizeGuideUrl, String sizeGuideThumbnailUrl,
                 List<String> colors, List<String> sizes, int totalStock, Double priceFrom, int variantCount) {
             this(productId, name, description, category, preorder, preorderShippingDate, sizeGuideUrl,
-                    sizeGuideThumbnailUrl, colors, sizes, totalStock, priceFrom, variantCount, List.of());
+                    sizeGuideThumbnailUrl, colors, sizes, totalStock, priceFrom, variantCount, List.of(), "");
+        }
+
+        public ProductDetail(Integer productId, String name, String description, String category,
+                boolean preorder, LocalDate preorderShippingDate, String sizeGuideUrl, String sizeGuideThumbnailUrl,
+                List<String> colors, List<String> sizes, int totalStock, Double priceFrom, int variantCount,
+                List<ColorAvailability> availabilityByColor) {
+            this(productId, name, description, category, preorder, preorderShippingDate, sizeGuideUrl,
+                    sizeGuideThumbnailUrl, colors, sizes, totalStock, priceFrom, variantCount,
+                    availabilityByColor, "");
         }
     }
 

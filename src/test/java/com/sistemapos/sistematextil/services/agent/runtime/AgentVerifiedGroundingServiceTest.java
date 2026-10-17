@@ -3,6 +3,7 @@ package com.sistemapos.sistematextil.services.agent.runtime;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -250,7 +251,11 @@ class AgentVerifiedGroundingServiceTest {
         assertEquals(List.of(59, 61, 66), result.media().stream().map(item -> item.productId()).toList());
         assertTrue(result.media().stream().allMatch(item -> item.type() == MediaType.SIZE_GUIDE));
         assertTrue(result.media().stream().noneMatch(item -> item.suppressIfRecentlySent()));
-        assertTrue(result.customerMessage().contains("EMMA, ANNIE ENTERO y ANNIE RAYAS"));
+        assertNull(result.customerMessage());
+        assertTrue(result.evidenceJson().contains("sizeGuideDelivery"));
+        assertTrue(result.evidenceJson().contains("EMMA"));
+        assertTrue(result.evidenceJson().contains("ANNIE ENTERO"));
+        assertTrue(result.evidenceJson().contains("ANNIE RAYAS"));
         assertEquals(4, result.verifiedToolCalls());
     }
 
@@ -283,9 +288,11 @@ class AgentVerifiedGroundingServiceTest {
         var result = service.ground(4L, 9L, 30L, conversation);
 
         assertEquals(List.of(59), result.media().stream().map(item -> item.productId()).toList());
-        assertTrue(result.customerMessage().contains("EMMA"));
-        assertTrue(result.customerMessage().contains("ANNIE RAYAS"));
-        assertTrue(result.customerMessage().contains("No encontré una guía"));
+        assertNull(result.customerMessage());
+        assertTrue(result.evidenceJson().contains("sizeGuideDelivery"));
+        assertTrue(result.evidenceJson().contains("EMMA"));
+        assertTrue(result.evidenceJson().contains("ANNIE RAYAS"));
+        assertTrue(result.evidenceJson().contains("missing"));
     }
 
     @Test
@@ -361,17 +368,14 @@ class AgentVerifiedGroundingServiceTest {
                 result.decision().commercialAction());
         assertEquals(6, result.verifiedToolCalls());
         assertTrue(result.media().isEmpty());
-        assertTrue(result.customerMessage().contains("**ALICE LISO** (S/ 90.00)"));
-        assertTrue(result.customerMessage().contains("**LYANA** (S/ 70.00)"));
-        assertTrue(result.customerMessage().contains("- NUDE"));
-        assertTrue(result.customerMessage().contains("- PERLA"));
-        assertTrue(result.customerMessage().contains("**EMMA** (S/ 67.00)"));
-        assertTrue(result.customerMessage().contains("- BEIGE CLARO"));
-        assertTrue(result.customerMessage().contains("- CAMEL CLARO"));
-        assertTrue(result.customerMessage().contains("- GRIS OSCURO"));
-        assertFalse(result.customerMessage().contains("ALICE RAYAS"));
-        assertFalse(result.customerMessage().contains("LYANA** (S/ 70.00)\n- Actualmente"));
+        assertNull(result.customerMessage());
         assertTrue(result.evidenceJson().contains("requestedVariantAvailability"));
+        assertTrue(result.evidenceJson().contains("ALICE LISO"));
+        assertTrue(result.evidenceJson().contains("LYANA"));
+        assertTrue(result.evidenceJson().contains("NUDE"));
+        assertTrue(result.evidenceJson().contains("PERLA"));
+        assertTrue(result.evidenceJson().contains("EMMA"));
+        assertFalse(result.evidenceJson().contains("ALICE RAYAS"));
     }
 
     @Test

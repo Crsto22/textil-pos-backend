@@ -50,6 +50,8 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
             - SHOW_PRODUCT_IMAGES: pide expresamente fotos o imagenes de uno o varios modelos. Conserva todos los
               nombres o familias solicitados en productReferences y el primero en productReference. Si tambien
               solicita un color, conservalo en colorReference; Java decidira si primero debe precisar el modelo.
+              En el contexto peruano de colores de prendas, "morocho" significa NEGRO. Aplica esta equivalencia
+              solo cuando la palabra describe el color solicitado; si el uso es ambiguo, pide una aclaracion.
             - SHOW_SIZE_GUIDE: pide una tabla, guia o medidas del producto, incluso con frases naturales como
               "para medirme". Conserva todos los modelos solicitados en productReferences y el primero en
               productReference. Una familia generica como Annie o Lia debe conservarse sin elegir arbitrariamente

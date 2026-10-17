@@ -196,7 +196,7 @@ public class AgentVerifiedGroundingService {
             groundCatalog(sessionId, jobId, decision, conversation, ordinal, evidence, media);
         } else if (!commercial.handled()
                 && decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY) {
-            customerMessage = groundProductAvailability(sessionId, jobId, decision, ordinal, evidence);
+            groundProductAvailability(sessionId, jobId, decision, ordinal, evidence);
         } else if (!commercial.handled()) switch (decision.intent()) {
             case PRODUCT_SEARCH, PRODUCT_DETAILS -> groundCatalog(
                     sessionId, jobId, decision, conversation, ordinal, evidence, media);
@@ -353,7 +353,7 @@ public class AgentVerifiedGroundingService {
         return decision;
     }
 
-    private String groundProductAvailability(Long sessionId, Long jobId, AgentConversationDecision decision,
+    private void groundProductAvailability(Long sessionId, Long jobId, AgentConversationDecision decision,
             AtomicInteger ordinal, Map<String, Object> evidence) {
         List<String> references = decision.productReferences() == null
                 ? new ArrayList<>() : new ArrayList<>(decision.productReferences());
@@ -361,7 +361,7 @@ public class AgentVerifiedGroundingService {
                 && !decision.productReference().isBlank()) {
             references.add(decision.productReference().trim());
         }
-        if (references.isEmpty()) return null;
+        if (references.isEmpty()) return;
 
         Map<Integer, AgentCatalogQueryService.ProductSummary> products = new LinkedHashMap<>();
         List<Map<String, Object>> searches = new ArrayList<>();
@@ -401,80 +401,14 @@ public class AgentVerifiedGroundingService {
                     .min(Double::compareTo)
                     .orElse(product.priceFrom());
             availability.add(new ProductAvailabilityView(
-                    product.productId(), product.name(), price, availableVariants));
+                    product.productId(), product.name(), price, product.productPageUrl(), availableVariants));
         }
         evidence.put("requestedVariantAvailability", Map.of(
                 "requestedSize", clean(decision.sizeReference()),
                 "requestedColor", clean(decision.colorReference()),
                 "products", availability,
                 "unresolvedReferences", unresolved));
-        return productAvailabilityMessage(availability, unresolved,
-                decision.sizeReference(), decision.colorReference());
-    }
-
-    private String productAvailabilityMessage(List<ProductAvailabilityView> products, List<String> unresolved,
-            String requestedSize, String requestedColor) {
-        String size = clean(requestedSize);
-        String color = clean(requestedColor);
-        StringBuilder message = new StringBuilder("Claro que s\u00ed, hermosa \uD83D\uDC9B ");
-        if (!size.isBlank() && color.isBlank()) {
-            message.append("Estos son los colores disponibles en talla ").append(size).append(":");
-        } else if (!size.isBlank()) {
-            message.append("Esta es la disponibilidad en color ").append(color)
-                    .append(" y talla ").append(size).append(":");
-        } else if (!color.isBlank()) {
-            message.append("Esta es la disponibilidad en color ").append(color).append(":");
-        } else {
-            message.append("Estas son las opciones disponibles:");
-        }
-
-        for (ProductAvailabilityView product : products) {
-            message.append("\n\n\u2728 **").append(product.name()).append("**");
-            if (product.price() != null) {
-                message.append(" (S/ ").append(String.format(Locale.US, "%.2f", product.price())).append(")");
-            }
-            if (product.variants().isEmpty()) {
-                message.append("\n- Actualmente no cuenta con stock disponible");
-                if (!color.isBlank()) message.append(" en color ").append(color);
-                if (!size.isBlank()) message.append(" en talla ").append(size);
-                message.append(".");
-                continue;
-            }
-
-            Map<String, List<String>> sizesByColor = new LinkedHashMap<>();
-            for (var variant : product.variants()) {
-                sizesByColor.computeIfAbsent(variant.color(), ignored -> new ArrayList<>());
-                List<String> sizes = sizesByColor.get(variant.color());
-                if (variant.size() != null && !variant.size().isBlank() && !sizes.contains(variant.size())) {
-                    sizes.add(variant.size());
-                }
-            }
-            for (var entry : sizesByColor.entrySet()) {
-                message.append("\n- ").append(entry.getKey());
-                if (size.isBlank() && !entry.getValue().isEmpty()) {
-                    message.append(" — tallas ").append(humanList(entry.getValue()));
-                }
-            }
-        }
-        if (!unresolved.isEmpty()) {
-            message.append("\n\nNo encontr\u00e9 en el cat\u00e1logo: ").append(humanList(unresolved)).append(".");
-        }
-        if (products.size() == 1) {
-            if (!color.isBlank() && size.isBlank()) {
-                message.append("\n\n\u00bfQu\u00e9 talla deseas elegir? \uD83D\uDC9B");
-            } else if (!size.isBlank() && color.isBlank()) {
-                message.append("\n\n\u00bfQu\u00e9 color deseas elegir? \uD83D\uDC9B");
-            } else if (!size.isBlank()) {
-                message.append("\n\n\u00bfDeseas agregarlo a tu pedido? \uD83D\uDC9B");
-            } else {
-                message.append("\n\n\u00bfQu\u00e9 color y talla deseas elegir? \uD83D\uDC9B");
-            }
-        } else if (!color.isBlank() && size.isBlank()) {
-            message.append("\n\n\u00bfCu\u00e1l modelo y talla deseas elegir? \uD83D\uDC9B");
-        } else {
-            message.append("\n\n\u00bfCu\u00e1l modelo y color deseas elegir? \uD83D\uDC9B");
-        }
-        return message.toString();
+        // La evidencia verificada queda estructurada; Gemini redacta la respuesta final.
     }
 
     private void groundSizeRecommendation(Long sessionId, Long jobId, AgentConversationDecision decision,
@@ -552,7 +486,10 @@ public class AgentVerifiedGroundingService {
         }
         evidence.put("requestedSizeGuides", guideEvidence);
         evidence.put("sizeGuideRepeatSuppression", false);
-        return sizeGuideMessage(sent, missing);
+        evidence.put("sizeGuideDelivery", Map.of(
+                "sent", List.copyOf(sent),
+                "missing", List.copyOf(missing)));
+        return null;
     }
 
     private void groundPromotions(Long sessionId, Long jobId, AgentConversationDecision decision,
@@ -1308,25 +1245,6 @@ public class AgentVerifiedGroundingService {
         return selected.values().stream().toList();
     }
 
-    private String sizeGuideMessage(List<String> sent, List<String> missing) {
-        if (sent.isEmpty()) {
-            return "Hermosa, estos productos no tienen una guía de tallas en imagen disponible: "
-                    + humanList(missing) + ".";
-        }
-        String message = "Aquí tienes las guías de tallas de " + humanList(sent)
-                + ", hermosa 💛 Revísalas para elegir la talla que mejor se adapte a tus medidas.";
-        if (!missing.isEmpty()) {
-            message += " No encontré una guía en imagen disponible para " + humanList(missing) + ".";
-        }
-        return message;
-    }
-
-    private String humanList(List<String> values) {
-        if (values == null || values.isEmpty()) return "los modelos solicitados";
-        if (values.size() == 1) return values.getFirst();
-        return String.join(", ", values.subList(0, values.size() - 1)) + " y " + values.getLast();
-    }
-
     private String currentGroupedInput(String conversation) {
         if (conversation == null || conversation.isBlank()) return "";
         String marker = "LOTE_ACTUAL_AGRUPADO:";
@@ -1480,8 +1398,10 @@ public class AgentVerifiedGroundingService {
             Integer productId,
             String name,
             Double price,
+            String productPageUrl,
             List<AgentCatalogQueryService.VariantSummary> variants) {
         private ProductAvailabilityView {
+            productPageUrl = productPageUrl == null ? "" : productPageUrl;
             variants = variants == null ? List.of() : List.copyOf(variants);
         }
     }

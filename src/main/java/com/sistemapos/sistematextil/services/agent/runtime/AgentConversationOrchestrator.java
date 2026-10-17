@@ -10,6 +10,9 @@ import java.util.Map;
 
 import org.springframework.stereotype.Service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import com.sistemapos.sistematextil.services.agent.ai.AgentResponseGateway;
 import com.sistemapos.sistematextil.services.agent.ai.AgentCommercialAction;
 import com.sistemapos.sistematextil.services.agent.ai.AgentDecisionIntent;
@@ -50,6 +53,7 @@ public class AgentConversationOrchestrator {
 
     private final AgentProductPriceResponseValidator priceValidator = new AgentProductPriceResponseValidator();
     private final AgentPromotionResponseValidator promotionValidator = new AgentPromotionResponseValidator();
+    private final ObjectMapper evidenceMapper = new ObjectMapper();
     private final AgentJobCoordinator coordinator;
     private final AgentJobStore jobStore;
     private final AgentMessageBatchFactory batchFactory;
@@ -140,6 +144,22 @@ public class AgentConversationOrchestrator {
                         - Todo producto que menciones o muestres debe incluir su precio real de la evidencia.
                           No omitas precios, no los agrupes si tienen importes distintos y no inventes montos.
                         - Cuando exista availabilityByColor, presenta cada color con sus tallas disponibles reales.
+                        - Cuando exista requestedVariantAvailability, redacta la respuesta de forma natural usando
+                          exclusivamente sus productos, precios y variantes verificadas. No uses una plantilla fija.
+                          Si variants esta vacio, informa que la combinacion solicitada no tiene stock y NUNCA
+                          preguntes si desea agregarla, comprarla o separarla. Invita de forma natural a explorar
+                          otros productos en https://kiments.com.pe/productos, sin repetir una frase fija. Si la
+                          clienta pidio algo parecido,
+                          ofrece solo alternativas que aparezcan verificadas con stock; si la evidencia no contiene
+                          alternativas, pregunta si desea que busques otros modelos con ese color y talla.
+                          Si variants contiene opciones, invita a elegir o agregar solo opciones disponibles.
+                        - Da prioridad a la web como galeria visual. Cuando presentes exactamente un producto y su
+                          productPageUrl no este vacio, incluye ese enlace individual. Cuando presentes dos o mas
+                          productos, incluye una sola vez https://kiments.com.pe/productos. No inventes slugs ni
+                          construyas enlaces a partir del nombre; usa solamente URLs presentes en la evidencia.
+                        - Cuando exista sizeGuideDelivery, redacta libremente una respuesta breve: menciona solo las
+                          guias realmente incluidas en sent y explica cuales faltan usando missing. No uses una
+                          plantilla fija ni afirmes que enviaste una guia que no aparece en sent.
                         - Cuando exista productColorGallery, menciona por texto TODOS los availableColors, aunque solo
                           se adjunten hasta imageLimit imagenes. Indica naturalmente cuales se mostraron y, si
                           hasMoreColors=true, invita a la clienta a pedir cualquier otro color para ver su foto.
@@ -188,14 +208,17 @@ public class AgentConversationOrchestrator {
         String mediaCorrection = mediaCorrectionInstruction(grounding, response.customerMessage());
         String catalogUrlCorrection = catalogUrlCorrectionInstruction(grounding, response.customerMessage());
         String deliveryCorrection = deliveryTimingCorrectionInstruction(grounding, response.customerMessage());
+        String availabilityCorrection = availabilityCorrectionInstruction(grounding, response.customerMessage());
         if (!priceValidation.valid() || !promotionValidation.valid() || !mediaCorrection.isBlank()
-                || !catalogUrlCorrection.isBlank() || !deliveryCorrection.isBlank()) {
+                || !catalogUrlCorrection.isBlank() || !deliveryCorrection.isBlank()
+                || !availabilityCorrection.isBlank()) {
             String correctionInstruction = String.join("\n",
                     priceValidation.valid() ? "" : priceValidation.correctionInstruction(),
                     promotionValidation.valid() ? "" : promotionValidation.correctionInstruction(),
                     mediaCorrection,
                     catalogUrlCorrection,
-                    deliveryCorrection).trim();
+                    deliveryCorrection,
+                    availabilityCorrection).trim();
             AgentMainPrompt correctionPrompt = groundingCorrectionPrompt(
                     prompt, response.customerMessage(), correctionInstruction);
             var corrected = gateway.respond(context.connectionId(), correctionPrompt, maxTools);
@@ -211,15 +234,19 @@ public class AgentConversationOrchestrator {
                     grounding, correctedResponse.customerMessage());
             String correctedDeliveryValidation = deliveryTimingCorrectionInstruction(
                     grounding, correctedResponse.customerMessage());
+            String correctedAvailabilityValidation = availabilityCorrectionInstruction(
+                    grounding, correctedResponse.customerMessage());
             if (!correctedValidation.valid() || !correctedPromotionValidation.valid()
                     || !correctedMediaValidation.isBlank() || !correctedCatalogUrlValidation.isBlank()
-                    || !correctedDeliveryValidation.isBlank()) {
+                    || !correctedDeliveryValidation.isBlank()
+                    || !correctedAvailabilityValidation.isBlank()) {
                 throw new IllegalStateException("Gemini contradijo la evidencia comercial despues de corregir la redaccion: "
                         + String.join(" ", correctedValidation.correctionInstruction(),
                                 correctedPromotionValidation.correctionInstruction(),
                                 correctedMediaValidation,
                                 correctedCatalogUrlValidation,
-                                correctedDeliveryValidation).trim());
+                                correctedDeliveryValidation,
+                                correctedAvailabilityValidation).trim());
             }
             generated = new AgentResponseGateway.AgentResponseResult(
                     corrected.provider(), corrected.model(), generated.latencyMs() + corrected.latencyMs(),
@@ -422,6 +449,57 @@ public class AgentConversationOrchestrator {
                     + "coordinar. No escribas una fecha exacta ni un plazo de dias. Redacta naturalmente.";
         }
         return "";
+    }
+
+    private String availabilityCorrectionInstruction(AgentVerifiedGroundingService.Grounding grounding,
+            String customerMessage) {
+        if (grounding == null || grounding.evidenceJson() == null) return "";
+        try {
+            JsonNode availability = evidenceMapper.readTree(grounding.evidenceJson())
+                    .path("requestedVariantAvailability");
+            if (availability.isMissingNode()) return "";
+            JsonNode products = availability.path("products");
+            boolean anyAvailable = false;
+            int productCount = 0;
+            String singleProductUrl = "";
+            if (products.isArray()) {
+                for (JsonNode product : products) {
+                    productCount++;
+                    if (productCount == 1) singleProductUrl = product.path("productPageUrl").asText("");
+                    if (product.path("variants").isArray() && !product.path("variants").isEmpty()) {
+                        anyAvailable = true;
+                    }
+                }
+            }
+            String response = normalizeText(customerMessage);
+            boolean offersUnavailableItem = response.contains("deseas agregar")
+                    || response.contains("quieres agregar")
+                    || response.contains("deseas comprar")
+                    || response.contains("quieres comprar")
+                    || response.contains("deseas separar")
+                    || response.contains("quieres separar");
+            List<String> corrections = new ArrayList<>();
+            if (!anyAvailable && offersUnavailableItem) {
+                corrections.add("Ninguna variante solicitada tiene stock. No invites a agregar, comprar ni "
+                        + "separar esa combinacion; informa la falta de stock.");
+            }
+            String catalogUrl = "https://kiments.com.pe/productos";
+            if (!anyAvailable && (customerMessage == null || !customerMessage.contains(catalogUrl))) {
+                corrections.add("Como no hay stock, invita naturalmente a explorar otros productos e incluye "
+                        + catalogUrl + ".");
+            } else if (anyAvailable && productCount == 1 && !singleProductUrl.isBlank()
+                    && (customerMessage == null || !customerMessage.contains(singleProductUrl))) {
+                corrections.add("Presentaste un solo producto: incluye su pagina verificada " + singleProductUrl
+                        + " como galeria visual.");
+            } else if (anyAvailable && productCount > 1
+                    && (customerMessage == null || !customerMessage.contains(catalogUrl))) {
+                corrections.add("Presentaste varios productos: incluye una sola vez " + catalogUrl
+                        + " como galeria completa.");
+            }
+            return String.join(" ", corrections);
+        } catch (Exception ignored) {
+            return "";
+        }
     }
 
     private static boolean containsShippingContact(String response) {

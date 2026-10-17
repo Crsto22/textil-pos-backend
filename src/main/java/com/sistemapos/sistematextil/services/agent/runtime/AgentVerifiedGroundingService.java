@@ -540,6 +540,7 @@ public class AgentVerifiedGroundingService {
         }
         if (action == AgentCartAction.CHANGE_QUANTITY
                 || action == AgentCartAction.CHANGE_VARIANT
+                || action == AgentCartAction.REPLACE_PRODUCT
                 || action == AgentCartAction.REMOVE_PRODUCT) {
             return groundExistingCartChange(sessionId, jobId, decision, ordinal, evidence, action);
         }
@@ -817,7 +818,9 @@ public class AgentVerifiedGroundingService {
         CartResult current = verified(sessionId, jobId, ordinal,
                 "recalcular_carrito", Map.of(), CartResult.class,
                 () -> cart.recalculate(sessionId, "agent-job-" + jobId + ":read-cart"));
-        CartItemView selected = selectCartItem(current, decision.productReference());
+        CartItemView selected = action == AgentCartAction.REPLACE_PRODUCT
+                ? selectCartItemForReplacement(current, decision)
+                : selectCartItem(current, decision.productReference());
         if (selected == null) {
             evidence.put("cartOperation", Map.of("executed", false,
                     "reason", "No se pudo identificar un unico producto del carrito"));
@@ -846,13 +849,29 @@ public class AgentVerifiedGroundingService {
                     "consultar_stock", Map.of("varianteId", selected.variantId(), "cantidad", selected.quantity()),
                     StockResult.class,
                     () -> catalog.getStock(sessionId, selected.variantId(), selected.quantity()));
+            Integer targetProductId = currentStock.productId();
+            if (action == AgentCartAction.REPLACE_PRODUCT) {
+                ProductSearchResult search = verified(sessionId, jobId, ordinal,
+                        "buscar_productos", Map.of("consulta", decision.productReference(), "limite", 10),
+                        ProductSearchResult.class,
+                        () -> catalog.searchProducts(sessionId, decision.productReference(), 10));
+                evidence.put("replacementProductSearch", search);
+                var replacement = unambiguousProduct(search, decision.productReference());
+                if (replacement == null || Objects.equals(replacement.productId(), currentStock.productId())) {
+                    evidence.put("cartOperation", Map.of("executed", false,
+                            "reason", "Falta validar un modelo nuevo diferente", "item", selected));
+                    return new CartMutation(false, null);
+                }
+                targetProductId = replacement.productId();
+            }
             String color = firstPresent(decision.colorReference(), selected.color());
             String size = firstPresent(decision.sizeReference(), selected.size());
+            Integer verifiedTargetProductId = targetProductId;
             VariantResult variants = verified(sessionId, jobId, ordinal,
-                    "consultar_variantes", nullableMap("productoId", currentStock.productId(), "color", color,
+                    "consultar_variantes", nullableMap("productoId", verifiedTargetProductId, "color", color,
                             "talla", size),
                     VariantResult.class,
-                    () -> catalog.getVariants(sessionId, currentStock.productId(), color, size));
+                    () -> catalog.getVariants(sessionId, verifiedTargetProductId, color, size));
             if (variants.variants() == null || variants.variants().size() != 1) {
                 evidence.put("cartOperation", Map.of("executed", false,
                         "reason", "Falta validar una unica variante nueva", "item", selected,
@@ -865,11 +884,19 @@ public class AgentVerifiedGroundingService {
                         "reason", "La variante solicitada ya es la variante actual", "item", selected));
                 return new CartMutation(false, null);
             }
-            result = verified(sessionId, jobId, ordinal,
-                    "cambiar_variante_carrito",
-                    Map.of("varianteActualId", selected.variantId(), "varianteNuevaId", newVariantId),
-                    CartResult.class,
-                    () -> cart.changeVariant(sessionId, selected.variantId(), newVariantId, operation));
+            if (action == AgentCartAction.REPLACE_PRODUCT) {
+                result = verified(sessionId, jobId, ordinal,
+                        "reemplazar_producto_carrito",
+                        Map.of("varianteActualId", selected.variantId(), "varianteNuevaId", newVariantId),
+                        CartResult.class,
+                        () -> cart.replaceProduct(sessionId, selected.variantId(), newVariantId, operation));
+            } else {
+                result = verified(sessionId, jobId, ordinal,
+                        "cambiar_variante_carrito",
+                        Map.of("varianteActualId", selected.variantId(), "varianteNuevaId", newVariantId),
+                        CartResult.class,
+                        () -> cart.changeVariant(sessionId, selected.variantId(), newVariantId, operation));
+            }
         }
         evidence.put("cartOperation", Map.of("executed", true, "result", result));
         String message = result.items().isEmpty()
@@ -887,6 +914,18 @@ public class AgentVerifiedGroundingService {
                 .filter(item -> normalize(item.product()).equals(reference)
                         || normalize(item.product()).contains(reference)
                         || reference.contains(normalize(item.product())))
+                .toList();
+        return matches.size() == 1 ? matches.getFirst() : null;
+    }
+
+    private CartItemView selectCartItemForReplacement(CartResult cartResult,
+            AgentConversationDecision decision) {
+        if (cartResult == null || cartResult.items() == null || cartResult.items().isEmpty()) return null;
+        if (cartResult.items().size() == 1) return cartResult.items().getFirst();
+        List<String> references = decision.productReferences() == null
+                ? List.of() : decision.productReferences();
+        List<CartItemView> matches = cartResult.items().stream()
+                .filter(item -> references.stream().anyMatch(reference -> productMatches(reference, item.product())))
                 .toList();
         return matches.size() == 1 ? matches.getFirst() : null;
     }

@@ -41,6 +41,28 @@ import com.sistemapos.sistematextil.model.CrmWhatsappAgentState;
 
 class AgentConversationOrchestratorTest {
     @Test
+    void doesNotTreatACartReplacementAsAPostSaleChangeWithoutARegisteredSale() {
+        AgentContext context = mock(AgentContext.class);
+        AgentMessageBatch batch = new AgentMessageBatch(
+                8L, 20L, 99L, List.of(), "Cámbialo por Anguie Liso gris oscuro talla M", false, false, false);
+
+        assertFalse(AgentConversationOrchestrator.isPostSaleChangeRequest(context, batch));
+    }
+
+    @Test
+    void doesNotTreatANewCartEditAsPostSaleWhenTheConversationHasAnOlderSale() {
+        AgentContext context = mock(AgentContext.class);
+        AgentContext.Fulfillment fulfillment = mock(AgentContext.Fulfillment.class);
+        when(context.fulfillment()).thenReturn(fulfillment);
+        when(fulfillment.saleId()).thenReturn(11305);
+        when(context.state()).thenReturn(CrmWhatsappAgentState.ARMANDO_CARRITO);
+        AgentMessageBatch batch = new AgentMessageBatch(
+                8L, 20L, 99L, List.of(), "Cámbialo por Anguie Liso gris oscuro talla M", false, false, false);
+
+        assertFalse(AgentConversationOrchestrator.isPostSaleChangeRequest(context, batch));
+    }
+
+    @Test
     void escalatesPostSaleChangesWithoutCallingGeminiOrCartTools() {
         Fixture fixture = new Fixture();
         AgentContext context = mock(AgentContext.class);

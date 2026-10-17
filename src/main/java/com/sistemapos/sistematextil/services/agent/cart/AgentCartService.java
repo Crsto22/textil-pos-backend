@@ -273,6 +273,49 @@ public class AgentCartService {
     }
 
     @Transactional
+    public CartResult replaceProduct(Long sessionId, Integer currentVariantId, Integer newVariantId,
+            String operationId) {
+        if (currentVariantId == null || newVariantId == null) {
+            throw new IllegalArgumentException("Las variantes actual y nueva son obligatorias");
+        }
+        if (Objects.equals(currentVariantId, newVariantId)) {
+            throw new IllegalArgumentException("El nuevo producto debe ser diferente");
+        }
+        return execute(sessionId, operationId, "reemplazar_producto_carrito",
+                currentVariantId + ":" + newVariantId,
+                () -> {
+                    LockedSession scope = lockEditableSession(sessionId);
+                    CartRow cart = requireExistingDraftCart(sessionId);
+                    List<CartItemRow> items = store.findItems(cart.id());
+                    CartItemRow current = items.stream()
+                            .filter(item -> Objects.equals(item.variantId(), currentVariantId))
+                            .findFirst()
+                            .orElseThrow(() -> new IllegalArgumentException("El producto actual no existe en el carrito"));
+                    SucursalStock currentStock = requireVariant(scope.branchId(), currentVariantId);
+                    SucursalStock replacementStock = requireVariant(scope.branchId(), newVariantId);
+                    Integer currentProductId = currentStock.getProductoVariante().getProducto().getIdProducto();
+                    Integer replacementProductId = replacementStock.getProductoVariante().getProducto().getIdProducto();
+                    if (Objects.equals(currentProductId, replacementProductId)) {
+                        throw new IllegalArgumentException("Para cambiar solo color o talla usa cambiar_variante_carrito");
+                    }
+                    int existingReplacementQuantity = items.stream()
+                            .filter(item -> Objects.equals(item.variantId(), newVariantId))
+                            .mapToInt(CartItemRow::quantity)
+                            .findFirst()
+                            .orElse(0);
+                    int targetQuantity = Math.addExact(existingReplacementQuantity, current.quantity());
+                    validateStock(replacementStock, targetQuantity);
+                    if (store.deleteItem(cart.id(), currentVariantId) != 1) {
+                        throw new IllegalStateException("No se pudo reemplazar el producto actual");
+                    }
+                    store.upsertItem(cart.id(), price(replacementStock, targetQuantity, scope.branchId()),
+                            LocalDateTime.now());
+                    markCartUpdated(scope.session());
+                    return recalculateLocked(scope, cart, "DRAFT");
+                });
+    }
+
+    @Transactional
     public CartResult removeProduct(Long sessionId, Integer variantId, String operationId) {
         return execute(sessionId, operationId, "eliminar_producto_carrito", String.valueOf(variantId), () -> {
             LockedSession scope = lockEditableSession(sessionId);

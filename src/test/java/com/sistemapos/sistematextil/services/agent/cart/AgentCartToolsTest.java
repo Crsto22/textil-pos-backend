@@ -26,17 +26,17 @@ import com.sistemapos.sistematextil.services.agent.catalog.AgentCatalogTools;
 class AgentCartToolsTest {
 
     @Test
-    void exposesEightToolsWithoutPriceBranchSessionOrOperationInputs() {
+    void exposesNineToolsWithoutPriceBranchSessionOrOperationInputs() {
         AgentCartTools tools = new AgentCartTools(mock(AgentCartService.class));
         Set<String> names = Arrays.stream(AgentCartTools.class.getDeclaredMethods())
                 .filter(method -> method.isAnnotationPresent(Tool.class))
                 .map(method -> method.getAnnotation(Tool.class).name()).collect(Collectors.toSet());
         assertEquals(Set.of("agregar_producto_carrito", "agregar_combo_carrito", "cambiar_cantidad_carrito",
-                "cambiar_variante_carrito",
+                "cambiar_variante_carrito", "reemplazar_producto_carrito",
                 "eliminar_producto_carrito", "vaciar_carrito", "recalcular_carrito", "confirmar_carrito"), names);
 
         ToolCallback[] callbacks = MethodToolCallbackProvider.builder().toolObjects(tools).build().getToolCallbacks();
-        assertEquals(8, callbacks.length);
+        assertEquals(9, callbacks.length);
         assertFalse(Arrays.stream(callbacks)
                 .map(callback -> callback.getToolDefinition().inputSchema().toLowerCase())
                 .anyMatch(schema -> schema.contains("price") || schema.contains("precio")
@@ -70,6 +70,20 @@ class AgentCartToolsTest {
 
         assertEquals(expected, tools.cambiarVariante(101, 102, context));
         verify(service).changeVariant(8L, 101, 102, "tool-call-10");
+    }
+
+    @Test
+    void replacesOneModelWithAnotherUsingOneTrustedAtomicOperation() {
+        AgentCartService service = mock(AgentCartService.class);
+        AgentCartTools tools = new AgentCartTools(service);
+        CartResult expected = emptyResult();
+        when(service.replaceProduct(8L, 101, 202, "tool-call-11")).thenReturn(expected);
+        ToolContext context = new ToolContext(Map.of(
+                AgentCatalogTools.SESSION_ID_CONTEXT_KEY, 8L,
+                AgentCartTools.OPERATION_ID_CONTEXT_KEY, "tool-call-11"));
+
+        assertEquals(expected, tools.reemplazarProducto(101, 202, context));
+        verify(service).replaceProduct(8L, 101, 202, "tool-call-11");
     }
 
     @Test

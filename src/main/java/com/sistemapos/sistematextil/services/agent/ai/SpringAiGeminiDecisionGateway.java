@@ -71,7 +71,13 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
               producto que acompaña, sin reutilizar esos atributos para otro modelo.
               No uses
               CHANGE_CART cuando apenas esta eligiendo un modelo o color y todavia no existe una edicion concreta.
-            - CHANGE_CART: quiere quitar un producto, vaciar el carrito, cambiar cantidad, color o talla.
+            - CHANGE_CART: quiere modificar un carrito que todavía no se convirtió en venta. Usa CHANGE_QUANTITY para
+              cantidad, CHANGE_VARIANT para color o talla del mismo modelo, REPLACE_PRODUCT para sustituir un modelo
+              por otro, REMOVE_PRODUCT para quitarlo y CLEAR_CART para vaciarlo. Un ajuste del carrito nunca es un
+              cambio postventa, no requiere asesora y debe usar requiresHumanHelp=false.
+              En REPLACE_PRODUCT conserva en productReference el modelo nuevo y sus nuevos color y talla. Si existe
+              un solo producto en el carrito, Java identificará ese producto como el que debe reemplazarse. Cuando la
+              clienta ya confirmó el reemplazo solicitado, ejecútalo en ese turno y no pidas otra confirmación.
             - CONFIRM_CART: acepta el resumen, dice continuar, eso es todo o confirma la compra sin indicar como pagara.
             - SHOW_PAYMENT_METHODS: esta listo para elegir como pagar.
             - SELECT_PAYMENT_METHOD: elige un metodo o una de sus cuentas; completa paymentMethodReference y,

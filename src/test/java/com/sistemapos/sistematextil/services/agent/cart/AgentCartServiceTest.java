@@ -159,6 +159,31 @@ class AgentCartServiceTest {
     }
 
     @Test
+    void replacesAProductWithAnotherModelAtomicallyAndPreservesQuantity() {
+        SucursalStock replacement = stock(20, "ANGUIE LISO", 202, 75, 5, "GRIS OSCURO", "M");
+        CartItemRow replacementItem = new CartItemRow(10L, 202, 2, "ANGUIE LISO", "GRIS OSCURO", "M",
+                new BigDecimal("75.00"), BigDecimal.ZERO, new BigDecimal("150.00"));
+        when(catalogRepository.findVariantByBranch(7, 202)).thenReturn(List.of(replacement));
+        when(catalogRepository.findVariantsByBranch(7, List.of(202))).thenReturn(List.of(replacement));
+        when(catalogRepository.findCatalogByBranch(7)).thenReturn(List.of(stock, replacement));
+        when(priceService.resolverPrecioVigente(replacement.getProductoVariante(), 7)).thenReturn(75.0);
+        when(store.deleteItem(5L, 101)).thenReturn(1);
+        when(store.findItems(5L)).thenReturn(
+                List.of(persistedItem), List.of(replacementItem), List.of(replacementItem));
+
+        CartResult result = service.replaceProduct(41L, 101, 202, "op-replace-product");
+
+        assertEquals(1, result.items().size());
+        assertEquals("ANGUIE LISO", result.items().getFirst().product());
+        assertEquals(202, result.items().getFirst().variantId());
+        assertEquals(2, result.items().getFirst().quantity());
+        verify(store).deleteItem(5L, 101);
+        verify(store, org.mockito.Mockito.atLeastOnce()).upsertItem(org.mockito.Mockito.eq(5L),
+                org.mockito.ArgumentMatchers.argThat(item -> item.variantId().equals(202) && item.quantity() == 2),
+                any());
+    }
+
+    @Test
     void addingComboReusesAnUnpromotedMatchingItemAlreadyInTheCart() {
         SucursalStock lyanaStock = stock(60, "LYANA", 202, 67, 10, "AZUL", "L");
         CartItemRow existingEmma = new CartItemRow(9L, 101, 1, "EMMA", "NEGRO", "M",

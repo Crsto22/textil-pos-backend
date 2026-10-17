@@ -1059,6 +1059,51 @@ class AgentVerifiedGroundingServiceTest {
         verify(cart).removeProduct(9L, 4501, "agent-job-30:remove_product");
     }
 
+    @Test
+    void replacesTheOnlyCartProductWithAnotherModelWithoutHumanEscalation() {
+        AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        AgentCartService cart = mock(AgentCartService.class);
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.CART_CHANGE, "reemplazar Anguie Rayas por Anguie Liso",
+                "ANGUIE LISO", List.of("ANGUIE LISO"), "GRIS OSCURO", "M", 1, "", List.of(),
+                AgentCartAction.REPLACE_PRODUCT, AgentCommercialAction.CHANGE_CART,
+                "", "", "", "", "", "", "", "", List.of(),
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL,
+                "", List.of(), "", 99, false);
+        when(decisions.interpret(4L, "Sí, cámbialo por Anguie Liso gris oscuro talla M")).thenReturn(
+                new AgentInterpretationResult("GEMINI", "model", "DB", 10, 0, decision));
+        CartItemView currentItem = new CartItemView(8L, 4501, "ANGUIE RAYAS", "GRIS OSCURO", "M", 1,
+                BigDecimal.valueOf(75), BigDecimal.ZERO, BigDecimal.valueOf(75));
+        CartItemView replacementItem = new CartItemView(9L, 4601, "ANGUIE LISO", "GRIS OSCURO", "M", 1,
+                BigDecimal.valueOf(75), BigDecimal.ZERO, BigDecimal.valueOf(75));
+        CartResult current = new CartResult(70L, "DRAFT", "PEN", BigDecimal.valueOf(75),
+                BigDecimal.ZERO, BigDecimal.valueOf(75), List.of(currentItem), List.of());
+        CartResult replaced = new CartResult(70L, "DRAFT", "PEN", BigDecimal.valueOf(75),
+                BigDecimal.ZERO, BigDecimal.valueOf(75), List.of(replacementItem), List.of());
+        ProductSummary product = new ProductSummary(79, "ANGUIE LISO", "", "CONJUNTO",
+                true, LocalDate.of(2026, 10, 24), 75D, 13, List.of("GRIS OSCURO"), List.of("M"));
+        when(cart.recalculate(9L, "agent-job-30:read-cart")).thenReturn(current);
+        when(catalog.getStock(9L, 4501, 1)).thenReturn(new StockResult(
+                4501, 78, "ANGUIE RAYAS", "GRIS OSCURO", "M", 7, 5, true, 1, true));
+        when(catalog.searchProducts(9L, "ANGUIE LISO", 10)).thenReturn(
+                new ProductSearchResult("ANGUIE LISO", 7, List.of(product), false));
+        when(catalog.getVariants(9L, 79, "GRIS OSCURO", "M")).thenReturn(new VariantResult(
+                79, "ANGUIE LISO", "GRIS OSCURO", "M",
+                List.of(availableVariant(4601, "GRIS OSCURO", "M", 75D, 13))));
+        when(cart.replaceProduct(9L, 4501, 4601, "agent-job-30:replace_product")).thenReturn(replaced);
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class), cart,
+                passThroughAudit());
+
+        var result = service.ground(4L, 9L, 30L,
+                "Sí, cámbialo por Anguie Liso gris oscuro talla M");
+
+        assertTrue(result.mutationExecuted());
+        assertFalse(result.decision().requiresHumanHelp());
+        verify(cart).replaceProduct(9L, 4501, 4601, "agent-job-30:replace_product");
+    }
+
     private ProductDetail productWithGuide(Integer id, String name, String guideUrl) {
         return new ProductDetail(id, name, "", "CONJUNTO", false, null, guideUrl, null,
                 List.of(), List.of("S"), 10, 75D, 1);

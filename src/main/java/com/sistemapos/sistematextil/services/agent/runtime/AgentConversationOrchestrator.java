@@ -266,6 +266,7 @@ public class AgentConversationOrchestrator {
             AgentMessageBatch batch) {
         if (context == null || context.fulfillment() == null || context.fulfillment().saleId() == null
                 || batch == null) return false;
+        if (isPreSaleWorkflow(context.state())) return false;
         String message = normalizeText(batch.combinedInput());
         boolean asksForChange = message.matches(
                 ".*\\b(cambi(?:ar|arme|o|ame|es|e|arlo|arla)|modific(?:ar|acion)|reemplaz(?:ar|o)|correg(?:ir|irlo|irla))\\b.*");
@@ -273,6 +274,18 @@ public class AgentConversationOrchestrator {
         return message.matches(
                 ".*\\b(color|talla|modelo|producto|prenda|cantidad|pedido|pago|direccion|agencia|envio|entrega)\\b.*")
                 || message.contains("quiero cambiar") || message.contains("deseo cambiar");
+    }
+
+    private static boolean isPreSaleWorkflow(
+            com.sistemapos.sistematextil.model.CrmWhatsappAgentState state) {
+        if (state == null) return false;
+        return switch (state) {
+            case IDLE, EXPLORANDO_PRODUCTOS, ARMANDO_CARRITO, ESPERANDO_METODO_PAGO,
+                    ESPERANDO_COMPROBANTE, VALIDANDO_COMPROBANTE, ESPERANDO_DATOS_CLIENTE,
+                    ESPERANDO_METODO_ENTREGA, ESPERANDO_DATOS_SHALOM,
+                    ESPERANDO_CONFIRMACION_AGENCIA_SHALOM, LISTO_PARA_VENTA -> true;
+            default -> false;
+        };
     }
 
     private static String normalizeText(String value) {

@@ -54,6 +54,14 @@ public class AgentCartTools {
         return cart.changeVariant(sessionId(context), varianteActualId, varianteNuevaId, operationId(context));
     }
 
+    @Tool(name = "reemplazar_producto_carrito", description = "Reemplaza de forma atomica un producto del carrito por una variante validada de otro modelo, conservando la cantidad. Solo aplica antes de registrar la venta.")
+    public CartResult reemplazarProducto(
+            @ToolParam(description = "Identificador de la variante actualmente presente en el carrito") Integer varianteActualId,
+            @ToolParam(description = "Identificador exacto de la variante del nuevo modelo devuelta por consultar_variantes") Integer varianteNuevaId,
+            ToolContext context) {
+        return cart.replaceProduct(sessionId(context), varianteActualId, varianteNuevaId, operationId(context));
+    }
+
     @Tool(name = "eliminar_producto_carrito", description = "Elimina una variante del carrito y recalcula todas las promociones.")
     public CartResult eliminarProducto(
             @ToolParam(description = "Identificador de la variante presente en el carrito") Integer varianteId,

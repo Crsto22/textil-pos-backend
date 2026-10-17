@@ -11,6 +11,8 @@ import java.util.Objects;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,6 +26,7 @@ import com.sistemapos.sistematextil.services.agent.ai.AgentDecisionGateway;
 import com.sistemapos.sistematextil.services.agent.ai.AgentDecisionIntent;
 import com.sistemapos.sistematextil.services.agent.ai.AgentMediaRequest;
 import com.sistemapos.sistematextil.services.agent.ai.AgentMediaRequest.MediaType;
+import com.sistemapos.sistematextil.model.CrmWhatsappAgentState;
 import com.sistemapos.sistematextil.services.agent.catalog.AgentCatalogQueryService;
 import com.sistemapos.sistematextil.services.agent.catalog.AgentCatalogQueryService.ProductDetail;
 import com.sistemapos.sistematextil.services.agent.catalog.AgentCatalogQueryService.ProductImage;
@@ -58,6 +61,14 @@ public class AgentVerifiedGroundingService {
     private static final int MAX_CART_COLOR_IMAGES = 5;
     private static final int MAX_PRODUCT_COLOR_GALLERY_IMAGES = 5;
     private static final int MAX_INITIAL_CATALOG_IMAGES = 3;
+    private static final Pattern COMPONENT_WITH_SIZE = Pattern.compile(
+            "(?iu)\\b(blazer|saco|chaqueta|chaleco|top|blusa|camisa|polo|casaca|pantal[oó]n|falda|short|"
+                    + "parte\\s+de\\s+arriba|parte\\s+superior|parte\\s+de\\s+abajo|parte\\s+inferior)\\b"
+                    + "(?:(?!\\b(?:y|con|pero)\\b|[,;/|\\n]).){0,24}?\\b(XXS|XS|S|M|L|XL|XXL|[2-5]XL)\\b");
+    private static final Pattern SIZE_WITH_COMPONENT = Pattern.compile(
+            "(?iu)\\b(XXS|XS|S|M|L|XL|XXL|[2-5]XL)\\b(?:(?!\\b(?:y|con|pero)\\b|[,;/|\\n]).){0,24}?\\b"
+                    + "(blazer|saco|chaqueta|chaleco|top|blusa|camisa|polo|casaca|pantal[oó]n|falda|short|"
+                    + "parte\\s+de\\s+arriba|parte\\s+superior|parte\\s+de\\s+abajo|parte\\s+inferior)\\b");
     private static final DateTimeFormatter DELIVERY_DATE = DateTimeFormatter.ofPattern(
             "d 'de' MMMM 'de' uuuu", Locale.forLanguageTag("es-PE"));
 
@@ -111,11 +122,17 @@ public class AgentVerifiedGroundingService {
     }
 
     public Grounding ground(Long connectionId, Long sessionId, Long jobId, String conversation) {
+        return ground(connectionId, sessionId, jobId, conversation, stateFromConversation(conversation));
+    }
+
+    public Grounding ground(Long connectionId, Long sessionId, Long jobId, String conversation,
+            CrmWhatsappAgentState state) {
         AgentConversationDecision decision = decisions.interpret(connectionId, conversation).decision();
         if (decision == null || decision.intent() == null) {
             throw new IllegalStateException("Gemini no clasifico la solicitud actual");
         }
         decision = enforceHumanHandoffRules(decision);
+        decision = normalizeFreshRetailPurchase(decision, conversation, state);
         if (commerce != null) {
             decision = commerce.normalizeShalomAgencyRefinement(sessionId, decision);
         }
@@ -228,6 +245,38 @@ public class AgentVerifiedGroundingService {
             return decision.withRequiresHumanHelp(false);
         }
         return decision;
+    }
+
+    AgentConversationDecision normalizeFreshRetailPurchase(AgentConversationDecision decision,
+            String conversation, CrmWhatsappAgentState state) {
+        boolean freshCommerceState = state == CrmWhatsappAgentState.IDLE
+                || state == CrmWhatsappAgentState.EXPLORANDO_PRODUCTOS
+                || state == CrmWhatsappAgentState.ARMANDO_CARRITO;
+        boolean completeSelection = !normalize(decision.productReference()).isBlank()
+                && !normalize(decision.colorReference()).isBlank()
+                && !normalize(decision.sizeReference()).isBlank();
+        String input = normalize(currentGroupedInput(conversation));
+        boolean explicitRegisteredOrder = input.matches(".*\\b(pedido|venta|compra)\\s*(numero|nro|n|#)?\\s*\\d{3,}\\b.*")
+                || input.matches(".*\\b(pedido|venta|compra)\\s+(anterior|registrad[oa]|confirmad[oa]|pagad[oa])\\b.*")
+                || input.matches(".*\\b(de|en)\\s+mi\\s+(pedido|venta|compra)\\b.*");
+        if (freshCommerceState && completeSelection && !explicitRegisteredOrder
+                && (decision.requiresHumanHelp()
+                || decision.commercialAction() == AgentCommercialAction.REQUEST_SUPPORT)) {
+            return decision.asNewRetailPurchase();
+        }
+        return decision;
+    }
+
+    private CrmWhatsappAgentState stateFromConversation(String conversation) {
+        String value = conversation == null ? "" : conversation.toUpperCase(Locale.ROOT);
+        for (CrmWhatsappAgentState candidate : CrmWhatsappAgentState.values()) {
+            if (value.contains("\"STATE\":\"" + candidate.name() + "\"")
+                    || value.contains("ESTADO: " + candidate.name())
+                    || value.contains("ESTADO_ACTUAL: " + candidate.name())) {
+                return candidate;
+            }
+        }
+        return null;
     }
 
     private String groundDeliveryTiming(Long sessionId, Long jobId, AgentConversationDecision decision,
@@ -522,6 +571,16 @@ public class AgentVerifiedGroundingService {
     private CartMutation groundCartChange(Long sessionId, Long jobId, AgentConversationDecision decision,
             String conversation, AtomicInteger ordinal, Map<String, Object> evidence,
             List<AgentMediaRequest> media) {
+        String currentInput = currentGroupedInput(conversation);
+        if (requestsDifferentSizesForSetPieces(currentInput)) {
+            evidence.put("cartOperation", Map.of("executed", false,
+                    "reason", "El conjunto fue solicitado con tallas diferentes por pieza",
+                    "requestedComponentSizes", componentSizes(currentInput)));
+            return new CartMutation(false,
+                    "Preciosa, nuestros conjuntos se venden completos, por lo que todas sus prendas deben ser "
+                    + "de la misma talla. No es posible combinar tallas diferentes. Indícame una sola talla "
+                    + "para todo el conjunto. 💛");
+        }
         if (commerce != null) commerce.prepareCartMutation(sessionId);
         AgentCartAction action = decision.cartAction() == null ? AgentCartAction.NONE : decision.cartAction();
         if (action == AgentCartAction.ADD_PROMOTION) {
@@ -539,6 +598,7 @@ public class AgentVerifiedGroundingService {
             return new CartMutation(true, "Tu carrito quedó vacío. ¿Qué producto deseas elegir?");
         }
         if (action == AgentCartAction.CHANGE_QUANTITY
+                || action == AgentCartAction.KEEP_ONLY_PRODUCT
                 || action == AgentCartAction.CHANGE_VARIANT
                 || action == AgentCartAction.REPLACE_PRODUCT
                 || action == AgentCartAction.REMOVE_PRODUCT) {
@@ -547,7 +607,8 @@ public class AgentVerifiedGroundingService {
         if (action != AgentCartAction.ADD_PRODUCT) {
             evidence.put("cartOperation", Map.of("executed", false,
                     "reason", "La accion o la cantidad todavia requiere aclaracion"));
-            return new CartMutation(false, null);
+            return new CartMutation(false,
+                    "Indícame qué producto del carrito deseas cambiar y cuál debe ser el resultado final.");
         }
         int quantity = decision.quantity() == null || decision.quantity() < 1 ? 1 : decision.quantity();
         String query = firstPresent(decision.productReference(), decision.customerGoal(), conversation);
@@ -824,7 +885,8 @@ public class AgentVerifiedGroundingService {
         if (selected == null) {
             evidence.put("cartOperation", Map.of("executed", false,
                     "reason", "No se pudo identificar un unico producto del carrito"));
-            return new CartMutation(false, null);
+            return new CartMutation(false, currentCartClarification(sessionId, current,
+                    "Indícame exactamente cuál producto deseas modificar."));
         }
 
         String operation = "agent-job-" + jobId + ":" + action.name().toLowerCase(Locale.ROOT);
@@ -833,11 +895,18 @@ public class AgentVerifiedGroundingService {
             result = verified(sessionId, jobId, ordinal,
                     "eliminar_producto_carrito", Map.of("varianteId", selected.variantId()),
                     CartResult.class, () -> cart.removeProduct(sessionId, selected.variantId(), operation));
+        } else if (action == AgentCartAction.KEEP_ONLY_PRODUCT) {
+            result = verified(sessionId, jobId, ordinal,
+                    "conservar_solo_producto_carrito",
+                    nullableMap("varianteId", selected.variantId(), "cantidad", decision.quantity()),
+                    CartResult.class,
+                    () -> cart.keepOnlyProduct(sessionId, selected.variantId(), decision.quantity(), operation));
         } else if (action == AgentCartAction.CHANGE_QUANTITY) {
             if (decision.quantity() == null || decision.quantity() < 1) {
                 evidence.put("cartOperation", Map.of("executed", false,
                         "reason", "Falta indicar la nueva cantidad", "item", selected));
-                return new CartMutation(false, null);
+                return new CartMutation(false, currentCartClarification(sessionId, current,
+                        "Indícame la cantidad final que deseas para " + selected.product() + "."));
             }
             result = verified(sessionId, jobId, ordinal,
                     "cambiar_cantidad_carrito",
@@ -860,7 +929,8 @@ public class AgentVerifiedGroundingService {
                 if (replacement == null || Objects.equals(replacement.productId(), currentStock.productId())) {
                     evidence.put("cartOperation", Map.of("executed", false,
                             "reason", "Falta validar un modelo nuevo diferente", "item", selected));
-                    return new CartMutation(false, null);
+                    return new CartMutation(false, currentCartClarification(sessionId, current,
+                            "Indícame el nuevo modelo, color y talla que deseas."));
                 }
                 targetProductId = replacement.productId();
             }
@@ -876,13 +946,15 @@ public class AgentVerifiedGroundingService {
                 evidence.put("cartOperation", Map.of("executed", false,
                         "reason", "Falta validar una unica variante nueva", "item", selected,
                         "variants", variants));
-                return new CartMutation(false, null);
+                return new CartMutation(false, currentCartClarification(sessionId, current,
+                        "Indícame un color y una talla disponibles para realizar el cambio."));
             }
             Integer newVariantId = variants.variants().getFirst().variantId();
             if (Objects.equals(newVariantId, selected.variantId())) {
                 evidence.put("cartOperation", Map.of("executed", false,
                         "reason", "La variante solicitada ya es la variante actual", "item", selected));
-                return new CartMutation(false, null);
+                return new CartMutation(false, currentCartClarification(sessionId, current,
+                        "Ese producto ya tiene el color y la talla indicados."));
             }
             if (action == AgentCartAction.REPLACE_PRODUCT) {
                 result = verified(sessionId, jobId, ordinal,
@@ -904,6 +976,13 @@ public class AgentVerifiedGroundingService {
                 : commerce == null ? "Carrito actualizado correctamente."
                 : commerce.cartTemplate(sessionId, result, true);
         return new CartMutation(true, message);
+    }
+
+    private String currentCartClarification(Long sessionId, CartResult current, String clarification) {
+        if (current == null || current.items() == null || current.items().isEmpty()) return clarification;
+        String summary = commerce == null ? "El carrito no fue modificado."
+                : commerce.cartTemplate(sessionId, current, false);
+        return summary + "\n\n" + clarification;
     }
 
     private CartItemView selectCartItem(CartResult cartResult, String productReference) {
@@ -1254,6 +1333,29 @@ public class AgentVerifiedGroundingService {
         int markerIndex = conversation.lastIndexOf(marker);
         return markerIndex < 0 ? conversation.trim()
                 : conversation.substring(markerIndex + marker.length()).trim();
+    }
+
+    static boolean requestsDifferentSizesForSetPieces(String input) {
+        Map<String, String> selections = componentSizes(input);
+        return selections.size() > 1 && selections.values().stream().distinct().count() > 1;
+    }
+
+    private static Map<String, String> componentSizes(String input) {
+        if (input == null || input.isBlank()) return Map.of();
+        Map<String, String> selections = new LinkedHashMap<>();
+        collectComponentSizes(COMPONENT_WITH_SIZE.matcher(input), selections, 1, 2);
+        collectComponentSizes(SIZE_WITH_COMPONENT.matcher(input), selections, 2, 1);
+        return Map.copyOf(selections);
+    }
+
+    private static void collectComponentSizes(Matcher matcher, Map<String, String> selections,
+            int componentGroup, int sizeGroup) {
+        while (matcher.find()) {
+            String component = Normalizer.normalize(matcher.group(componentGroup), Normalizer.Form.NFD)
+                    .replaceAll("\\p{M}+", "").toLowerCase(Locale.ROOT).replaceAll("\\s+", " ").trim();
+            String size = matcher.group(sizeGroup).toUpperCase(Locale.ROOT);
+            selections.putIfAbsent(component, size);
+        }
     }
 
     private boolean containsWord(String value, String word) {

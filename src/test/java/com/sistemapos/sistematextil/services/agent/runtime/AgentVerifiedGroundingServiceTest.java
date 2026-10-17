@@ -11,6 +11,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
@@ -21,6 +22,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
+import com.sistemapos.sistematextil.model.CrmWhatsappAgentState;
 import com.sistemapos.sistematextil.services.agent.ai.AgentConversationDecision;
 import com.sistemapos.sistematextil.services.agent.ai.AgentConversationDecision.PromotionSelection;
 import com.sistemapos.sistematextil.services.agent.ai.AgentCartAction;
@@ -52,6 +54,91 @@ import com.sistemapos.sistematextil.services.agent.promotion.AgentPromotionQuery
 import com.sistemapos.sistematextil.services.agent.promotion.AgentPromotionQueryService.PromotionSummary;
 
 class AgentVerifiedGroundingServiceTest {
+    @Test
+    void convertsACompleteSelectionIntoANewPurchaseInAFreshSession() {
+        AgentConversationDecision mistaken = new AgentConversationDecision(
+                AgentDecisionIntent.SUPPORT_REQUEST, "adicionar Alessia", "ALESSIA RAYAS",
+                List.of("ALESSIA RAYAS"), "GUINDA", "M", 1, "", List.of(),
+                AgentCartAction.NONE, AgentCommercialAction.REQUEST_SUPPORT,
+                "", "", "", "", "", "", "", "", List.of(),
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL,
+                "", List.of(), "", 95, true);
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(
+                mock(AgentDecisionGateway.class), mock(AgentCatalogQueryService.class),
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
+                mock(AgentCartService.class), passThroughAudit());
+
+        AgentConversationDecision normalized = service.normalizeFreshRetailPurchase(mistaken,
+                "LOTE_ACTUAL_AGRUPADO:\nQuiero adicionar Alessia rayas guinda talla M",
+                CrmWhatsappAgentState.IDLE);
+
+        assertEquals(AgentCommercialAction.ADD_PRODUCT, normalized.commercialAction());
+        assertEquals(AgentCartAction.ADD_PRODUCT, normalized.cartAction());
+        assertFalse(normalized.requiresHumanHelp());
+    }
+
+    @Test
+    void preservesSupportForAnExplicitlyRegisteredPreviousOrder() {
+        AgentConversationDecision mistaken = new AgentConversationDecision(
+                AgentDecisionIntent.SUPPORT_REQUEST, "cambiar pedido anterior", "ALESSIA RAYAS",
+                List.of("ALESSIA RAYAS"), "GUINDA", "M", 1, "", List.of(),
+                AgentCartAction.NONE, AgentCommercialAction.REQUEST_SUPPORT,
+                "", "", "", "", "", "", "", "", List.of(),
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL,
+                "", List.of(), "", 95, true);
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(
+                mock(AgentDecisionGateway.class), mock(AgentCatalogQueryService.class),
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
+                mock(AgentCartService.class), passThroughAudit());
+
+        AgentConversationDecision normalized = service.normalizeFreshRetailPurchase(mistaken,
+                "LOTE_ACTUAL_AGRUPADO:\nQuiero cambiar mi pedido anterior a Alessia rayas guinda talla M",
+                CrmWhatsappAgentState.IDLE);
+
+        assertEquals(AgentCommercialAction.REQUEST_SUPPORT, normalized.commercialAction());
+        assertTrue(normalized.requiresHumanHelp());
+    }
+
+    @Test
+    void rejectsDifferentSizesForPiecesOfTheSameSetWithoutChangingTheCart() {
+        AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        AgentCartService cart = mock(AgentCartService.class);
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.CART_CHANGE, "usar blazer S y pantalón M", "ALICE RAYAS",
+                List.of("ALICE RAYAS"), "CHOCOLATE", "M", 1, "", List.of(),
+                AgentCartAction.CHANGE_VARIANT, AgentCommercialAction.CHANGE_CART,
+                "", "", "", "", "", "", "", "", List.of(),
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL,
+                "", List.of(), "", 98, false);
+        String conversation = "HISTORIAL: carrito Alice Rayas chocolate S\n\n"
+                + "LOTE_ACTUAL_AGRUPADO:\n¿Puede ser blazer S y pantalón M?";
+        when(decisions.interpret(4L, conversation)).thenReturn(
+                new AgentInterpretationResult("GEMINI", "model", "DB", 10, 0, decision));
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class), cart,
+                passThroughAudit());
+
+        var result = service.ground(4L, 9L, 30L, conversation);
+
+        assertFalse(result.mutationExecuted());
+        assertTrue(result.customerMessage().contains("misma talla"));
+        assertTrue(result.customerMessage().contains("No es posible combinar tallas diferentes"));
+        verifyNoInteractions(cart);
+    }
+
+    @Test
+    void detectsDifferentSetPieceSizesInEitherNaturalOrder() {
+        assertTrue(AgentVerifiedGroundingService.requestsDifferentSizesForSetPieces(
+                "Quiero blazer S y pantalón M"));
+        assertTrue(AgentVerifiedGroundingService.requestsDifferentSizesForSetPieces(
+                "Talla S para el saco y M para el pantalón"));
+        assertTrue(AgentVerifiedGroundingService.requestsDifferentSizesForSetPieces(
+                "Blazer S pantalón M"));
+        assertFalse(AgentVerifiedGroundingService.requestsDifferentSizesForSetPieces(
+                "Quiero blazer y pantalón en talla M"));
+    }
+
     @Test
     void preservesExplicitLiaFamilyInsteadOfUsingLyanaFromTheDecision() {
         AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
@@ -1057,6 +1144,42 @@ class AgentVerifiedGroundingServiceTest {
         assertTrue(result.mutationExecuted());
         assertTrue(result.customerMessage().contains("carrito quedó vacío"));
         verify(cart).removeProduct(9L, 4501, "agent-job-30:remove_product");
+    }
+
+    @Test
+    void keepsOnlyTheRequestedCartProductInsteadOfChangingOnlyItsQuantity() {
+        AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        AgentCartService cart = mock(AgentCartService.class);
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.CART_CHANGE, "dejar solo una Alice", "ALICE RAYAS", "", "", 1, "",
+                AgentCartAction.KEEP_ONLY_PRODUCT, AgentCommercialAction.CHANGE_CART,
+                "", "", "", "", "", "", "", "",
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL, 99, false);
+        when(decisions.interpret(4L, "Quiero solo 1 Alice a rayas")).thenReturn(
+                new AgentInterpretationResult("GEMINI", "model", "DB", 10, 0, decision));
+        CartItemView alessia = new CartItemView(8L, 4401, "ALESSIA ENTERO", "GUINDA", "M", 1,
+                BigDecimal.valueOf(75), BigDecimal.ZERO, BigDecimal.valueOf(75));
+        CartItemView alice = new CartItemView(9L, 4501, "ALICE RAYAS", "CHOCOLATE", "M", 2,
+                BigDecimal.valueOf(90), BigDecimal.ZERO, BigDecimal.valueOf(180));
+        CartResult current = new CartResult(70L, "DRAFT", "PEN", BigDecimal.valueOf(255),
+                BigDecimal.valueOf(100), BigDecimal.valueOf(155), List.of(alessia, alice),
+                List.of(new CartPromotionView(29, "COMBO 29", 1, BigDecimal.valueOf(255),
+                        BigDecimal.valueOf(155), BigDecimal.valueOf(100))));
+        CartItemView onlyAlice = new CartItemView(9L, 4501, "ALICE RAYAS", "CHOCOLATE", "M", 1,
+                BigDecimal.valueOf(90), BigDecimal.ZERO, BigDecimal.valueOf(90));
+        CartResult result = new CartResult(70L, "DRAFT", "PEN", BigDecimal.valueOf(90),
+                BigDecimal.ZERO, BigDecimal.valueOf(90), List.of(onlyAlice), List.of());
+        when(cart.recalculate(9L, "agent-job-30:read-cart")).thenReturn(current);
+        when(cart.keepOnlyProduct(9L, 4501, 1, "agent-job-30:keep_only_product")).thenReturn(result);
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class), cart,
+                passThroughAudit());
+
+        var grounded = service.ground(4L, 9L, 30L, "Quiero solo 1 Alice a rayas");
+
+        assertTrue(grounded.mutationExecuted());
+        verify(cart).keepOnlyProduct(9L, 4501, 1, "agent-job-30:keep_only_product");
     }
 
     @Test

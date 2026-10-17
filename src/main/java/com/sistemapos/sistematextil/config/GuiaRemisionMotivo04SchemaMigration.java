@@ -3,6 +3,7 @@ package com.sistemapos.sistematextil.config;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
 
 import javax.sql.DataSource;
@@ -36,7 +37,7 @@ public class GuiaRemisionMotivo04SchemaMigration implements ApplicationRunner {
             retirarColumnasCatalogoObsoletas(connection, statement);
             ocultarGuiasLegacyNoPermitidas(statement);
             normalizarDefinicionMotivo(statement);
-            recrearTriggersMotivosPermitidos(statement);
+            asegurarTriggersMotivosPermitidos(connection, statement);
         }
     }
 
@@ -71,11 +72,8 @@ public class GuiaRemisionMotivo04SchemaMigration implements ApplicationRunner {
                 """);
     }
 
-    private void recrearTriggersMotivosPermitidos(Statement statement) throws Exception {
-        statement.execute("DROP TRIGGER IF EXISTS bi_guia_remision_motivo_04");
-        statement.execute("DROP TRIGGER IF EXISTS bu_guia_remision_motivo_04");
-
-        statement.execute("""
+    private void asegurarTriggersMotivosPermitidos(Connection connection, Statement statement) throws Exception {
+        crearTriggerSiFalta(connection, statement, "bi_guia_remision_motivo_04", """
                 CREATE TRIGGER bi_guia_remision_motivo_04
                 BEFORE INSERT ON guia_remision
                 FOR EACH ROW
@@ -111,7 +109,7 @@ public class GuiaRemisionMotivo04SchemaMigration implements ApplicationRunner {
                 END
                 """);
 
-        statement.execute("""
+        crearTriggerSiFalta(connection, statement, "bu_guia_remision_motivo_04", """
                 CREATE TRIGGER bu_guia_remision_motivo_04
                 BEFORE UPDATE ON guia_remision
                 FOR EACH ROW
@@ -148,6 +146,26 @@ public class GuiaRemisionMotivo04SchemaMigration implements ApplicationRunner {
                     END IF;
                 END
                 """);
+    }
+
+    private void crearTriggerSiFalta(
+            Connection connection,
+            Statement statement,
+            String triggerName,
+            String createSql) throws Exception {
+        if (triggerExists(connection, triggerName)) {
+            return;
+        }
+
+        try {
+            statement.execute(createSql);
+            log.info("Trigger {} creado", triggerName);
+        } catch (SQLException exception) {
+            log.warn(
+                    "No se pudo crear el trigger {}. La aplicacion continuara usando las validaciones del servicio: {}",
+                    triggerName,
+                    exception.getMessage());
+        }
     }
 
     private void eliminarColumnaSiExiste(
@@ -214,6 +232,20 @@ public class GuiaRemisionMotivo04SchemaMigration implements ApplicationRunner {
                 """)) {
             statement.setString(1, tableName);
             statement.setString(2, indexName);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                return resultSet.next() && resultSet.getInt(1) > 0;
+            }
+        }
+    }
+
+    private boolean triggerExists(Connection connection, String triggerName) throws Exception {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT COUNT(*)
+                FROM information_schema.TRIGGERS
+                WHERE TRIGGER_SCHEMA = DATABASE()
+                  AND TRIGGER_NAME = ?
+                """)) {
+            statement.setString(1, triggerName);
             try (ResultSet resultSet = statement.executeQuery()) {
                 return resultSet.next() && resultSet.getInt(1) > 0;
             }

@@ -2,6 +2,7 @@ package com.sistemapos.sistematextil.services.agent.cart;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -130,6 +131,32 @@ class AgentCartServiceTest {
 
         assertEquals("Stock insuficiente; disponible: 8", error.getMessage());
         verify(store, never()).upsertItem(any(), any(), any());
+    }
+
+    @Test
+    void keepsOnlyTheRequestedProductAndRecalculatesPromotionsAndTotal() {
+        SucursalStock aliceStock = stock(20, "ALICE RAYAS", 202, 90, 6, "CHOCOLATE", "M");
+        CartItemRow alessia = new CartItemRow(8L, 101, 1, "ALESSIA ENTERO", "GUINDA", "M",
+                new BigDecimal("75.00"), zero(), new BigDecimal("75.00"));
+        CartItemRow aliceBefore = new CartItemRow(10L, 202, 2, "ALICE RAYAS", "CHOCOLATE", "M",
+                new BigDecimal("90.00"), zero(), new BigDecimal("180.00"));
+        CartItemRow aliceAfter = new CartItemRow(10L, 202, 1, "ALICE RAYAS", "CHOCOLATE", "M",
+                new BigDecimal("90.00"), zero(), new BigDecimal("90.00"));
+        when(catalogRepository.findVariantByBranch(7, 202)).thenReturn(List.of(aliceStock));
+        when(catalogRepository.findVariantsByBranch(7, List.of(202))).thenReturn(List.of(aliceStock));
+        when(catalogRepository.findCatalogByBranch(7)).thenReturn(List.of(stock, aliceStock));
+        when(priceService.resolverPrecioVigente(aliceStock.getProductoVariante(), 7)).thenReturn(90.0);
+        when(store.findItems(5L)).thenReturn(
+                List.of(alessia, aliceBefore), List.of(aliceAfter), List.of(aliceAfter));
+
+        CartResult result = service.keepOnlyProduct(41L, 202, 1, "op-only-alice");
+
+        assertEquals(1, result.items().size());
+        assertEquals("ALICE RAYAS", result.items().getFirst().product());
+        assertEquals(1, result.items().getFirst().quantity());
+        assertEquals(new BigDecimal("90.00"), result.total());
+        assertTrue(result.promotions().isEmpty());
+        verify(store).deleteItem(5L, 101);
     }
 
     @Test

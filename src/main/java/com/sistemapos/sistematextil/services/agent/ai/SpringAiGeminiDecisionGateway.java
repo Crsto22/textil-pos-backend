@@ -69,12 +69,25 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
               Haz lo mismo cuando la clienta solicite directamente dos o más productos en un solo mensaje. Conserva
               la asociación individual expresada por ella: cada color, talla y cantidad pertenece únicamente al
               producto que acompaña, sin reutilizar esos atributos para otro modelo.
+              Si el estado activo es IDLE, EXPLORANDO_PRODUCTOS o ARMANDO_CARRITO, expresiones como agregar,
+              adicionar, quiero otro o también deseo significan una compra minorista nueva o una adición al carrito
+              actual. Una venta histórica no convierte esa solicitud en cambio postventa. Solo deriva como cambio
+              de una venta registrada cuando la clienta identifica explícitamente ese pedido anterior y pide
+              modificarlo.
               No uses
               CHANGE_CART cuando apenas esta eligiendo un modelo o color y todavia no existe una edicion concreta.
             - CHANGE_CART: quiere modificar un carrito que todavía no se convirtió en venta. Usa CHANGE_QUANTITY para
               cantidad, CHANGE_VARIANT para color o talla del mismo modelo, REPLACE_PRODUCT para sustituir un modelo
-              por otro, REMOVE_PRODUCT para quitarlo y CLEAR_CART para vaciarlo. Un ajuste del carrito nunca es un
+              por otro, REMOVE_PRODUCT para quitarlo y CLEAR_CART para vaciarlo. Usa KEEP_ONLY_PRODUCT cuando el
+              significado sea conservar exclusivamente un producto y retirar todos los demás (por ejemplo, deja
+              solo Alice o quiero únicamente uno de Alice). En esa acción, productReference identifica el producto
+              que permanece y quantity solo fija su cantidad cuando la clienta la indicó. No lo clasifiques como
+              CHANGE_QUANTITY porque también deben retirarse las otras líneas y promociones del carrito.
+              Un ajuste del carrito nunca es un
               cambio postventa, no requiere asesora y debe usar requiresHumanHelp=false.
+              Los conjuntos se venden completos en una sola talla. Si pide tallas distintas para sus piezas, conserva
+              la solicitud completa en customerGoal, no elijas una de las tallas como talla general ni afirmes que el
+              cambio fue realizado; Java rechazará esa combinación y solicitará una sola talla para todo el conjunto.
               En REPLACE_PRODUCT conserva en productReference el modelo nuevo y sus nuevos color y talla. Si existe
               un solo producto en el carrito, Java identificará ese producto como el que debe reemplazarse. Cuando la
               clienta ya confirmó el reemplazo solicitado, ejecútalo en ese turno y no pidas otra confirmación.
@@ -188,10 +201,11 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
             Devuelve ALL cuando la clienta no establezca esa condicion. No deduzcas este campo mediante coincidencia literal:
             interpreta el significado completo de su mensaje.
             cartAction debe ser NONE salvo que la clienta quiera modificar el carrito. Cuando cartAction sea
-            CHANGE_QUANTITY, CHANGE_VARIANT, REMOVE_PRODUCT o CLEAR_CART usa tambien commercialAction CHANGE_CART.
+            CHANGE_QUANTITY, KEEP_ONLY_PRODUCT, CHANGE_VARIANT, REMOVE_PRODUCT o CLEAR_CART usa tambien
+            commercialAction CHANGE_CART.
             Para aceptar una prenda ya elegida con producto, color y talla usa ADD_PRODUCT; si no menciona
             cantidad devuelve 0 y Java agregara una unidad por defecto.
-            Usa CHANGE_QUANTITY, CHANGE_VARIANT, REMOVE_PRODUCT, CLEAR_CART, CONFIRM_CART o ADD_PROMOTION
+            Usa CHANGE_QUANTITY, KEEP_ONLY_PRODUCT, CHANGE_VARIANT, REMOVE_PRODUCT, CLEAR_CART, CONFIRM_CART o ADD_PROMOTION
             solo cuando esa accion se entienda claramente por el contexto.
             Para comprar un combo o promocion usa commercialAction=CHANGE_CART y cartAction=ADD_PROMOTION.
             Conserva en promotionReference el nombre o numero exacto del combo elegido, incluso cuando los mensajes

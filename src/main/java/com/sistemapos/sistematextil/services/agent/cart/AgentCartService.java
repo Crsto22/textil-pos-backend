@@ -331,6 +331,33 @@ public class AgentCartService {
     }
 
     @Transactional
+    public CartResult keepOnlyProduct(Long sessionId, Integer variantId, Integer quantity, String operationId) {
+        if (variantId == null) throw new IllegalArgumentException("La variante que se conservara es obligatoria");
+        return execute(sessionId, operationId, "conservar_solo_producto_carrito",
+                variantId + ":" + String.valueOf(quantity), () -> {
+                    LockedSession scope = lockEditableSession(sessionId);
+                    CartRow cart = requireExistingDraftCart(sessionId);
+                    List<CartItemRow> items = store.findItems(cart.id());
+                    CartItemRow selected = items.stream()
+                            .filter(item -> Objects.equals(item.variantId(), variantId))
+                            .findFirst()
+                            .orElseThrow(() -> new IllegalArgumentException("El producto no existe en el carrito"));
+                    for (CartItemRow item : items) {
+                        if (!Objects.equals(item.variantId(), variantId)) {
+                            store.deleteItem(cart.id(), item.variantId());
+                        }
+                    }
+                    int targetQuantity = quantity == null || quantity < 1 ? selected.quantity() : quantity;
+                    SucursalStock selectedStock = requireVariant(scope.branchId(), variantId);
+                    validateStock(selectedStock, targetQuantity);
+                    store.upsertItem(cart.id(), price(selectedStock, targetQuantity, scope.branchId()),
+                            LocalDateTime.now());
+                    markCartUpdated(scope.session());
+                    return recalculateLocked(scope, cart, "DRAFT");
+                });
+    }
+
+    @Transactional
     public CartResult emptyCart(Long sessionId, String operationId) {
         return execute(sessionId, operationId, "vaciar_carrito", "empty", () -> {
             LockedSession scope = lockEditableSession(sessionId);

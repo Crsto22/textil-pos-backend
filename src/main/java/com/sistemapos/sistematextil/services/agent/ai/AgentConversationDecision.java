@@ -86,6 +86,15 @@ public record AgentConversationDecision(
                 fitPreference, confidence, required);
     }
 
+    public AgentConversationDecision asNewRetailPurchase() {
+        return new AgentConversationDecision(AgentDecisionIntent.CART_CHANGE, customerGoal, productReference,
+                productReferences, colorReference, sizeReference, quantity, promotionReference,
+                promotionSelections, AgentCartAction.ADD_PRODUCT, AgentCommercialAction.ADD_PRODUCT,
+                paymentMethodReference, paymentAccountReference, customerName, customerPhone, deliveryMethod,
+                documentNumber, shalomAgency, shalomDestination, shalomFieldsToChange, catalogAvailability,
+                sizeGuideComponent, bodyMeasurements, fitPreference, confidence, false);
+    }
+
     public AgentConversationDecision withProductReferences(String primaryReference, List<String> references) {
         return new AgentConversationDecision(intent, customerGoal, primaryReference, references, colorReference,
                 sizeReference, quantity, promotionReference, promotionSelections, cartAction, commercialAction,

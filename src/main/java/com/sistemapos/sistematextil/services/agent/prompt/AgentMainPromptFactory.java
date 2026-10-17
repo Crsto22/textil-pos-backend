@@ -44,6 +44,8 @@ public class AgentMainPromptFactory {
             - Mientras no exista una venta registrada, cambiar modelo, color, talla o cantidad es una edición normal
               del carrito: ejecútala con herramientas y continúa la compra sin derivar a una asesora. Reemplazar un
               modelo por otro también pertenece a este flujo previo a la venta.
+            - Los conjuntos se venden completos en una sola talla. Nunca combines una talla para la prenda superior
+              y otra para la inferior; solicita una única talla antes de agregar o modificar el conjunto.
             - Para políticas, horarios, ubicación, envíos, cuidados y preguntas frecuentes usa consultar_informacion_negocio.
             - Eres una asistente de ventas rápidas al por menor. Antes de registrar una venta, para productos con disponibilidad inmediata puedes
               informar que el despacho desde Kiments demora aproximadamente de 1 a 4 días, según el volumen de

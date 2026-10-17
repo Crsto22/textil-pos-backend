@@ -8,6 +8,7 @@ public enum AgentCartAction {
     NONE,
     ADD_PRODUCT,
     CHANGE_QUANTITY,
+    KEEP_ONLY_PRODUCT,
     CHANGE_VARIANT,
     REPLACE_PRODUCT,
     REMOVE_PRODUCT,

@@ -238,7 +238,12 @@ public class AgentVerifiedGroundingService {
     }
 
     AgentConversationDecision enforceHumanHandoffRules(AgentConversationDecision decision) {
-        if ((decision.commercialAction() == AgentCommercialAction.REQUEST_WHOLESALE_SUPPORT
+        boolean ordinaryCommercialQuestion = decision.intent() == AgentDecisionIntent.PRODUCT_SEARCH
+                || decision.intent() == AgentDecisionIntent.PRODUCT_DETAILS
+                || decision.intent() == AgentDecisionIntent.PROMOTION_SEARCH
+                || decision.intent() == AgentDecisionIntent.BUSINESS_INFORMATION;
+        if ((ordinaryCommercialQuestion
+                || decision.commercialAction() == AgentCommercialAction.REQUEST_WHOLESALE_SUPPORT
                 || decision.commercialAction() == AgentCommercialAction.SHARE_DELIVERY_TIMING_CONTACT
                 || decision.commercialAction() == AgentCommercialAction.REFER_EXISTING_ORDER_DELIVERY)
                 && decision.requiresHumanHelp()) {

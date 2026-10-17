@@ -2,10 +2,12 @@ package com.sistemapos.sistematextil.services.agent.runtime;
 
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 
 import java.time.LocalDateTime;
@@ -61,19 +63,54 @@ class AgentTurnFinalizerTest {
     @Test
     void appendsAdvisorPhoneToEveryHumanHandoff() {
         AgentOutboxService outbox=mock(AgentOutboxService.class);CrmWhatsappAgentSessionRepository sessions=mock(CrmWhatsappAgentSessionRepository.class);
+        AgentRuntimeConfigService runtime=mock(AgentRuntimeConfigService.class);
         CrmWhatsappAgentSession session=new CrmWhatsappAgentSession();session.setIdAgentSession(8L);session.setActiveSlot(true);
         CrmWhatsappConversation conversation=new CrmWhatsappConversation();conversation.setIdConversation(20L);session.setConversation(conversation);
         CrmWhatsappMessage anchor=new CrmWhatsappMessage();anchor.setIdMessage(99L);session.setLastCustomerMessage(anchor);
         when(sessions.findForUpdate(8L)).thenReturn(java.util.Optional.of(session));
         JdbcTemplate jdbc=mock(JdbcTemplate.class);when(jdbc.queryForObject(anyString(),eq(Long.class),eq(20L),eq(99L))).thenReturn(2L);
+        when(runtime.forSession(8L)).thenReturn(new AgentRuntimeConfigService.RuntimeConfig(false,
+                com.sistemapos.sistematextil.model.CrmWhatsappAgentActivationStage.AUTOMATIC_SALES,
+                java.util.Set.of(),100,5000,240,85,true,3,5,15,12,6));
         AgentTurnFinalizer finalizer=new AgentTurnFinalizer(outbox,mock(AgentCatalogQueryService.class),sessions,
-                mock(CrmWhatsappAgentStateMachine.class),mock(AgentRuntimeConfigService.class),jdbc);
+                mock(CrmWhatsappAgentStateMachine.class),runtime,jdbc);
         JobLease lease=new JobLease(41L,8L,99L,1,"worker:lease",LocalDateTime.now());
         GeneratedTurn turn=new GeneratedTurn("Una asesora revisará el caso.","Resumen",true,"GEMINI","gemini",10,0,"fp",List.of());
 
         finalizer.finalizeTurn(lease,turn);
 
         verify(outbox).enqueueText(8L,41L,99L,0,"Una asesora revisará el caso.\n\n"+AgentTurnFinalizer.ADVISOR_CONTACT);
+    }
+
+    @Test
+    void ignoresModelHandoffAndKeepsAgentActiveWhenAdvisorAttentionIsDisabled() {
+        AgentOutboxService outbox=mock(AgentOutboxService.class);
+        CrmWhatsappAgentSessionRepository sessions=mock(CrmWhatsappAgentSessionRepository.class);
+        AgentRuntimeConfigService runtime=mock(AgentRuntimeConfigService.class);
+        CrmWhatsappAgentSession session=new CrmWhatsappAgentSession();
+        session.setIdAgentSession(8L);session.setActiveSlot(true);
+        session.setState(CrmWhatsappAgentState.EXPLORANDO_PRODUCTOS);
+        CrmWhatsappConversation conversation=new CrmWhatsappConversation();conversation.setIdConversation(20L);
+        session.setConversation(conversation);
+        CrmWhatsappMessage anchor=new CrmWhatsappMessage();anchor.setIdMessage(99L);session.setLastCustomerMessage(anchor);
+        when(sessions.findForUpdate(8L)).thenReturn(java.util.Optional.of(session));
+        when(runtime.forSession(8L)).thenReturn(new AgentRuntimeConfigService.RuntimeConfig(false,
+                com.sistemapos.sistematextil.model.CrmWhatsappAgentActivationStage.AUTOMATIC_SALES,
+                java.util.Set.of(),100,5000,240,85,false,3,5,15,12,6));
+        JdbcTemplate jdbc=mock(JdbcTemplate.class);
+        when(jdbc.queryForObject(anyString(),eq(Long.class),eq(20L),eq(99L))).thenReturn(2L);
+        AgentTurnFinalizer finalizer=new AgentTurnFinalizer(outbox,mock(AgentCatalogQueryService.class),sessions,
+                mock(CrmWhatsappAgentStateMachine.class),runtime,jdbc);
+        JobLease lease=new JobLease(41L,8L,99L,1,"worker:lease",LocalDateTime.now());
+        GeneratedTurn turn=new GeneratedTurn("Puedes comunicarte al 933918047.","Resumen",true,
+                "GEMINI","gemini",10,0,"fp",List.of());
+
+        finalizer.finalizeTurn(lease,turn);
+
+        org.junit.jupiter.api.Assertions.assertEquals(CrmWhatsappAgentState.EXPLORANDO_PRODUCTOS,session.getState());
+        verify(outbox).enqueueText(8L,41L,99L,0,"Puedes comunicarte al 933918047.");
+        verify(jdbc, never()).update(org.mockito.ArgumentMatchers.contains("crm_whatsapp_support_case"),
+                any(Object[].class));
     }
 
     @Test

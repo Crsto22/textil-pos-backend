@@ -44,6 +44,10 @@ public class AgentConversationOrchestrator {
             Una asesora revisara tu solicitud y te indicara si el cambio es posible. Ten en cuenta que puede aplicarse una penalidad de S/10 por prenda.
 
             Para recibir ayuda con tu caso, comunícate con nuestra asesora al 933918047.""";
+    static final String POST_SALE_CHANGE_CONTACT_ONLY_MESSAGE = """
+            Entiendo. Como tu pedido ya fue confirmado, no puedo realizar cambios de color, talla, modelo, cantidad, pago o entrega desde este chat.
+
+            Para consultar si el cambio es posible, comunícate con nuestra asesora al 933918047. Puedes seguir escribiéndome si deseas información o realizar una compra nueva.""";
     static final String GENERAL_IMAGE_MESSAGE = """
             Recibí tu imagen, bella 💛
             Para ayudarte correctamente, indícame el nombre del modelo, el color y la talla que deseas.""";
@@ -100,9 +104,13 @@ public class AgentConversationOrchestrator {
     private GeneratedTurn generate(JobLease lease) {
         var context = contextFactory.build(lease.sessionId(), lease.anchorMessageId());
         var batch = batchFactory.build(lease.sessionId(), context.conversationId(), lease.anchorMessageId());
+        var runtime = runtimeConfig.forSession(lease.sessionId());
+        if (runtime == null) runtime = AgentRuntimeConfigService.RuntimeConfig.defaults();
+        boolean advisorEnabled = runtime != null && runtime.advisorAttentionEnabled();
         if (isPostSaleChangeRequest(context, batch)) {
             GeneratedTurn deterministic = new GeneratedTurn(
-                    POST_SALE_CHANGE_MESSAGE, context.previousSummary(), true,
+                    advisorEnabled ? POST_SALE_CHANGE_MESSAGE : POST_SALE_CHANGE_CONTACT_ONLY_MESSAGE,
+                    context.previousSummary(), advisorEnabled,
                     "JAVA_DETERMINISTIC", "post-sale-change-guard", 0L, 0,
                     context.fingerprint(), List.of());
             return persistGeneratedTurn(lease, deterministic);
@@ -121,7 +129,8 @@ public class AgentConversationOrchestrator {
         if (grounding.customerMessage() != null && !grounding.customerMessage().isBlank()) {
             GeneratedTurn deterministic = new GeneratedTurn(
                     grounding.customerMessage(), context.previousSummary(),
-                    grounding.decision().requiresHumanHelp(), "JAVA_DETERMINISTIC", "state-machine", 0L,
+                    advisorEnabled && grounding.decision().requiresHumanHelp(),
+                    "JAVA_DETERMINISTIC", "state-machine", 0L,
                     grounding.verifiedToolCalls(), context.fingerprint(), grounding.media());
             return persistGeneratedTurn(lease, deterministic);
         }
@@ -153,10 +162,13 @@ public class AgentConversationOrchestrator {
                           ofrece solo alternativas que aparezcan verificadas con stock; si la evidencia no contiene
                           alternativas, pregunta si desea que busques otros modelos con ese color y talla.
                           Si variants contiene opciones, invita a elegir o agregar solo opciones disponibles.
-                        - Da prioridad a la web como galeria visual. Cuando presentes exactamente un producto y su
-                          productPageUrl no este vacio, incluye ese enlace individual. Cuando presentes dos o mas
-                          productos, incluye una sola vez https://kiments.com.pe/productos. No inventes slugs ni
-                          construyas enlaces a partir del nombre; usa solamente URLs presentes en la evidencia.
+                        - Usa la web como galeria visual solo en consultas generales. Si presentas de forma general
+                          exactamente un producto y su productPageUrl no esta vacio, incluye ese enlace individual;
+                          si presentas de forma general dos o mas productos, incluye una sola vez
+                          https://kiments.com.pe/productos. Si la clienta consulta una seleccion concreta de color,
+                          talla o ambos, responde directamente disponibilidad y precio sin incluir ninguna URL.
+                          No inventes slugs ni construyas enlaces a partir del nombre; usa solamente URLs presentes
+                          en la evidencia. Redacta naturalmente y no conviertas esta regla en una plantilla fija.
                         - Cuando exista sizeGuideDelivery, redacta libremente una respuesta breve: menciona solo las
                           guias realmente incluidas en sent y explica cuales faltan usando missing. No uses una
                           plantilla fija ni afirmes que enviaste una guia que no aparece en sent.
@@ -198,7 +210,7 @@ public class AgentConversationOrchestrator {
                         - Si cartOperation.executed es false y no ejecutaste una herramienta, no afirmes que agregaste,
                           cambiaste o confirmaste nada; solicita unicamente el dato que falta.
                         """.formatted(grounding.evidenceJson()), Map.copyOf(toolContext));
-        int maxTools = runtimeConfig.forSession(lease.sessionId()).maxToolCallsPerRun();
+        int maxTools = runtime.maxToolCallsPerRun();
         var generated = gateway.respond(context.connectionId(), prompt, maxTools);
         var response = generated.response();
         validateTurn(grounding, response.customerMessage());
@@ -209,16 +221,19 @@ public class AgentConversationOrchestrator {
         String catalogUrlCorrection = catalogUrlCorrectionInstruction(grounding, response.customerMessage());
         String deliveryCorrection = deliveryTimingCorrectionInstruction(grounding, response.customerMessage());
         String availabilityCorrection = availabilityCorrectionInstruction(grounding, response.customerMessage());
+        String advisorCorrection = advisorCorrectionInstruction(advisorEnabled,
+                grounding.decision().requiresHumanHelp(), response);
         if (!priceValidation.valid() || !promotionValidation.valid() || !mediaCorrection.isBlank()
                 || !catalogUrlCorrection.isBlank() || !deliveryCorrection.isBlank()
-                || !availabilityCorrection.isBlank()) {
+                || !availabilityCorrection.isBlank() || !advisorCorrection.isBlank()) {
             String correctionInstruction = String.join("\n",
                     priceValidation.valid() ? "" : priceValidation.correctionInstruction(),
                     promotionValidation.valid() ? "" : promotionValidation.correctionInstruction(),
                     mediaCorrection,
                     catalogUrlCorrection,
                     deliveryCorrection,
-                    availabilityCorrection).trim();
+                    availabilityCorrection,
+                    advisorCorrection).trim();
             AgentMainPrompt correctionPrompt = groundingCorrectionPrompt(
                     prompt, response.customerMessage(), correctionInstruction);
             var corrected = gateway.respond(context.connectionId(), correctionPrompt, maxTools);
@@ -236,17 +251,21 @@ public class AgentConversationOrchestrator {
                     grounding, correctedResponse.customerMessage());
             String correctedAvailabilityValidation = availabilityCorrectionInstruction(
                     grounding, correctedResponse.customerMessage());
+            String correctedAdvisorValidation = advisorCorrectionInstruction(
+                    advisorEnabled, false, correctedResponse);
             if (!correctedValidation.valid() || !correctedPromotionValidation.valid()
                     || !correctedMediaValidation.isBlank() || !correctedCatalogUrlValidation.isBlank()
                     || !correctedDeliveryValidation.isBlank()
-                    || !correctedAvailabilityValidation.isBlank()) {
+                    || !correctedAvailabilityValidation.isBlank()
+                    || !correctedAdvisorValidation.isBlank()) {
                 throw new IllegalStateException("Gemini contradijo la evidencia comercial despues de corregir la redaccion: "
                         + String.join(" ", correctedValidation.correctionInstruction(),
                                 correctedPromotionValidation.correctionInstruction(),
                                 correctedMediaValidation,
                                 correctedCatalogUrlValidation,
                                 correctedDeliveryValidation,
-                                correctedAvailabilityValidation).trim());
+                                correctedAvailabilityValidation,
+                                correctedAdvisorValidation).trim());
             }
             generated = new AgentResponseGateway.AgentResponseResult(
                     corrected.provider(), corrected.model(), generated.latencyMs() + corrected.latencyMs(),
@@ -257,10 +276,29 @@ public class AgentConversationOrchestrator {
         // fotos repetidas o no solicitadas durante recomendaciones y reintentos.
         List<AgentMediaRequest> media = verifiedMedia(grounding.media());
         GeneratedTurn turn = new GeneratedTurn(response.customerMessage(), response.conversationSummary(),
-                response.requiresHumanHelp() || grounding.decision().requiresHumanHelp(),
+                advisorEnabled && grounding.decision().requiresHumanHelp(),
                 generated.provider(), generated.model(), generated.latencyMs(),
                 generated.toolCalls() + grounding.verifiedToolCalls(), context.fingerprint(), media);
         return persistGeneratedTurn(lease, turn);
+    }
+
+    private String advisorCorrectionInstruction(boolean advisorEnabled, boolean decisionRequiresHumanHelp,
+            AgentTurnResponse response) {
+        boolean handoffAllowed = advisorEnabled && decisionRequiresHumanHelp;
+        if (handoffAllowed) return "";
+        String message = normalizeText(response == null ? null : response.customerMessage());
+        boolean promisesAutomaticHandoff = message.contains("te derivare")
+                || message.contains("te transferire")
+                || message.contains("dejare el chat en espera")
+                || message.contains("una asesora revisara tu caso")
+                || message.contains("una asesora se comunicara contigo para ayudarte");
+        boolean modelRequestsHandoff = response != null && response.requiresHumanHelp();
+        boolean disabledDecisionRequestsHandoff = !advisorEnabled && decisionRequiresHumanHelp;
+        if (!modelRequestsHandoff && !disabledDecisionRequestsHandoff && !promisesAutomaticHandoff) return "";
+        return "No esta autorizada una derivacion humana para esta respuesta. Redacta nuevamente con "
+                + "requiresHumanHelp=false, sin prometer transferencia, espera, revision ni contacto automatico. "
+                + "Responde la consulta normalmente; si esta fuera de alcance, comparte 933918047 solo como "
+                + "contacto informativo y mantente disponible para seguir informando o vendiendo.";
     }
 
     static String generalMediaMessage(AgentMessageBatch batch,
@@ -458,6 +496,8 @@ public class AgentConversationOrchestrator {
             JsonNode availability = evidenceMapper.readTree(grounding.evidenceJson())
                     .path("requestedVariantAvailability");
             if (availability.isMissingNode()) return "";
+            boolean specificSelection = !availability.path("requestedColor").asText("").isBlank()
+                    || !availability.path("requestedSize").asText("").isBlank();
             JsonNode products = availability.path("products");
             boolean anyAvailable = false;
             int productCount = 0;
@@ -484,14 +524,19 @@ public class AgentConversationOrchestrator {
                         + "separar esa combinacion; informa la falta de stock.");
             }
             String catalogUrl = "https://kiments.com.pe/productos";
-            if (!anyAvailable && (customerMessage == null || !customerMessage.contains(catalogUrl))) {
+            boolean containsWebsiteUrl = customerMessage != null && customerMessage.contains(catalogUrl);
+            if (specificSelection && containsWebsiteUrl) {
+                corrections.add("La clienta consulto una seleccion concreta de color o talla. Retira el enlace web "
+                        + "y responde directamente con disponibilidad, precio y el siguiente paso de compra.");
+            } else if (!specificSelection && !anyAvailable
+                    && (customerMessage == null || !customerMessage.contains(catalogUrl))) {
                 corrections.add("Como no hay stock, invita naturalmente a explorar otros productos e incluye "
                         + catalogUrl + ".");
-            } else if (anyAvailable && productCount == 1 && !singleProductUrl.isBlank()
+            } else if (!specificSelection && anyAvailable && productCount == 1 && !singleProductUrl.isBlank()
                     && (customerMessage == null || !customerMessage.contains(singleProductUrl))) {
                 corrections.add("Presentaste un solo producto: incluye su pagina verificada " + singleProductUrl
                         + " como galeria visual.");
-            } else if (anyAvailable && productCount > 1
+            } else if (!specificSelection && anyAvailable && productCount > 1
                     && (customerMessage == null || !customerMessage.contains(catalogUrl))) {
                 corrections.add("Presentaste varios productos: incluye una sola vez " + catalogUrl
                         + " como galeria completa.");

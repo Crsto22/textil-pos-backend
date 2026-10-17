@@ -65,6 +65,7 @@ class AgentConversationOrchestratorTest {
     @Test
     void escalatesPostSaleChangesWithoutCallingGeminiOrCartTools() {
         Fixture fixture = new Fixture();
+        fixture.advisorEnabled(true);
         AgentContext context = mock(AgentContext.class);
         AgentContext.Fulfillment fulfillment = mock(AgentContext.Fulfillment.class);
         when(fulfillment.saleId()).thenReturn(11305);
@@ -88,6 +89,33 @@ class AgentConversationOrchestratorTest {
         assertTrue(turn.getValue().requiresHumanHelp());
         assertEquals("post-sale-change-guard", turn.getValue().model());
         assertEquals(AgentConversationOrchestrator.POST_SALE_CHANGE_MESSAGE,
+                turn.getValue().customerMessage());
+    }
+
+    @Test
+    void keepsPostSaleContactInformativeWhenAdvisorAttentionIsDisabled() {
+        Fixture fixture = new Fixture();
+        AgentContext context = mock(AgentContext.class);
+        AgentContext.Fulfillment fulfillment = mock(AgentContext.Fulfillment.class);
+        when(fulfillment.saleId()).thenReturn(11305);
+        when(context.fulfillment()).thenReturn(fulfillment);
+        when(context.connectionId()).thenReturn(7L);
+        when(context.conversationId()).thenReturn(20L);
+        when(context.fingerprint()).thenReturn("post-sale-change-disabled");
+        when(context.previousSummary()).thenReturn("Pedido 11305 emitido");
+        when(fixture.contexts.build(8L, 99L)).thenReturn(context);
+        when(fixture.batches.build(8L, 20L, 99L)).thenReturn(new AgentMessageBatch(
+                8L, 20L, 99L, List.of(), "Quiero que me cambies de color", false, false, false));
+        fixture.advisorEnabled(false);
+        fixture.current(true, true, true);
+
+        assertEquals(AgentConversationOrchestrator.Outcome.COMPLETED,
+                fixture.orchestrator.process(fixture.lease));
+
+        ArgumentCaptor<GeneratedTurn> turn = ArgumentCaptor.forClass(GeneratedTurn.class);
+        verify(fixture.jobs).saveGeneratedTurn(eq(41L), eq("worker:lease"), turn.capture(), any());
+        assertFalse(turn.getValue().requiresHumanHelp());
+        assertEquals(AgentConversationOrchestrator.POST_SALE_CHANGE_CONTACT_ONLY_MESSAGE,
                 turn.getValue().customerMessage());
     }
 
@@ -277,6 +305,39 @@ class AgentConversationOrchestratorTest {
     }
 
     @Test
+    void rewritesModelHandoffAndKeepsAutomaticAttentionWhenAdvisorsAreDisabled() {
+        Fixture fixture = new Fixture();
+        fixture.advisorEnabled(false);
+        fixture.current(true, true, true);
+        AgentConversationDecision mistakenHandoff = new AgentConversationDecision(
+                AgentDecisionIntent.BUSINESS_INFORMATION, "pregunta por pieza del conjunto", "", "", "", 0, "",
+                java.util.List.of(),
+                com.sistemapos.sistematextil.services.agent.ai.AgentCartAction.NONE,
+                AgentCommercialAction.REQUEST_SUPPORT,
+                "", "", "", "", "", "", "", "",
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL, 80, true);
+        when(fixture.grounding.ground(eq(7L), eq(8L), eq(41L), any())).thenReturn(
+                new AgentVerifiedGroundingService.Grounding(
+                        mistakenHandoff, "{}", java.util.List.of(), 1, false));
+        when(fixture.gateway.respond(eq(7L), any(), eq(12)))
+                .thenReturn(new AgentResponseResult("GEMINI", "gemini", 100, 1,
+                        new AgentTurnResponse("Una asesora revisará tu caso.", "Consulta", true, List.of())))
+                .thenReturn(new AgentResponseResult("GEMINI", "gemini", 80, 0,
+                        new AgentTurnResponse(
+                                "Los conjuntos se venden completos. Puedes revisar los modelos disponibles en https://kiments.com.pe/productos.",
+                                "Consulta por una pieza del conjunto", false, List.of())));
+
+        assertEquals(AgentConversationOrchestrator.Outcome.COMPLETED,
+                fixture.orchestrator.process(fixture.lease));
+
+        verify(fixture.gateway, times(2)).respond(eq(7L), any(), eq(12));
+        ArgumentCaptor<GeneratedTurn> turn = ArgumentCaptor.forClass(GeneratedTurn.class);
+        verify(fixture.jobs).saveGeneratedTurn(eq(41L), eq("worker:lease"), turn.capture(), any());
+        assertFalse(turn.getValue().requiresHumanHelp());
+        assertTrue(turn.getValue().customerMessage().contains("se venden completos"));
+    }
+
+    @Test
     void asksGeminiToRewriteNaturallyWhenAProductPriceWasOmitted() {
         Fixture fixture = new Fixture();
         fixture.current(true, true, true);
@@ -375,6 +436,78 @@ class AgentConversationOrchestratorTest {
     }
 
     @Test
+    void removesWebsiteLinkFromASpecificColorOrSizeAnswer() {
+        Fixture fixture = new Fixture();
+        fixture.current(true, true, true);
+        when(fixture.grounding.ground(eq(7L), eq(8L), eq(41L), any())).thenReturn(
+                new AgentVerifiedGroundingService.Grounding(
+                        new AgentConversationDecision(AgentDecisionIntent.PRODUCT_DETAILS,
+                                "consultar Lyana negro", "Lyana", "NEGRO", "L", 0, "",
+                                com.sistemapos.sistematextil.services.agent.ai.AgentCartAction.NONE,
+                                AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY,
+                                "", "", "", "", "", "", "", "",
+                                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL,
+                                100, false),
+                        "{\"requestedVariantAvailability\":{\"requestedColor\":\"NEGRO\","
+                                + "\"requestedSize\":\"L\",\"products\":[{\"name\":\"LYANA\","
+                                + "\"productPageUrl\":\"https://kiments.com.pe/productos/lyana\","
+                                + "\"variants\":[{\"color\":\"NEGRO\",\"size\":\"L\",\"stock\":2}]}]}}",
+                        java.util.List.of(), 1, false));
+        when(fixture.gateway.respond(eq(7L), any(), eq(12)))
+                .thenReturn(new AgentResponseResult("GEMINI", "gemini", 100, 1,
+                        new AgentTurnResponse(
+                                "Lyana negro talla L esta disponible. https://kiments.com.pe/productos/lyana",
+                                "Disponibilidad", false, java.util.List.of())))
+                .thenReturn(new AgentResponseResult("GEMINI", "gemini", 80, 0,
+                        new AgentTurnResponse("Lyana negro talla L esta disponible a S/70.00.",
+                                "Disponibilidad", false, java.util.List.of())));
+
+        assertEquals(AgentConversationOrchestrator.Outcome.COMPLETED,
+                fixture.orchestrator.process(fixture.lease));
+
+        verify(fixture.gateway, times(2)).respond(eq(7L), any(), eq(12));
+        ArgumentCaptor<GeneratedTurn> turn = ArgumentCaptor.forClass(GeneratedTurn.class);
+        verify(fixture.jobs).saveGeneratedTurn(eq(41L), eq("worker:lease"), turn.capture(), any());
+        assertFalse(turn.getValue().customerMessage().contains("kiments.com.pe"));
+    }
+
+    @Test
+    void addsIndividualGalleryLinkForAGeneralSingleProductAnswer() {
+        Fixture fixture = new Fixture();
+        fixture.current(true, true, true);
+        when(fixture.grounding.ground(eq(7L), eq(8L), eq(41L), any())).thenReturn(
+                new AgentVerifiedGroundingService.Grounding(
+                        new AgentConversationDecision(AgentDecisionIntent.PRODUCT_DETAILS,
+                                "consultar Lyana", "Lyana", "", "", 0, "",
+                                com.sistemapos.sistematextil.services.agent.ai.AgentCartAction.NONE,
+                                AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY,
+                                "", "", "", "", "", "", "", "",
+                                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL,
+                                100, false),
+                        "{\"requestedVariantAvailability\":{\"requestedColor\":\"\","
+                                + "\"requestedSize\":\"\",\"products\":[{\"name\":\"LYANA\","
+                                + "\"productPageUrl\":\"https://kiments.com.pe/productos/lyana\","
+                                + "\"variants\":[{\"color\":\"NEGRO\",\"size\":\"L\",\"stock\":2}]}]}}",
+                        java.util.List.of(), 1, false));
+        when(fixture.gateway.respond(eq(7L), any(), eq(12)))
+                .thenReturn(new AgentResponseResult("GEMINI", "gemini", 100, 1,
+                        new AgentTurnResponse("Lyana esta disponible en varios colores y tallas.",
+                                "Disponibilidad general", false, java.util.List.of())))
+                .thenReturn(new AgentResponseResult("GEMINI", "gemini", 80, 0,
+                        new AgentTurnResponse(
+                                "Lyana esta disponible en varios colores y tallas. Mira su galeria en https://kiments.com.pe/productos/lyana",
+                                "Disponibilidad general", false, java.util.List.of())));
+
+        assertEquals(AgentConversationOrchestrator.Outcome.COMPLETED,
+                fixture.orchestrator.process(fixture.lease));
+
+        verify(fixture.gateway, times(2)).respond(eq(7L), any(), eq(12));
+        ArgumentCaptor<GeneratedTurn> turn = ArgumentCaptor.forClass(GeneratedTurn.class);
+        verify(fixture.jobs).saveGeneratedTurn(eq(41L), eq("worker:lease"), turn.capture(), any());
+        assertTrue(turn.getValue().customerMessage().contains("https://kiments.com.pe/productos/lyana"));
+    }
+
+    @Test
     void validatesReadyStockDeliveryGuidanceForAnAgentSale() {
         var grounding = deliveryGrounding("READY_STOCK");
 
@@ -459,6 +592,12 @@ class AgentConversationOrchestratorTest {
                     "GEMINI", "gemini", 100, 2, new AgentTurnResponse("Claro", "Busca Emma", false,
                             java.util.List.of())));
             when(jobs.findGeneratedTurn(41L, "worker:lease")).thenReturn(Optional.empty());
+        }
+
+        void advisorEnabled(boolean enabled) {
+            when(runtime.forSession(8L)).thenReturn(new AgentRuntimeConfigService.RuntimeConfig(false,
+                    com.sistemapos.sistematextil.model.CrmWhatsappAgentActivationStage.LOCAL_TEST,
+                    java.util.Set.of(), 10, 5000, 240, 85, enabled, 3, 5, 15, 12, 6));
         }
 
         void batch(String messageType, boolean image) {

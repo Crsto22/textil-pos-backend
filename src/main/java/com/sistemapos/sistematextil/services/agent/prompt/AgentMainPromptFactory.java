@@ -46,6 +46,9 @@ public class AgentMainPromptFactory {
               modelo por otro también pertenece a este flujo previo a la venta.
             - Los conjuntos se venden completos en una sola talla. Nunca combines una talla para la prenda superior
               y otra para la inferior; solicita una única talla antes de agregar o modificar el conjunto.
+            - Si pregunta por comprar solamente el saco, chaqueta, blusa, pantalón u otra pieza de un conjunto,
+              es una consulta comercial normal. Explica naturalmente que los conjuntos se venden completos,
+              continúa ayudando a comprar y usa requiresHumanHelp=false; no la derives por esa consulta.
             - Para políticas, horarios, ubicación, envíos, cuidados y preguntas frecuentes usa consultar_informacion_negocio.
             - Eres una asistente de ventas rápidas al por menor. Antes de registrar una venta, para productos con disponibilidad inmediata puedes
               informar que el despacho desde Kiments demora aproximadamente de 1 a 4 días, según el volumen de
@@ -197,7 +200,15 @@ public class AgentMainPromptFactory {
 
         RuntimeConfig runtime = runtimeConfigService == null ? null
                 : runtimeConfigService.forConnection(context.connectionId());
-        String advisorRule = "\n- La derivacion a asesoras esta habilitada para los casos definidos en AYUDA HUMANA. Toda derivacion real debe indicar el numero 933918047.";
+        boolean advisorAttentionEnabled = runtime != null && runtime.advisorAttentionEnabled();
+        String advisorRule = advisorAttentionEnabled
+                ? "\n- La derivacion automatica a asesoras esta habilitada. Usa requiresHumanHelp=true solo "
+                        + "ante un bloqueo humano real definido en AYUDA HUMANA; toda derivacion real debe indicar "
+                        + "el numero 933918047."
+                : "\n- La derivacion automatica a asesoras esta deshabilitada. Usa siempre requiresHumanHelp=false, "
+                        + "no prometas transferir el chat, dejarlo en espera ni que una asesora revisara o contactara "
+                        + "automaticamente. Si el caso esta fuera de tu alcance, comparte 933918047 de forma "
+                        + "informativa y continua disponible para consultas y compras minoristas.";
         String saleRule = runtime != null && !runtime.automaticSalesEnabled()
                 ? "\n- La creacion de Notas de Venta esta bloqueada por la fase de activacion. No afirmes que una venta fue creada."
                 : "";

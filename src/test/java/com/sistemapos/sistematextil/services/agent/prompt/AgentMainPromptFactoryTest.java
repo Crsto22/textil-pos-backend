@@ -115,6 +115,35 @@ class AgentMainPromptFactoryTest {
     }
 
     @Test
+    void disablesAutomaticHandoffsInPromptWhenAdvisorAttentionIsOff() {
+        AgentRuntimeConfigService runtime = mock(AgentRuntimeConfigService.class);
+        when(runtime.forConnection(7L)).thenReturn(new RuntimeConfig(true,
+                CrmWhatsappAgentActivationStage.AUTOMATIC_SALES, Set.of(), 10,
+                5000, 240, 85, false, 3, 5, 15, 12, 6));
+
+        AgentMainPrompt prompt = new AgentMainPromptFactory(runtime)
+                .create(context(CrmWhatsappAgentState.EXPLORANDO_PRODUCTOS));
+
+        assertTrue(prompt.systemInstruction().contains("derivacion automatica a asesoras esta deshabilitada"));
+        assertTrue(prompt.systemInstruction().contains("Usa siempre requiresHumanHelp=false"));
+        assertTrue(prompt.systemInstruction().contains("pieza de un conjunto"));
+    }
+
+    @Test
+    void enablesRealHumanHandoffsInPromptWhenAdvisorAttentionIsOn() {
+        AgentRuntimeConfigService runtime = mock(AgentRuntimeConfigService.class);
+        when(runtime.forConnection(7L)).thenReturn(new RuntimeConfig(true,
+                CrmWhatsappAgentActivationStage.AUTOMATIC_SALES, Set.of(), 10,
+                5000, 240, 85, true, 3, 5, 15, 12, 6));
+
+        AgentMainPrompt prompt = new AgentMainPromptFactory(runtime)
+                .create(context(CrmWhatsappAgentState.EXPLORANDO_PRODUCTOS));
+
+        assertTrue(prompt.systemInstruction().contains("derivacion automatica a asesoras esta habilitada"));
+        assertTrue(prompt.systemInstruction().contains("bloqueo humano real"));
+    }
+
+    @Test
     void rejectsMissingContextOrState() {
         assertThrows(IllegalArgumentException.class, () -> factory.create(null));
         AgentContext invalid = new AgentContext(

@@ -56,6 +56,23 @@ import com.sistemapos.sistematextil.services.agent.promotion.AgentPromotionQuery
 
 class AgentVerifiedGroundingServiceTest {
     @Test
+    void ordinaryCommercialQuestionsNeverRequireHumanHandoff() {
+        AgentConversationDecision mistaken = new AgentConversationDecision(
+                AgentDecisionIntent.BUSINESS_INFORMATION, "precio de chaqueta por separado", "", "", "", 0, "",
+                List.of(), AgentCartAction.NONE, AgentCommercialAction.REQUEST_SUPPORT,
+                "", "", "", "", "", "", "", "",
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL, 90, true);
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(
+                mock(AgentDecisionGateway.class), mock(AgentCatalogQueryService.class),
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
+                mock(AgentCartService.class), passThroughAudit());
+
+        AgentConversationDecision normalized = service.enforceHumanHandoffRules(mistaken);
+
+        assertFalse(normalized.requiresHumanHelp());
+    }
+
+    @Test
     void convertsACompleteSelectionIntoANewPurchaseInAFreshSession() {
         AgentConversationDecision mistaken = new AgentConversationDecision(
                 AgentDecisionIntent.SUPPORT_REQUEST, "adicionar Alessia", "ALESSIA RAYAS",

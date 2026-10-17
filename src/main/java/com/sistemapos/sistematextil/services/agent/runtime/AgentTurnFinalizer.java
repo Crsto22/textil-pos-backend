@@ -45,9 +45,9 @@ public class AgentTurnFinalizer {
         String summary = clean(turn.conversationSummary());
         if (!summary.isBlank()) session.setSummary(truncate(summary, 4000));
         session.setLastActivityAt(LocalDateTime.now());
-        // La ayuda humana solicitada por una regla de seguridad siempre detiene al
-        // agente automatico; no es una preferencia de estilo configurable.
-        boolean escalated = turn.requiresHumanHelp();
+        // La configuracion es la autoridad final: el modelo nunca puede pausar por
+        // si solo una conversacion cuando la atencion de asesoras esta deshabilitada.
+        boolean escalated = turn.requiresHumanHelp() && advisorAttentionEnabled(lease.sessionId());
         if (escalated) {
             escalate(session, lease.jobId(), "La IA determino que el caso requiere revision humana");
         } else {
@@ -162,7 +162,7 @@ public class AgentTurnFinalizer {
     public void failPermanently(JobLease lease, String reason) {
         CrmWhatsappAgentSession session = sessions.findForUpdate(lease.sessionId()).orElse(null);
         if (session == null || !Boolean.TRUE.equals(session.getActiveSlot())) return;
-        if (runtimeConfig.forSession(lease.sessionId()).advisorAttentionEnabled()) {
+        if (advisorAttentionEnabled(lease.sessionId())) {
             escalate(session, lease.jobId(), truncate(clean(reason), 160));
             int ordinal=Math.floorMod(Objects.hash("AGENT_FAILURE_HELP",lease.jobId()),Integer.MAX_VALUE);
             outbox.enqueueText(lease.sessionId(),null,lease.anchorMessageId(),ordinal,ADVISOR_CONTACT);
@@ -237,6 +237,11 @@ public class AgentTurnFinalizer {
         session.setResumeState(null);
         session.setLastEvent(CrmWhatsappAgentEvent.AYUDA_RESUELTA);
         session.setStateChangedAt(LocalDateTime.now());
+    }
+
+    private boolean advisorAttentionEnabled(Long sessionId) {
+        AgentRuntimeConfigService.RuntimeConfig config = runtimeConfig.forSession(sessionId);
+        return config != null && config.advisorAttentionEnabled();
     }
 
     private String clean(String value) { return value == null ? "" : value.trim(); }

@@ -26,7 +26,9 @@ import com.sistemapos.sistematextil.services.agent.batch.AgentMessageBatch;
 import com.sistemapos.sistematextil.services.agent.batch.AgentMessageBatchFactory;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartTools;
 import com.sistemapos.sistematextil.services.agent.config.AgentRuntimeConfigService;
+import com.sistemapos.sistematextil.services.agent.context.AgentContext;
 import com.sistemapos.sistematextil.services.agent.context.AgentContextFactory;
+import com.sistemapos.sistematextil.services.agent.context.AgentMissingData;
 import com.sistemapos.sistematextil.services.agent.prompt.AgentMainPrompt;
 import com.sistemapos.sistematextil.services.agent.prompt.AgentMainPromptFactory;
 import com.sistemapos.sistematextil.services.agent.runtime.AgentTurnFinalizer.StaleAgentTurnException;
@@ -126,7 +128,9 @@ public class AgentConversationOrchestrator {
         AgentMainPrompt base = promptFactory.create(context);
         String conversation = base.userMessage() + "\n\nLOTE_ACTUAL_AGRUPADO:\n" + batch.combinedInput();
         var grounding = groundingService.ground(context.connectionId(), lease.sessionId(), lease.jobId(), conversation);
-        if (grounding.customerMessage() != null && !grounding.customerMessage().isBlank()) {
+        boolean pendingReminderRequired = pendingReminderRequired(context, grounding);
+        if (grounding.customerMessage() != null && !grounding.customerMessage().isBlank()
+                && !pendingReminderRequired) {
             GeneratedTurn deterministic = new GeneratedTurn(
                     grounding.customerMessage(), context.previousSummary(),
                     advisorEnabled && grounding.decision().requiresHumanHelp(),
@@ -145,6 +149,12 @@ public class AgentConversationOrchestrator {
 
                         REGLA DE SALIDA:
                         - Usa esta evidencia como unica fuente para hechos del negocio.
+                        - El inventario exacto es informacion interna. Nunca menciones cantidades de stock,
+                          existencias ni unidades restantes. Comunica solamente si cada color o talla esta
+                          disponible o no disponible, aunque el historial contenga una cantidad.
+                        - Si existe unresolvedImageProductReference, no uses el producto supuesto por la decision ni
+                          por el historial. Indica brevemente que no puedes identificar el modelo desde la imagen,
+                          responde solo la parte textual verificable y pide el nombre del modelo cuando sea necesario.
                         - No digas que estas buscando, revisando o verificando: la consulta ya fue ejecutada.
                         - No escribas marcadores como [lista], datos pendientes ni productos no presentes en la evidencia.
                         - Solo afirma que adjuntas, compartes, envias o muestras fotos cuando verifiedMediaCount es
@@ -209,7 +219,9 @@ public class AgentConversationOrchestrator {
                         - Si cartOperation.executed es true, confirma el carrito real devuelto por el backend.
                         - Si cartOperation.executed es false y no ejecutaste una herramienta, no afirmes que agregaste,
                           cambiaste o confirmaste nada; solicita unicamente el dato que falta.
-                        """.formatted(grounding.evidenceJson()), Map.copyOf(toolContext));
+                        %s
+                        """.formatted(grounding.evidenceJson(), pendingReminderRule(context, pendingReminderRequired)),
+                Map.copyOf(toolContext));
         int maxTools = runtime.maxToolCallsPerRun();
         var generated = gateway.respond(context.connectionId(), prompt, maxTools);
         var response = generated.response();
@@ -221,11 +233,16 @@ public class AgentConversationOrchestrator {
         String catalogUrlCorrection = catalogUrlCorrectionInstruction(grounding, response.customerMessage());
         String deliveryCorrection = deliveryTimingCorrectionInstruction(grounding, response.customerMessage());
         String availabilityCorrection = availabilityCorrectionInstruction(grounding, response.customerMessage());
+        String inventoryDisclosureCorrection = inventoryDisclosureCorrectionInstruction(response.customerMessage());
         String advisorCorrection = advisorCorrectionInstruction(advisorEnabled,
                 grounding.decision().requiresHumanHelp(), response);
+        String pendingReminderCorrection = pendingReminderCorrectionInstruction(
+                context, pendingReminderRequired, response);
         if (!priceValidation.valid() || !promotionValidation.valid() || !mediaCorrection.isBlank()
                 || !catalogUrlCorrection.isBlank() || !deliveryCorrection.isBlank()
-                || !availabilityCorrection.isBlank() || !advisorCorrection.isBlank()) {
+                || !availabilityCorrection.isBlank() || !inventoryDisclosureCorrection.isBlank()
+                || !advisorCorrection.isBlank()
+                || !pendingReminderCorrection.isBlank()) {
             String correctionInstruction = String.join("\n",
                     priceValidation.valid() ? "" : priceValidation.correctionInstruction(),
                     promotionValidation.valid() ? "" : promotionValidation.correctionInstruction(),
@@ -233,7 +250,9 @@ public class AgentConversationOrchestrator {
                     catalogUrlCorrection,
                     deliveryCorrection,
                     availabilityCorrection,
-                    advisorCorrection).trim();
+                    inventoryDisclosureCorrection,
+                    advisorCorrection,
+                    pendingReminderCorrection).trim();
             AgentMainPrompt correctionPrompt = groundingCorrectionPrompt(
                     prompt, response.customerMessage(), correctionInstruction);
             var corrected = gateway.respond(context.connectionId(), correctionPrompt, maxTools);
@@ -251,13 +270,19 @@ public class AgentConversationOrchestrator {
                     grounding, correctedResponse.customerMessage());
             String correctedAvailabilityValidation = availabilityCorrectionInstruction(
                     grounding, correctedResponse.customerMessage());
+            String correctedInventoryDisclosureValidation = inventoryDisclosureCorrectionInstruction(
+                    correctedResponse.customerMessage());
             String correctedAdvisorValidation = advisorCorrectionInstruction(
                     advisorEnabled, false, correctedResponse);
+            String correctedPendingReminderValidation = pendingReminderCorrectionInstruction(
+                    context, pendingReminderRequired, correctedResponse);
             if (!correctedValidation.valid() || !correctedPromotionValidation.valid()
                     || !correctedMediaValidation.isBlank() || !correctedCatalogUrlValidation.isBlank()
                     || !correctedDeliveryValidation.isBlank()
                     || !correctedAvailabilityValidation.isBlank()
-                    || !correctedAdvisorValidation.isBlank()) {
+                    || !correctedInventoryDisclosureValidation.isBlank()
+                    || !correctedAdvisorValidation.isBlank()
+                    || !correctedPendingReminderValidation.isBlank()) {
                 throw new IllegalStateException("Gemini contradijo la evidencia comercial despues de corregir la redaccion: "
                         + String.join(" ", correctedValidation.correctionInstruction(),
                                 correctedPromotionValidation.correctionInstruction(),
@@ -265,7 +290,9 @@ public class AgentConversationOrchestrator {
                                 correctedCatalogUrlValidation,
                                 correctedDeliveryValidation,
                                 correctedAvailabilityValidation,
-                                correctedAdvisorValidation).trim());
+                                correctedInventoryDisclosureValidation,
+                                correctedAdvisorValidation,
+                                correctedPendingReminderValidation).trim());
             }
             generated = new AgentResponseGateway.AgentResponseResult(
                     corrected.provider(), corrected.model(), generated.latencyMs() + corrected.latencyMs(),
@@ -275,11 +302,60 @@ public class AgentConversationOrchestrator {
         // Gemini redacta el texto, pero solo Java puede autorizar archivos. Esto evita
         // fotos repetidas o no solicitadas durante recomendaciones y reintentos.
         List<AgentMediaRequest> media = verifiedMedia(grounding.media());
-        GeneratedTurn turn = new GeneratedTurn(response.customerMessage(), response.conversationSummary(),
+        String customerMessage = composeCustomerMessage(response, pendingReminderRequired);
+        GeneratedTurn turn = new GeneratedTurn(customerMessage, response.conversationSummary(),
                 advisorEnabled && grounding.decision().requiresHumanHelp(),
                 generated.provider(), generated.model(), generated.latencyMs(),
                 generated.toolCalls() + grounding.verifiedToolCalls(), context.fingerprint(), media);
         return persistGeneratedTurn(lease, turn);
+    }
+
+    private boolean pendingReminderRequired(AgentContext context,
+            AgentVerifiedGroundingService.Grounding grounding) {
+        return context != null
+                && context.missingData() != null
+                && !context.missingData().isEmpty()
+                && grounding != null
+                && !grounding.mutationExecuted();
+    }
+
+    private String pendingReminderRule(AgentContext context, boolean required) {
+        if (!required) {
+            return "- No existe un recordatorio pendiente para esta respuesta: devuelve pendingStepReminder vacio "
+                    + "y remindedPendingData como lista vacia.";
+        }
+        return "- Esta es una consulta intermedia y el estado comercial no avanzo. Responde primero la consulta "
+                + "usando la evidencia verificada. Escribe aparte en pendingStepReminder un recordatorio breve, "
+                + "natural y sin repetir el formulario completo. Solicita solamente: "
+                + context.missingData() + ". Devuelve exactamente esos valores en remindedPendingData. No vuelvas "
+                + "a pedir datos que ya estan validados ni incluyas el recordatorio dentro de customerMessage.";
+    }
+
+    private String pendingReminderCorrectionInstruction(AgentContext context, boolean required,
+            AgentTurnResponse response) {
+        String reminder = response == null ? "" : response.pendingStepReminder();
+        List<AgentMissingData> actual = response == null || response.remindedPendingData() == null
+                ? List.of() : response.remindedPendingData();
+        if (!required) {
+            if (reminder.isBlank() && actual.isEmpty()) return "";
+            return "No existe un paso pendiente que deba recordarse en esta respuesta. Deja pendingStepReminder "
+                    + "vacio y remindedPendingData como lista vacia.";
+        }
+        List<AgentMissingData> expected = context.missingData().stream().distinct().toList();
+        boolean sameValues = actual.size() == expected.size()
+                && actual.containsAll(expected) && expected.containsAll(actual);
+        if (!reminder.isBlank() && sameValues) return "";
+        return "El estado comercial sigue esperando informacion. Responde la consulta y completa "
+                + "pendingStepReminder con una sola frase natural que recuerde unicamente " + expected
+                + "; devuelve exactamente esos mismos valores en remindedPendingData. No repitas el formulario "
+                + "completo ni solicites datos ya guardados.";
+    }
+
+    private String composeCustomerMessage(AgentTurnResponse response, boolean reminderRequired) {
+        String message = response.customerMessage().trim();
+        if (!reminderRequired || response.pendingStepReminder().isBlank()) return message;
+        String reminder = response.pendingStepReminder().trim();
+        return message.endsWith(reminder) ? message : message + "\n\n" + reminder;
     }
 
     private String advisorCorrectionInstruction(boolean advisorEnabled, boolean decisionRequiresHumanHelp,
@@ -545,6 +621,20 @@ public class AgentConversationOrchestrator {
         } catch (Exception ignored) {
             return "";
         }
+    }
+
+    private String inventoryDisclosureCorrectionInstruction(String customerMessage) {
+        String response = normalizeText(customerMessage);
+        if (response.isBlank()) return "";
+        boolean exposesInventory = response.matches("(?s).*\\b\\d+\\s+(?:unidades?\\s+)?"
+                + "(?:disponibles?|restantes?|en\\s+stock)\\b.*")
+                || response.matches("(?s).*\\b(?:quedan?|tenemos|hay)\\s+\\d+\\s+"
+                + "(?:unidades?|prendas?|piezas?)\\b.*")
+                || response.matches("(?s).*\\b(?:stock|existencias?)\\s*(?:disponible)?\\s*[:=-]?\\s*\\d+\\b.*");
+        if (!exposesInventory) return "";
+        return "El inventario exacto es interno. Elimina toda cantidad de stock, unidades disponibles o "
+                + "existencias restantes. Conserva solamente los colores y tallas disponibles, el precio y el "
+                + "siguiente paso natural de compra.";
     }
 
     private static boolean containsShippingContact(String response) {

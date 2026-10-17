@@ -36,6 +36,12 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
             Devuelve siempre todos los campos del esquema. Nunca omitas campos y nunca escribas null.
             commercialAction es una accion semantica, no una palabra clave. Determinala por el significado,
             el ESTADO_ACTUAL y el ultimo mensaje. Usa el historial solo para resolver referencias.
+            Un estado que espera datos no convierte cualquier mensaje en la accion pendiente. Si la clienta hace
+            una pregunta intermedia, clasifica la pregunta por su significado real para que Java pueda responderla;
+            no inventes que proporciono, confirmo o eligio el dato pendiente. El estado se conserva y la respuesta
+            final le recordara lo que todavia falta. Solo usa la accion transaccional pendiente cuando el mensaje
+            realmente aporta, corrige o confirma esa informacion. Si pide expresamente repetir las instrucciones,
+            conserva el estado y representa fielmente esa solicitud sin simular que el paso fue completado.
             - SHOW_PRODUCTS: pide catalogo o pregunta que productos existen.
             - SHOW_PRODUCT: pide datos o detalles generales de un modelo. Conserva literalmente cada modelo
               mencionado en productReferences y el primero en productReference. No sustituyas un nombre escrito
@@ -93,6 +99,11 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
               En REPLACE_PRODUCT conserva en productReference el modelo nuevo y sus nuevos color y talla. Si existe
               un solo producto en el carrito, Java identificará ese producto como el que debe reemplazarse. Cuando la
               clienta ya confirmó el reemplazo solicitado, ejecútalo en ese turno y no pidas otra confirmación.
+              Usa REPLACE_CART cuando la clienta expresa el contenido final completo del pedido, corrige varias
+              líneas a la vez, pega un resumen definitivo o aclara que ese es su pedido refiriéndose a una lista
+              completa. Reúne todas las líneas finales en promotionSelections y conserva promotionReference solo
+              si identifica una promoción concreta. REPLACE_CART sustituye el carrito borrador; no lo uses para una
+              adición normal, una corrección de una sola línea ni cuando falte producto, color o talla.
             - CONFIRM_CART: acepta el resumen, dice continuar, eso es todo o confirma la compra sin indicar como pagara.
             - SHOW_PAYMENT_METHODS: esta listo para elegir como pagar.
             - SELECT_PAYMENT_METHOD: elige un metodo o una de sus cuentas; completa paymentMethodReference y,
@@ -203,11 +214,11 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
             Devuelve ALL cuando la clienta no establezca esa condicion. No deduzcas este campo mediante coincidencia literal:
             interpreta el significado completo de su mensaje.
             cartAction debe ser NONE salvo que la clienta quiera modificar el carrito. Cuando cartAction sea
-            CHANGE_QUANTITY, KEEP_ONLY_PRODUCT, CHANGE_VARIANT, REMOVE_PRODUCT o CLEAR_CART usa tambien
+            CHANGE_QUANTITY, KEEP_ONLY_PRODUCT, CHANGE_VARIANT, REPLACE_CART, REMOVE_PRODUCT o CLEAR_CART usa tambien
             commercialAction CHANGE_CART.
             Para aceptar una prenda ya elegida con producto, color y talla usa ADD_PRODUCT; si no menciona
             cantidad devuelve 0 y Java agregara una unidad por defecto.
-            Usa CHANGE_QUANTITY, KEEP_ONLY_PRODUCT, CHANGE_VARIANT, REMOVE_PRODUCT, CLEAR_CART, CONFIRM_CART o ADD_PROMOTION
+            Usa CHANGE_QUANTITY, KEEP_ONLY_PRODUCT, CHANGE_VARIANT, REPLACE_CART, REMOVE_PRODUCT, CLEAR_CART, CONFIRM_CART o ADD_PROMOTION
             solo cuando esa accion se entienda claramente por el contexto.
             Para comprar un combo o promocion usa commercialAction=CHANGE_CART y cartAction=ADD_PROMOTION.
             Conserva en promotionReference el nombre o numero exacto del combo elegido, incluso cuando los mensajes

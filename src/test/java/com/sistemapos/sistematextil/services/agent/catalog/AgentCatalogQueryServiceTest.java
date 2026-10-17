@@ -150,6 +150,19 @@ class AgentCatalogQueryServiceTest {
     }
 
     @Test
+    void twoLetterWordsFromAnImageCaptionCannotIdentifyAProduct() {
+        when(catalogRepository.findCatalogByBranch(7)).thenReturn(List.of(
+                stock(10, "ALESSIA ENTERO", 101, "PERLA", "XS", 4),
+                stock(11, "ALESSIA RAYAS", 111, "NEGRO", "XS", 3),
+                stock(20, "MELINA", 201, "CAMEL", "XS", 2)));
+
+        var result = service.searchProducts(41L,
+                "Tiene es esos modelos en xs? [IMAGEN ADJUNTA]", 10);
+
+        assertEquals(0, result.products().size());
+    }
+
+    @Test
     void sharedProductNameReturnsAllRealVariantsForClarification() {
         when(catalogRepository.findCatalogByBranch(7)).thenReturn(List.of(
                 stock(10, "ALESSIA ENTERO", 101, "MARRON", "M", 4),

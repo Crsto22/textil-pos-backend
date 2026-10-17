@@ -34,6 +34,7 @@ public class AgentCatalogQueryService {
     private static final String PRODUCT_PAGE_BASE_URL = "https://kiments.com.pe/productos/";
     private static final int DEFAULT_LIMIT = 10;
     private static final int MAX_LIMIT = 20;
+    private static final int MIN_PRODUCT_TOKEN_LENGTH = 3;
     private static final ZoneId BUSINESS_ZONE = ZoneId.of("America/Lima");
     private static final Set<String> STOP_WORDS = Set.of(
             "quiero", "deseo", "busco", "ver", "muestrame", "mostrar", "tienes", "tiene", "hay",
@@ -345,7 +346,8 @@ public class AgentCatalogQueryService {
     private List<String> meaningfulTokens(String value) {
         if (value.isBlank()) return List.of();
         return List.of(value.split("\\s+")).stream()
-                .filter(token -> token.length() > 1 && !STOP_WORDS.contains(token)).distinct().toList();
+                .filter(token -> token.length() >= MIN_PRODUCT_TOKEN_LENGTH && !STOP_WORDS.contains(token))
+                .distinct().toList();
     }
 
     private boolean matches(String candidate, String filter) {

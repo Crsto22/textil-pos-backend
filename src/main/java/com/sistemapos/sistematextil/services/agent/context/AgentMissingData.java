@@ -2,6 +2,7 @@ package com.sistemapos.sistematextil.services.agent.context;
 
 public enum AgentMissingData {
     CART_ITEMS,
+    CART_CONFIRMATION,
     CUSTOMER_NAME,
     CUSTOMER_PHONE,
     PAYMENT_METHOD,
@@ -11,6 +12,7 @@ public enum AgentMissingData {
     SHALOM_DOCUMENT_NUMBER,
     SHALOM_PHONE,
     SHALOM_AGENCY,
+    PREVIOUS_ORDER_DECISION,
     FILM_DECISION,
     FILM_EVIDENCE
 }

@@ -152,6 +152,39 @@ public class JdbcAgentCartStore implements AgentCartStore {
     }
 
     @Override
+    public Optional<PendingPromotionRow> findPendingPromotion(Long sessionId) {
+        return jdbc.query("""
+                SELECT id_agent_session, id_ecommerce_promocion_combo, promotion_name, selections_json,
+                       source_job_id
+                FROM crm_whatsapp_agent_pending_promotion
+                WHERE id_agent_session = ?
+                """, (rs, row) -> new PendingPromotionRow(
+                rs.getLong("id_agent_session"), rs.getInt("id_ecommerce_promocion_combo"),
+                rs.getString("promotion_name"), rs.getString("selections_json"),
+                rs.getObject("source_job_id", Long.class)), sessionId).stream().findFirst();
+    }
+
+    @Override
+    public void upsertPendingPromotion(Long sessionId, Integer promotionId, String promotionName,
+            String selectionsJson, Long sourceJobId, LocalDateTime now) {
+        jdbc.update("""
+                INSERT INTO crm_whatsapp_agent_pending_promotion
+                    (id_agent_session, id_ecommerce_promocion_combo, promotion_name, selections_json,
+                     source_job_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE
+                    id_ecommerce_promocion_combo = VALUES(id_ecommerce_promocion_combo),
+                    promotion_name = VALUES(promotion_name), selections_json = VALUES(selections_json),
+                    source_job_id = VALUES(source_job_id), updated_at = VALUES(updated_at)
+                """, sessionId, promotionId, promotionName, selectionsJson, sourceJobId, now, now);
+    }
+
+    @Override
+    public void deletePendingPromotion(Long sessionId) {
+        jdbc.update("DELETE FROM crm_whatsapp_agent_pending_promotion WHERE id_agent_session = ?", sessionId);
+    }
+
+    @Override
     public Optional<OperationRow> findOperation(String idempotencyKey) {
         return jdbc.query("""
                 SELECT idempotency_key, tool_name, status, request_json, response_json

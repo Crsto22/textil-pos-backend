@@ -353,6 +353,26 @@ public class CrmWhatsappAgentSchemaMigration implements ApplicationRunner {
                     REFERENCES ecommerce_promocion_combo (id_ecommerce_promocion_combo)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """);
+
+        statement.execute("""
+                CREATE TABLE IF NOT EXISTS crm_whatsapp_agent_pending_promotion (
+                  id_agent_session BIGINT NOT NULL,
+                  id_ecommerce_promocion_combo INT NOT NULL,
+                  promotion_name VARCHAR(150) NOT NULL,
+                  selections_json JSON NOT NULL,
+                  source_job_id BIGINT NULL,
+                  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                  PRIMARY KEY (id_agent_session),
+                  KEY idx_crm_agent_pending_promo_combo (id_ecommerce_promocion_combo),
+                  CONSTRAINT fk_crm_agent_pending_promo_session
+                    FOREIGN KEY (id_agent_session) REFERENCES crm_whatsapp_agent_session (id_agent_session)
+                    ON DELETE CASCADE,
+                  CONSTRAINT fk_crm_agent_pending_promo_combo
+                    FOREIGN KEY (id_ecommerce_promocion_combo)
+                    REFERENCES ecommerce_promocion_combo (id_ecommerce_promocion_combo)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """);
     }
 
     private void createRuntimeTables(Statement statement) throws SQLException {

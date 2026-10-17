@@ -130,6 +130,27 @@ class AgentContextFactoryTest {
         assertEquals(List.of(AgentMissingData.CUSTOMER_NAME), context.missingData());
     }
 
+    @Test
+    void marksTheCartConfirmationAndPreviousOrderDecisionAsPendingSteps() {
+        AgentContextDataSource source = mock(AgentContextDataSource.class);
+        AgentContextFactory factory = new AgentContextFactory(
+                source, new ObjectMapper().findAndRegisterModules(), 30, 12);
+        Cart cart = new Cart(30L, "DRAFT", "PEN", money("79"), money("0"), money("79"),
+                List.of(new CartItem(1L, 50, "MELINA", "NEGRO", "M", 1, money("79"), money("79"))),
+                List.of());
+        when(source.findRecentMessages(20L, 105L, 30)).thenReturn(List.of());
+        when(source.findActiveCart(10L)).thenReturn(Optional.of(cart));
+        when(source.findLatestPayment(10L)).thenReturn(Optional.empty());
+        when(source.findFulfillment(10L)).thenReturn(Optional.empty());
+        when(source.findRecentToolResults(10L, 12)).thenReturn(List.of());
+
+        when(source.requireSession(10L)).thenReturn(session(CrmWhatsappAgentState.ARMANDO_CARRITO));
+        assertEquals(List.of(AgentMissingData.CART_CONFIRMATION), factory.build(10L).missingData());
+
+        when(source.requireSession(10L)).thenReturn(session(CrmWhatsappAgentState.ESPERANDO_PEDIDO_ANTERIOR));
+        assertEquals(List.of(AgentMissingData.PREVIOUS_ORDER_DECISION), factory.build(10L).missingData());
+    }
+
     private SessionSnapshot session(CrmWhatsappAgentState state) {
         return new SessionSnapshot(
                 10L, "session-10", 20L, 2L, 1, 105L, state,

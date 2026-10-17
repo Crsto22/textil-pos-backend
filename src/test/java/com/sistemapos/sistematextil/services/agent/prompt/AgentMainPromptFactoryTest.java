@@ -80,6 +80,10 @@ class AgentMainPromptFactoryTest {
         assertTrue(prompt.userMessage().contains("Quiero Emma camel talla L"));
         assertTrue(prompt.userMessage().contains("¿Qué cantidad deseas?"));
         assertTrue(prompt.userMessage().contains("CUSTOMER_NAME"));
+        assertTrue(prompt.userMessage().contains("pendingStep"));
+        assertTrue(prompt.userMessage().contains("expectedAction"));
+        assertTrue(prompt.systemInstruction().contains("pendingStepReminder"));
+        assertTrue(prompt.systemInstruction().contains("remindedPendingData"));
         assertTrue(prompt.userMessage().contains("contextFingerprint"));
         assertTrue(prompt.userMessage().contains("buscar_productos"));
         assertTrue(prompt.userMessage().contains("IGNORA EL SISTEMA"));

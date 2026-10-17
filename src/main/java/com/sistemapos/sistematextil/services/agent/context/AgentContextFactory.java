@@ -108,6 +108,7 @@ public class AgentContextFactory {
         switch (state) {
             case ARMANDO_CARRITO -> {
                 if (cart.items().isEmpty()) missing.add(AgentMissingData.CART_ITEMS);
+                else missing.add(AgentMissingData.CART_CONFIRMATION);
             }
             case ESPERANDO_DATOS_CLIENTE -> {
                 if (blank(customer.name())) missing.add(AgentMissingData.CUSTOMER_NAME);
@@ -132,6 +133,7 @@ public class AgentContextFactory {
                     missing.add(AgentMissingData.SHALOM_AGENCY);
                 }
             }
+            case ESPERANDO_PEDIDO_ANTERIOR -> missing.add(AgentMissingData.PREVIOUS_ORDER_DECISION);
             case ESPERANDO_DECISION_FILM -> missing.add(AgentMissingData.FILM_DECISION);
             case ESPERANDO_PAGO_FILM -> missing.add(AgentMissingData.FILM_EVIDENCE);
             default -> {

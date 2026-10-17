@@ -36,6 +36,8 @@ import com.sistemapos.sistematextil.repositories.EcommercePromocionComboReposito
 import com.sistemapos.sistematextil.services.PrecioOfertaService;
 import com.sistemapos.sistematextil.services.agent.CrmWhatsappAgentStateMachine;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.CartResult;
+import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.ComboSelection;
+import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.PendingPromotionSelection;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartStore.CartItemRow;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartStore.CartRow;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartStore.OperationRow;
@@ -119,6 +121,56 @@ class AgentCartServiceTest {
 
         assertEquals(prior, replayed);
         verify(sessionRepository, never()).findForUpdate(any());
+        verify(store, never()).upsertItem(any(), any(), any());
+    }
+
+    @Test
+    void replacesTheWholeDraftOnlyAfterEveryRequestedVariantHasBeenValidated() {
+        SucursalStock melina = stock(20, "MELINA", 202, 79, 6, "NEGRO", "L");
+        CartItemRow anguieItem = new CartItemRow(10L, 101, 1, "EMMA", "NEGRO", "M",
+                new BigDecimal("60.00"), new BigDecimal("5.00"), new BigDecimal("60.00"));
+        CartItemRow melinaItem = new CartItemRow(11L, 202, 1, "MELINA", "NEGRO", "L",
+                new BigDecimal("79.00"), zero(), new BigDecimal("79.00"));
+        when(catalogRepository.findVariantByBranch(7, 202)).thenReturn(List.of(melina));
+        when(catalogRepository.findVariantsByBranch(7, List.of(101, 202))).thenReturn(List.of(stock, melina));
+        when(catalogRepository.findCatalogByBranch(7)).thenReturn(List.of(stock, melina));
+        when(priceService.resolverPrecioVigente(melina.getProductoVariante(), 7)).thenReturn(79.0);
+        when(store.findItems(5L)).thenReturn(List.of(anguieItem, melinaItem), List.of(anguieItem, melinaItem));
+
+        CartResult result = service.replaceCart(41L,
+                List.of(new ComboSelection(101, 1), new ComboSelection(202, 1)), null, "replace-all-1");
+
+        assertEquals(2, result.items().size());
+        assertEquals(new BigDecimal("139.00"), result.total());
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(store);
+        order.verify(store).clearCart(5L);
+        order.verify(store, org.mockito.Mockito.atLeast(2))
+                .upsertItem(org.mockito.Mockito.eq(5L), any(), any());
+        verify(store).deletePendingPromotion(41L);
+    }
+
+    @Test
+    void keepsTheExistingDraftUntouchedWhenAReplacementLineHasNoStock() {
+        SucursalStock unavailable = stock(20, "MELINA", 202, 79, 0, "NEGRO", "L");
+        when(catalogRepository.findVariantByBranch(7, 202)).thenReturn(List.of(unavailable));
+
+        assertThrows(IllegalArgumentException.class, () -> service.replaceCart(41L,
+                List.of(new ComboSelection(101, 1), new ComboSelection(202, 1)), null, "replace-no-stock"));
+
+        verify(store, never()).clearCart(any());
+    }
+
+    @Test
+    void storesPendingPromotionSelectionsWithoutWritingCartItems() {
+        List<PendingPromotionSelection> selections = List.of(
+                new PendingPromotionSelection(10, "EMMA", "NEGRO", "M", 1, 101));
+
+        service.savePendingPromotion(41L, 56, "combo 30", selections, 900L);
+
+        ArgumentCaptor<String> json = ArgumentCaptor.forClass(String.class);
+        verify(store).upsertPendingPromotion(org.mockito.Mockito.eq(41L), org.mockito.Mockito.eq(56),
+                org.mockito.Mockito.eq("combo 30"), json.capture(), org.mockito.Mockito.eq(900L), any());
+        assertTrue(json.getValue().contains("\"productName\":\"EMMA\""));
         verify(store, never()).upsertItem(any(), any(), any());
     }
 

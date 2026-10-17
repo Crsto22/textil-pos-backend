@@ -18,6 +18,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sistemapos.sistematextil.services.agent.ai.AgentConversationDecision;
 import com.sistemapos.sistematextil.services.agent.ai.AgentConversationDecision.PromotionSelection;
 import com.sistemapos.sistematextil.services.agent.ai.AgentCartAction;
@@ -38,6 +40,8 @@ import com.sistemapos.sistematextil.services.agent.cart.AgentCartService;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.CartItemView;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.CartResult;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.ComboSelection;
+import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.PendingPromotionDraft;
+import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.PendingPromotionSelection;
 import com.sistemapos.sistematextil.services.agent.knowledge.AgentKnowledgeRetriever;
 import com.sistemapos.sistematextil.services.agent.knowledge.AgentKnowledgeRetriever.KnowledgeSearchResult;
 import com.sistemapos.sistematextil.services.agent.promotion.AgentPromotionQueryService;
@@ -61,6 +65,7 @@ public class AgentVerifiedGroundingService {
     private static final int MAX_CART_COLOR_IMAGES = 5;
     private static final int MAX_PRODUCT_COLOR_GALLERY_IMAGES = 5;
     private static final int MAX_INITIAL_CATALOG_IMAGES = 3;
+    private static final int MAX_KNOWLEDGE_QUESTION_LENGTH = 500;
     private static final Pattern COMPONENT_WITH_SIZE = Pattern.compile(
             "(?iu)\\b(blazer|saco|chaqueta|chaleco|top|blusa|camisa|polo|casaca|pantal[oó]n|falda|short|"
                     + "parte\\s+de\\s+arriba|parte\\s+superior|parte\\s+de\\s+abajo|parte\\s+inferior)\\b"
@@ -203,7 +208,7 @@ public class AgentVerifiedGroundingService {
             case PROMOTION_SEARCH -> groundPromotions(
                     sessionId, jobId, decision, conversation, ordinal, evidence);
             case BUSINESS_INFORMATION -> {
-                String question = firstPresent(decision.customerGoal(), conversation);
+                String question = knowledgeQuestion(decision, conversation);
                 KnowledgeSearchResult result = verified(sessionId, jobId, ordinal,
                         "consultar_informacion_negocio", Map.of("pregunta", question),
                         KnowledgeSearchResult.class, () -> knowledge.searchForSession(sessionId, question));
@@ -222,7 +227,8 @@ public class AgentVerifiedGroundingService {
 
         boolean catalogIntent = decision.intent() == AgentDecisionIntent.PRODUCT_SEARCH
                 || decision.intent() == AgentDecisionIntent.PRODUCT_DETAILS;
-        if (catalogIntent && ordinal.get() == AUDIT_ORDINAL_BASE && !mutationExecuted) {
+        if (catalogIntent && ordinal.get() == AUDIT_ORDINAL_BASE && !mutationExecuted
+                && !evidence.containsKey("unresolvedImageProductReference")) {
             // Una consulta comercial nunca debe llegar a redaccion sin datos reales,
             // incluso cuando la decision semantica venga parcialmente incoherente.
             groundCatalog(sessionId, jobId, decision, conversation, ordinal, evidence, media);
@@ -233,7 +239,7 @@ public class AgentVerifiedGroundingService {
         }
         evidence.put("verifiedMediaCount", media.size());
         int verifiedCalls = ordinal.get() - AUDIT_ORDINAL_BASE;
-        return new Grounding(decision, write(evidence), List.copyOf(media), verifiedCalls,
+        return new Grounding(decision, writeCustomerEvidence(evidence), List.copyOf(media), verifiedCalls,
                 mutationExecuted, customerMessage);
     }
 
@@ -528,6 +534,9 @@ public class AgentVerifiedGroundingService {
         if (action == AgentCartAction.ADD_PROMOTION) {
             return groundPromotionAdd(sessionId, jobId, decision, conversation, ordinal, evidence);
         }
+        if (action == AgentCartAction.REPLACE_CART) {
+            return groundCartReplacement(sessionId, jobId, decision, ordinal, evidence, media);
+        }
         if (action == AgentCartAction.ADD_PRODUCT && decision.promotionSelections() != null
                 && decision.promotionSelections().size() > 1) {
             return groundMultipleProductAdd(sessionId, jobId, decision, ordinal, evidence, media);
@@ -671,8 +680,10 @@ public class AgentVerifiedGroundingService {
                 PromotionDetail.class, () -> promotions.getPromotion(sessionId, selected.promotionId()));
         evidence.put("promotion", detail);
 
-        List<PromotionSelection> requested = decision.promotionSelections() == null
-                ? new ArrayList<>() : new ArrayList<>(decision.promotionSelections());
+        List<PromotionSelection> incoming = decision.promotionSelections() == null
+                ? List.of() : decision.promotionSelections();
+        List<PromotionSelection> requested = mergePendingPromotionSelections(
+                cart.pendingPromotion(sessionId).orElse(null), detail, incoming);
         Map<Integer, RequiredPromotionProduct> requirements = new LinkedHashMap<>();
         for (PromotionItem item : detail.items()) {
             requirements.merge(item.productId(),
@@ -680,9 +691,8 @@ public class AgentVerifiedGroundingService {
                     (left, right) -> new RequiredPromotionProduct(left.productId(), left.productName(),
                             left.quantity() + right.quantity()));
         }
-        CartResult currentCart = completePromotionSelectionsFromCart(
-                sessionId, jobId, ordinal, evidence, requirements, requested);
         List<ComboSelection> resolved = new ArrayList<>();
+        List<PendingPromotionSelection> pending = new ArrayList<>();
         List<String> missing = new ArrayList<>();
         for (RequiredPromotionProduct required : requirements.values()) {
             List<PromotionSelection> productSelections = requested.stream()
@@ -693,6 +703,9 @@ public class AgentVerifiedGroundingService {
                             ? 1 : selection.quantity())
                     .sum();
             if (selectedQuantity != required.quantity()) {
+                for (PromotionSelection selection : productSelections) {
+                    pending.add(pendingSelection(required, selection, null));
+                }
                 missing.add(required.quantity() + " x " + required.productName());
                 continue;
             }
@@ -700,6 +713,7 @@ public class AgentVerifiedGroundingService {
             for (PromotionSelection selection : productSelections) {
                 int quantity = selection.quantity() == null || selection.quantity() < 1 ? 1 : selection.quantity();
                 if (selection.colorReference().isBlank() || selection.sizeReference().isBlank()) {
+                    pending.add(pendingSelection(required, selection, null));
                     validProduct = false;
                     break;
                 }
@@ -709,6 +723,7 @@ public class AgentVerifiedGroundingService {
                         VariantResult.class, () -> catalog.getVariants(sessionId, required.productId(),
                                 selection.colorReference(), selection.sizeReference()));
                 if (variants.variants() == null || variants.variants().size() != 1) {
+                    pending.add(pendingSelection(required, selection, null));
                     validProduct = false;
                     break;
                 }
@@ -717,19 +732,22 @@ public class AgentVerifiedGroundingService {
                         "consultar_stock", Map.of("varianteId", variantId, "cantidad", quantity),
                         StockResult.class, () -> catalog.getStock(sessionId, variantId, quantity));
                 if (!Boolean.TRUE.equals(stock.sufficient())) {
+                    pending.add(pendingSelection(required, selection, variantId));
                     validProduct = false;
                     break;
                 }
                 resolved.add(new ComboSelection(variantId, quantity));
+                pending.add(pendingSelection(required, selection, variantId));
             }
             if (!validProduct) missing.add(required.quantity() + " x " + required.productName());
         }
         if (!missing.isEmpty()) {
-            persistPartialPromotionSelections(
-                    sessionId, jobId, ordinal, evidence, resolved, currentCart);
+            cart.savePendingPromotion(sessionId, detail.promotionId(), detail.name(), pending, jobId);
+            evidence.put("pendingPromotion", Map.of("promotionId", detail.promotionId(),
+                    "name", detail.name(), "selections", pending));
             evidence.put("cartOperation", Map.of("executed", false,
                     "reason", "Faltan variantes validas para completar la promocion", "missing", missing));
-            return new CartMutation(false, missingPromotionSelectionMessage(detail.name(), missing));
+            return new CartMutation(false, null);
         }
 
         String operationId = "agent-job-" + jobId + ":verified-add-promotion";
@@ -742,57 +760,30 @@ public class AgentVerifiedGroundingService {
         return new CartMutation(true, message);
     }
 
-    private CartResult completePromotionSelectionsFromCart(Long sessionId, Long jobId, AtomicInteger ordinal,
-            Map<String, Object> evidence, Map<Integer, RequiredPromotionProduct> requirements,
-            List<PromotionSelection> requested) {
-        boolean incomplete = requirements.values().stream().anyMatch(required ->
-                selectedQuantity(requested, required.productName()) < required.quantity());
-        if (!incomplete) return null;
-
-        CartResult current = verified(sessionId, jobId, ordinal,
-                "recalcular_carrito", Map.of("motivo", "completar_promocion"), CartResult.class,
-                () -> cart.recalculate(sessionId, "agent-job-" + jobId + ":promotion-cart-context"));
-        evidence.put("currentCartForPromotion", current);
-        if (current == null || current.items() == null || current.items().isEmpty()) return current;
-
-        for (RequiredPromotionProduct required : requirements.values()) {
-            int missing = required.quantity() - selectedQuantity(requested, required.productName());
-            if (missing <= 0) continue;
-            for (CartItemView item : current.items()) {
-                if (missing <= 0) break;
-                if (!productMatches(item.product(), required.productName())) continue;
-                int reused = Math.min(missing, item.quantity());
-                requested.add(new PromotionSelection(item.product(), item.color(), item.size(), reused));
-                missing -= reused;
-            }
+    private List<PromotionSelection> mergePendingPromotionSelections(PendingPromotionDraft existing,
+            PromotionDetail detail, List<PromotionSelection> incoming) {
+        List<PromotionSelection> merged = new ArrayList<>();
+        if (existing != null && Objects.equals(existing.promotionId(), detail.promotionId())) {
+            existing.selections().forEach(selection -> merged.add(new PromotionSelection(
+                    selection.productName(), selection.colorReference(), selection.sizeReference(),
+                    selection.quantity())));
         }
-        return current;
+        for (PromotionItem required : detail.items()) {
+            List<PromotionSelection> replacements = incoming.stream()
+                    .filter(selection -> productMatches(selection.productReference(), required.productName()))
+                    .toList();
+            if (replacements.isEmpty()) continue;
+            merged.removeIf(selection -> productMatches(selection.productReference(), required.productName()));
+            merged.addAll(replacements);
+        }
+        return merged;
     }
 
-    private void persistPartialPromotionSelections(Long sessionId, Long jobId, AtomicInteger ordinal,
-            Map<String, Object> evidence, List<ComboSelection> resolved, CartResult currentCart) {
-        if (resolved.isEmpty()) return;
-        Map<Integer, Integer> existing = new LinkedHashMap<>();
-        if (currentCart != null && currentCart.items() != null) {
-            currentCart.items().forEach(item -> existing.merge(item.variantId(), item.quantity(), Integer::sum));
-        }
-        List<CartResult> persisted = new ArrayList<>();
-        for (ComboSelection selection : resolved) {
-            int alreadyPresent = existing.getOrDefault(selection.variantId(), 0);
-            int quantityToAdd = Math.max(0, selection.quantity() - alreadyPresent);
-            if (quantityToAdd == 0) continue;
-            String operation = "agent-job-" + jobId + ":promotion-selection:"
-                    + selection.variantId();
-            CartResult result = verified(sessionId, jobId, ordinal,
-                    "agregar_producto_carrito",
-                    Map.of("varianteId", selection.variantId(), "cantidad", quantityToAdd,
-                            "motivo", "seleccion_parcial_promocion"),
-                    CartResult.class,
-                    () -> cart.addProduct(sessionId, selection.variantId(), quantityToAdd, operation));
-            persisted.add(result);
-            existing.merge(selection.variantId(), quantityToAdd, Integer::sum);
-        }
-        if (!persisted.isEmpty()) evidence.put("partialPromotionSelectionsPersisted", persisted);
+    private PendingPromotionSelection pendingSelection(RequiredPromotionProduct required,
+            PromotionSelection selection, Integer variantId) {
+        int quantity = selection.quantity() == null || selection.quantity() < 1 ? 1 : selection.quantity();
+        return new PendingPromotionSelection(required.productId(), required.productName(),
+                selection.colorReference(), selection.sizeReference(), quantity, variantId);
     }
 
     private int selectedQuantity(List<PromotionSelection> selections, String productName) {
@@ -803,16 +794,88 @@ public class AgentVerifiedGroundingService {
                 .sum();
     }
 
-    private String missingPromotionSelectionMessage(String promotionName, List<String> missing) {
-        List<String> products = missing.stream()
-                .map(value -> value.replaceFirst("^\\d+\\s*x\\s*", ""))
-                .distinct()
-                .toList();
-        String names = products.size() == 1
-                ? "*" + products.getFirst() + "*"
-                : products.stream().map(name -> "*" + name + "*")
-                        .collect(java.util.stream.Collectors.joining(", "));
-        return "Para completar *" + promotionName + "*, indícame el color y la talla de " + names + ".";
+    private CartMutation groundCartReplacement(Long sessionId, Long jobId,
+            AgentConversationDecision decision, AtomicInteger ordinal, Map<String, Object> evidence,
+            List<AgentMediaRequest> media) {
+        List<PromotionSelection> requested = decision.promotionSelections() == null
+                ? List.of() : decision.promotionSelections();
+        if (requested.isEmpty()) {
+            evidence.put("cartOperation", Map.of("executed", false,
+                    "reason", "El pedido final no contiene productos estructurados"));
+            return new CartMutation(false, null);
+        }
+
+        List<ComboSelection> resolved = new ArrayList<>();
+        List<CartImageCandidate> images = new ArrayList<>();
+        for (PromotionSelection selection : requested) {
+            int quantity = selection.quantity() == null || selection.quantity() < 1 ? 1 : selection.quantity();
+            ProductSearchResult search = verified(sessionId, jobId, ordinal,
+                    "buscar_productos", Map.of("consulta", selection.productReference(), "limite", 10),
+                    ProductSearchResult.class,
+                    () -> catalog.searchProducts(sessionId, selection.productReference(), 10));
+            var product = unambiguousProduct(search, selection.productReference());
+            if (product == null) {
+                evidence.put("cartOperation", Map.of("executed", false,
+                        "reason", "Un producto del pedido final es ambiguo",
+                        "productReference", selection.productReference()));
+                return new CartMutation(false, null);
+            }
+            VariantResult variants = verified(sessionId, jobId, ordinal,
+                    "consultar_variantes", nullableMap("productoId", product.productId(),
+                            "color", selection.colorReference(), "talla", selection.sizeReference()),
+                    VariantResult.class, () -> catalog.getVariants(sessionId, product.productId(),
+                            selection.colorReference(), selection.sizeReference()));
+            if (variants.variants() == null || variants.variants().size() != 1) {
+                evidence.put("cartOperation", Map.of("executed", false,
+                        "reason", "Una variante del pedido final es ambigua",
+                        "product", product.name()));
+                return new CartMutation(false, null);
+            }
+            Integer variantId = variants.variants().getFirst().variantId();
+            StockResult stock = verified(sessionId, jobId, ordinal,
+                    "consultar_stock", Map.of("varianteId", variantId, "cantidad", quantity),
+                    StockResult.class, () -> catalog.getStock(sessionId, variantId, quantity));
+            if (!Boolean.TRUE.equals(stock.sufficient())) {
+                evidence.put("cartOperation", Map.of("executed", false,
+                        "reason", "Una variante del pedido final no tiene stock suficiente",
+                        "product", product.name()));
+                return new CartMutation(false, null);
+            }
+            resolved.add(new ComboSelection(variantId, quantity));
+            images.add(new CartImageCandidate(product.productId(), product.name(),
+                    variants.variants().getFirst().color()));
+        }
+
+        Integer expectedPromotionId = null;
+        if (decision.promotionReference() != null && !decision.promotionReference().isBlank()) {
+            PromotionSearchResult search = verified(sessionId, jobId, ordinal,
+                    "buscar_promociones", Map.of("consulta", decision.promotionReference(), "limite", 20),
+                    PromotionSearchResult.class,
+                    () -> promotions.searchPromotions(sessionId, decision.promotionReference(), 20));
+            PromotionSummary promotion = unambiguousPromotion(search, decision.promotionReference(),
+                    decision.customerGoal(), decision.promotionReference());
+            if (promotion == null) {
+                evidence.put("cartOperation", Map.of("executed", false,
+                        "reason", "La promocion indicada para el pedido final es ambigua"));
+                return new CartMutation(false, null);
+            }
+            expectedPromotionId = promotion.promotionId();
+        }
+
+        Integer promotionId = expectedPromotionId;
+        CartResult result = verified(sessionId, jobId, ordinal,
+                "reemplazar_carrito", nullableMap("selecciones", resolved,
+                        "promocionId", promotionId), CartResult.class,
+                () -> cart.replaceCart(sessionId, resolved, promotionId,
+                        "agent-job-" + jobId + ":verified-replace-cart"));
+        evidence.put("cartOperation", Map.of("executed", true, "result", result));
+        for (CartImageCandidate image : images.stream().limit(MAX_CART_COLOR_IMAGES).toList()) {
+            queueVerifiedCartColorImage(sessionId, jobId, image.productId(), image.productName(),
+                    image.color(), ordinal, evidence, media);
+        }
+        String message = commerce == null ? "Carrito reemplazado correctamente."
+                : commerce.cartTemplate(sessionId, result, true);
+        return new CartMutation(true, message);
     }
 
     private CartMutation groundExistingCartChange(Long sessionId, Long jobId,
@@ -1148,8 +1211,22 @@ public class AgentVerifiedGroundingService {
         List<String> exactReferences = exactCatalogReferences(search, currentInput);
         evidence.put("explicitProductReferenceSearch", search);
         evidence.put("explicitProductReferences", exactReferences);
-        if (exactReferences.isEmpty()) return decision;
+        if (exactReferences.isEmpty()) {
+            if (containsImageMarker(currentInput) && !interpreted.isEmpty()) {
+                evidence.put("unresolvedImageProductReference",
+                        "La imagen no se analiza visualmente y el texto actual no nombra ningun producto del catalogo. "
+                        + "No menciones el producto supuesto por la decision. Explica brevemente que no puedes "
+                        + "identificar el modelo desde la imagen, responde solo lo escrito que sea verificable y "
+                        + "solicita el nombre del modelo si la consulta depende de la foto.");
+                return decision.withProductReferences("", List.of());
+            }
+            return decision;
+        }
         return decision.withProductReferences(exactReferences.getFirst(), exactReferences);
+    }
+
+    private boolean containsImageMarker(String value) {
+        return value != null && normalize(value).contains("imagen adjunta");
     }
 
     private boolean usesCatalogProductReference(AgentConversationDecision decision) {
@@ -1256,6 +1333,13 @@ public class AgentVerifiedGroundingService {
         int markerIndex = conversation.lastIndexOf(marker);
         return markerIndex < 0 ? conversation.trim()
                 : conversation.substring(markerIndex + marker.length()).trim();
+    }
+
+    private String knowledgeQuestion(AgentConversationDecision decision, String conversation) {
+        String currentInput = currentGroupedInput(conversation).replaceAll("\\s+", " ").trim();
+        String question = firstPresent(currentInput, decision.customerGoal()).replaceAll("\\s+", " ").trim();
+        if (question.length() <= MAX_KNOWLEDGE_QUESTION_LENGTH) return question;
+        return question.substring(question.length() - MAX_KNOWLEDGE_QUESTION_LENGTH).trim();
     }
 
     static boolean requestsDifferentSizesForSetPieces(String input) {
@@ -1376,6 +1460,37 @@ public class AgentVerifiedGroundingService {
         } catch (Exception error) {
             throw new IllegalStateException("No se pudo serializar la evidencia del agente", error);
         }
+    }
+
+    private String writeCustomerEvidence(Object value) {
+        try {
+            JsonNode evidence = objectMapper.valueToTree(value);
+            removeInventoryQuantities(evidence);
+            return objectMapper.writeValueAsString(evidence);
+        } catch (Exception error) {
+            throw new IllegalStateException("No se pudo serializar la evidencia publica del agente", error);
+        }
+    }
+
+    private void removeInventoryQuantities(JsonNode node) {
+        if (node == null) return;
+        if (node.isArray()) {
+            node.forEach(this::removeInventoryQuantities);
+            return;
+        }
+        if (!node.isObject()) return;
+        ObjectNode object = (ObjectNode) node;
+        List<String> fieldsToRemove = new ArrayList<>();
+        object.fields().forEachRemaining(entry -> {
+            String field = entry.getKey().toLowerCase(Locale.ROOT);
+            if (field.contains("stock") || field.contains("inventoryquantity")
+                    || field.contains("existencias")) {
+                fieldsToRemove.add(entry.getKey());
+            } else {
+                removeInventoryQuantities(entry.getValue());
+            }
+        });
+        fieldsToRemove.forEach(object::remove);
     }
 
     private String firstPresent(String... values) {

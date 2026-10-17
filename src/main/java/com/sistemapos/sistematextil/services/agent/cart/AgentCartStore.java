@@ -28,6 +28,13 @@ public interface AgentCartStore {
 
     void reopen(Long cartId, LocalDateTime now);
 
+    Optional<PendingPromotionRow> findPendingPromotion(Long sessionId);
+
+    void upsertPendingPromotion(Long sessionId, Integer promotionId, String promotionName,
+            String selectionsJson, Long sourceJobId, LocalDateTime now);
+
+    void deletePendingPromotion(Long sessionId);
+
     Optional<OperationRow> findOperation(String idempotencyKey);
 
     boolean claimOperation(Long sessionId, String idempotencyKey, String toolName, String requestFingerprint,
@@ -53,5 +60,9 @@ public interface AgentCartStore {
 
     record OperationRow(String idempotencyKey, String toolName, String status, String requestFingerprint,
             String responseJson) {
+    }
+
+    record PendingPromotionRow(Long sessionId, Integer promotionId, String promotionName,
+            String selectionsJson, Long sourceJobId) {
     }
 }

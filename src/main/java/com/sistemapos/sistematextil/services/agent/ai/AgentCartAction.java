@@ -11,6 +11,7 @@ public enum AgentCartAction {
     KEEP_ONLY_PRODUCT,
     CHANGE_VARIANT,
     REPLACE_PRODUCT,
+    REPLACE_CART,
     REMOVE_PRODUCT,
     CLEAR_CART,
     CONFIRM_CART,

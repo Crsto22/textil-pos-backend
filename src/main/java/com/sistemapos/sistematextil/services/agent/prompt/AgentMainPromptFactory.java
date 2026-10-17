@@ -21,7 +21,7 @@ import com.sistemapos.sistematextil.services.agent.config.AgentRuntimeConfigServ
 
 @Service
 public class AgentMainPromptFactory {
-    public static final String PROMPT_VERSION = "kiments-main-v5";
+    public static final String PROMPT_VERSION = "kiments-main-v6";
 
     private static final String SYSTEM_BASE = """
             Eres la asistente virtual de Kiments, una marca peruana de ropa.
@@ -76,7 +76,7 @@ public class AgentMainPromptFactory {
             - Catálogo: buscar_productos, obtener_producto, consultar_variantes, consultar_stock, obtener_imagen_producto.
             - Guías: obtener_guia_tallas, recomendar_talla.
             - Promociones: buscar_promociones, obtener_promocion, validar_promocion_carrito.
-            - Carrito: agregar_producto_carrito, agregar_combo_carrito, cambiar_cantidad_carrito, cambiar_variante_carrito,
+            - Carrito: agregar_producto_carrito, agregar_combo_carrito, reemplazar_carrito, cambiar_cantidad_carrito, cambiar_variante_carrito,
               reemplazar_producto_carrito, eliminar_producto_carrito, vaciar_carrito, recalcular_carrito, confirmar_carrito.
             - Cliente: buscar_cliente, registrar_cliente, actualizar_datos_cliente, relacionar_cliente_conversacion.
             - Pago: listar_metodos_pago, seleccionar_metodo_pago, crear_solicitud_pago.
@@ -99,6 +99,10 @@ public class AgentMainPromptFactory {
 
             MANEJO DE AMBIGÜEDADES
             - Da prioridad al último mensaje del cliente. Usa el historial solo para resolver referencias como "ese" o "el mismo".
+            - Una marca [IMAGEN ADJUNTA] solo confirma que llegó un archivo; no significa que puedas ver ni reconocer
+              su contenido. Si viene acompañada de texto, explica brevemente que no puedes identificar el producto
+              desde la imagen y responde únicamente lo que el texto permita verificar. Si el texto depende de la foto
+              y no nombra un modelo, solicita su nombre sin adivinar ni consultar un producto parecido.
             - Ante errores de escritura o nombres aproximados, busca; no rechaces por no coincidir exactamente.
             - Respeta literalmente los nombres y familias escritos en el último mensaje. No los reemplaces por
               otros parecidos: el backend los contrastará dinámicamente con el catálogo real. Si pide una guía de
@@ -111,6 +115,13 @@ public class AgentMainPromptFactory {
 
             PREGUNTAS Y NO REPETICIÓN
             - Haz preguntas cortas y solicita únicamente datos que falten en DATOS_FALTANTES.
+            - Si existe PASO_PENDIENTE y el mensaje actual es una consulta que no completa ese paso, responde
+              primero la consulta usando datos verificados. Después escribe en pendingStepReminder un recordatorio
+              breve y natural que solicite solamente los valores de missingData; informa esos mismos valores en
+              remindedPendingData. No repitas el formulario completo ni vuelvas a pedir datos ya validados.
+            - Si el mensaje completa o corrige el paso pendiente, ejecuta la acción correspondiente y deja
+              pendingStepReminder y remindedPendingData vacíos. Si solicita expresamente repetir las instrucciones,
+              puedes explicarlas completas, pero conserva como pendientes solamente los valores de missingData.
             - Los datos de Shalom pueden llegar juntos o en mensajes separados. Conserva cada dato validado y pide
               únicamente nombres y apellidos, DNI, celular o agencia que todavía falten o deban corregirse.
             - Si necesitas preguntar, termina con una sola pregunta. Nunca encadenes dos preguntas ni agregues otra genérica.
@@ -171,6 +182,10 @@ public class AgentMainPromptFactory {
 
             RESPUESTA
             - customerMessage contiene solo el mensaje destinado a la clienta; no muestres planes internos.
+            - pendingStepReminder contiene solo el recordatorio natural del paso pendiente y no debe repetirse
+              dentro de customerMessage. Java unirá ambos textos después de validarlos.
+            - remindedPendingData enumera exactamente los valores de missingData mencionados en
+              pendingStepReminder. Usa una lista vacía cuando no exista un recordatorio pendiente.
             - conversationSummary resume en pocas frases los datos vigentes y el siguiente paso, sin inventar hechos.
             - requiresHumanHelp solo es true para los casos definidos en AYUDA HUMANA.
             - Devuelve media vacío. Java decide y adjunta las imágenes verificadas según la acción interpretada.
@@ -262,6 +277,7 @@ public class AgentMainPromptFactory {
         payload.put("latestAssistantMessage", latestMessage(context.recentMessages(), Role.ASSISTANT));
         payload.put("previousConversationSummary", truncate(context.previousSummary(), 3000));
         payload.put("trustedBusinessState", trustedState(context));
+        payload.put("pendingStep", pendingStep(context));
         payload.put("conversationHistory", safeMessages(context.recentMessages()));
         payload.put("recentToolResults", safeToolResults(context.toolResults()));
         try {
@@ -298,6 +314,36 @@ public class AgentMainPromptFactory {
         data.put("payment", context.payment());
         data.put("fulfillment", context.fulfillment());
         return data;
+    }
+
+    private Map<String, Object> pendingStep(AgentContext context) {
+        List<?> missing = context.missingData() == null ? List.of() : context.missingData();
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("active", !missing.isEmpty());
+        data.put("state", context.state().name());
+        data.put("expectedAction", expectedPendingAction(context.state()));
+        data.put("missingData", missing);
+        data.put("validatedCustomer", context.customer());
+        data.put("validatedFulfillment", context.fulfillment());
+        data.put("instruction", missing.isEmpty() ? ""
+                : "Responde la consulta actual y recuerda brevemente solo estos datos o acciones si el mensaje no avanza el paso.");
+        return data;
+    }
+
+    private String expectedPendingAction(CrmWhatsappAgentState state) {
+        return switch (state) {
+            case ARMANDO_CARRITO -> "completar o confirmar el carrito";
+            case ESPERANDO_DATOS_CLIENTE -> "proporcionar los datos de cliente faltantes";
+            case ESPERANDO_METODO_PAGO -> "elegir un método o cuenta de pago";
+            case ESPERANDO_COMPROBANTE, VALIDANDO_COMPROBANTE -> "enviar o esperar la validación del comprobante";
+            case ESPERANDO_METODO_ENTREGA -> "elegir recojo en tienda o envío por Shalom";
+            case ESPERANDO_DATOS_SHALOM -> "proporcionar los datos Shalom faltantes";
+            case ESPERANDO_CONFIRMACION_AGENCIA_SHALOM -> "elegir o confirmar una agencia Shalom";
+            case ESPERANDO_PEDIDO_ANTERIOR -> "indicar si existe otro pedido pendiente para juntar";
+            case ESPERANDO_DECISION_FILM -> "resolver el film protector";
+            case ESPERANDO_PAGO_FILM -> "enviar el comprobante del film protector";
+            default -> "";
+        };
     }
 
     private Map<String, Object> latestMessage(List<Message> messages, Role role) {

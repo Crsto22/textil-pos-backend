@@ -34,6 +34,7 @@ import com.sistemapos.sistematextil.services.agent.batch.AgentMessageBatch;
 import com.sistemapos.sistematextil.services.agent.batch.AgentMessageBatchFactory;
 import com.sistemapos.sistematextil.services.agent.config.AgentRuntimeConfigService;
 import com.sistemapos.sistematextil.services.agent.context.AgentContext;
+import com.sistemapos.sistematextil.services.agent.context.AgentMissingData;
 import com.sistemapos.sistematextil.services.agent.context.AgentContextFactory;
 import com.sistemapos.sistematextil.services.agent.prompt.AgentMainPrompt;
 import com.sistemapos.sistematextil.services.agent.prompt.AgentMainPromptFactory;
@@ -472,6 +473,44 @@ class AgentConversationOrchestratorTest {
     }
 
     @Test
+    void removesExactInventoryQuantitiesFromAvailabilityAnswers() {
+        Fixture fixture = new Fixture();
+        fixture.current(true, true, true);
+        when(fixture.grounding.ground(eq(7L), eq(8L), eq(41L), any())).thenReturn(
+                new AgentVerifiedGroundingService.Grounding(
+                        new AgentConversationDecision(AgentDecisionIntent.PRODUCT_DETAILS,
+                                "consultar Melina negro", "Melina", "NEGRO", "", 0, "",
+                                com.sistemapos.sistematextil.services.agent.ai.AgentCartAction.NONE,
+                                AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY,
+                                "", "", "", "", "", "", "", "",
+                                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL,
+                                100, false),
+                        "{\"requestedVariantAvailability\":{\"requestedColor\":\"NEGRO\","
+                                + "\"requestedSize\":\"\",\"products\":[{\"name\":\"MELINA\","
+                                + "\"price\":79.0,\"productPageUrl\":\"\",\"variants\":["
+                                + "{\"color\":\"NEGRO\",\"size\":\"L\",\"available\":true}]}]}}",
+                        java.util.List.of(), 1, false));
+        when(fixture.gateway.respond(eq(7L), any(), eq(12)))
+                .thenReturn(new AgentResponseResult("GEMINI", "gemini", 100, 1,
+                        new AgentTurnResponse(
+                                "Melina negro está disponible en talla L (15 disponibles) a S/79.00.",
+                                "Disponibilidad", false, java.util.List.of())))
+                .thenReturn(new AgentResponseResult("GEMINI", "gemini", 80, 0,
+                        new AgentTurnResponse(
+                                "Melina negro está disponible en talla L a S/79.00.",
+                                "Disponibilidad", false, java.util.List.of())));
+
+        assertEquals(AgentConversationOrchestrator.Outcome.COMPLETED,
+                fixture.orchestrator.process(fixture.lease));
+
+        verify(fixture.gateway, times(2)).respond(eq(7L), any(), eq(12));
+        ArgumentCaptor<GeneratedTurn> turn = ArgumentCaptor.forClass(GeneratedTurn.class);
+        verify(fixture.jobs).saveGeneratedTurn(eq(41L), eq("worker:lease"), turn.capture(), any());
+        assertEquals("Melina negro está disponible en talla L a S/79.00.",
+                turn.getValue().customerMessage());
+    }
+
+    @Test
     void addsIndividualGalleryLinkForAGeneralSingleProductAnswer() {
         Fixture fixture = new Fixture();
         fixture.current(true, true, true);
@@ -505,6 +544,74 @@ class AgentConversationOrchestratorTest {
         ArgumentCaptor<GeneratedTurn> turn = ArgumentCaptor.forClass(GeneratedTurn.class);
         verify(fixture.jobs).saveGeneratedTurn(eq(41L), eq("worker:lease"), turn.capture(), any());
         assertTrue(turn.getValue().customerMessage().contains("https://kiments.com.pe/productos/lyana"));
+    }
+
+    @Test
+    void answersAnIntermediateQuestionAndAppendsOnlyTheMissingShalomData() {
+        Fixture fixture = new Fixture();
+        fixture.pending(
+                com.sistemapos.sistematextil.model.CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM,
+                AgentMissingData.SHALOM_DOCUMENT_NUMBER, AgentMissingData.SHALOM_AGENCY);
+        fixture.current(true, true, true);
+        AgentConversationDecision question = new AgentConversationDecision(
+                AgentDecisionIntent.BUSINESS_INFORMATION, "consultar costo del envio", "", "", "", 0, "",
+                com.sistemapos.sistematextil.services.agent.ai.AgentCartAction.NONE,
+                AgentCommercialAction.NONE, "", "", "", "", "", "", "", "",
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL, 99, false);
+        when(fixture.grounding.ground(eq(7L), eq(8L), eq(41L), any())).thenReturn(
+                new AgentVerifiedGroundingService.Grounding(
+                        question, "{\"businessInformation\":{\"answer\":\"El costo depende de Shalom\"}}",
+                        List.of(), 1, false));
+        when(fixture.gateway.respond(eq(7L), any(), eq(12)))
+                .thenReturn(new AgentResponseResult("GEMINI", "gemini", 100, 1,
+                        new AgentTurnResponse("El costo del traslado depende de Shalom.",
+                                "Consulta sobre el envio", false, List.of())))
+                .thenReturn(new AgentResponseResult("GEMINI", "gemini", 80, 0,
+                        new AgentTurnResponse("El costo del traslado depende de Shalom.",
+                                "Consulta sobre el envio", false, List.of(),
+                                "Para continuar, envíame tu DNI y la agencia donde recogerás el pedido.",
+                                List.of(AgentMissingData.SHALOM_DOCUMENT_NUMBER,
+                                        AgentMissingData.SHALOM_AGENCY))));
+
+        assertEquals(AgentConversationOrchestrator.Outcome.COMPLETED,
+                fixture.orchestrator.process(fixture.lease));
+
+        verify(fixture.gateway, times(2)).respond(eq(7L), any(), eq(12));
+        ArgumentCaptor<GeneratedTurn> turn = ArgumentCaptor.forClass(GeneratedTurn.class);
+        verify(fixture.jobs).saveGeneratedTurn(eq(41L), eq("worker:lease"), turn.capture(), any());
+        assertTrue(turn.getValue().customerMessage().contains("depende de Shalom"));
+        assertTrue(turn.getValue().customerMessage().contains("DNI y la agencia"));
+        assertFalse(turn.getValue().customerMessage().contains("Nombres y apellidos"));
+        assertFalse(turn.getValue().customerMessage().contains("Celular"));
+    }
+
+    @Test
+    void keepsDeterministicPartialDataProgressWithoutAddingAnotherReminder() {
+        Fixture fixture = new Fixture();
+        fixture.pending(
+                com.sistemapos.sistematextil.model.CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM,
+                AgentMissingData.SHALOM_RECIPIENT_NAME, AgentMissingData.SHALOM_DOCUMENT_NUMBER,
+                AgentMissingData.SHALOM_PHONE, AgentMissingData.SHALOM_AGENCY);
+        fixture.current(true, true, true);
+        AgentConversationDecision partialData = new AgentConversationDecision(
+                AgentDecisionIntent.DELIVERY_METHOD, "proporcionar datos Shalom", "", "", "", 0, "",
+                com.sistemapos.sistematextil.services.agent.ai.AgentCartAction.NONE,
+                AgentCommercialAction.PROVIDE_SHALOM_DATA, "", "", "Janeth Rosa Flores Jara", "907570995",
+                "SHALOM", "", "", "", com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL,
+                99, false);
+        when(fixture.grounding.ground(eq(7L), eq(8L), eq(41L), any())).thenReturn(
+                new AgentVerifiedGroundingService.Grounding(
+                        partialData, "{}", List.of(), 1, true,
+                        "Guardé correctamente tu nombre y celular. Envíame únicamente tu DNI y agencia Shalom."));
+
+        assertEquals(AgentConversationOrchestrator.Outcome.COMPLETED,
+                fixture.orchestrator.process(fixture.lease));
+
+        verify(fixture.gateway, never()).respond(any(), any(), any(Integer.class));
+        ArgumentCaptor<GeneratedTurn> turn = ArgumentCaptor.forClass(GeneratedTurn.class);
+        verify(fixture.jobs).saveGeneratedTurn(eq(41L), eq("worker:lease"), turn.capture(), any());
+        assertEquals("Guardé correctamente tu nombre y celular. Envíame únicamente tu DNI y agencia Shalom.",
+                turn.getValue().customerMessage());
     }
 
     @Test
@@ -563,16 +670,19 @@ class AgentConversationOrchestratorTest {
         final AgentResponseGateway gateway = mock(AgentResponseGateway.class);
         final AgentRuntimeConfigService runtime = mock(AgentRuntimeConfigService.class);
         final AgentTurnFinalizer finalizer = mock(AgentTurnFinalizer.class);
+        final AgentContext context = mock(AgentContext.class);
         final JobLease lease = new JobLease(41L, 8L, 99L, 1, "worker:lease",
                 LocalDateTime.now().plusMinutes(1));
         final AgentConversationOrchestrator orchestrator = new AgentConversationOrchestrator(
                 coordinator, jobs, batches, contexts, prompts, grounding, gateway, runtime, finalizer);
 
         Fixture() {
-            AgentContext context = mock(AgentContext.class);
             when(context.connectionId()).thenReturn(7L);
             when(context.conversationId()).thenReturn(20L);
             when(context.fingerprint()).thenReturn("fingerprint");
+            when(context.state()).thenReturn(
+                    com.sistemapos.sistematextil.model.CrmWhatsappAgentState.EXPLORANDO_PRODUCTOS);
+            when(context.missingData()).thenReturn(List.of());
             when(contexts.build(8L, 99L)).thenReturn(context);
             when(batches.build(8L, 20L, 99L)).thenReturn(new AgentMessageBatch(
                     8L, 20L, 99L, java.util.List.of(), "Hola quiero Emma", false, false, false));
@@ -603,6 +713,12 @@ class AgentConversationOrchestratorTest {
         void batch(String messageType, boolean image) {
             when(batches.build(8L, 20L, 99L)).thenReturn(
                     AgentConversationOrchestratorTest.batch(messageType, image));
+        }
+
+        void pending(com.sistemapos.sistematextil.model.CrmWhatsappAgentState state,
+                AgentMissingData... missing) {
+            when(context.state()).thenReturn(state);
+            when(context.missingData()).thenReturn(List.of(missing));
         }
 
         void current(boolean... values) {

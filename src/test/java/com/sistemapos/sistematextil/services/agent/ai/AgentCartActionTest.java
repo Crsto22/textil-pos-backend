@@ -18,6 +18,8 @@ class AgentCartActionTest {
     void keepsKnownActionsAndIgnoresUnknownValuesSafely() throws Exception {
         assertEquals(AgentCartAction.ADD_PRODUCT,
                 mapper.readValue("\"ADD_PRODUCT\"", AgentCartAction.class));
+        assertEquals(AgentCartAction.REPLACE_CART,
+                mapper.readValue("\"REPLACE_CART\"", AgentCartAction.class));
         assertEquals(AgentCartAction.NONE,
                 mapper.readValue("\"AN_UNSUPPORTED_ACTION\"", AgentCartAction.class));
     }

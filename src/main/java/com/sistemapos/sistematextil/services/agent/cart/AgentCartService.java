@@ -21,6 +21,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sistemapos.sistematextil.model.CrmWhatsappAgentEvent;
 import com.sistemapos.sistematextil.model.CrmWhatsappAgentSession;
@@ -39,6 +40,7 @@ import com.sistemapos.sistematextil.services.agent.cart.AgentCartPromotionCalcul
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartStore.CartItemRow;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartStore.CartRow;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartStore.OperationRow;
+import com.sistemapos.sistematextil.services.agent.cart.AgentCartStore.PendingPromotionRow;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartStore.PricedCartItem;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartStore.PromotionApplicationRow;
 
@@ -102,6 +104,7 @@ public class AgentCartService {
                     int target = Math.addExact(current, safeQuantity);
                     validateStock(stock, target);
                     store.upsertItem(cart.id(), price(stock, target, scope.branchId()), LocalDateTime.now());
+                    store.deletePendingPromotion(sessionId);
                     markCartUpdated(scope.session());
                     return recalculateLocked(scope, cart, "DRAFT");
                 });
@@ -187,6 +190,69 @@ public class AgentCartService {
                         throw new IllegalStateException(
                                 "La promocion seleccionada no pudo aplicarse al carrito");
                     }
+                    store.deletePendingPromotion(sessionId);
+                    return result;
+                });
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<PendingPromotionDraft> pendingPromotion(Long sessionId) {
+        return store.findPendingPromotion(sessionId).map(this::readPendingPromotion);
+    }
+
+    @Transactional
+    public void savePendingPromotion(Long sessionId, Integer promotionId, String promotionName,
+            List<PendingPromotionSelection> selections, Long sourceJobId) {
+        if (sessionId == null || promotionId == null) {
+            throw new IllegalArgumentException("La sesion y la promocion pendiente son obligatorias");
+        }
+        store.upsertPendingPromotion(sessionId, promotionId,
+                promotionName == null ? "" : promotionName,
+                writePendingSelections(selections), sourceJobId, LocalDateTime.now());
+    }
+
+    @Transactional
+    public void clearPendingPromotion(Long sessionId) {
+        if (sessionId != null) store.deletePendingPromotion(sessionId);
+    }
+
+    @Transactional
+    public CartResult replaceCart(Long sessionId, List<ComboSelection> selections,
+            Integer expectedPromotionId, String operationId) {
+        Map<Integer, Integer> quantities = new LinkedHashMap<>();
+        if (selections != null) {
+            for (ComboSelection selection : selections) {
+                if (selection == null || selection.variantId() == null) {
+                    throw new IllegalArgumentException("Todas las variantes del pedido son obligatorias");
+                }
+                quantities.merge(selection.variantId(), requirePositiveQuantity(selection.quantity()), Math::addExact);
+            }
+        }
+        if (quantities.isEmpty()) throw new IllegalArgumentException("El pedido corregido no puede quedar vacio");
+        return execute(sessionId, operationId, "reemplazar_carrito",
+                expectedPromotionId + ":" + quantities, () -> {
+                    LockedSession scope = lockEditableSession(sessionId);
+                    CartRow cart = requireOrCreateDraftCart(sessionId);
+                    Map<Integer, SucursalStock> validated = new LinkedHashMap<>();
+                    for (Map.Entry<Integer, Integer> entry : quantities.entrySet()) {
+                        SucursalStock stock = requireVariant(scope.branchId(), entry.getKey());
+                        validateStock(stock, entry.getValue());
+                        validated.put(entry.getKey(), stock);
+                    }
+                    // All lines are validated before the existing draft is touched.
+                    store.clearCart(cart.id());
+                    LocalDateTime now = LocalDateTime.now();
+                    for (Map.Entry<Integer, Integer> entry : quantities.entrySet()) {
+                        store.upsertItem(cart.id(),
+                                price(validated.get(entry.getKey()), entry.getValue(), scope.branchId()), now);
+                    }
+                    CartResult result = recalculateLocked(scope, cart, "DRAFT");
+                    if (expectedPromotionId != null && result.promotions().stream()
+                            .noneMatch(item -> Objects.equals(item.promotionId(), expectedPromotionId))) {
+                        throw new IllegalArgumentException("Los productos elegidos no completan la promocion indicada");
+                    }
+                    store.deletePendingPromotion(sessionId);
+                    markCartUpdated(scope.session());
                     return result;
                 });
     }
@@ -224,6 +290,7 @@ public class AgentCartService {
                     SucursalStock stock = requireVariant(scope.branchId(), variantId);
                     validateStock(stock, safeQuantity);
                     store.upsertItem(cart.id(), price(stock, safeQuantity, scope.branchId()), LocalDateTime.now());
+                    store.deletePendingPromotion(sessionId);
                     markCartUpdated(scope.session());
                     return recalculateLocked(scope, cart, "DRAFT");
                 });
@@ -267,6 +334,7 @@ public class AgentCartService {
                     }
                     store.upsertItem(cart.id(), price(replacementStock, targetQuantity, scope.branchId()),
                             LocalDateTime.now());
+                    store.deletePendingPromotion(sessionId);
                     markCartUpdated(scope.session());
                     return recalculateLocked(scope, cart, "DRAFT");
                 });
@@ -310,6 +378,7 @@ public class AgentCartService {
                     }
                     store.upsertItem(cart.id(), price(replacementStock, targetQuantity, scope.branchId()),
                             LocalDateTime.now());
+                    store.deletePendingPromotion(sessionId);
                     markCartUpdated(scope.session());
                     return recalculateLocked(scope, cart, "DRAFT");
                 });
@@ -323,6 +392,7 @@ public class AgentCartService {
             if (variantId == null || store.deleteItem(cart.id(), variantId) != 1) {
                 throw new IllegalArgumentException("La variante no existe en el carrito");
             }
+            store.deletePendingPromotion(sessionId);
             CartResult result = recalculateLocked(scope, cart, "DRAFT");
             if (result.items().isEmpty()) markCartEmpty(scope.session());
             else markCartUpdated(scope.session());
@@ -352,6 +422,7 @@ public class AgentCartService {
                     validateStock(selectedStock, targetQuantity);
                     store.upsertItem(cart.id(), price(selectedStock, targetQuantity, scope.branchId()),
                             LocalDateTime.now());
+                    store.deletePendingPromotion(sessionId);
                     markCartUpdated(scope.session());
                     return recalculateLocked(scope, cart, "DRAFT");
                 });
@@ -362,8 +433,12 @@ public class AgentCartService {
         return execute(sessionId, operationId, "vaciar_carrito", "empty", () -> {
             LockedSession scope = lockEditableSession(sessionId);
             Optional<CartRow> cart = store.lockActiveCart(sessionId);
-            if (cart.isEmpty()) return emptyResult();
+            if (cart.isEmpty()) {
+                store.deletePendingPromotion(sessionId);
+                return emptyResult();
+            }
             store.clearCart(cart.get().id());
+            store.deletePendingPromotion(sessionId);
             store.updateTotals(cart.get().id(), ZERO, ZERO, ZERO, LocalDateTime.now());
             markCartEmpty(scope.session());
             return new CartResult(cart.get().id(), "DRAFT", "PEN", ZERO, ZERO, ZERO, List.of(), List.of());
@@ -391,6 +466,7 @@ public class AgentCartService {
             }
             LocalDateTime now = LocalDateTime.now();
             store.confirm(cart.id(), now);
+            store.deletePendingPromotion(sessionId);
             applyEvent(scope.session(), CrmWhatsappAgentEvent.CARRITO_CONFIRMADO, now);
             return new CartResult(recalculated.cartId(), "CONFIRMED", recalculated.currency(),
                     recalculated.subtotal(), recalculated.discountTotal(), recalculated.total(),
@@ -605,6 +681,24 @@ public class AgentCartService {
         }
     }
 
+    private PendingPromotionDraft readPendingPromotion(PendingPromotionRow row) {
+        try {
+            List<PendingPromotionSelection> selections = objectMapper.readValue(row.selectionsJson(),
+                    new TypeReference<List<PendingPromotionSelection>>() { });
+            return new PendingPromotionDraft(row.promotionId(), row.promotionName(), selections, row.sourceJobId());
+        } catch (JsonProcessingException error) {
+            throw new IllegalStateException("No se pudo leer la seleccion provisional de la promocion", error);
+        }
+    }
+
+    private String writePendingSelections(List<PendingPromotionSelection> selections) {
+        try {
+            return objectMapper.writeValueAsString(selections == null ? List.of() : selections);
+        } catch (JsonProcessingException error) {
+            throw new IllegalStateException("No se pudo guardar la seleccion provisional de la promocion", error);
+        }
+    }
+
     private String sha256(String value) {
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
@@ -622,6 +716,23 @@ public class AgentCartService {
     }
 
     public record ComboSelection(Integer variantId, Integer quantity) {
+    }
+
+    public record PendingPromotionDraft(Integer promotionId, String promotionName,
+            List<PendingPromotionSelection> selections, Long sourceJobId) {
+        public PendingPromotionDraft {
+            selections = selections == null ? List.of() : List.copyOf(selections);
+        }
+    }
+
+    public record PendingPromotionSelection(Integer productId, String productName,
+            String colorReference, String sizeReference, Integer quantity, Integer variantId) {
+        public PendingPromotionSelection {
+            productName = productName == null ? "" : productName;
+            colorReference = colorReference == null ? "" : colorReference;
+            sizeReference = sizeReference == null ? "" : sizeReference;
+            quantity = quantity == null || quantity < 1 ? 1 : quantity;
+        }
     }
 
     public record CartResult(Long cartId, String status, String currency, BigDecimal subtotal,

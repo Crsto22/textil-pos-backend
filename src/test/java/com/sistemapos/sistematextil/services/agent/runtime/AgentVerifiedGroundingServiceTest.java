@@ -46,7 +46,10 @@ import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.CartIte
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.CartResult;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.CartPromotionView;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.ComboSelection;
+import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.PendingPromotionDraft;
+import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.PendingPromotionSelection;
 import com.sistemapos.sistematextil.services.agent.knowledge.AgentKnowledgeRetriever;
+import com.sistemapos.sistematextil.services.agent.knowledge.AgentKnowledgeRetriever.KnowledgeSearchResult;
 import com.sistemapos.sistematextil.services.agent.promotion.AgentPromotionQueryService;
 import com.sistemapos.sistematextil.services.agent.promotion.AgentPromotionQueryService.PromotionDetail;
 import com.sistemapos.sistematextil.services.agent.sizeguide.ProductSizeGuideQueryService;
@@ -70,6 +73,55 @@ class AgentVerifiedGroundingServiceTest {
         AgentConversationDecision normalized = service.enforceHumanHandoffRules(mistaken);
 
         assertFalse(normalized.requiresHumanHelp());
+    }
+
+    @Test
+    void businessInformationUsesOnlyCurrentCustomerMessageForRag() {
+        AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
+        AgentKnowledgeRetriever knowledge = mock(AgentKnowledgeRetriever.class);
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.BUSINESS_INFORMATION, "", "", "", "", 0, "",
+                AgentCartAction.NONE, "", 95, false);
+        String customerMessage = "mañana a qué hora tienen atención presencial?";
+        String conversation = "Resuelve primero MENSAJE_ACTUAL_CLIENTE.\n"
+                + "CONTEXTO_CONFIABLE_Y_CONVERSACION_NO_CONFIABLE:\n"
+                + "x".repeat(900) + "\n\nLOTE_ACTUAL_AGRUPADO:\n" + customerMessage;
+        when(decisions.interpret(4L, conversation)).thenReturn(
+                new AgentInterpretationResult("GEMINI", "model", "DB", 10, 0, decision));
+        when(knowledge.searchForSession(9L, customerMessage)).thenReturn(
+                new KnowledgeSearchResult(true, "ok", List.of()));
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(
+                decisions, mock(AgentCatalogQueryService.class), mock(AgentPromotionQueryService.class),
+                knowledge, mock(AgentCartService.class), passThroughAudit());
+
+        service.ground(4L, 9L, 30L, conversation);
+
+        verify(knowledge).searchForSession(9L, customerMessage);
+    }
+
+    @Test
+    void businessInformationBoundsAnUnusuallyLongCustomerMessageForRag() {
+        AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
+        AgentKnowledgeRetriever knowledge = mock(AgentKnowledgeRetriever.class);
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.BUSINESS_INFORMATION, "", "", "", "", 0, "",
+                AgentCartAction.NONE, "", 95, false);
+        String customerMessage = "consulta " + "larga ".repeat(100) + "sobre el horario";
+        String expectedQuestion = customerMessage.trim()
+                .substring(customerMessage.trim().length() - 500).trim();
+        String conversation = "CONTEXTO INTERNO EXTENSO\nLOTE_ACTUAL_AGRUPADO:\n" + customerMessage;
+        when(decisions.interpret(4L, conversation)).thenReturn(
+                new AgentInterpretationResult("GEMINI", "model", "DB", 10, 0, decision));
+        when(knowledge.searchForSession(9L, expectedQuestion)).thenReturn(
+                new KnowledgeSearchResult(true, "ok", List.of()));
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(
+                decisions, mock(AgentCatalogQueryService.class), mock(AgentPromotionQueryService.class),
+                knowledge, mock(AgentCartService.class), passThroughAudit());
+
+        service.ground(4L, 9L, 30L, conversation);
+
+        assertEquals(500, expectedQuestion.length());
+        verify(knowledge).searchForSession(9L, expectedQuestion);
     }
 
     @Test
@@ -194,6 +246,34 @@ class AgentVerifiedGroundingServiceTest {
         assertTrue(result.evidenceJson().contains("LIA LISO"));
         assertTrue(result.evidenceJson().contains("LIA RAYAS"));
         assertFalse(result.evidenceJson().contains("\"query\":\"LYANA\""));
+    }
+
+    @Test
+    void rejectsAProductGuessedFromAnImageCaptionWithoutAnExplicitModel() {
+        AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        AgentConversationDecision wrongDecision = new AgentConversationDecision(
+                AgentDecisionIntent.PRODUCT_DETAILS, "consultar Alessia en XS", "ALESSIA",
+                List.of("ALESSIA"), "", "XS", 0, "", List.of(), AgentCartAction.NONE,
+                AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY, "", "", "", "", "", "", "", "",
+                List.of(), com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL,
+                "", List.of(), "", 90, false);
+        String conversation = "LOTE_ACTUAL_AGRUPADO:\nTiene es esos modelos en xs?\n[IMAGEN ADJUNTA]";
+        when(decisions.interpret(4L, conversation)).thenReturn(
+                new AgentInterpretationResult("GEMINI", "model", "DB", 10, 0, wrongDecision));
+        when(catalog.searchProducts(9L, "Tiene es esos modelos en xs?\n[IMAGEN ADJUNTA]", 20,
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL))
+                .thenReturn(new ProductSearchResult("Tiene es esos modelos en xs?", 1, List.of(), false));
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
+                mock(AgentCartService.class), passThroughAudit());
+
+        var result = service.ground(4L, 9L, 30L, conversation);
+
+        assertTrue(result.decision().productReferences().isEmpty());
+        assertEquals("", result.decision().productReference());
+        assertTrue(result.evidenceJson().contains("unresolvedImageProductReference"));
+        assertFalse(result.evidenceJson().contains("ALESSIA ENTERO"));
     }
 
     @Test
@@ -393,6 +473,7 @@ class AgentVerifiedGroundingServiceTest {
         assertTrue(result.evidenceJson().contains("PERLA"));
         assertTrue(result.evidenceJson().contains("EMMA"));
         assertFalse(result.evidenceJson().contains("ALICE RAYAS"));
+        assertFalse(result.evidenceJson().toLowerCase().contains("stock"));
     }
 
     @Test
@@ -598,8 +679,7 @@ class AgentVerifiedGroundingServiceTest {
                 mock(AgentCartService.class), passThroughAudit());
         var grounded = service.ground(4L, 9L, 30L, "El combo 49 deseo elegir");
 
-        assertEquals("Para completar *combo 49*, indícame el color y la talla de *ALICE RAYAS*, *EMMA*.",
-                grounded.customerMessage());
+        assertNull(grounded.customerMessage());
         assertTrue(grounded.evidenceJson().contains("\"name\":\"combo 49\""));
         verify(promotions).getPromotion(9L, 83);
     }
@@ -660,18 +740,18 @@ class AgentVerifiedGroundingServiceTest {
     }
 
     @Test
-    void completesMissingComboSelectionFromTheExistingCart() {
+    void completesMissingComboSelectionFromThePendingDraftWithoutReadingTheCart() {
         AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
         AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
         AgentPromotionQueryService promotions = mock(AgentPromotionQueryService.class);
         AgentCartService cart = mock(AgentCartService.class);
         AgentConversationDecision decision = new AgentConversationDecision(
-                AgentDecisionIntent.CART_CHANGE, "completar combo 30", "LYANA", "AZUL", "L", 1,
-                "combo 30", List.of(new PromotionSelection("LYANA", "AZUL", "L", 1)),
+                AgentDecisionIntent.CART_CHANGE, "corregir Emma del combo", "EMMA", "AZUL", "M", 1,
+                "combo 30", List.of(new PromotionSelection("EMMA", "AZUL", "M", 1)),
                 AgentCartAction.ADD_PROMOTION, AgentCommercialAction.CHANGE_CART,
                 "", "", "", "", "", "", "", "",
                 com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL, 99, false);
-        when(decisions.interpret(4L, "azul talla L")).thenReturn(
+        when(decisions.interpret(4L, "Emma azul talla M")).thenReturn(
                 new AgentInterpretationResult("GEMINI", "model", "DB", 10, 0, decision));
 
         var items = List.of(new PromotionItem(59, "EMMA", 1, 20),
@@ -684,35 +764,34 @@ class AgentVerifiedGroundingServiceTest {
         when(promotions.getPromotion(9L, 56)).thenReturn(new PromotionDetail(56, "combo 30",
                 "MIXED_PRODUCTS", BigDecimal.valueOf(125), BigDecimal.valueOf(132), BigDecimal.valueOf(7),
                 null, null, true, items, 1, true));
-        CartItemView emma = new CartItemView(1L, 1535, "EMMA", "Negro", "L", 1,
-                BigDecimal.valueOf(65), BigDecimal.ZERO, BigDecimal.valueOf(65));
-        when(cart.recalculate(9L, "agent-job-30:promotion-cart-context")).thenReturn(
-                new CartResult(70L, "DRAFT", "PEN", BigDecimal.valueOf(65), BigDecimal.ZERO,
-                        BigDecimal.valueOf(65), List.of(emma), List.of()));
-        when(catalog.getVariants(9L, 59, "Negro", "L")).thenReturn(new VariantResult(59, "EMMA",
-                "Negro", "L", List.of(new VariantSummary(1535, "EM-NEG-L", "Negro", "L",
+        when(cart.pendingPromotion(9L)).thenReturn(java.util.Optional.of(new PendingPromotionDraft(
+                56, "combo 30", List.of(
+                        new PendingPromotionSelection(59, "EMMA", "Negro", "L", 1, 1535),
+                        new PendingPromotionSelection(60, "LYANA", "AZUL", "L", 1, 1599)), 29L)));
+        when(catalog.getVariants(9L, 59, "AZUL", "M")).thenReturn(new VariantResult(59, "EMMA",
+                "AZUL", "M", List.of(new VariantSummary(1536, "EM-AZU-M", "AZUL", "M",
                         65D, 65D, 10, true))));
         when(catalog.getVariants(9L, 60, "AZUL", "L")).thenReturn(new VariantResult(60, "LYANA",
                 "AZUL", "L", List.of(new VariantSummary(1599, "LY-AZU-L", "AZUL", "L",
                         67D, 67D, 10, true))));
-        when(catalog.getStock(9L, 1535, 1)).thenReturn(
-                new StockResult(1535, 59, "EMMA", "Negro", "L", 1, 10, true, 1, true));
+        when(catalog.getStock(9L, 1536, 1)).thenReturn(
+                new StockResult(1536, 59, "EMMA", "AZUL", "M", 1, 10, true, 1, true));
         when(catalog.getStock(9L, 1599, 1)).thenReturn(
                 new StockResult(1599, 60, "LYANA", "AZUL", "L", 1, 10, true, 1, true));
         CartResult result = new CartResult(70L, "DRAFT", "PEN", BigDecimal.valueOf(132),
-                BigDecimal.valueOf(7), BigDecimal.valueOf(125), List.of(emma),
+                BigDecimal.valueOf(7), BigDecimal.valueOf(125), List.of(),
                 List.of(new CartPromotionView(56, "combo 30", 1, BigDecimal.valueOf(132),
                         BigDecimal.valueOf(125), BigDecimal.valueOf(7))));
-        when(cart.addCombo(9L, 56, List.of(new ComboSelection(1535, 1), new ComboSelection(1599, 1)),
+        when(cart.addCombo(9L, 56, List.of(new ComboSelection(1536, 1), new ComboSelection(1599, 1)),
                 "agent-job-30:verified-add-promotion")).thenReturn(result);
 
         AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
                 promotions, mock(AgentKnowledgeRetriever.class), cart, passThroughAudit());
-        var grounded = service.ground(4L, 9L, 30L, "azul talla L");
+        var grounded = service.ground(4L, 9L, 30L, "Emma azul talla M");
 
         assertTrue(grounded.mutationExecuted());
         verify(cart).addCombo(9L, 56,
-                List.of(new ComboSelection(1535, 1), new ComboSelection(1599, 1)),
+                List.of(new ComboSelection(1536, 1), new ComboSelection(1599, 1)),
                 "agent-job-30:verified-add-promotion");
     }
 
@@ -748,15 +827,14 @@ class AgentVerifiedGroundingServiceTest {
                 passThroughAudit());
         var grounded = service.ground(4L, 9L, 30L, "quiero ese combo");
 
-        assertEquals("Para completar *combo 30*, indícame el color y la talla de *EMMA*, *LYANA*.",
-                grounded.customerMessage());
+        assertNull(grounded.customerMessage());
         assertTrue(!grounded.mutationExecuted());
         org.mockito.Mockito.verify(cart, org.mockito.Mockito.never())
                 .addCombo(anyLong(), anyInt(), any(), anyString());
     }
 
     @Test
-    void persistsAValidPartialComboChoiceBeforeAskingForTheOtherProduct() {
+    void persistsAValidPartialComboChoiceOutsideTheCart() {
         AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
         AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
         AgentPromotionQueryService promotions = mock(AgentPromotionQueryService.class);
@@ -779,29 +857,81 @@ class AgentVerifiedGroundingServiceTest {
         when(promotions.getPromotion(9L, 56)).thenReturn(new PromotionDetail(56, "combo 30",
                 "MIXED_PRODUCTS", BigDecimal.valueOf(125), BigDecimal.valueOf(132), BigDecimal.valueOf(7),
                 null, null, true, items, 1, true));
-        when(cart.recalculate(9L, "agent-job-30:promotion-cart-context")).thenReturn(
-                new CartResult(70L, "DRAFT", "PEN", BigDecimal.ZERO, BigDecimal.ZERO,
-                        BigDecimal.ZERO, List.of(), List.of()));
         when(catalog.getVariants(9L, 59, "Negro", "XS")).thenReturn(new VariantResult(59, "EMMA",
                 "Negro", "XS", List.of(new VariantSummary(1538, "EM-NEG-XS", "Negro", "XS",
                         65D, 65D, 10, true))));
         when(catalog.getStock(9L, 1538, 1)).thenReturn(
                 new StockResult(1538, 59, "EMMA", "Negro", "XS", 1, 10, true, 1, true));
-        CartItemView emma = new CartItemView(1L, 1538, "EMMA", "Negro", "XS", 1,
-                BigDecimal.valueOf(65), BigDecimal.ZERO, BigDecimal.valueOf(65));
-        CartResult partial = new CartResult(70L, "DRAFT", "PEN", BigDecimal.valueOf(65),
-                BigDecimal.ZERO, BigDecimal.valueOf(65), List.of(emma), List.of());
-        when(cart.addProduct(9L, 1538, 1, "agent-job-30:promotion-selection:1538"))
-                .thenReturn(partial);
-
         AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
                 promotions, mock(AgentKnowledgeRetriever.class), cart, passThroughAudit());
         var grounded = service.ground(4L, 9L, 30L, "quiero negro xs");
 
-        assertEquals("Para completar *combo 30*, indícame el color y la talla de *LYANA*.",
-                grounded.customerMessage());
-        verify(cart).addProduct(9L, 1538, 1, "agent-job-30:promotion-selection:1538");
-        assertTrue(grounded.evidenceJson().contains("partialPromotionSelectionsPersisted"));
+        assertNull(grounded.customerMessage());
+        verify(cart).savePendingPromotion(9L, 56, "combo 30",
+                List.of(new PendingPromotionSelection(59, "EMMA", "Negro", "XS", 1, 1538)), 30L);
+        org.mockito.Mockito.verify(cart, org.mockito.Mockito.never())
+                .addProduct(anyLong(), anyInt(), anyInt(), anyString());
+        assertTrue(grounded.evidenceJson().contains("pendingPromotion"));
+    }
+
+    @Test
+    void replacesACompleteCorrectedOrderInOneAtomicCartOperation() {
+        AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        AgentPromotionQueryService promotions = mock(AgentPromotionQueryService.class);
+        AgentCartService cart = mock(AgentCartService.class);
+        List<PromotionSelection> finalLines = List.of(
+                new PromotionSelection("ANGUIE LISO", "AZUL", "L", 1),
+                new PromotionSelection("MELINA", "NEGRO", "L", 1));
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.CART_CHANGE, "este es mi pedido final", "", "", "", 0,
+                "combo 51", finalLines, AgentCartAction.REPLACE_CART, AgentCommercialAction.CHANGE_CART,
+                "", "", "", "", "", "", "", "",
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL, 99, false);
+        when(decisions.interpret(4L, "este es mi pedido final")).thenReturn(
+                new AgentInterpretationResult("GEMINI", "model", "DB", 10, 0, decision));
+
+        ProductSummary anguie = new ProductSummary(79, "ANGUIE LISO", "", "CONJUNTO",
+                true, null, 75D, 30, List.of("AZUL"), List.of("L"));
+        ProductSummary melina = new ProductSummary(78, "MELINA", "", "CONJUNTO",
+                true, null, 79D, 16, List.of("NEGRO"), List.of("L"));
+        when(catalog.searchProducts(9L, "ANGUIE LISO", 10)).thenReturn(
+                new ProductSearchResult("ANGUIE LISO", 1, List.of(anguie), false));
+        when(catalog.searchProducts(9L, "MELINA", 10)).thenReturn(
+                new ProductSearchResult("MELINA", 1, List.of(melina), false));
+        when(catalog.getVariants(9L, 79, "AZUL", "L")).thenReturn(new VariantResult(79, "ANGUIE LISO",
+                "AZUL", "L", List.of(new VariantSummary(1880, "ANG-AZU-L", "AZUL", "L",
+                        75D, 75D, 30, true))));
+        when(catalog.getVariants(9L, 78, "NEGRO", "L")).thenReturn(new VariantResult(78, "MELINA",
+                "NEGRO", "L", List.of(new VariantSummary(1864, "MEL-NEG-L", "NEGRO", "L",
+                        79D, 79D, 16, true))));
+        when(catalog.getStock(9L, 1880, 1)).thenReturn(
+                new StockResult(1880, 79, "ANGUIE LISO", "AZUL", "L", 1, 30, true, 1, true));
+        when(catalog.getStock(9L, 1864, 1)).thenReturn(
+                new StockResult(1864, 78, "MELINA", "NEGRO", "L", 1, 16, true, 1, true));
+        var promoItems = List.of(new PromotionItem(79, "ANGUIE LISO", 1, 30),
+                new PromotionItem(78, "MELINA", 1, 16));
+        PromotionSummary combo = new PromotionSummary(150, "combo 51", "MIXED_PRODUCTS",
+                BigDecimal.valueOf(149), BigDecimal.valueOf(154), BigDecimal.valueOf(5),
+                null, null, true, promoItems);
+        when(promotions.searchPromotions(9L, "combo 51", 20)).thenReturn(
+                new PromotionSearchResult("combo 51", 1, List.of(combo), false));
+        CartResult result = new CartResult(79L, "DRAFT", "PEN", BigDecimal.valueOf(154),
+                BigDecimal.valueOf(5), BigDecimal.valueOf(149), List.of(),
+                List.of(new CartPromotionView(150, "combo 51", 1, BigDecimal.valueOf(154),
+                        BigDecimal.valueOf(149), BigDecimal.valueOf(5))));
+        when(cart.replaceCart(9L, List.of(new ComboSelection(1880, 1), new ComboSelection(1864, 1)),
+                150, "agent-job-30:verified-replace-cart")).thenReturn(result);
+
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
+                promotions, mock(AgentKnowledgeRetriever.class), cart, passThroughAudit());
+        var grounded = service.ground(4L, 9L, 30L, "este es mi pedido final");
+
+        assertTrue(grounded.mutationExecuted());
+        verify(cart).replaceCart(9L,
+                List.of(new ComboSelection(1880, 1), new ComboSelection(1864, 1)),
+                150, "agent-job-30:verified-replace-cart");
+        verify(cart, org.mockito.Mockito.never()).addProduct(anyLong(), anyInt(), anyInt(), anyString());
     }
 
     @Test

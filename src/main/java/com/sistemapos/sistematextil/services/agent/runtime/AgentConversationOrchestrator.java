@@ -324,11 +324,15 @@ public class AgentConversationOrchestrator {
             return "- No existe un recordatorio pendiente para esta respuesta: devuelve pendingStepReminder vacio "
                     + "y remindedPendingData como lista vacia.";
         }
+        String paymentOptions = context.state() == com.sistemapos.sistematextil.model.CrmWhatsappAgentState.ESPERANDO_METODO_PAGO
+                ? " Si espera el metodo de pago, menciona naturalmente que puede continuar eligiendo como pagar, modificar el pedido o cancelarlo."
+                : "";
         return "- Esta es una consulta intermedia y el estado comercial no avanzo. Responde primero la consulta "
                 + "usando la evidencia verificada. Escribe aparte en pendingStepReminder un recordatorio breve, "
                 + "natural y sin repetir el formulario completo. Solicita solamente: "
                 + context.missingData() + ". Devuelve exactamente esos valores en remindedPendingData. No vuelvas "
-                + "a pedir datos que ya estan validados ni incluyas el recordatorio dentro de customerMessage.";
+                + "a pedir datos que ya estan validados ni incluyas el recordatorio dentro de customerMessage."
+                + paymentOptions;
     }
 
     private String pendingReminderCorrectionInstruction(AgentContext context, boolean required,
@@ -345,10 +349,13 @@ public class AgentConversationOrchestrator {
         boolean sameValues = actual.size() == expected.size()
                 && actual.containsAll(expected) && expected.containsAll(actual);
         if (!reminder.isBlank() && sameValues) return "";
+        String paymentOptions = context.state() == com.sistemapos.sistematextil.model.CrmWhatsappAgentState.ESPERANDO_METODO_PAGO
+                ? " Para el metodo de pago, permite continuar, modificar el pedido o cancelarlo."
+                : "";
         return "El estado comercial sigue esperando informacion. Responde la consulta y completa "
                 + "pendingStepReminder con una sola frase natural que recuerde unicamente " + expected
                 + "; devuelve exactamente esos mismos valores en remindedPendingData. No repitas el formulario "
-                + "completo ni solicites datos ya guardados.";
+                + "completo ni solicites datos ya guardados." + paymentOptions;
     }
 
     private String composeCustomerMessage(AgentTurnResponse response, boolean reminderRequired) {

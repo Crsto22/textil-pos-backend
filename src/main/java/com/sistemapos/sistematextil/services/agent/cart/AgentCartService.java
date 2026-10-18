@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -47,6 +48,7 @@ import com.sistemapos.sistematextil.services.agent.cart.AgentCartStore.Promotion
 @Service
 public class AgentCartService {
     private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+    public static final Duration CONFIRMED_CART_WINDOW = Duration.ofHours(3);
 
     private final CrmWhatsappAgentSessionRepository sessionRepository;
     private final CrmWhatsappAgentStateMachine stateMachine;
@@ -474,6 +476,80 @@ public class AgentCartService {
         });
     }
 
+    /**
+     * Reopens and recalculates a confirmed cart once its three-hour review window
+     * expires. No stock is reserved at this stage; current catalog stock, prices
+     * and promotions become authoritative before the customer can confirm again.
+     */
+    @Transactional
+    public ExpiredCartRefresh refreshExpiredConfirmedCart(Long sessionId) {
+        CrmWhatsappAgentSession session = sessionRepository.findForUpdate(sessionId)
+                .orElseThrow(() -> new IllegalArgumentException("La sesion del agente no existe"));
+        if (!Boolean.TRUE.equals(session.getActiveSlot())
+                || session.getState() != CrmWhatsappAgentState.ESPERANDO_METODO_PAGO) {
+            return ExpiredCartRefresh.notRefreshed();
+        }
+        CartRow cart = store.lockActiveCart(sessionId).orElse(null);
+        if (cart == null || !"CONFIRMED".equals(cart.status()) || cart.confirmedAt() == null) {
+            return ExpiredCartRefresh.notRefreshed();
+        }
+        LocalDateTime now = LocalDateTime.now();
+        if (now.isBefore(cart.confirmedAt().plus(CONFIRMED_CART_WINDOW))) {
+            return ExpiredCartRefresh.notRefreshed();
+        }
+        Integer branchId = requireBranchId(session);
+        List<CartItemRow> previous = List.copyOf(store.findItems(cart.id()));
+        applyEvent(session, CrmWhatsappAgentEvent.CARRITO_REVALIDADO_POR_VENCIMIENTO, now);
+        store.reopen(cart.id(), now);
+        CartResult refreshed = recalculateLocked(new LockedSession(session, branchId), cart, "DRAFT");
+        List<CartItemView> removed = previous.stream()
+                .filter(old -> refreshed.items().stream().noneMatch(current -> current.variantId().equals(old.variantId())))
+                .map(this::cartItemView)
+                .toList();
+        if (refreshed.items().isEmpty()) markCartEmpty(session);
+        return new ExpiredCartRefresh(true, refreshed, removed, cart.confirmedAt(), now);
+    }
+
+    /** Cancels an unpaid draft/confirmed cart. There is no stock reservation to release. */
+    @Transactional
+    public boolean cancelPendingCart(Long sessionId) {
+        CrmWhatsappAgentSession session = sessionRepository.findForUpdate(sessionId)
+                .orElseThrow(() -> new IllegalArgumentException("La sesion del agente no existe"));
+        if (session.getState() == CrmWhatsappAgentState.CANCELADO) return false;
+        if (session.getState() != CrmWhatsappAgentState.ESPERANDO_METODO_PAGO
+                && session.getState() != CrmWhatsappAgentState.ARMANDO_CARRITO) {
+            throw new IllegalStateException("No existe un carrito pendiente que pueda cancelarse");
+        }
+        LocalDateTime now = LocalDateTime.now();
+        Optional<CartRow> active = store.lockActiveCart(sessionId);
+        if (active.isPresent()) {
+            CartRow cart = active.get();
+            if ("CONFIRMED".equals(cart.status())) store.reopen(cart.id(), now);
+            store.clearCart(cart.id());
+            store.replacePromotions(cart.id(), List.of(), now);
+            store.deletePendingPromotion(sessionId);
+            store.updateTotals(cart.id(), ZERO, ZERO, ZERO, now);
+        }
+        applyEvent(session, CrmWhatsappAgentEvent.CANCELACION_SOLICITADA, now);
+        session.setSelectedPaymentMethod(null);
+        session.setSelectedPaymentAccount(null);
+        sessionRepository.save(session);
+        return true;
+    }
+
+    private Integer requireBranchId(CrmWhatsappAgentSession session) {
+        if (session.getConnection() == null || session.getConnection().getSucursal() == null
+                || session.getConnection().getSucursal().getIdSucursal() == null) {
+            throw new IllegalStateException("La conexion WhatsApp no tiene una sucursal configurada");
+        }
+        return session.getConnection().getSucursal().getIdSucursal();
+    }
+
+    private CartItemView cartItemView(CartItemRow item) {
+        return new CartItemView(item.id(), item.variantId(), item.productName(), item.color(), item.size(),
+                item.quantity(), item.unitPrice(), item.unitDiscount(), item.lineTotal());
+    }
+
     private CartResult recalculateLocked(LockedSession scope, CartRow cart, String status) {
         List<CartItemRow> existing = store.findItems(cart.id());
         if (existing.isEmpty()) {
@@ -746,5 +822,12 @@ public class AgentCartService {
 
     public record CartPromotionView(Integer promotionId, String name, int applicationOrder,
             BigDecimal regularPrice, BigDecimal comboPrice, BigDecimal discount) {
+    }
+
+    public record ExpiredCartRefresh(boolean refreshed, CartResult cart, List<CartItemView> removedItems,
+            LocalDateTime previousConfirmedAt, LocalDateTime refreshedAt) {
+        public static ExpiredCartRefresh notRefreshed() {
+            return new ExpiredCartRefresh(false, null, List.of(), null, null);
+        }
     }
 }

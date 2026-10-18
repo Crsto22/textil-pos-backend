@@ -8,6 +8,8 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 
 import java.util.Optional;
 import java.util.List;
@@ -28,16 +30,22 @@ import com.sistemapos.sistematextil.services.agent.ai.AgentDecisionIntent;
 import com.sistemapos.sistematextil.services.agent.ai.AgentShalomDataField;
 import com.sistemapos.sistematextil.services.agent.payment.AgentPaymentService.PaymentMethodList;
 import com.sistemapos.sistematextil.services.agent.payment.AgentPaymentService.PaymentMethodView;
+import com.sistemapos.sistematextil.services.agent.payment.AgentPaymentService.PaymentAccountView;
+import com.sistemapos.sistematextil.services.agent.payment.AgentPaymentService.PaymentMethodSelection;
+import com.sistemapos.sistematextil.services.agent.payment.AgentPaymentService.PaymentRequestResult;
 import com.sistemapos.sistematextil.services.agent.payment.AgentPaymentService;
 import com.sistemapos.sistematextil.services.agent.customer.AgentCustomerService;
 import com.sistemapos.sistematextil.services.agent.fulfillment.AgentFulfillmentService;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.CartPromotionView;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.CartResult;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.CartItemView;
+import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.ExpiredCartRefresh;
+import com.sistemapos.sistematextil.services.agent.cart.AgentCartService;
 import com.sistemapos.sistematextil.services.agent.catalog.AgentCatalogQueryService;
 import com.sistemapos.sistematextil.services.agent.catalog.AgentCatalogQueryService.ProductDetail;
 import com.sistemapos.sistematextil.services.agent.catalog.AgentCatalogQueryService.StockResult;
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import com.sistemapos.sistematextil.util.cliente.TipoDocumento;
 
 class AgentDeterministicCommerceServiceTest {
@@ -101,7 +109,125 @@ class AgentDeterministicCommerceServiceTest {
         assertFalse(message.contains("tiempo de entrega"));
         assertFalse(message.contains("logística de Shalom"));
         assertTrue(message.contains("penalidad de S/10"));
+        assertTrue(message.contains("📦 *Modalidades de entrega disponibles*"));
+        assertTrue(message.contains("Recojo en tienda: sin costo adicional"));
+        assertTrue(message.contains("Envío por Shalom: requiere S/2 adicionales"));
         assertFalse(message.contains("🛍️"));
+    }
+
+    @Test
+    void explainsTheSixMinuteReservationBeforeSelectingPayment() {
+        CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        AgentPaymentService payments = mock(AgentPaymentService.class);
+        CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
+        session.setState(CrmWhatsappAgentState.ESPERANDO_METODO_PAGO);
+        when(sessions.findById(41L)).thenReturn(Optional.of(session));
+        when(payments.listMethods(41L)).thenReturn(new PaymentMethodList(1,
+                List.of(method(1, "YAPE"), method(2, "PLIN"), method(3, "TRANSFERENCIA")), "OK"));
+        AgentDeterministicCommerceService service = new AgentDeterministicCommerceService(
+                sessions, null, null, null, payments, null, null, null, null, null,
+                new AgentToolCallAuditService(null));
+
+        var result = service.execute(41L, null, decision(AgentCommercialAction.SHOW_PAYMENT_METHODS, ""));
+
+        assertTrue(result.customerMessage().contains("*6 minutos*"));
+        assertTrue(result.customerMessage().contains("sin que otra persona los compre"));
+        assertTrue(result.customerMessage().contains("¿Cuál deseas utilizar?"));
+    }
+
+    @Test
+    void confirmsTheExactReservationWindowAfterCreatingThePaymentRequest() {
+        CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        AgentPaymentService payments = mock(AgentPaymentService.class);
+        CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
+        session.setState(CrmWhatsappAgentState.ESPERANDO_METODO_PAGO);
+        when(sessions.findById(41L)).thenReturn(Optional.of(session));
+        PaymentAccountView account = new PaymentAccountView(7, "923249598", "Perpetua Leon Quispe");
+        PaymentMethodView yape = new PaymentMethodView(1, "YAPE", "", false, false, false, List.of(account));
+        when(payments.listMethods(41L)).thenReturn(new PaymentMethodList(1, List.of(yape), "OK"));
+        when(payments.selectMethod(41L, 1, 7, "agent-job-null:select_payment_method:select"))
+                .thenReturn(new PaymentMethodSelection("SELECTED", 1, "YAPE", 7, "923249598",
+                        "Perpetua Leon Quispe", List.of(account), "ESPERANDO_METODO_PAGO"));
+        when(payments.createRequest(41L, "agent-job-null:select_payment_method:reserve"))
+                .thenReturn(new PaymentRequestResult(9L, "PENDING_EVIDENCE", BigDecimal.valueOf(90), "PEN",
+                        LocalDateTime.now().plusMinutes(6), 360, "RESERVED", 1, "YAPE", 7,
+                        "923249598", "Perpetua Leon Quispe", List.of(), "ESPERANDO_COMPROBANTE"));
+        AgentDeterministicCommerceService service = new AgentDeterministicCommerceService(
+                sessions, null, null, null, payments, null, null, null, null, null,
+                new AgentToolCallAuditService(null));
+
+        var result = service.execute(41L, null, decision(AgentCommercialAction.SELECT_PAYMENT_METHOD, "YAPE"));
+
+        assertTrue(result.customerMessage().contains("Tus productos quedaron reservados durante *6 minutos*"));
+        assertTrue(result.customerMessage().contains("antes de que termine el plazo"));
+    }
+
+    @Test
+    void blocksPaymentAndExplainsRevalidationWhenTheThreeHourCartWindowExpired() {
+        CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        AgentCartService carts = mock(AgentCartService.class);
+        AgentPaymentService payments = mock(AgentPaymentService.class);
+        CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
+        session.setState(CrmWhatsappAgentState.ESPERANDO_METODO_PAGO);
+        when(sessions.findById(41L)).thenReturn(Optional.of(session));
+        CartResult empty = new CartResult(5L, "DRAFT", "PEN", BigDecimal.ZERO, BigDecimal.ZERO,
+                BigDecimal.ZERO, List.of(), List.of());
+        when(carts.refreshExpiredConfirmedCart(41L)).thenReturn(new ExpiredCartRefresh(
+                true, empty, List.of(), LocalDateTime.now().minusHours(3), LocalDateTime.now()));
+        AgentDeterministicCommerceService service = new AgentDeterministicCommerceService(
+                sessions, null, carts, null, payments, null, null, null, null, null,
+                new AgentToolCallAuditService(null));
+
+        var result = service.execute(41L, null, decision(AgentCommercialAction.SELECT_PAYMENT_METHOD, "YAPE"));
+
+        assertTrue(result.customerMessage().contains("más de 3 horas"));
+        assertTrue(result.customerMessage().contains("carrito pendiente quedó vacío"));
+        verify(payments, never()).createRequest(any(), anyString());
+    }
+
+    @Test
+    void cancelsThePendingCartWithoutStartingPayment() {
+        CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        AgentCartService carts = mock(AgentCartService.class);
+        AgentPaymentService payments = mock(AgentPaymentService.class);
+        CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
+        session.setState(CrmWhatsappAgentState.ESPERANDO_METODO_PAGO);
+        when(sessions.findById(41L)).thenReturn(Optional.of(session));
+        when(carts.cancelPendingCart(41L)).thenReturn(true);
+        AgentDeterministicCommerceService service = new AgentDeterministicCommerceService(
+                sessions, null, carts, null, payments, null, null, null, null, null,
+                new AgentToolCallAuditService(null));
+
+        var result = service.execute(41L, null, decision(AgentCommercialAction.CANCEL_PENDING_CART, ""));
+
+        assertTrue(result.customerMessage().contains("Cancelé el pedido"));
+        assertTrue(result.customerMessage().contains("No se realizó ningún cobro"));
+        verify(carts).cancelPendingCart(41L);
+        verify(carts, never()).refreshExpiredConfirmedCart(41L);
+        verify(payments, never()).createRequest(any(), anyString());
+    }
+
+    @Test
+    void requiresANewConfirmationAfterExpiredCartRevalidation() {
+        CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        AgentCartService carts = mock(AgentCartService.class);
+        AgentPaymentService payments = mock(AgentPaymentService.class);
+        CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
+        session.setState(CrmWhatsappAgentState.ARMANDO_CARRITO);
+        session.setLastEvent(com.sistemapos.sistematextil.model.CrmWhatsappAgentEvent.CARRITO_REVALIDADO_POR_VENCIMIENTO);
+        when(sessions.findById(41L)).thenReturn(Optional.of(session));
+        when(carts.recalculate(41L, "agent-job-null:select_payment_method:expired-cart-review"))
+                .thenReturn(new CartResult(5L, "DRAFT", "PEN", BigDecimal.ZERO, BigDecimal.ZERO,
+                        BigDecimal.ZERO, List.of(), List.of()));
+        AgentDeterministicCommerceService service = new AgentDeterministicCommerceService(
+                sessions, null, carts, null, payments, null, null, null, null, null,
+                new AgentToolCallAuditService(null));
+
+        var result = service.execute(41L, null, decision(AgentCommercialAction.SELECT_PAYMENT_METHOD, "YAPE"));
+
+        assertTrue(result.customerMessage().contains("superó las 3 horas"));
+        verify(payments, never()).selectMethod(any(), any(), any(), anyString());
+        verify(payments, never()).createRequest(any(), anyString());
     }
 
     @Test

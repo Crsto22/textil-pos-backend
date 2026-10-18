@@ -31,6 +31,7 @@ import com.sistemapos.sistematextil.services.agent.cart.AgentCartService;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.CartItemView;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.CartPromotionView;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.CartResult;
+import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.ExpiredCartRefresh;
 import com.sistemapos.sistematextil.services.agent.catalog.AgentCatalogQueryService;
 import com.sistemapos.sistematextil.services.agent.customer.AgentCustomerService;
 import com.sistemapos.sistematextil.services.agent.fulfillment.AgentFulfillmentService;
@@ -73,6 +74,16 @@ public class AgentDeterministicCommerceService {
     public Outcome execute(Long sessionId, Long jobId, AgentConversationDecision decision) {
         AgentConversationDecision effectiveDecision = normalizeShalomAgencyRefinement(sessionId, decision);
         AgentCommercialAction action = effectiveCommercialAction(effectiveDecision);
+        if (carts != null && action != AgentCommercialAction.CANCEL_PENDING_CART) {
+            ExpiredCartRefresh expired = carts.refreshExpiredConfirmedCart(sessionId);
+            boolean concreteCartMutation = (action == AgentCommercialAction.CHANGE_CART
+                    || action == AgentCommercialAction.ADD_PRODUCT)
+                    && effectiveDecision.cartAction() != null
+                    && effectiveDecision.cartAction() != AgentCartAction.NONE;
+            if (expired != null && expired.refreshed() && !concreteCartMutation) {
+                return Outcome.executed(expiredCartMessage(sessionId, expired));
+            }
+        }
         if ((action == AgentCommercialAction.HAS_PREVIOUS_PENDING_ORDER
                 || action == AgentCommercialAction.NO_PREVIOUS_PENDING_ORDER)
                 && requireSession(sessionId).getState() != CrmWhatsappAgentState.ESPERANDO_PEDIDO_ANTERIOR) {
@@ -227,13 +238,14 @@ public class AgentDeterministicCommerceService {
             case REFER_EXISTING_ORDER_DELIVERY -> Outcome.notHandled();
             case REQUEST_WHOLESALE_SUPPORT -> wholesaleContact();
             case CHANGE_CART -> beginCartEdit(sessionId);
+            case CANCEL_PENDING_CART -> cancelPendingCart(sessionId);
             default -> Outcome.notHandled();
         };
     }
 
     private boolean handledByJava(AgentCommercialAction action) {
         return switch (action) {
-            case CHANGE_CART, CONFIRM_CART, SHOW_PAYMENT_METHODS, SELECT_PAYMENT_METHOD, PAYMENT_TIME_REMAINING,
+            case CHANGE_CART, CANCEL_PENDING_CART, CONFIRM_CART, SHOW_PAYMENT_METHODS, SELECT_PAYMENT_METHOD, PAYMENT_TIME_REMAINING,
                     RETRY_PAYMENT, EXPLAIN_IMMEDIATE_PAYMENT_POLICY,
                     PROVIDE_CUSTOMER_DATA, CONFIRM_EXISTING_CUSTOMER, SELECT_PICKUP, SELECT_SHALOM,
                     PROVIDE_SHALOM_DATA, EDIT_SHALOM_DATA, CONFIRM_SHALOM_AGENCY, REUSE_SHALOM_PROFILE,
@@ -250,6 +262,29 @@ public class AgentDeterministicCommerceService {
         payments.beginCartEdit(sessionId);
         return Outcome.executed("Tu reserva anterior fue liberada y el carrito volvió a edición. "
                 + "Indícame qué producto, talla, color o cantidad deseas cambiar.");
+    }
+
+    private Outcome cancelPendingCart(Long sessionId) {
+        carts.cancelPendingCart(sessionId);
+        return Outcome.executed("Entendido 💛 Cancelé el pedido que estaba pendiente de pago. "
+                + "No se realizó ningún cobro ni se reservó stock. Puedes iniciar otra compra cuando desees.");
+    }
+
+    private String expiredCartMessage(Long sessionId, ExpiredCartRefresh refresh) {
+        CartResult cart = refresh.cart();
+        if (cart == null || cart.items() == null || cart.items().isEmpty()) {
+            return "Han pasado más de 3 horas desde que confirmaste el pedido. Al revisar nuevamente la "
+                    + "disponibilidad, los productos ya no están disponibles y el carrito pendiente quedó vacío. "
+                    + "Indícame qué producto deseas para ayudarte a preparar un pedido nuevo. 💛";
+        }
+        StringBuilder text = new StringBuilder("Han pasado más de 3 horas desde que confirmaste el pedido, hermosa 💛 "
+                + "Volví a verificar el stock, los precios y las promociones antes de permitir el pago.");
+        if (refresh.removedItems() != null && !refresh.removedItems().isEmpty()) {
+            text.append("\n\nEstas opciones ya no están disponibles y fueron retiradas del carrito:");
+            refresh.removedItems().forEach(item -> text.append("\n• ").append(item.product())
+                    .append(" — ").append(item.color()).append(", ").append(item.size()));
+        }
+        return text.append("\n\n").append(cartTemplate(sessionId, cart, true)).toString();
     }
 
     /** Reabre el carrito confirmado antes de ejecutar una mutación concreta. */
@@ -312,7 +347,10 @@ public class AgentDeterministicCommerceService {
         if (cart.discountTotal() != null && cart.discountTotal().signum() > 0) {
             text.append("Descuento: ").append(money(cart.discountTotal())).append("\n");
         }
-        text.append("*Total: ").append(money(cart.total())).append("*\n\n");
+        text.append("*Total: ").append(money(cart.total())).append("*\n\n")
+                .append("📦 *Modalidades de entrega disponibles*\n")
+                .append("🏬 Recojo en tienda: sin costo adicional.\n")
+                .append("🚌 Envío por Shalom: requiere S/2 adicionales por el film protector para embalaje.\n\n");
         if (preorder && regular) {
             text.append("📅 Los despachos del pedido comienzan cuando los productos en preventa estén disponibles, ")
                     .append("a partir de la fecha indicada y según el volumen de pedidos.\n\n");
@@ -359,6 +397,9 @@ public class AgentDeterministicCommerceService {
 
     private Outcome showPaymentMethods(Long sessionId, String operation) {
         var session = requireSession(sessionId);
+        if (awaitingExpiredCartReconfirmation(session)) {
+            return expiredCartReconfirmation(sessionId, operation);
+        }
         if (session.getState() == CrmWhatsappAgentState.ARMANDO_CARRITO) {
             CartResult cart = carts.confirm(sessionId, operation + ":confirm-cart");
             return Outcome.executed(cartTemplate(sessionId, cart, false) + "\n\n"
@@ -400,6 +441,9 @@ public class AgentDeterministicCommerceService {
 
     private Outcome selectPaymentMethod(Long sessionId, AgentConversationDecision decision, String operation) {
         var session = requireSession(sessionId);
+        if (awaitingExpiredCartReconfirmation(session)) {
+            return expiredCartReconfirmation(sessionId, operation);
+        }
         if (session.getState() == CrmWhatsappAgentState.ARMANDO_CARRITO) {
             carts.confirm(sessionId, operation + ":confirm-cart");
         } else if (session.getState() != CrmWhatsappAgentState.ESPERANDO_METODO_PAGO) {
@@ -434,6 +478,23 @@ public class AgentDeterministicCommerceService {
         }
         PaymentRequestResult request = payments.createRequest(sessionId, operation + ":reserve");
         return Outcome.executed(paymentRequestTemplate(request));
+    }
+
+    private boolean awaitingExpiredCartReconfirmation(CrmWhatsappAgentSession session) {
+        return session != null
+                && session.getState() == CrmWhatsappAgentState.ARMANDO_CARRITO
+                && session.getLastEvent() == com.sistemapos.sistematextil.model.CrmWhatsappAgentEvent.CARRITO_REVALIDADO_POR_VENCIMIENTO;
+    }
+
+    private Outcome expiredCartReconfirmation(Long sessionId, String operation) {
+        CartResult refreshed = carts.recalculate(sessionId, operation + ":expired-cart-review");
+        if (refreshed.items().isEmpty()) {
+            return Outcome.executed("El carrito que superó las 3 horas ya no tiene productos disponibles. "
+                    + "Indícame qué producto deseas para preparar un pedido nuevo. 💛");
+        }
+        return Outcome.executed("Tu carrito superó las 3 horas y fue actualizado con la disponibilidad, los precios "
+                + "y las promociones vigentes. Antes de elegir el método de pago, confirma nuevamente este resumen:\n\n"
+                + cartTemplate(sessionId, refreshed, true));
     }
 
     PaymentMethodResolution resolvePaymentMethod(PaymentMethodList list, String paymentMethodReference) {
@@ -755,7 +816,9 @@ public class AgentDeterministicCommerceService {
     private String paymentMethodsTemplate(PaymentMethodList list) {
         StringBuilder text = new StringBuilder("💳 *Métodos de pago disponibles*\n");
         list.methods().forEach(method -> text.append("• ").append(method.name()).append("\n"));
-        return text.append("\n¿Cuál deseas utilizar?").toString();
+        return text.append("\nAl elegir tu método de pago y la cuenta, si aparece más de una, reservaremos tus "
+                + "productos durante *6 minutos* para que puedas enviar el comprobante sin que otra persona los compre.\n\n"
+                + "¿Cuál deseas utilizar?").toString();
     }
 
     private String ambiguousPaymentMethodsTemplate(List<PaymentMethodView> matches) {
@@ -771,9 +834,9 @@ public class AgentDeterministicCommerceService {
         if (!blank(request.accountNumber())) text.append("📱 Cuenta: *").append(request.accountNumber()).append("*\n");
         if (!blank(request.accountHolder())) text.append("👤 Titular: ").append(request.accountHolder()).append("\n");
         long minutes = Math.max(1, (request.expiresInSeconds() + 59) / 60);
-        text.append("\n⏱️ Tienes *").append(minutes)
+        text.append("\n✅ Tus productos quedaron reservados durante *").append(minutes)
                 .append(minutes == 1 ? " minuto" : " minutos")
-                .append("* para enviar el comprobante por este chat.");
+                .append("*.\n\nEnvía el comprobante por este chat antes de que termine el plazo para continuar con tu pedido.");
         return text.toString();
     }
 

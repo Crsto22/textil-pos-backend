@@ -97,6 +97,7 @@ public class CrmWhatsappAgentStateMachine {
         register(result, CrmWhatsappAgentState.ESPERANDO_METODO_PAGO,
                 entry(CrmWhatsappAgentEvent.METODO_PAGO_SELECCIONADO, CrmWhatsappAgentState.ESPERANDO_METODO_PAGO),
                 entry(CrmWhatsappAgentEvent.SOLICITUD_PAGO_CREADA, CrmWhatsappAgentState.ESPERANDO_COMPROBANTE),
+                entry(CrmWhatsappAgentEvent.CARRITO_REVALIDADO_POR_VENCIMIENTO, CrmWhatsappAgentState.ARMANDO_CARRITO),
                 entry(CrmWhatsappAgentEvent.EDICION_CARRITO_SOLICITADA, CrmWhatsappAgentState.ARMANDO_CARRITO),
                 entry(CrmWhatsappAgentEvent.CANCELACION_SOLICITADA, CrmWhatsappAgentState.CANCELADO),
                 entry(CrmWhatsappAgentEvent.AYUDA_REQUERIDA, CrmWhatsappAgentState.REQUIERE_AYUDA));

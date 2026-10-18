@@ -3,6 +3,7 @@ package com.sistemapos.sistematextil.services.agent;
 import static com.sistemapos.sistematextil.model.CrmWhatsappAgentEvent.AYUDA_REQUERIDA;
 import static com.sistemapos.sistematextil.model.CrmWhatsappAgentEvent.CANCELACION_SOLICITADA;
 import static com.sistemapos.sistematextil.model.CrmWhatsappAgentEvent.CARRITO_CONFIRMADO;
+import static com.sistemapos.sistematextil.model.CrmWhatsappAgentEvent.CARRITO_REVALIDADO_POR_VENCIMIENTO;
 import static com.sistemapos.sistematextil.model.CrmWhatsappAgentEvent.COMPROBANTE_APROBADO_INICIALMENTE;
 import static com.sistemapos.sistematextil.model.CrmWhatsappAgentEvent.COMPROBANTE_RECIBIDO;
 import static com.sistemapos.sistematextil.model.CrmWhatsappAgentEvent.CONVERSACION_INICIADA;
@@ -121,6 +122,12 @@ class CrmWhatsappAgentStateMachineTest {
         assertEquals(CANCELADO, machine.transition(ESPERANDO_COMPROBANTE, SOLICITUD_PAGO_EXPIRADA));
         assertEquals(ESPERANDO_METODO_PAGO, machine.transition(CANCELADO, SOLICITUD_PAGO_REINTENTADA));
         assertEquals(IDLE, machine.transition(CANCELADO, NUEVA_COMPRA_INICIADA));
+    }
+
+    @Test
+    void expiredConfirmedCartReturnsToReviewBeforePayment() {
+        assertEquals(ARMANDO_CARRITO,
+                machine.transition(ESPERANDO_METODO_PAGO, CARRITO_REVALIDADO_POR_VENCIMIENTO));
     }
 
     @Test

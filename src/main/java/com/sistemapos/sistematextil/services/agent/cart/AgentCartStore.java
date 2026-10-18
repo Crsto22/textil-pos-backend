@@ -43,7 +43,11 @@ public interface AgentCartStore {
     void completeOperation(String idempotencyKey, String responseJson, LocalDateTime now);
 
     record CartRow(Long id, Long sessionId, String status, String currency, BigDecimal subtotal,
-            BigDecimal discountTotal, BigDecimal total, Long lockVersion) {
+            BigDecimal discountTotal, BigDecimal total, Long lockVersion, LocalDateTime confirmedAt) {
+        public CartRow(Long id, Long sessionId, String status, String currency, BigDecimal subtotal,
+                BigDecimal discountTotal, BigDecimal total, Long lockVersion) {
+            this(id, sessionId, status, currency, subtotal, discountTotal, total, lockVersion, null);
+        }
     }
 
     record CartItemRow(Long id, Integer variantId, int quantity, String productName, String color, String size,

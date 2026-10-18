@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -106,6 +107,54 @@ class AgentCartServiceTest {
         assertEquals("CONFIRMED", result.status());
         assertEquals(CrmWhatsappAgentState.ESPERANDO_METODO_PAGO, session.getState());
         verify(store).confirm(org.mockito.Mockito.eq(5L), any());
+    }
+
+    @Test
+    void refreshesStockPricesAndPromotionsAfterExactlyThreeHours() {
+        session.setState(CrmWhatsappAgentState.ESPERANDO_METODO_PAGO);
+        cart = new CartRow(5L, 41L, "CONFIRMED", "PEN", new BigDecimal("120.00"), zero(),
+                new BigDecimal("120.00"), 1L, LocalDateTime.now().minusHours(3).minusSeconds(1));
+        when(store.lockActiveCart(41L)).thenReturn(Optional.of(cart));
+        when(store.findItems(5L)).thenReturn(List.of(persistedItem), List.of(persistedItem), List.of(persistedItem));
+
+        AgentCartService.ExpiredCartRefresh result = service.refreshExpiredConfirmedCart(41L);
+
+        assertTrue(result.refreshed());
+        assertEquals(CrmWhatsappAgentState.ARMANDO_CARRITO, session.getState());
+        assertEquals(new BigDecimal("120.00"), result.cart().total());
+        verify(store).reopen(org.mockito.Mockito.eq(5L), any());
+        verify(priceService).resolverPrecioVigente(stock.getProductoVariante(), 7);
+        verify(promotionRepository).listarActivas(any());
+    }
+
+    @Test
+    void keepsAConfirmedCartPayableBeforeThreeHours() {
+        session.setState(CrmWhatsappAgentState.ESPERANDO_METODO_PAGO);
+        cart = new CartRow(5L, 41L, "CONFIRMED", "PEN", new BigDecimal("120.00"), zero(),
+                new BigDecimal("120.00"), 1L, LocalDateTime.now().minusHours(2));
+        when(store.lockActiveCart(41L)).thenReturn(Optional.of(cart));
+
+        AgentCartService.ExpiredCartRefresh result = service.refreshExpiredConfirmedCart(41L);
+
+        assertTrue(!result.refreshed());
+        assertEquals(CrmWhatsappAgentState.ESPERANDO_METODO_PAGO, session.getState());
+        verify(store, never()).reopen(any(), any());
+        verify(priceService, never()).resolverPrecioVigente(any(), any());
+    }
+
+    @Test
+    void cancelsAnUnpaidConfirmedCartWithoutCreatingAReservation() {
+        session.setState(CrmWhatsappAgentState.ESPERANDO_METODO_PAGO);
+        cart = new CartRow(5L, 41L, "CONFIRMED", "PEN", new BigDecimal("120.00"), zero(),
+                new BigDecimal("120.00"), 1L, LocalDateTime.now());
+        when(store.lockActiveCart(41L)).thenReturn(Optional.of(cart));
+
+        assertTrue(service.cancelPendingCart(41L));
+
+        assertEquals(CrmWhatsappAgentState.CANCELADO, session.getState());
+        verify(store).reopen(org.mockito.Mockito.eq(5L), any());
+        verify(store).clearCart(5L);
+        verify(store).deletePendingPromotion(41L);
     }
 
     @Test

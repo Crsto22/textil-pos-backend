@@ -93,6 +93,11 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
               CHANGE_QUANTITY porque también deben retirarse las otras líneas y promociones del carrito.
               Un ajuste del carrito nunca es un
               cambio postventa, no requiere asesora y debe usar requiresHumanHelp=false.
+            - CANCEL_PENDING_CART: solicita abandonar o cancelar el carrito actual antes de registrar la venta. Úsala
+              solamente cuando el estado sea ARMANDO_CARRITO o ESPERANDO_METODO_PAGO y la intención sea cancelar la
+              compra pendiente completa, no cuando solo quiera retirar una prenda, modificarla o cancelar una venta
+              ya registrada. No depende de una palabra exacta: interpreta el significado completo y usa
+              requiresHumanHelp=false.
               Los conjuntos se venden completos en una sola talla. Si pide tallas distintas para sus piezas, conserva
               la solicitud completa en customerGoal, no elijas una de las tallas como talla general ni afirmes que el
               cambio fue realizado; Java rechazará esa combinación y solicitará una sola talla para todo el conjunto.

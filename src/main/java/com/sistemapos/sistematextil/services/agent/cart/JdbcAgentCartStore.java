@@ -21,7 +21,8 @@ public class JdbcAgentCartStore implements AgentCartStore {
     @Override
     public Optional<CartRow> lockActiveCart(Long sessionId) {
         return queryCart("""
-                SELECT id_agent_cart, id_agent_session, status, currency, subtotal, discount_total, total, lock_version
+                SELECT id_agent_cart, id_agent_session, status, currency, subtotal, discount_total, total, lock_version,
+                       confirmed_at
                 FROM crm_whatsapp_agent_cart
                 WHERE id_agent_session = ? AND active_slot = 1
                 LIMIT 1
@@ -32,7 +33,8 @@ public class JdbcAgentCartStore implements AgentCartStore {
     @Override
     public Optional<CartRow> findLatestCart(Long sessionId) {
         return queryCart("""
-                SELECT id_agent_cart, id_agent_session, status, currency, subtotal, discount_total, total, lock_version
+                SELECT id_agent_cart, id_agent_session, status, currency, subtotal, discount_total, total, lock_version,
+                       confirmed_at
                 FROM crm_whatsapp_agent_cart
                 WHERE id_agent_session = ?
                 ORDER BY id_agent_cart DESC
@@ -60,7 +62,7 @@ public class JdbcAgentCartStore implements AgentCartStore {
         if (key == null) throw new IllegalStateException("No se pudo crear el carrito persistente");
         return new CartRow(key.longValue(), sessionId, "DRAFT", "PEN",
                 java.math.BigDecimal.ZERO.setScale(2), java.math.BigDecimal.ZERO.setScale(2),
-                java.math.BigDecimal.ZERO.setScale(2), 0L);
+                java.math.BigDecimal.ZERO.setScale(2), 0L, null);
     }
 
     @Override
@@ -220,6 +222,7 @@ public class JdbcAgentCartStore implements AgentCartStore {
         return jdbc.query(sql, (rs, row) -> new CartRow(
                 rs.getLong("id_agent_cart"), rs.getLong("id_agent_session"), rs.getString("status"),
                 rs.getString("currency"), rs.getBigDecimal("subtotal"), rs.getBigDecimal("discount_total"),
-                rs.getBigDecimal("total"), rs.getLong("lock_version")), sessionId).stream().findFirst();
+                rs.getBigDecimal("total"), rs.getLong("lock_version"),
+                rs.getObject("confirmed_at", LocalDateTime.class)), sessionId).stream().findFirst();
     }
 }

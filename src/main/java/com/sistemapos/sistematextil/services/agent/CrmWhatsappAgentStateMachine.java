@@ -112,6 +112,8 @@ public class CrmWhatsappAgentStateMachine {
         register(result, CrmWhatsappAgentState.VALIDANDO_COMPROBANTE,
                 entry(CrmWhatsappAgentEvent.COMPROBANTE_APROBADO_INICIALMENTE,
                         CrmWhatsappAgentState.ESPERANDO_DATOS_CLIENTE),
+                entry(CrmWhatsappAgentEvent.COMPROBANTE_COMBINADO_APROBADO,
+                        CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM),
                 entry(CrmWhatsappAgentEvent.COMPROBANTE_OBSERVADO,
                         CrmWhatsappAgentState.ESPERANDO_COMPROBANTE),
                 entry(CrmWhatsappAgentEvent.COMPROBANTE_RECHAZADO_INICIALMENTE,

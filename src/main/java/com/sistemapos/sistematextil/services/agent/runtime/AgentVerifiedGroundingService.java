@@ -372,7 +372,13 @@ public class AgentVerifiedGroundingService {
                 && !decision.productReference().isBlank()) {
             references.add(decision.productReference().trim());
         }
-        if (references.isEmpty()) return;
+        if (references.isEmpty() && evidence.containsKey("unresolvedImageProductReference")) {
+            return;
+        }
+        if (references.isEmpty()) {
+            groundCatalogAttributes(sessionId, jobId, decision, ordinal, evidence);
+            return;
+        }
 
         Map<Integer, AgentCatalogQueryService.ProductSummary> products = new LinkedHashMap<>();
         List<Map<String, Object>> searches = new ArrayList<>();
@@ -1017,6 +1023,10 @@ public class AgentVerifiedGroundingService {
     private void groundCatalog(Long sessionId, Long jobId, AgentConversationDecision decision,
             String conversation, AtomicInteger ordinal, Map<String, Object> evidence,
             List<AgentMediaRequest> media) {
+        if (hasCatalogAttributesWithoutProduct(decision)) {
+            groundCatalogAttributes(sessionId, jobId, decision, ordinal, evidence);
+            return;
+        }
         boolean browsingCatalog = decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCTS;
         boolean imagesRequested = decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT_IMAGES;
         String multipleReferences = decision.productReferences() == null
@@ -1111,6 +1121,80 @@ public class AgentVerifiedGroundingService {
         }
     }
 
+    /**
+     * A color/size request without a model is a catalog-wide variant query, not a
+     * product-name search. Product summaries already contain the valid
+     * color-size pairs with positive stock, so filtering those pairs prevents a
+     * sentence such as "algún modelo en perla L" from being treated as a model
+     * name and also prevents false matches where the color and size exist only in
+     * different variants.
+     */
+    private void groundCatalogAttributes(Long sessionId, Long jobId, AgentConversationDecision decision,
+            AtomicInteger ordinal, Map<String, Object> evidence) {
+        String requestedColor = clean(decision.colorReference());
+        String requestedSize = clean(decision.sizeReference());
+        ProductSearchResult catalogResult = verified(sessionId, jobId, ordinal,
+                "buscar_productos", Map.of("consulta", "", "limite", 20,
+                        "disponibilidad", decision.catalogAvailability().name()),
+                ProductSearchResult.class,
+                () -> catalog.searchProducts(sessionId, "", 20, decision.catalogAvailability()));
+
+        List<AgentCatalogQueryService.ProductSummary> matches = catalogResult.products().stream()
+                .filter(product -> matchesCatalogAttributes(product, requestedColor, requestedSize))
+                .toList();
+        List<AgentCatalogQueryService.ProductSummary> ready = matches.stream()
+                .filter(product -> !product.preorder())
+                .toList();
+        List<AgentCatalogQueryService.ProductSummary> preorder = matches.stream()
+                .filter(AgentCatalogQueryService.ProductSummary::preorder)
+                .toList();
+
+        evidence.put("catalogAttributeAvailability", Map.of(
+                "requestedColor", requestedColor,
+                "requestedSize", requestedSize,
+                "availabilityFilter", decision.catalogAvailability().name(),
+                "products", matches,
+                "readyProducts", ready,
+                "preorderProducts", preorder,
+                "hasMoreCatalogProducts", catalogResult.hasMore()));
+    }
+
+    private boolean hasCatalogAttributesWithoutProduct(AgentConversationDecision decision) {
+        boolean hasProductReference = decision.productReference() != null
+                && !decision.productReference().isBlank();
+        hasProductReference = hasProductReference || (decision.productReferences() != null
+                && decision.productReferences().stream().anyMatch(reference -> reference != null
+                        && !reference.isBlank()));
+        return !hasProductReference
+                && ((decision.colorReference() != null && !decision.colorReference().isBlank())
+                        || (decision.sizeReference() != null && !decision.sizeReference().isBlank()));
+    }
+
+    private boolean matchesCatalogAttributes(AgentCatalogQueryService.ProductSummary product,
+            String requestedColor, String requestedSize) {
+        boolean hasColor = requestedColor != null && !requestedColor.isBlank();
+        boolean hasSize = requestedSize != null && !requestedSize.isBlank();
+        List<AgentCatalogQueryService.ColorAvailability> pairs = product.availabilityByColor() == null
+                ? List.of() : product.availabilityByColor();
+        if (!pairs.isEmpty()) {
+            return pairs.stream().anyMatch(availability ->
+                    (!hasColor || sameColor(availability.color(), requestedColor))
+                            && (!hasSize || containsExactSize(availability.sizes(), requestedSize)));
+        }
+        // Backward-compatible fallback for catalog sources that do not expose
+        // pair-level availability yet.
+        return (!hasColor || product.colors().stream().anyMatch(color -> sameColor(color, requestedColor)))
+                && (!hasSize || containsExactSize(product.sizes(), requestedSize));
+    }
+
+    private boolean containsExactSize(List<String> sizes, String requestedSize) {
+        if (sizes == null || requestedSize == null || requestedSize.isBlank()) return false;
+        String normalizedRequested = normalize(requestedSize);
+        return sizes.stream().filter(Objects::nonNull)
+                .map(this::normalize)
+                .anyMatch(normalizedRequested::equals);
+    }
+
     private void queueAvailableColorGallery(Integer productId, ProductDetail detail, ProductImageResult images,
             Map<String, Object> evidence, List<AgentMediaRequest> media) {
         List<String> availableColors = detail.colors() == null ? List.of() : detail.colors().stream()
@@ -1198,6 +1282,9 @@ public class AgentVerifiedGroundingService {
         if (interpreted.isEmpty() && decision.productReference() != null
                 && !decision.productReference().isBlank()) {
             interpreted.add(decision.productReference());
+        }
+        if (interpreted.isEmpty() && hasCatalogAttributesWithoutProduct(decision)) {
+            return decision;
         }
         boolean allReflectedInCurrentMessage = !interpreted.isEmpty() && interpreted.stream()
                 .allMatch(reference -> containsPhrase(normalize(currentInput), normalize(reference)));

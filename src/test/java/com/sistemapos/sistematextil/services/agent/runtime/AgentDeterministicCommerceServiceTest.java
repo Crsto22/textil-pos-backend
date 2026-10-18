@@ -290,11 +290,18 @@ class AgentDeterministicCommerceServiceTest {
     @Test
     void convertsARejectedCandidateAndNewLocationIntoAnotherSearch() {
         CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        AgentFulfillmentService fulfillment = mock(AgentFulfillmentService.class);
         CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
         session.setState(CrmWhatsappAgentState.ESPERANDO_CONFIRMACION_AGENCIA_SHALOM);
         when(sessions.findById(41L)).thenReturn(Optional.of(session));
+        var candidate = new com.sistemapos.sistematextil.services.agent.fulfillment.ShalomAgencySearchService.AgencyView(
+                44L, 410, "LIMA / SAN JUAN DE LURIGANCHO", "SJL", "LIMA", "LIMA",
+                "SAN JUAN DE LURIGANCHO", "AV. CANTO GRANDE 123", null, null, .99);
+        when(fulfillment.searchAgencies("San Juan de Lurigancho"))
+                .thenReturn(new com.sistemapos.sistematextil.services.agent.fulfillment.ShalomAgencySearchService.SearchResult(
+                        "MATCH", List.of(candidate)));
         AgentDeterministicCommerceService service = new AgentDeterministicCommerceService(
-                sessions, null, null, null, null, null, null, null, null, null, null);
+                sessions, null, null, null, null, null, fulfillment, null, null, null, null);
         AgentConversationDecision mistaken = new AgentConversationDecision(
                 AgentDecisionIntent.SHALOM_DATA, "San Juan de Lurigancho", "", "", "", 0, "",
                 AgentCartAction.NONE, AgentCommercialAction.REQUEST_SUPPORT, "", "", "", "",
@@ -302,8 +309,32 @@ class AgentDeterministicCommerceServiceTest {
 
         AgentConversationDecision normalized = service.normalizeShalomAgencyRefinement(41L, mistaken);
 
-        assertEquals(AgentCommercialAction.PROVIDE_SHALOM_DATA, normalized.commercialAction());
+        assertEquals(AgentCommercialAction.EDIT_SHALOM_DATA, normalized.commercialAction());
         assertEquals("San Juan de Lurigancho", normalized.shalomAgency());
+        assertEquals(List.of(AgentShalomDataField.AGENCY), normalized.shalomFieldsToChange());
+        assertFalse(normalized.requiresHumanHelp());
+    }
+
+    @Test
+    void repeatsPendingAgencyForAnAmbiguousContextualReply() {
+        CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        AgentFulfillmentService fulfillment = mock(AgentFulfillmentService.class);
+        CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
+        session.setState(CrmWhatsappAgentState.ESPERANDO_CONFIRMACION_AGENCIA_SHALOM);
+        when(sessions.findById(41L)).thenReturn(Optional.of(session));
+        when(fulfillment.searchAgencies("ya te envié los datos"))
+                .thenReturn(new com.sistemapos.sistematextil.services.agent.fulfillment.ShalomAgencySearchService.SearchResult(
+                        "NOT_FOUND", List.of()));
+        AgentDeterministicCommerceService service = new AgentDeterministicCommerceService(
+                sessions, null, null, null, null, null, fulfillment, null, null, null, null);
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.SHALOM_DATA, "ya te envié los datos", "", "", "", 0, "",
+                AgentCartAction.NONE, AgentCommercialAction.PROVIDE_SHALOM_DATA, "", "", "", "",
+                "", "", "", "", AgentCatalogAvailability.ALL, 90, false);
+
+        AgentConversationDecision normalized = service.normalizeShalomAgencyRefinement(41L, decision);
+
+        assertEquals(AgentCommercialAction.SHOW_PENDING_SHALOM_AGENCIES, normalized.commercialAction());
         assertFalse(normalized.requiresHumanHelp());
     }
 
@@ -385,6 +416,39 @@ class AgentDeterministicCommerceServiceTest {
 
         assertTrue(result.customerMessage().contains("DNI, celular, agencia de Shalom"));
         assertFalse(result.customerMessage().contains("nombres y apellidos"));
+    }
+
+    @Test
+    void combinedPaymentLinksCustomerFromCompleteShalomData() {
+        CrmWhatsappAgentSessionRepository sessions=mock(CrmWhatsappAgentSessionRepository.class);
+        AgentPaymentService payments=mock(AgentPaymentService.class);
+        AgentCustomerService customers=mock(AgentCustomerService.class);
+        AgentFulfillmentService fulfillment=mock(AgentFulfillmentService.class);
+        CrmWhatsappAgentSession session=new CrmWhatsappAgentSession();
+        session.setState(CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM);
+        when(sessions.findById(41L)).thenReturn(Optional.of(session));
+        when(payments.hasCombinedFilmPayment(41L)).thenReturn(true);
+        var agency=new com.sistemapos.sistematextil.services.agent.fulfillment.ShalomAgencySearchService.AgencyView(
+                9L,7,"AREQUIPA / AV PARRA","AQP","AREQUIPA","AREQUIPA","PARRA",
+                "AV. PARRA 379",null,null,.98);
+        var complete=new AgentFulfillmentService.FulfillmentResult(41L,51L,"SHALOM","AWAITING_AGENCY_CONFIRMATION",
+                "Ana Perez","DNI","12345678","999111222",null,null,null,null,null,List.of(agency),
+                "ESPERANDO_CONFIRMACION_AGENCIA_SHALOM",null);
+        when(fulfillment.savePartialShalomData(41L,"Ana Perez","12345678","999111222","Arequipa Parra"))
+                .thenReturn(new AgentFulfillmentService.ShalomDataProgress(complete,List.of(),List.of(),false));
+        AgentDeterministicCommerceService service=new AgentDeterministicCommerceService(sessions,null,null,null,
+                payments,customers,fulfillment,null,null,null,new AgentToolCallAuditService(null));
+        AgentConversationDecision decision=new AgentConversationDecision(AgentDecisionIntent.SHALOM_DATA,
+                "datos para envio","","","",0,"",AgentCartAction.NONE,
+                AgentCommercialAction.PROVIDE_SHALOM_DATA,"","","Ana Perez","999111222","SHALOM",
+                "12345678","Arequipa Parra","",AgentCatalogAvailability.ALL,100,false);
+
+        var result=service.execute(41L,null,decision);
+
+        verify(customers).registerFromShalom(41L,"Ana Perez","999111222",TipoDocumento.DNI,"12345678",
+                "agent-job-null:provide_shalom_data:customer");
+        verify(payments).bindApprovedCustomer(41L);
+        assertTrue(result.customerMessage().contains("AREQUIPA / AV PARRA"));
     }
 
     @Test

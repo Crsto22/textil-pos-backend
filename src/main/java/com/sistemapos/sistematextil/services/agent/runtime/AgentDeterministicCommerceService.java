@@ -178,12 +178,47 @@ public class AgentDeterministicCommerceService {
                 ? AgentCommercialAction.NONE : decision.commercialAction();
         String explicitAgency = !blank(decision.shalomAgency()) ? decision.shalomAgency()
                 : !blank(decision.shalomDestination()) ? decision.shalomDestination() : "";
-        String reference = !blank(explicitAgency) ? explicitAgency
-                : decision.intent() == com.sistemapos.sistematextil.services.agent.ai.AgentDecisionIntent.SHALOM_DATA
-                        ? decision.customerGoal() : "";
-        if ((action != AgentCommercialAction.NONE && action != AgentCommercialAction.REQUEST_SUPPORT)
-                ) return decision;
         var state = requireSession(sessionId).getState();
+        if(state==CrmWhatsappAgentState.ESPERANDO_CONFIRMACION_AGENCIA_SHALOM) {
+            if(action==AgentCommercialAction.CONFIRM_SHALOM_AGENCY) {
+                if(blank(explicitAgency))return decision.withRequiresHumanHelp(false);
+                var pendingResolution=fulfillment.resolvePendingAgencyReference(sessionId,explicitAgency);
+                if("MATCH".equals(pendingResolution.status()))return decision.withRequiresHumanHelp(false);
+                if("AMBIGUOUS".equals(pendingResolution.status()))
+                    return decision.withCommercialAction(AgentCommercialAction.SHOW_PENDING_SHALOM_AGENCIES)
+                            .withRequiresHumanHelp(false);
+                var newLocation=fulfillment.searchAgencies(explicitAgency);
+                if(!newLocation.candidates().isEmpty())
+                    return decision.withShalomDataEdit(List.of(AgentShalomDataField.AGENCY))
+                            .withRequiresHumanHelp(false);
+                return decision.withRequiresHumanHelp(false);
+            }
+            boolean explicitCorrection=decision.shalomFieldsToChange()!=null
+                    &&!decision.shalomFieldsToChange().isEmpty();
+            if(explicitCorrection&&action==AgentCommercialAction.EDIT_SHALOM_DATA)
+                return decision.withRequiresHumanHelp(false);
+            if(blank(explicitAgency)) {
+                String possibleNewAgency=decision.intent()==com.sistemapos.sistematextil.services.agent.ai.AgentDecisionIntent.SHALOM_DATA
+                        ? decision.customerGoal() : "";
+                if(!blank(possibleNewAgency)&&fulfillment!=null
+                        &&!fulfillment.searchAgencies(possibleNewAgency).candidates().isEmpty())
+                    return decision.withShalomAgencySearch(possibleNewAgency)
+                            .withShalomDataEdit(List.of(AgentShalomDataField.AGENCY))
+                            .withRequiresHumanHelp(false);
+                return decision.withCommercialAction(AgentCommercialAction.SHOW_PENDING_SHALOM_AGENCIES)
+                        .withRequiresHumanHelp(false);
+            }
+            var resolution=fulfillment.resolvePendingAgencyReference(sessionId,explicitAgency);
+            if("MATCH".equals(resolution.status()))
+                return decision.withCommercialAction(AgentCommercialAction.CONFIRM_SHALOM_AGENCY)
+                        .withRequiresHumanHelp(false);
+            if("AMBIGUOUS".equals(resolution.status()))
+                return decision.withCommercialAction(AgentCommercialAction.SHOW_PENDING_SHALOM_AGENCIES)
+                        .withRequiresHumanHelp(false);
+            return decision.withShalomDataEdit(List.of(AgentShalomDataField.AGENCY))
+                    .withRequiresHumanHelp(false);
+        }
+        if ((action != AgentCommercialAction.NONE && action != AgentCommercialAction.REQUEST_SUPPORT)) return decision;
         boolean waitingSavedData = state == CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM;
         if(waitingSavedData&&(decision.intent()==com.sistemapos.sistematextil.services.agent.ai.AgentDecisionIntent.SHALOM_DATA
                 ||decision.shalomFieldsToChange()!=null&&!decision.shalomFieldsToChange().isEmpty()
@@ -202,11 +237,7 @@ public class AgentDeterministicCommerceService {
             if((fields==null||fields.isEmpty())&&!blank(explicitAgency))fields=List.of(AgentShalomDataField.AGENCY);
             return decision.withShalomDataEdit(fields);
         }
-        if(blank(reference))return decision;
-        boolean mayBeRefinement = state == com.sistemapos.sistematextil.model.CrmWhatsappAgentState.ESPERANDO_CONFIRMACION_AGENCIA_SHALOM;
-        return mayBeRefinement && !blank(reference)
-                ? decision.withShalomAgencySearch(reference)
-                : decision;
+        return decision;
     }
 
     private Outcome executeInternal(Long sessionId, Long jobId, AgentConversationDecision decision,
@@ -225,6 +256,7 @@ public class AgentDeterministicCommerceService {
             case SELECT_SHALOM -> selectShalom(sessionId, operation);
             case PROVIDE_SHALOM_DATA -> saveShalomData(sessionId, decision, operation);
             case EDIT_SHALOM_DATA -> editShalomData(sessionId, decision, operation);
+            case SHOW_PENDING_SHALOM_AGENCIES -> showPendingShalomAgencies(sessionId);
             case CONFIRM_SHALOM_AGENCY -> confirmShalomAgency(sessionId, decision, operation);
             case REUSE_SHALOM_PROFILE -> reuseShalomProfile(sessionId, operation);
             case HAS_PREVIOUS_PENDING_ORDER -> confirmPreviousOrder(sessionId);
@@ -248,7 +280,8 @@ public class AgentDeterministicCommerceService {
             case CHANGE_CART, CANCEL_PENDING_CART, CONFIRM_CART, SHOW_PAYMENT_METHODS, SELECT_PAYMENT_METHOD, PAYMENT_TIME_REMAINING,
                     RETRY_PAYMENT, EXPLAIN_IMMEDIATE_PAYMENT_POLICY,
                     PROVIDE_CUSTOMER_DATA, CONFIRM_EXISTING_CUSTOMER, SELECT_PICKUP, SELECT_SHALOM,
-                    PROVIDE_SHALOM_DATA, EDIT_SHALOM_DATA, CONFIRM_SHALOM_AGENCY, REUSE_SHALOM_PROFILE,
+                    PROVIDE_SHALOM_DATA, EDIT_SHALOM_DATA, SHOW_PENDING_SHALOM_AGENCIES,
+                    CONFIRM_SHALOM_AGENCY, REUSE_SHALOM_PROFILE,
                     HAS_PREVIOUS_PENDING_ORDER, NO_PREVIOUS_PENDING_ORDER,
                     ACCEPT_FILM, DECLINE_FILM, SHARE_ADVISOR_CONTACT, SHARE_INVOICE_CONTACT,
                     SHARE_MOTORIZED_CONTACT,
@@ -531,8 +564,8 @@ public class AgentDeterministicCommerceService {
         if (phone.isBlank()) phone = conversationPhone(requireSession(sessionId));
         if (blank(decision.customerName())) {
             return phone.isBlank()
-                    ? Outcome.message("Para registrar tu compra, envíame en un solo mensaje:\n☑️ Nombre completo\n☑️ Número de celular")
-                    : Outcome.message("Para registrar tu compra, envíame tu nombre completo.");
+                    ? Outcome.message("Para registrar tu compra, envíame en un solo mensaje:\n☑️ Tu nombre\n☑️ Tu número de celular")
+                    : Outcome.message("Para registrar tu compra, envíame tu nombre, por favor.");
         }
         if (phone.isBlank()) {
             return Outcome.message("No pude identificar un celular válido en la conversación. Envíame tu número de celular de 9 dígitos.");
@@ -557,7 +590,7 @@ public class AgentDeterministicCommerceService {
     private Outcome confirmExistingCustomer(Long sessionId, String operation) {
         var session = requireSession(sessionId);
         if (session.getCliente() == null || session.getCliente().getIdCliente() == null) {
-            return Outcome.message("Para registrar tu compra, envíame tu nombre completo y número de celular.");
+            return Outcome.message("Para registrar tu compra, envíame tu nombre y número de celular.");
         }
         customers.link(sessionId, session.getCliente().getIdCliente(), operation);
         payments.bindApprovedCustomer(sessionId);
@@ -605,7 +638,14 @@ public class AgentDeterministicCommerceService {
                     + (profile.agencyAddress() == null ? "" : "\n" + profile.agencyAddress())
                     + "\n\n¿Deseas usar estos mismos datos para este pedido?");
         }
-        return Outcome.executed(shalomDataRequest());
+        List<String> missing=new java.util.ArrayList<>();
+        if(blank(result.recipientName()))missing.add("nombres y apellidos");
+        if(blank(result.documentNumber()))missing.add("DNI");
+        if(blank(result.phone()))missing.add("celular");
+        if(result.shalomAgencyId()==null)missing.add("agencia de Shalom");
+        return missing.size()==4?Outcome.executed(shalomDataRequest())
+                :Outcome.executed("Para continuar con el envío por Shalom, envíame únicamente: *"
+                        +String.join(", ",missing)+"*.");
     }
 
     private Outcome saveShalomData(Long sessionId, AgentConversationDecision decision, String operation) {
@@ -613,6 +653,11 @@ public class AgentDeterministicCommerceService {
         AgentFulfillmentService.ShalomDataProgress progress=fulfillment.savePartialShalomData(sessionId,
                 decision.customerName(),decision.documentNumber(),decision.customerPhone(),agency);
         AgentFulfillmentService.FulfillmentResult result=progress.fulfillment();
+        ensureCombinedCustomerLinked(sessionId,result,operation+":customer");
+        if(progress.missingFields().isEmpty()&&!result.agencyCandidates().isEmpty()
+                &&CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM.name().equals(result.agentState())
+                &&payments!=null&&payments.hasCombinedFilmPayment(sessionId))
+            result=fulfillment.completeCombinedShalomData(sessionId);
         if(progress.missingFields().isEmpty()&&!result.agencyCandidates().isEmpty())
             return Outcome.executed(agencyCandidatesMessage(result));
         StringBuilder message=new StringBuilder();
@@ -674,8 +719,23 @@ public class AgentDeterministicCommerceService {
                 : "¿Cuál de estas agencias deseas usar?").toString().trim();
     }
 
+    private Outcome showPendingShalomAgencies(Long sessionId) {
+        var pending=fulfillment.pendingAgencyConfirmation(sessionId);
+        if(pending.agencyCandidates().isEmpty())
+            return Outcome.message("La agencia anterior ya no está disponible. Envíame otra ciudad, dirección o "
+                    + "referencia de Shalom; conservaré tu nombre, DNI y celular.");
+        return Outcome.message(agencyCandidatesMessage(pending));
+    }
+
     private Outcome confirmShalomAgency(Long sessionId, AgentConversationDecision decision, String operation) {
-        var confirmed = fulfillment.confirmShalomAgency(sessionId, decision.shalomAgency(), operation);
+        ensureCombinedCustomerLinked(sessionId,fulfillment.pendingAgencyConfirmation(sessionId),
+                operation+":customer");
+        AgentFulfillmentService.FulfillmentResult confirmed;
+        try {
+            confirmed=fulfillment.confirmShalomAgency(sessionId,decision.shalomAgency(),operation);
+        } catch(IllegalArgumentException ambiguousReference) {
+            return showPendingShalomAgencies(sessionId);
+        }
         var sale = sales.createSalesNote(sessionId, operation + ":sale");
         if (payments.hasCombinedFilmPayment(sessionId)) {
             var film = films.confirmCombinedPayment(sessionId, sale.saleId());
@@ -683,6 +743,15 @@ public class AgentDeterministicCommerceService {
         }
         films.awaitPreviousOrderDecision(sessionId, sale.saleId());
         return Outcome.executed(previousOrderQuestion(confirmed, sale.saleId()));
+    }
+
+    private void ensureCombinedCustomerLinked(Long sessionId,
+            AgentFulfillmentService.FulfillmentResult result,String operation) {
+        if(payments==null||!payments.hasCombinedFilmPayment(sessionId))return;
+        if(result==null||blank(result.recipientName())||blank(result.documentNumber())||blank(result.phone()))return;
+        customers.registerFromShalom(sessionId,result.recipientName(),result.phone(),TipoDocumento.DNI,
+                result.documentNumber(),operation);
+        payments.bindApprovedCustomer(sessionId);
     }
 
     private Outcome reuseShalomProfile(Long sessionId, String operation) {

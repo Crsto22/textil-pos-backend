@@ -511,6 +511,44 @@ class AgentConversationOrchestratorTest {
     }
 
     @Test
+    void requiresEveryCatalogMatchForAGlobalColorAndSizeQuestion() {
+        Fixture fixture = new Fixture();
+        fixture.current(true, true, true);
+        when(fixture.grounding.ground(eq(7L), eq(8L), eq(41L), any())).thenReturn(
+                new AgentVerifiedGroundingService.Grounding(
+                        new AgentConversationDecision(AgentDecisionIntent.PRODUCT_SEARCH,
+                                "modelos perla talla L", "", "PERLA", "L", 0, "",
+                                com.sistemapos.sistematextil.services.agent.ai.AgentCartAction.NONE,
+                                AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY,
+                                "", "", "", "", "", "", "", "",
+                                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL,
+                                100, false),
+                        "{\"catalogAttributeAvailability\":{\"requestedColor\":\"PERLA\","
+                                + "\"requestedSize\":\"L\",\"products\":["
+                                + "{\"name\":\"ALICE RAYAS\",\"priceFrom\":90.0,\"preorder\":false},"
+                                + "{\"name\":\"ANNIE ENTERO\",\"priceFrom\":75.0,\"preorder\":true}]}}",
+                        java.util.List.of(), 1, false));
+        when(fixture.gateway.respond(eq(7L), any(), eq(12)))
+                .thenReturn(new AgentResponseResult("GEMINI", "gemini", 100, 1,
+                        new AgentTurnResponse("Alice Rayas perla talla L esta disponible a S/90.00.",
+                                "Disponibilidad", false, java.util.List.of())))
+                .thenReturn(new AgentResponseResult("GEMINI", "gemini", 80, 0,
+                        new AgentTurnResponse(
+                                "Alice Rayas perla talla L esta disponible a S/90.00 para entrega inmediata. "
+                                        + "Annie Entero perla talla L esta disponible en preventa a S/75.00.",
+                                "Disponibilidad", false, java.util.List.of())));
+
+        assertEquals(AgentConversationOrchestrator.Outcome.COMPLETED,
+                fixture.orchestrator.process(fixture.lease));
+
+        verify(fixture.gateway, times(2)).respond(eq(7L), any(), eq(12));
+        ArgumentCaptor<GeneratedTurn> turn = ArgumentCaptor.forClass(GeneratedTurn.class);
+        verify(fixture.jobs).saveGeneratedTurn(eq(41L), eq("worker:lease"), turn.capture(), any());
+        assertTrue(turn.getValue().customerMessage().contains("Alice Rayas"));
+        assertTrue(turn.getValue().customerMessage().contains("Annie Entero"));
+    }
+
+    @Test
     void addsIndividualGalleryLinkForAGeneralSingleProductAnswer() {
         Fixture fixture = new Fixture();
         fixture.current(true, true, true);

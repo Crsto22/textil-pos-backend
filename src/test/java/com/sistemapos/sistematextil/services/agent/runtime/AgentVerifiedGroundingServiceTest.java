@@ -33,6 +33,7 @@ import com.sistemapos.sistematextil.services.agent.ai.AgentDecisionIntent;
 import com.sistemapos.sistematextil.services.agent.ai.AgentInterpretationResult;
 import com.sistemapos.sistematextil.services.agent.ai.AgentMediaRequest.MediaType;
 import com.sistemapos.sistematextil.services.agent.catalog.AgentCatalogQueryService;
+import com.sistemapos.sistematextil.services.agent.catalog.AgentCatalogQueryService.ColorAvailability;
 import com.sistemapos.sistematextil.services.agent.catalog.AgentCatalogQueryService.ProductDetail;
 import com.sistemapos.sistematextil.services.agent.catalog.AgentCatalogQueryService.ProductImage;
 import com.sistemapos.sistematextil.services.agent.catalog.AgentCatalogQueryService.ProductImageResult;
@@ -474,6 +475,53 @@ class AgentVerifiedGroundingServiceTest {
         assertTrue(result.evidenceJson().contains("EMMA"));
         assertFalse(result.evidenceJson().contains("ALICE RAYAS"));
         assertFalse(result.evidenceJson().toLowerCase().contains("stock"));
+    }
+
+    @Test
+    void searchesTheWholeCatalogByExactColorAndSizeWhenNoModelWasNamed() {
+        AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.PRODUCT_SEARCH, "buscar modelos perla talla L", "", List.of(),
+                "PERLA", "L", 0, "", List.of(), AgentCartAction.NONE,
+                AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY,
+                "", "", "", "", "", "", "", "", List.of(),
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL,
+                "", List.of(), "", 98, false);
+        String conversation = "LOTE_ACTUAL_AGRUPADO:\n"
+                + "Hola queria saber si tiene en stock algun modelo en perla L";
+        when(decisions.interpret(4L, conversation)).thenReturn(
+                new AgentInterpretationResult("GEMINI", "model", "DB", 10, 0, decision));
+
+        ProductSummary aliceRayas = productWithAvailability(58, "ALICE RAYAS", false,
+                List.of(new ColorAvailability("PERLA", List.of("L", "S"), 4)));
+        ProductSummary annieEntero = productWithAvailability(64, "ANNIE ENTERO", true,
+                List.of(new ColorAvailability("PERLA", List.of("L"), 2)));
+        ProductSummary wrongPair = productWithAvailability(59, "EMMA", false,
+                List.of(new ColorAvailability("PERLA", List.of("S"), 2),
+                        new ColorAvailability("NEGRO", List.of("L"), 3)));
+        when(catalog.searchProducts(9L, "", 20,
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL))
+                .thenReturn(new ProductSearchResult("", 1,
+                        com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL,
+                        List.of(aliceRayas, annieEntero, wrongPair), false));
+
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
+                mock(AgentCartService.class), passThroughAudit());
+
+        var result = service.ground(4L, 9L, 30L, conversation);
+
+        assertEquals(1, result.verifiedToolCalls());
+        assertTrue(result.evidenceJson().contains("catalogAttributeAvailability"));
+        assertTrue(result.evidenceJson().contains("ALICE RAYAS"));
+        assertTrue(result.evidenceJson().contains("ANNIE ENTERO"));
+        assertFalse(result.evidenceJson().contains("EMMA"));
+        assertTrue(result.evidenceJson().contains("readyProducts"));
+        assertTrue(result.evidenceJson().contains("preorderProducts"));
+        assertFalse(result.evidenceJson().toLowerCase().contains("stock"));
+        verify(catalog).searchProducts(9L, "", 20,
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL);
     }
 
     @Test
@@ -1381,6 +1429,16 @@ class AgentVerifiedGroundingServiceTest {
     private ProductDetail productWithGuide(Integer id, String name, String guideUrl) {
         return new ProductDetail(id, name, "", "CONJUNTO", false, null, guideUrl, null,
                 List.of(), List.of("S"), 10, 75D, 1);
+    }
+
+    private ProductSummary productWithAvailability(Integer id, String name, boolean preorder,
+            List<ColorAvailability> availability) {
+        List<String> colors = availability.stream().map(ColorAvailability::color).distinct().toList();
+        List<String> sizes = availability.stream().flatMap(item -> item.sizes().stream()).distinct().toList();
+        int total = availability.stream().mapToInt(ColorAvailability::totalStock).sum();
+        return new ProductSummary(id, name, "", "CONJUNTO", preorder,
+                preorder ? LocalDate.of(2026, 10, 26) : null, 75D, total,
+                colors, sizes, availability, "https://kiments.com.pe/productos/" + name.toLowerCase());
     }
 
     private VariantSummary availableVariant(

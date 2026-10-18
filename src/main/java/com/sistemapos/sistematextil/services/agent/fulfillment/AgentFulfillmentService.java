@@ -42,6 +42,7 @@ import com.sistemapos.sistematextil.services.agent.ai.AgentShalomDataField;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartStore;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartStore.OperationRow;
 import com.sistemapos.sistematextil.services.agent.fulfillment.ShalomAgencySearchService.AgencyView;
+import com.sistemapos.sistematextil.services.agent.fulfillment.ShalomAgencySearchService.ReferenceResolution;
 import com.sistemapos.sistematextil.services.agent.fulfillment.ShalomAgencySearchService.SearchResult;
 import com.sistemapos.sistematextil.util.crm.CrmWhatsappPhoneUtils;
 
@@ -123,9 +124,42 @@ public class AgentFulfillmentService {
                         f.setPhone(profile.getPhone()); bindAgency(f,agency);
                         f.setShalomCandidateIds(agency.getIdShalomAgency().toString()); f=fulfillments.save(f);
                     }
+                } else {
+                    f.setRecipientName(clean(scope.session().getCliente().getNombres()));
+                    String customerPhone=CrmWhatsappPhoneUtils.normalizePeruvianMobile(
+                            scope.session().getCliente().getTelefono());
+                    f.setPhone(customerPhone.isBlank()?null:customerPhone);
+                    f=fulfillments.save(f);
                 }
             }
             apply(scope.session(),CrmWhatsappAgentEvent.ENVIO_SHALOM_SELECCIONADO); return result(f,scope.session());
+        });
+    }
+
+    /**
+     * Prepara Shalom cuando el comprobante principal ya incluyo el film. El
+     * estado fue avanzado por la validacion del pago y aun puede no existir un
+     * cliente: sus datos se vincularan a medida que lleguen los datos Shalom.
+     */
+    @Transactional
+    public FulfillmentResult initializeCombinedShalom(Long sessionId,String operationId){
+        return execute(sessionId,operationId,"inicializar_envio_shalom_combinado","SHALOM",()->{
+            CrmWhatsappAgentSession session=requireSession(sessionId,true);
+            if(session.getState()!=CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM)
+                throw new IllegalStateException("La sesion no esta esperando los datos de Shalom");
+            CrmWhatsappPaymentRequest payment=requireApprovedPayment(session);
+            if(payment.getIncludedFilmAmount()==null||payment.getIncludedFilmAmount().signum()<=0)
+                throw new IllegalStateException("El pago aprobado no incluye el film protector");
+            Scope scope=new Scope(session,payment);
+            CrmWhatsappFulfillment f=getOrCreate(scope,operationId);
+            f.setMethod(CrmWhatsappFulfillmentMethod.SHALOM);
+            f.setStatus(CrmWhatsappFulfillmentStatus.DRAFT);
+            f.setPickupBranch(null);
+            clearShalom(f);
+            f.setDocumentType("DNI");
+            f.setConfirmedAt(null);
+            f=fulfillments.save(f);
+            return result(f,session);
         });
     }
 
@@ -172,7 +206,7 @@ public class AgentFulfillmentService {
         CrmWhatsappAgentSession session=requireSession(sessionId,true);
         if(session.getState()!=CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM)
             throw new IllegalStateException("La sesion no esta esperando los datos de Shalom");
-        requireApprovedPayment(session);
+        CrmWhatsappPaymentRequest approvedPayment=requireApprovedPayment(session);
         CrmWhatsappFulfillment f=requireShalom(sessionId);
         List<String> validationErrors=new ArrayList<>();
 
@@ -211,7 +245,10 @@ public class AgentFulfillmentService {
         f.setStatus(personalComplete&&agencyReady?CrmWhatsappFulfillmentStatus.AWAITING_AGENCY_CONFIRMATION
                 :CrmWhatsappFulfillmentStatus.DRAFT);
         f=fulfillments.save(f);
-        if(personalComplete&&agencyReady)apply(session,CrmWhatsappAgentEvent.DATOS_SHALOM_COMPLETADOS);
+        boolean combinedNeedsCustomer=approvedPayment.getIncludedFilmAmount()!=null
+                &&approvedPayment.getIncludedFilmAmount().signum()>0&&session.getCliente()==null;
+        if(personalComplete&&agencyReady&&!combinedNeedsCustomer)
+            apply(session,CrmWhatsappAgentEvent.DATOS_SHALOM_COMPLETADOS);
 
         List<String> missing=new ArrayList<>();
         if(clean(f.getRecipientName()).isBlank())missing.add("nombres y apellidos");
@@ -220,6 +257,27 @@ public class AgentFulfillmentService {
         if(!agencyReady)missing.add("agencia de Shalom");
         return new ShalomDataProgress(result(f,session,candidates),List.copyOf(missing),
                 List.copyOf(validationErrors),agencySearchAttempted&&!agencyReady);
+    }
+
+    @Transactional
+    public FulfillmentResult completeCombinedShalomData(Long sessionId){
+        CrmWhatsappAgentSession session=requireSession(sessionId,true);
+        if(session.getState()!=CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM)
+            throw new IllegalStateException("La sesion no esta esperando los datos de Shalom");
+        CrmWhatsappPaymentRequest payment=requireApprovedPayment(session);
+        if(payment.getIncludedFilmAmount()==null||payment.getIncludedFilmAmount().signum()<=0)
+            throw new IllegalStateException("El pago aprobado no incluye el film protector");
+        if(session.getCliente()==null||payment.getCliente()==null)
+            throw new IllegalStateException("Los datos del cliente aun no estan vinculados al pago");
+        CrmWhatsappFulfillment f=requireShalom(sessionId);
+        List<AgencyView> candidates=existingCandidateViews(f);
+        boolean complete=!clean(f.getRecipientName()).isBlank()
+                &&clean(f.getDocumentNumber()).matches("\\d{8}")
+                &&!CrmWhatsappPhoneUtils.normalizePeruvianMobile(f.getPhone()).isBlank()
+                &&!candidates.isEmpty();
+        if(!complete)throw new IllegalStateException("Los datos de Shalom aun estan incompletos");
+        apply(session,CrmWhatsappAgentEvent.DATOS_SHALOM_COMPLETADOS);
+        return result(f,session,candidates);
     }
 
     @Transactional
@@ -297,17 +355,33 @@ public class AgentFulfillmentService {
         if(offered.isEmpty())throw new IllegalStateException("No hay agencias Shalom ofrecidas para confirmar");
         Long selected=null;
         String reference=ShalomAgencySyncService.normalize(agencyReference);
-        if(offered.size()==1&&(reference.isBlank()||reference.equals("si")||reference.equals("esa")))selected=offered.getFirst();
-        if(selected==null){
-            List<ShalomAgency> matches=offered.stream().map(agencies::findById).flatMap(Optional::stream)
-                    .filter(a->a.isActive()&&a.isDestinationEnabled())
-                    .filter(a->{String haystack=ShalomAgencySyncService.normalize(a.getName()+" "+Objects.toString(a.getAddress(),""));
-                        return !reference.isBlank()&&(haystack.contains(reference)||reference.contains(ShalomAgencySyncService.normalize(a.getName())));})
-                    .toList();
-            if(matches.size()==1)selected=matches.getFirst().getIdShalomAgency();
-        }
+        // La intención afirmativa ya fue interpretada por la IA y validada por el
+        // estado. Con una sola opción no exigimos una palabra literal determinada.
+        ReferenceResolution resolution=agencySearch.resolveReference(reference,offered);
+        if(resolution.agencyId()!=null)selected=resolution.agencyId();
+        // Este método solo se invoca después de que la IA interpretó una intención
+        // de confirmación. Si había una única candidata, una frase afirmativa libre
+        // también la confirma sin mantener una lista rígida de palabras.
+        if(selected==null&&offered.size()==1)selected=offered.getFirst();
         if(selected==null)throw new IllegalArgumentException("Indica cual de las agencias ofrecidas deseas confirmar");
         return confirmShalomAgency(sessionId,selected,operationId);
+    }
+
+    @Transactional(readOnly = true)
+    public ReferenceResolution resolvePendingAgencyReference(Long sessionId,String reference) {
+        CrmWhatsappFulfillment f=fulfillments.findByAgentSession_IdAgentSession(sessionId)
+                .orElseThrow(()->new IllegalStateException("No existen datos Shalom pendientes"));
+        return agencySearch.resolveReference(reference,candidateIds(f));
+    }
+
+    @Transactional(readOnly = true)
+    public FulfillmentResult pendingAgencyConfirmation(Long sessionId) {
+        CrmWhatsappAgentSession session=requireSession(sessionId,false);
+        if(session.getState()!=CrmWhatsappAgentState.ESPERANDO_CONFIRMACION_AGENCIA_SHALOM)
+            throw new IllegalStateException("La sesion no esta esperando confirmar una agencia Shalom");
+        CrmWhatsappFulfillment f=fulfillments.findByAgentSession_IdAgentSession(sessionId)
+                .orElseThrow(()->new IllegalStateException("No existen datos Shalom pendientes"));
+        return result(f,session,existingCandidateViews(f));
     }
 
     @Transactional

@@ -313,7 +313,8 @@ public class AgentPaymentEvidenceAnalysisStore {
         switch (validation.outcome()) {
             case APPROVED_INITIAL -> {
                 request.setIncludedFilmAmount(validation.includedFilmAmount());
-                if (validation.includedFilmAmount().signum() > 0) {
+                boolean combinedFilm = validation.includedFilmAmount().signum() > 0;
+                if (combinedFilm) {
                     session.setPreferredFulfillmentMethod(
                             com.sistemapos.sistematextil.model.CrmWhatsappFulfillmentMethod.SHALOM);
                 }
@@ -321,14 +322,18 @@ public class AgentPaymentEvidenceAnalysisStore {
                 request.setStatus(CrmWhatsappPaymentRequestStatus.UNDER_REVIEW);
                 request.setEvidenceAcceptedAt(now);
                 request.setReviewExpiresAt(now.plusHours(24));
-                applyEvent(session, CrmWhatsappAgentEvent.COMPROBANTE_APROBADO_INICIALMENTE, now);
-                if (hasCompleteCustomer(session)) {
+                applyEvent(session, combinedFilm
+                        ? CrmWhatsappAgentEvent.COMPROBANTE_COMBINADO_APROBADO
+                        : CrmWhatsappAgentEvent.COMPROBANTE_APROBADO_INICIALMENTE, now);
+                if (!combinedFilm && hasCompleteCustomer(session)) {
                     request.setCliente(session.getCliente());
                     applyEvent(session, CrmWhatsappAgentEvent.DATOS_CLIENTE_COMPLETADOS, now);
-                    if (validation.includedFilmAmount().signum() > 0 && fulfillmentService != null) {
-                        fulfillmentService.selectShalom(session.getIdAgentSession(),
-                                "combined-main-payment:" + evidence.getIdPaymentEvidence());
-                    }
+                } else if (combinedFilm) {
+                    if (hasCompleteCustomer(session)) request.setCliente(session.getCliente());
+                    requestRepository.save(request);
+                    if (fulfillmentService != null) fulfillmentService.initializeCombinedShalom(
+                            session.getIdAgentSession(),
+                            "combined-main-payment:" + evidence.getIdPaymentEvidence());
                 }
             }
             case OBSERVED -> {
@@ -372,25 +377,24 @@ public class AgentPaymentEvidenceAnalysisStore {
     String approvedCustomerMessage(CrmWhatsappAgentSession session, CrmWhatsappPaymentRequest request) {
         boolean combinedFilm = request != null && request.getIncludedFilmAmount() != null
                 && request.getIncludedFilmAmount().signum() > 0;
-        if (combinedFilm && hasCompleteCustomer(session)) {
-            return combinedPaymentMessage(request)
-                    + "\n\nPara continuar, enviame tus datos de Shalom: nombres y apellidos, DNI, celular y agencia.";
-        }
         if (combinedFilm) {
-            String pending = !conversationPhone(session).isBlank()
-                    ? "Para registrar tu compra, enviame tu nombre completo."
-                    : "Para registrar tu compra, enviame tu nombre completo y numero de celular.";
-            return combinedPaymentMessage(request) + "\n\n" + pending;
+            return combinedPaymentMessage(request)
+                    + "\n\nPara registrar tu compra y coordinar el envío, envíame:\n"
+                    + "☑️ Nombres y apellidos\n"
+                    + "☑️ DNI\n"
+                    + "☑️ Celular\n"
+                    + "☑️ Agencia de Shalom\n\n"
+                    + "Puedes enviarlos juntos o por partes; guardaré cada dato válido y te indicaré únicamente lo que falte.";
         }
         if (hasCompleteCustomer(session)) {
             return "✅ Comprobante validado correctamente.\n\n¿Cómo deseas recibir tu pedido?\n"
                     + "🏬 Recojo en tienda\n🚌 Envío por Shalom";
         }
         if (!conversationPhone(session).isBlank()) {
-            return "✅ Comprobante validado correctamente.\n\nPara registrar tu compra, envíame tu nombre completo.";
+            return "✅ Comprobante validado correctamente.\n\nPara registrar tu compra, envíame tu nombre, por favor.";
         }
         return "✅ Comprobante validado correctamente.\n\nPara registrar tu compra, envíame:\n"
-                + "☑️ Nombre completo\n☑️ Número de celular";
+                + "☑️ Tu nombre\n☑️ Tu número de celular";
     }
 
     private String combinedPaymentMessage(CrmWhatsappPaymentRequest request) {

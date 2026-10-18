@@ -216,8 +216,11 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
             - ALL: no limita por preventa.
             - PREORDER_ONLY: solicita exclusivamente productos en preventa.
             - READY_STOCK_ONLY: solicita productos que no son preventa, entrega inmediata o stock listo.
-            Devuelve ALL cuando la clienta no establezca esa condicion. No deduzcas este campo mediante coincidencia literal:
-            interpreta el significado completo de su mensaje.
+            Decir solamente que busca un producto "en stock", "disponible" o preguntar si "tienen" NO excluye
+            preventas con variantes disponibles: en esos casos devuelve ALL. Usa READY_STOCK_ONLY solo cuando la
+            clienta pida de manera inequívoca entrega inmediata, que no sea preventa o mercadería lista ahora.
+            Devuelve ALL cuando la clienta no establezca esa condicion. No deduzcas este campo mediante coincidencia
+            literal: interpreta el significado completo de su mensaje.
             cartAction debe ser NONE salvo que la clienta quiera modificar el carrito. Cuando cartAction sea
             CHANGE_QUANTITY, KEEP_ONLY_PRODUCT, CHANGE_VARIANT, REPLACE_CART, REMOVE_PRODUCT o CLEAR_CART usa tambien
             commercialAction CHANGE_CART.

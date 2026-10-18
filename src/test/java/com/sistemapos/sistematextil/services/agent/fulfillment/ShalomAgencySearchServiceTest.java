@@ -54,6 +54,40 @@ class ShalomAgencySearchServiceTest {
         assertEquals(1L, result.candidates().getFirst().agencyId());
     }
 
+    @Test
+    void resolvesAnOfferedAgencyRegardlessOfGenericWordsOrTokenOrder() {
+        ShalomAgencyRepository repository = mock(ShalomAgencyRepository.class);
+        ShalomAgency liverpool = agency(22L,
+                "LA LIBERTAD / TRUJILLO / TRUJILLO / CALLE LIVERPOOL",
+                "LA LIBERTAD", "TRUJILLO", "TRUJILLO", "CALLE LIVERPOOL",
+                "CALLE LIVERPOOL 241, TRUJILLO");
+        when(repository.findById(22L)).thenReturn(java.util.Optional.of(liverpool));
+
+        ShalomAgencySearchService service = new ShalomAgencySearchService(repository);
+
+        assertEquals(22L, service.resolveReference("Trujillo - sede Liverpool", List.of(22L)).agencyId());
+        assertEquals(22L, service.resolveReference("Shalom de Liverpool en Trujillo", List.of(22L)).agencyId());
+        assertEquals(22L, service.resolveReference("Liverpool Trujillo", List.of(22L)).agencyId());
+    }
+
+    @Test
+    void doesNotChooseWhenTheReferenceMatchesSeveralOfferedAgencies() {
+        ShalomAgencyRepository repository = mock(ShalomAgencyRepository.class);
+        ShalomAgency first = agency(22L, "TRUJILLO / CALLE LIVERPOOL",
+                "LA LIBERTAD", "TRUJILLO", "TRUJILLO", "LIVERPOOL", "CALLE LIVERPOOL 241");
+        ShalomAgency second = agency(23L, "TRUJILLO / AV ESPAÑA",
+                "LA LIBERTAD", "TRUJILLO", "TRUJILLO", "AV ESPAÑA", "AV ESPAÑA 100");
+        when(repository.findById(22L)).thenReturn(java.util.Optional.of(first));
+        when(repository.findById(23L)).thenReturn(java.util.Optional.of(second));
+
+        var result = new ShalomAgencySearchService(repository)
+                .resolveReference("agencia de Trujillo", List.of(22L, 23L));
+
+        assertEquals("AMBIGUOUS", result.status());
+        assertEquals(null, result.agencyId());
+        assertEquals(2, result.candidates().size());
+    }
+
     private ShalomAgency agency(Long id, String name, String department, String province,
             String zone, String place, String address) {
         ShalomAgency value = new ShalomAgency();

@@ -163,6 +163,11 @@ public class AgentConversationOrchestrator {
                         - Todo producto que menciones o muestres debe incluir su precio real de la evidencia.
                           No omitas precios, no los agrupes si tienen importes distintos y no inventes montos.
                         - Cuando exista availabilityByColor, presenta cada color con sus tallas disponibles reales.
+                        - Cuando exista catalogAttributeAvailability, la clienta consulto el catalogo completo por
+                          color, talla o ambos sin nombrar un modelo. Menciona todos los productos verificados en
+                          products, con su precio, y separa naturalmente entrega inmediata de preventa usando el
+                          campo preorder. Si products esta vacio, informa que no existe esa combinacion. No conviertas
+                          la regla en una plantilla ni reveles cantidades internas.
                         - Cuando exista requestedVariantAvailability, redacta la respuesta de forma natural usando
                           exclusivamente sus productos, precios y variantes verificadas. No uses una plantilla fija.
                           Si variants esta vacio, informa que la combinacion solicitada no tiene stock y NUNCA
@@ -576,8 +581,12 @@ public class AgentConversationOrchestrator {
             String customerMessage) {
         if (grounding == null || grounding.evidenceJson() == null) return "";
         try {
-            JsonNode availability = evidenceMapper.readTree(grounding.evidenceJson())
-                    .path("requestedVariantAvailability");
+            JsonNode root = evidenceMapper.readTree(grounding.evidenceJson());
+            JsonNode catalogAttributes = root.path("catalogAttributeAvailability");
+            if (!catalogAttributes.isMissingNode()) {
+                return catalogAttributeCorrectionInstruction(catalogAttributes, customerMessage);
+            }
+            JsonNode availability = root.path("requestedVariantAvailability");
             if (availability.isMissingNode()) return "";
             boolean specificSelection = !availability.path("requestedColor").asText("").isBlank()
                     || !availability.path("requestedSize").asText("").isBlank();
@@ -628,6 +637,38 @@ public class AgentConversationOrchestrator {
         } catch (Exception ignored) {
             return "";
         }
+    }
+
+    private String catalogAttributeCorrectionInstruction(JsonNode availability, String customerMessage) {
+        JsonNode products = availability.path("products");
+        if (!products.isArray()) return "";
+        List<String> requiredProducts = new ArrayList<>();
+        products.forEach(product -> {
+            String name = product.path("name").asText("").trim();
+            if (!name.isBlank()) requiredProducts.add(name);
+        });
+        String response = normalizeText(customerMessage);
+        if (requiredProducts.isEmpty()) {
+            return "";
+        }
+        List<String> omitted = requiredProducts.stream()
+                .filter(name -> !response.contains(normalizeText(name)))
+                .toList();
+        boolean falselyUnavailable = response.contains("no hay stock")
+                || response.contains("no tenemos stock")
+                || response.contains("no esta disponible")
+                || response.contains("no esta disponibles")
+                || response.contains("no contamos con stock");
+        List<String> corrections = new ArrayList<>();
+        if (!omitted.isEmpty()) {
+            corrections.add("La consulta abarca todo el catalogo por color y talla. Menciona todos los productos "
+                    + "verificados, sin omitir ninguno: " + String.join(", ", requiredProducts) + ".");
+        }
+        if (falselyUnavailable) {
+            corrections.add("La evidencia contiene productos disponibles para la combinacion solicitada. No afirmes "
+                    + "que no hay stock; distingue los productos de entrega inmediata y los de preventa.");
+        }
+        return String.join(" ", corrections);
     }
 
     private String inventoryDisclosureCorrectionInstruction(String customerMessage) {

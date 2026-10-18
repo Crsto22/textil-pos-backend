@@ -44,6 +44,7 @@ import com.sistemapos.sistematextil.services.agent.ai.AgentShalomDataField;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartStore;
 import com.sistemapos.sistematextil.services.agent.fulfillment.ShalomAgencySearchService.AgencyView;
 import com.sistemapos.sistematextil.services.agent.fulfillment.ShalomAgencySearchService.SearchResult;
+import com.sistemapos.sistematextil.services.agent.fulfillment.ShalomAgencySearchService.ReferenceResolution;
 
 class AgentFulfillmentServiceTest {
     private final Clock clock=Clock.fixed(Instant.parse("2026-10-08T19:10:00Z"),ZoneId.of("America/Lima"));
@@ -202,10 +203,77 @@ class AgentFulfillmentServiceTest {
     }
 
     @Test
+    void selectingShalomPrefillsCurrentCustomerWhenThereIsNoSavedProfile(){
+        when(fulfillments.findForUpdateBySessionId(41L)).thenReturn(Optional.empty());
+
+        var result=service.selectShalom(41L,"select-current-customer");
+
+        assertEquals("Ana Perez",result.recipientName());
+        assertEquals("999111222",result.phone());
+        assertEquals(CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM,session.getState());
+    }
+
+    @Test
+    void initializesCombinedShalomWithoutARegisteredCustomer(){
+        session.setCliente(null);
+        session.setState(CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM);
+        payment.setIncludedFilmAmount(new java.math.BigDecimal("2.00"));
+        when(fulfillments.findForUpdateBySessionId(41L)).thenReturn(Optional.empty());
+
+        var result=service.initializeCombinedShalom(41L,"combined-payment-91");
+
+        assertEquals("SHALOM",result.method());
+        assertEquals("DRAFT",result.status());
+        assertEquals(CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM,session.getState());
+    }
+
+    @Test
+    void combinedShalomWaitsForCustomerLinkBeforeAgencyConfirmation(){
+        session.setCliente(null);
+        session.setState(CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM);
+        payment.setIncludedFilmAmount(new java.math.BigDecimal("2.00"));
+        when(fulfillments.findForUpdateBySessionId(41L)).thenReturn(Optional.of(fulfillment));
+        when(fulfillments.findByAgentSession_IdAgentSession(41L)).thenReturn(Optional.of(fulfillment));
+        AgencyView view=new AgencyView(9L,7,"AREQUIPA / AV PARRA 379","AQP","AREQUIPA","AREQUIPA",
+                "AV PARRA 379","AV. PARRA 379 - Arequipa","01 5007878","LUNES A VIERNES",.98);
+        when(search.search("Arequipa Parra")).thenReturn(new SearchResult("MATCH",List.of(view)));
+        when(search.get(9L)).thenReturn(view);
+
+        var progress=service.savePartialShalomData(41L,"Ana Perez","12345678","999111222","Arequipa Parra");
+
+        assertEquals(List.of(),progress.missingFields());
+        assertEquals(CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM,session.getState());
+
+        Cliente customer=new Cliente();customer.setIdCliente(20);customer.setNombres("Ana Perez");customer.setTelefono("999111222");
+        session.setCliente(customer);payment.setCliente(customer);
+        var completed=service.completeCombinedShalomData(41L);
+
+        assertEquals(CrmWhatsappAgentState.ESPERANDO_CONFIRMACION_AGENCIA_SHALOM,session.getState());
+        assertEquals(List.of(view),completed.agencyCandidates());
+    }
+
+    @Test
     void rejectsAgencyThatWasNotOffered(){
         session.setState(CrmWhatsappAgentState.ESPERANDO_CONFIRMACION_AGENCIA_SHALOM);
         fulfillment.setShalomCandidateIds("9");when(fulfillments.findForUpdateBySessionId(41L)).thenReturn(Optional.of(fulfillment));
         assertThrows(IllegalArgumentException.class,()->service.confirmShalomAgency(41L,10L,"confirm-other"));
+    }
+
+    @Test
+    void confirmsTheOnlyPendingAgencyFromANaturalSemanticConfirmation(){
+        session.setState(CrmWhatsappAgentState.ESPERANDO_CONFIRMACION_AGENCIA_SHALOM);
+        fulfillment.setShalomCandidateIds("9");
+        when(fulfillments.findByAgentSession_IdAgentSession(41L)).thenReturn(Optional.of(fulfillment));
+        when(fulfillments.findForUpdateBySessionId(41L)).thenReturn(Optional.of(fulfillment));
+        when(search.resolveReference("correcto es ahi",List.of(9L)))
+                .thenReturn(new ReferenceResolution("NO_MATCH",null,List.of()));
+        ShalomAgency agency=agency(9L,"LA LIBERTAD / TRUJILLO / CALLE LIVERPOOL","CALLE LIVERPOOL 241");
+        when(agencies.findById(9L)).thenReturn(Optional.of(agency));
+
+        var result=service.confirmShalomAgency(41L,"correcto, es ahí","semantic-confirm");
+
+        assertEquals("READY",result.status());
+        assertEquals(CrmWhatsappAgentState.LISTO_PARA_VENTA,session.getState());
     }
 
     @Test

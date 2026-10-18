@@ -48,6 +48,33 @@ public class ShalomAgencySearchService {
         return view(agency, 1);
     }
 
+    /**
+     * Resuelve una referencia natural exclusivamente contra las agencias que ya
+     * fueron ofrecidas. El orden de las palabras y expresiones genéricas como
+     * "agencia", "sede" o "Shalom" no afectan la coincidencia.
+     */
+    @Transactional(readOnly = true)
+    public ReferenceResolution resolveReference(String reference, List<Long> offeredIds) {
+        String normalized = cleanQuery(ShalomAgencySyncService.normalize(reference));
+        if (normalized.length() < 2 || offeredIds == null || offeredIds.isEmpty()) {
+            return new ReferenceResolution("NO_MATCH", null, List.of());
+        }
+        List<Scored> matches = offeredIds.stream().distinct()
+                .map(repository::findById).flatMap(java.util.Optional::stream)
+                .filter(ShalomAgency::isActive).filter(ShalomAgency::isDestinationEnabled)
+                .map(agency -> new Scored(agency, score(normalized, agency)))
+                .filter(item -> item.score() >= .62)
+                .sorted(Comparator.comparingDouble(Scored::score).reversed()
+                        .thenComparing(item -> item.agency().getName()))
+                .toList();
+        if (matches.isEmpty()) return new ReferenceResolution("NO_MATCH", null, List.of());
+        boolean unique = matches.size() == 1 || matches.get(0).score() - matches.get(1).score() >= .18;
+        List<AgencyView> candidates = matches.stream().limit(unique ? 1 : 3)
+                .map(item -> view(item.agency(), item.score())).toList();
+        return new ReferenceResolution(unique ? "MATCH" : "AMBIGUOUS",
+                unique ? candidates.getFirst().agencyId() : null, candidates);
+    }
+
     private double score(String query, ShalomAgency agency) {
         String locality = ShalomAgencySyncService.normalize(String.join(" ",
                 safe(agency.getName()), safe(agency.getDepartment()), safe(agency.getProvince()),
@@ -101,6 +128,7 @@ public class ShalomAgencySearchService {
             a.getAbbreviation(),a.getDepartment(),a.getProvince(),a.getPlace(),a.getAddress(),a.getPhone(),a.getAttentionHours(),score);}
     private record Scored(ShalomAgency agency,double score){}
     public record SearchResult(String status,List<AgencyView> candidates){}
+    public record ReferenceResolution(String status,Long agencyId,List<AgencyView> candidates){}
     public record AgencyView(Long agencyId,Integer externalId,String name,String abbreviation,String department,
             String province,String place,String address,String phone,String attentionHours,double score){}
 }

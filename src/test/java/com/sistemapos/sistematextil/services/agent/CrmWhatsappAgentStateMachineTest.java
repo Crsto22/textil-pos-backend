@@ -5,6 +5,7 @@ import static com.sistemapos.sistematextil.model.CrmWhatsappAgentEvent.CANCELACI
 import static com.sistemapos.sistematextil.model.CrmWhatsappAgentEvent.CARRITO_CONFIRMADO;
 import static com.sistemapos.sistematextil.model.CrmWhatsappAgentEvent.CARRITO_REVALIDADO_POR_VENCIMIENTO;
 import static com.sistemapos.sistematextil.model.CrmWhatsappAgentEvent.COMPROBANTE_APROBADO_INICIALMENTE;
+import static com.sistemapos.sistematextil.model.CrmWhatsappAgentEvent.COMPROBANTE_COMBINADO_APROBADO;
 import static com.sistemapos.sistematextil.model.CrmWhatsappAgentEvent.COMPROBANTE_RECIBIDO;
 import static com.sistemapos.sistematextil.model.CrmWhatsappAgentEvent.CONVERSACION_INICIADA;
 import static com.sistemapos.sistematextil.model.CrmWhatsappAgentEvent.DATOS_CLIENTE_COMPLETADOS;
@@ -97,6 +98,12 @@ class CrmWhatsappAgentStateMachineTest {
         assertEquals(ESPERANDO_PAGO_FILM, state);
         state = machine.transition(state, PAGO_FILM_APROBADO);
         assertEquals(VENTA_PENDIENTE_REVISION, state);
+    }
+
+    @Test
+    void combinedPaymentStartsDirectlyAtShalomData() {
+        assertEquals(ESPERANDO_DATOS_SHALOM,
+                machine.transition(VALIDANDO_COMPROBANTE,COMPROBANTE_COMBINADO_APROBADO));
     }
 
     @Test

@@ -45,6 +45,7 @@ import com.sistemapos.sistematextil.repositories.CrmWhatsappPaymentRequestReposi
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
 import com.sistemapos.sistematextil.services.CrmWhatsappPaymentReservationService;
 import com.sistemapos.sistematextil.services.agent.CrmWhatsappAgentStateMachine;
+import com.sistemapos.sistematextil.services.agent.fulfillment.AgentFulfillmentService;
 import com.sistemapos.sistematextil.services.agent.payment.AgentPaymentEvidenceAnalysisStore.AnalysisResult;
 import com.sistemapos.sistematextil.services.agent.payment.AgentPaymentEvidenceAnalysisStore.ClaimedEvidence;
 import com.sistemapos.sistematextil.services.agent.payment.AgentPaymentReceiptVisionGateway.VisionResult;
@@ -57,6 +58,7 @@ class AgentPaymentEvidenceAnalysisStoreTest {
     private CrmWhatsappPaymentRequestRepository requestRepository;
     private CrmWhatsappAgentSessionRepository sessionRepository;
     private CrmWhatsappPaymentReservationService reservationService;
+    private AgentFulfillmentService fulfillmentService;
     private AgentPaymentEvidenceAnalysisStore store;
     private CrmWhatsappAgentSession session;
     private CrmWhatsappPaymentRequest request;
@@ -69,9 +71,10 @@ class AgentPaymentEvidenceAnalysisStoreTest {
         sessionRepository = mock(CrmWhatsappAgentSessionRepository.class);
         UsuarioRepository userRepository = mock(UsuarioRepository.class);
         reservationService = mock(CrmWhatsappPaymentReservationService.class);
+        fulfillmentService = mock(AgentFulfillmentService.class);
         store = new AgentPaymentEvidenceAnalysisStore(evidenceRepository, requestRepository, sessionRepository,
                 userRepository, reservationService, new CrmWhatsappAgentStateMachine(),
-                new ObjectMapper().findAndRegisterModules(), CLOCK, 85);
+                new ObjectMapper().findAndRegisterModules(), CLOCK, 85, null, null, fulfillmentService);
 
         Empresa company = new Empresa();
         company.setIdEmpresa(3);
@@ -204,7 +207,8 @@ class AgentPaymentEvidenceAnalysisStoreTest {
 
         String message = store.approvedCustomerMessage(session);
 
-        assertTrue(message.contains("nombre completo"));
+        assertTrue(message.contains("tu nombre"));
+        assertFalse(message.contains("nombre completo"));
         assertFalse(message.contains("Número de celular"));
     }
 
@@ -287,6 +291,15 @@ class AgentPaymentEvidenceAnalysisStoreTest {
         assertEquals(com.sistemapos.sistematextil.model.CrmWhatsappFulfillmentMethod.SHALOM,
                 session.getPreferredFulfillmentMethod());
         assertEquals(new BigDecimal("142.00"), evidence.getDetectedAmount());
+        assertEquals(CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM,session.getState());
+        assertEquals(CrmWhatsappAgentEvent.COMPROBANTE_COMBINADO_APROBADO,session.getLastEvent());
+        String message=store.approvedCustomerMessage(session,request);
+        assertTrue(message.contains("Nombres y apellidos"));
+        assertTrue(message.contains("DNI"));
+        assertTrue(message.contains("Celular"));
+        assertTrue(message.contains("Agencia de Shalom"));
+        assertFalse(message.contains("Cuál opción deseas"));
+        verify(fulfillmentService).initializeCombinedShalom(41L,"combined-main-payment:91");
     }
 
     @Test

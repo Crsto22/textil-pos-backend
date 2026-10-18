@@ -111,12 +111,24 @@ public class AgentCustomerService {
     @Transactional
     public CustomerResult register(Long sessionId, String names, String phone, TipoDocumento documentType,
             String documentNumber, String operationId) {
+        return registerAtStage(sessionId,names,phone,documentType,documentNumber,operationId,false);
+    }
+
+    @Transactional
+    public CustomerResult registerFromShalom(Long sessionId,String names,String phone,TipoDocumento documentType,
+            String documentNumber,String operationId) {
+        return registerAtStage(sessionId,names,phone,documentType,documentNumber,operationId,true);
+    }
+
+    private CustomerResult registerAtStage(Long sessionId,String names,String phone,TipoDocumento documentType,
+            String documentNumber,String operationId,boolean shalomStage) {
         String normalizedNames = requireNames(names);
         String normalizedPhone = requirePhone(phone);
         DocumentIdentity document = normalizeDocument(documentType, documentNumber, false);
         String request = normalizedNames + ":" + normalizedPhone + ":" + documentKey(document);
-        return execute(sessionId, operationId, "registrar_cliente", request, () -> {
-            LockedScope scope = lockCustomerStage(sessionId);
+        String tool=shalomStage?"registrar_cliente_desde_shalom":"registrar_cliente";
+        return execute(sessionId, operationId, tool, request, () -> {
+            LockedScope scope = lockCustomerStage(sessionId,shalomStage);
             List<Cliente> matches = findMatches(scope.company().getIdEmpresa(), normalizedPhone, document);
             if (matches.size() > 1) {
                 throw new IllegalStateException(
@@ -185,8 +197,15 @@ public class AgentCustomerService {
     }
 
     private LockedScope lockCustomerStage(Long sessionId) {
+        return lockCustomerStage(sessionId,false);
+    }
+
+    private LockedScope lockCustomerStage(Long sessionId,boolean shalomStage) {
         CrmWhatsappAgentSession session = requireSession(sessionId, true);
-        if (session.getState() != CrmWhatsappAgentState.ESPERANDO_DATOS_CLIENTE) {
+        boolean validState=session.getState()==CrmWhatsappAgentState.ESPERANDO_DATOS_CLIENTE
+                ||shalomStage&&(session.getState()==CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM
+                ||session.getState()==CrmWhatsappAgentState.ESPERANDO_CONFIRMACION_AGENCIA_SHALOM);
+        if (!validState) {
             throw new IllegalStateException("La sesion no esta en la etapa de datos del cliente");
         }
         Integer companyId = companyId(session);

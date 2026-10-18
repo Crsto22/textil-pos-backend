@@ -127,6 +127,26 @@ class AgentCustomerServiceTest {
     }
 
     @Test
+    void registersCustomerFromCombinedShalomDataWithoutChangingTheShalomState() {
+        session.setState(CrmWhatsappAgentState.ESPERANDO_CONFIRMACION_AGENCIA_SHALOM);
+        Usuario actor=new Usuario();actor.setIdUsuario(5);actor.setEstado("ACTIVO");
+        when(userRepository.findByCorreoAndDeletedAtIsNull("ia-kiments@system.local"))
+                .thenReturn(Optional.of(actor));
+        Cliente created=customer(24,"Ana Perez","999111222");
+        created.setTipoDocumento(TipoDocumento.DNI);
+        created.setNroDocumento("12345678");
+        when(customerRepository.saveAndFlush(any(Cliente.class))).thenReturn(created);
+
+        CustomerResult result=service.registerFromShalom(41L,"Ana Perez","999111222",
+                TipoDocumento.DNI,"12345678","combined-customer");
+
+        assertEquals("CREATED",result.outcome());
+        assertSame(created,session.getCliente());
+        assertSame(created,conversation.getCliente());
+        assertEquals(CrmWhatsappAgentState.ESPERANDO_CONFIRMACION_AGENCIA_SHALOM,session.getState());
+    }
+
+    @Test
     void refusesToMergePhoneAndDocumentBelongingToDifferentCustomers() {
         Cliente byPhone = customer(20, "Ana Perez", "999111222");
         Cliente byDocument = customer(21, "Maria Diaz", "988777666");

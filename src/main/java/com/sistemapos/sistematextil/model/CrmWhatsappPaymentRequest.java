@@ -73,6 +73,9 @@ public class CrmWhatsappPaymentRequest {
     @Column(name = "expected_amount", nullable = false, precision = 12, scale = 2)
     private BigDecimal expectedAmount;
 
+    @Column(name = "included_film_amount", nullable = false, precision = 12, scale = 2)
+    private BigDecimal includedFilmAmount;
+
     @Column(nullable = false, length = 3)
     private String currency;
 
@@ -121,6 +124,7 @@ public class CrmWhatsappPaymentRequest {
         updatedAt = now;
         if (status == null) status = CrmWhatsappPaymentRequestStatus.PENDING_EVIDENCE;
         if (reservationStatus == null) reservationStatus = CrmWhatsappPaymentReservationStatus.LEGACY_NONE;
+        if (includedFilmAmount == null) includedFilmAmount = BigDecimal.ZERO.setScale(2);
     }
 
     @PreUpdate

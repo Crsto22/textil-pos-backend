@@ -6,10 +6,12 @@ import static org.mockito.Mockito.*;
 
 import java.util.List;
 import java.util.Optional;
+import java.sql.Timestamp;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
 
 import com.sistemapos.sistematextil.model.*;
 import com.sistemapos.sistematextil.repositories.*;
@@ -76,4 +78,26 @@ class AgentFilmServiceTest {
     @Test void preservesSaleAndBlocksShipmentWhenYapeIsUnavailable(){when(branchMethods.findActivosBySucursal(1)).thenReturn(List.of());var result=service.startMandatoryPayment(9L,12);assertFalse(result.continueWithoutFilm());assertEquals(CrmWhatsappFilmStatus.PAYMENT_CONFIGURATION_REQUIRED,addon.getStatus());assertNotNull(addon.getVenta());}
 
     @Test void decliningMandatoryFilmIsNotAllowed(){assertThrows(IllegalStateException.class,()->service.decline(9L));}
+
+    @SuppressWarnings("unchecked")
+    @Test void combinedMainReceiptCreatesOneAuditedFilmMovement(){
+        MetodoPagoConfig method=new MetodoPagoConfig();method.setIdMetodoPago(7);method.setNombre("PLIN");
+        MetodoPagoCuenta account=new MetodoPagoCuenta();account.setIdMetodoPagoCuenta(8);account.setMetodoPago(method);
+        session.setSelectedPaymentMethod(method);session.setSelectedPaymentAccount(account);
+        when(jdbc.queryForObject(anyString(),any(RowMapper.class),eq(9L))).thenAnswer(invocation->{
+            RowMapper<Object> mapper=invocation.getArgument(1);java.sql.ResultSet rs=mock(java.sql.ResultSet.class);
+            when(rs.getLong("id_payment_evidence")).thenReturn(91L);when(rs.getInt("id_metodo_pago")).thenReturn(7);
+            when(rs.getObject("id_metodo_pago_cuenta")).thenReturn(8);when(rs.getString("nombre")).thenReturn("PLIN");
+            when(rs.getString("currency")).thenReturn("PEN");when(rs.getString("operation_code")).thenReturn("OP-81");
+            when(rs.getTimestamp("operation_at")).thenReturn(Timestamp.valueOf("2026-10-18 09:00:00"));
+            return mapper.mapRow(rs,0);
+        });
+
+        var result=service.confirmCombinedPayment(9L,12);
+
+        assertEquals("CONFIRMED",result.status());assertEquals("COMBINED_MAIN_RECEIPT",addon.getResolutionSource());
+        assertEquals(account,addon.getPaymentAccount());assertEquals(CrmWhatsappFulfillmentStatus.READY,addon.getFulfillment().getStatus());
+        verify(jdbc).update(contains("id_payment_evidence"),eq(3L),eq(12),eq(91L),eq(7),eq(8),
+                eq(AgentFilmService.PRICE),eq("PEN"),eq("PLIN"),eq("OP-81"),any());
+    }
 }

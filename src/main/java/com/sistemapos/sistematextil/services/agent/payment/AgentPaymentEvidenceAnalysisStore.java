@@ -44,6 +44,7 @@ import com.sistemapos.sistematextil.services.CrmWhatsappPaymentReservationServic
 import com.sistemapos.sistematextil.services.agent.CrmWhatsappAgentStateMachine;
 import com.sistemapos.sistematextil.services.agent.payment.AgentPaymentReceiptVisionGateway.VisionResult;
 import com.sistemapos.sistematextil.services.agent.config.AgentRuntimeConfigService;
+import com.sistemapos.sistematextil.services.agent.fulfillment.AgentFulfillmentService;
 import com.sistemapos.sistematextil.services.agent.outbox.AgentOutboxService;
 import com.sistemapos.sistematextil.util.crm.CrmWhatsappPhoneUtils;
 
@@ -71,6 +72,7 @@ public class AgentPaymentEvidenceAnalysisStore {
     private final int minimumConfidence;
     private final AgentRuntimeConfigService runtimeConfig;
     private final AgentOutboxService outbox;
+    private final AgentFulfillmentService fulfillmentService;
 
     @Autowired
     public AgentPaymentEvidenceAnalysisStore(
@@ -82,11 +84,12 @@ public class AgentPaymentEvidenceAnalysisStore {
             CrmWhatsappAgentStateMachine stateMachine,
             AgentRuntimeConfigService runtimeConfig,
             AgentOutboxService outbox,
+            AgentFulfillmentService fulfillmentService,
             @Value("${crm.whatsapp.agent.payment-vision.minimum-confidence:85}") int minimumConfidence,
             @Value("${crm.whatsapp.agent.payment-vision.zone-id:America/Lima}") String zoneId) {
         this(evidenceRepository, requestRepository, sessionRepository, userRepository, reservationService,
                 stateMachine, new ObjectMapper().findAndRegisterModules(),
-                Clock.system(ZoneId.of(zoneId)), minimumConfidence, runtimeConfig, outbox);
+                Clock.system(ZoneId.of(zoneId)), minimumConfidence, runtimeConfig, outbox, fulfillmentService);
     }
 
     AgentPaymentEvidenceAnalysisStore(
@@ -119,6 +122,17 @@ public class AgentPaymentEvidenceAnalysisStore {
             CrmWhatsappPaymentReservationService reservationService, CrmWhatsappAgentStateMachine stateMachine,
             ObjectMapper objectMapper, Clock clock, int minimumConfidence,
             AgentRuntimeConfigService runtimeConfig, AgentOutboxService outbox) {
+        this(evidenceRepository, requestRepository, sessionRepository, userRepository, reservationService,
+                stateMachine, objectMapper, clock, minimumConfidence, runtimeConfig, outbox, null);
+    }
+
+    AgentPaymentEvidenceAnalysisStore(CrmWhatsappPaymentEvidenceRepository evidenceRepository,
+            CrmWhatsappPaymentRequestRepository requestRepository,
+            CrmWhatsappAgentSessionRepository sessionRepository, UsuarioRepository userRepository,
+            CrmWhatsappPaymentReservationService reservationService, CrmWhatsappAgentStateMachine stateMachine,
+            ObjectMapper objectMapper, Clock clock, int minimumConfidence,
+            AgentRuntimeConfigService runtimeConfig, AgentOutboxService outbox,
+            AgentFulfillmentService fulfillmentService) {
         this.evidenceRepository = evidenceRepository;
         this.requestRepository = requestRepository;
         this.sessionRepository = sessionRepository;
@@ -130,6 +144,7 @@ public class AgentPaymentEvidenceAnalysisStore {
         this.minimumConfidence = Math.max(0, Math.min(100, minimumConfidence));
         this.runtimeConfig = runtimeConfig;
         this.outbox = outbox;
+        this.fulfillmentService = fulfillmentService;
     }
 
     @Transactional(readOnly = true)
@@ -229,7 +244,7 @@ public class AgentPaymentEvidenceAnalysisStore {
                     locked.session().getState().name());
         }
         Validation validation = new Validation(AgentPaymentReceiptOutcome.OBSERVED,
-                List.of("No se pudo leer el comprobante: " + message), null, null);
+                List.of("No se pudo leer el comprobante: " + message), null, null, BigDecimal.ZERO);
         applyOutcome(locked, validation, now());
         evidence.setProcessingStatus(CrmWhatsappPaymentProcessingStatus.FAILED);
         evidenceRepository.save(evidence);
@@ -256,50 +271,37 @@ public class AgentPaymentEvidenceAnalysisStore {
         List<String> warnings = new ArrayList<>();
         Integer companyId = request.getConnection() == null || request.getConnection().getEmpresa() == null
                 ? null : request.getConnection().getEmpresa().getIdEmpresa();
-        CrmWhatsappPaymentEvidence hashDuplicate = companyId == null ? null : evidenceRepository
-                .findOtherByHash(evidence.getIdPaymentEvidence(), evidence.getSha256(), companyId, PageRequest.of(0, 1))
-                .stream().findFirst().orElse(null);
-        if (hashDuplicate != null) {
-            evidence.setDuplicateOfId(hashDuplicate.getIdPaymentEvidence());
-            return rejected("El archivo del comprobante ya fue utilizado", warnings);
-        }
-        // Una apariencia similar no demuestra un pago duplicado: Yape y otras billeteras
-        // reutilizan el mismo diseño. Solo el archivo exacto o el código de operación pueden bloquearlo.
         evidence.setDuplicateOfId(null);
-        int effectiveConfidence = runtimeConfig == null ? minimumConfidence
-                : runtimeConfig.forSession(locked.session().getIdAgentSession()).receiptMinimumConfidence();
-        if (extraction.confidence() < effectiveConfidence) {
-            warnings.add("Confianza insuficiente: " + extraction.confidence()
-                    + "% (minimo " + effectiveConfidence + "%)");
-            return observed(warnings);
-        }
-        if (!extraction.paymentReceipt()) {
-            return rejected("La imagen no corresponde a un comprobante de pago", warnings);
-        }
 
         BigDecimal amount = parseAmount(extraction.amount());
         LocalDateTime operationAt = parseOperationAt(extraction.operationDate(), extraction.operationTime());
         String operation = normalizeOperation(extraction.operationNumber());
         if (amount == null) warnings.add("No se pudo leer el monto");
         if (operationAt == null) warnings.add("No se pudo leer la fecha de operación");
-        if (operation.isBlank()) warnings.add("No se pudo leer el numero de operacion");
         if (!warnings.isEmpty()) return observed(warnings);
 
-        if (request.getExpectedAmount() == null
-                || request.getExpectedAmount().setScale(2, RoundingMode.HALF_UP).compareTo(amount) != 0) {
+        BigDecimal expected = request.getExpectedAmount() == null ? null
+                : request.getExpectedAmount().setScale(2, RoundingMode.HALF_UP);
+        BigDecimal includedFilm = expected != null && expected.compareTo(amount) == 0
+                ? BigDecimal.ZERO.setScale(2)
+                : expected != null && expected.add(new BigDecimal("2.00")).compareTo(amount) == 0
+                        ? new BigDecimal("2.00") : null;
+        if (includedFilm == null) {
             return rejected("El monto no coincide con el total exacto del pedido", warnings);
         }
         if (!validOperationDate(request, locked.evidence(), operationAt)) {
-            return rejected("La fecha u hora del pago no corresponde a la solicitud", warnings);
+            return rejected("La fecha del pago no corresponde a la solicitud", warnings);
         }
-        CrmWhatsappPaymentEvidence operationDuplicate = companyId == null ? null : evidenceRepository
-                .findOtherByOperation(evidence.getIdPaymentEvidence(), operation, companyId, PageRequest.of(0, 1))
-                .stream().findFirst().orElse(null);
+        CrmWhatsappPaymentEvidence operationDuplicate = companyId == null || operation.isBlank() ? null
+                : evidenceRepository
+                        .findOtherByOperation(evidence.getIdPaymentEvidence(), operation, companyId, PageRequest.of(0, 1))
+                        .stream().findFirst().orElse(null);
         if (operationDuplicate != null) {
             evidence.setDuplicateOfId(operationDuplicate.getIdPaymentEvidence());
             return rejected("El numero de operacion ya fue utilizado", warnings);
         }
-        return new Validation(AgentPaymentReceiptOutcome.APPROVED_INITIAL, warnings, amount, operationAt);
+        return new Validation(AgentPaymentReceiptOutcome.APPROVED_INITIAL, warnings, amount, operationAt,
+                includedFilm);
     }
 
     private void applyOutcome(Locked locked, Validation validation, LocalDateTime now) {
@@ -310,6 +312,11 @@ public class AgentPaymentEvidenceAnalysisStore {
         evidence.setProcessingStatus(CrmWhatsappPaymentProcessingStatus.COMPLETED);
         switch (validation.outcome()) {
             case APPROVED_INITIAL -> {
+                request.setIncludedFilmAmount(validation.includedFilmAmount());
+                if (validation.includedFilmAmount().signum() > 0) {
+                    session.setPreferredFulfillmentMethod(
+                            com.sistemapos.sistematextil.model.CrmWhatsappFulfillmentMethod.SHALOM);
+                }
                 evidence.setValidationStatus(CrmWhatsappPaymentEvidenceStatus.ACEPTABLE);
                 request.setStatus(CrmWhatsappPaymentRequestStatus.UNDER_REVIEW);
                 request.setEvidenceAcceptedAt(now);
@@ -318,6 +325,10 @@ public class AgentPaymentEvidenceAnalysisStore {
                 if (hasCompleteCustomer(session)) {
                     request.setCliente(session.getCliente());
                     applyEvent(session, CrmWhatsappAgentEvent.DATOS_CLIENTE_COMPLETADOS, now);
+                    if (validation.includedFilmAmount().signum() > 0 && fulfillmentService != null) {
+                        fulfillmentService.selectShalom(session.getIdAgentSession(),
+                                "combined-main-payment:" + evidence.getIdPaymentEvidence());
+                    }
                 }
             }
             case OBSERVED -> {
@@ -337,7 +348,7 @@ public class AgentPaymentEvidenceAnalysisStore {
     private void notifyCustomer(Locked locked, Validation validation) {
         if (outbox == null || locked.evidence().getCustomerNotifiedAt() != null) return;
         String message = switch (validation.outcome()) {
-            case APPROVED_INITIAL -> approvedCustomerMessage(locked.session());
+            case APPROVED_INITIAL -> approvedCustomerMessage(locked.session(), locked.request());
             case OBSERVED -> "⚠️ No pude validar el comprobante.\n"
                     + String.join("\n", validation.warnings())
                     + "\n\nEnvía una nueva captura antes de que venza la reserva.";
@@ -355,6 +366,22 @@ public class AgentPaymentEvidenceAnalysisStore {
     }
 
     String approvedCustomerMessage(CrmWhatsappAgentSession session) {
+        return approvedCustomerMessage(session, null);
+    }
+
+    String approvedCustomerMessage(CrmWhatsappAgentSession session, CrmWhatsappPaymentRequest request) {
+        boolean combinedFilm = request != null && request.getIncludedFilmAmount() != null
+                && request.getIncludedFilmAmount().signum() > 0;
+        if (combinedFilm && hasCompleteCustomer(session)) {
+            return combinedPaymentMessage(request)
+                    + "\n\nPara continuar, enviame tus datos de Shalom: nombres y apellidos, DNI, celular y agencia.";
+        }
+        if (combinedFilm) {
+            String pending = !conversationPhone(session).isBlank()
+                    ? "Para registrar tu compra, enviame tu nombre completo."
+                    : "Para registrar tu compra, enviame tu nombre completo y numero de celular.";
+            return combinedPaymentMessage(request) + "\n\n" + pending;
+        }
         if (hasCompleteCustomer(session)) {
             return "✅ Comprobante validado correctamente.\n\n¿Cómo deseas recibir tu pedido?\n"
                     + "🏬 Recojo en tienda\n🚌 Envío por Shalom";
@@ -364,6 +391,20 @@ public class AgentPaymentEvidenceAnalysisStore {
         }
         return "✅ Comprobante validado correctamente.\n\nPara registrar tu compra, envíame:\n"
                 + "☑️ Nombre completo\n☑️ Número de celular";
+    }
+
+    private String combinedPaymentMessage(CrmWhatsappPaymentRequest request) {
+        String method = request.getMetodoPago() == null ? "METODO SELECCIONADO"
+                : clean(request.getMetodoPago().getNombre());
+        return "✅ Pago confirmado correctamente, hermosa 💛\n"
+                + "🧾 Pago de prendas: S/" + moneyText(request.getExpectedAmount()) + "\n"
+                + "📦 Film protector: S/2.00 — Pagado\n"
+                + "💳 Metodo: " + method + "\n"
+                + "🚌 Tipo de entrega: Envio por Shalom";
+    }
+
+    private String moneyText(BigDecimal value) {
+        return value == null ? "0.00" : value.setScale(2, RoundingMode.HALF_UP).toPlainString();
     }
 
     private String conversationPhone(CrmWhatsappAgentSession session) {
@@ -431,7 +472,7 @@ public class AgentPaymentEvidenceAnalysisStore {
 
     private void finishWithoutVision(Locked locked, AgentPaymentReceiptOutcome outcome,
             List<String> warnings, LocalDateTime now) {
-        applyOutcome(locked, new Validation(outcome, warnings, null, null), now);
+        applyOutcome(locked, new Validation(outcome, warnings, null, null, BigDecimal.ZERO), now);
     }
 
     private Locked lock(Long evidenceId) {
@@ -535,11 +576,11 @@ public class AgentPaymentEvidenceAnalysisStore {
 
     private Validation rejected(String reason, List<String> warnings) {
         warnings.add(reason);
-        return new Validation(AgentPaymentReceiptOutcome.REJECTED, warnings, null, null);
+        return new Validation(AgentPaymentReceiptOutcome.REJECTED, warnings, null, null, BigDecimal.ZERO);
     }
 
     private Validation observed(List<String> warnings) {
-        return new Validation(AgentPaymentReceiptOutcome.OBSERVED, warnings, null, null);
+        return new Validation(AgentPaymentReceiptOutcome.OBSERVED, warnings, null, null, BigDecimal.ZERO);
     }
 
     private AnalysisResult result(Locked locked, Validation validation) {
@@ -616,7 +657,7 @@ public class AgentPaymentEvidenceAnalysisStore {
     }
 
     private record Validation(AgentPaymentReceiptOutcome outcome, List<String> warnings,
-            BigDecimal amount, LocalDateTime operationAt) {
+            BigDecimal amount, LocalDateTime operationAt, BigDecimal includedFilmAmount) {
     }
 
     public record ClaimedEvidence(Long evidenceId, Long connectionId, String storagePath,

@@ -109,9 +109,10 @@ public class AgentFilmEvidenceService {
         CrmWhatsappFilmEvidence e=evidence.findForUpdate(id).orElseThrow(); CrmWhatsappFilmAddon addon=addons
                 .findForUpdate(e.getFilmAddon().getIdFilmAddon()).orElseThrow();
         e.setDetectedProvider(provider); e.setDetectedAmount(amount(x.amount())); e.setDetectedCurrency(x.currency());
-        e.setOperationCode(clean(x.operationNumber())); e.setOperationAt(operationAt(x)); e.setRecipient(clean(x.recipient()));
+        String operationCode=clean(x.operationNumber());
+        e.setOperationCode(operationCode.isBlank()?null:operationCode); e.setOperationAt(operationAt(x)); e.setRecipient(clean(x.recipient()));
         e.setConfidence(x.confidence()); e.setExtractedText(x.visibleText()); e.setExtractionJson(write(x));
-        List<String> errors=validate(e,addon,x); e.setWarningsJson(write(errors));
+        List<String> errors=validateFilmAmount(e); e.setWarningsJson(write(errors));
         e.setProcessingStatus(CrmWhatsappPaymentProcessingStatus.COMPLETED); e.setLastError(null);
         if(!errors.isEmpty()) {
             e.setValidationStatus(CrmWhatsappPaymentEvidenceStatus.OBSERVADO); evidence.save(e);
@@ -137,18 +138,11 @@ public class AgentFilmEvidenceService {
         return new Completion(addon.getIdFilmAddon(),true);
     }
 
-    private List<String> validate(CrmWhatsappFilmEvidence e,CrmWhatsappFilmAddon addon,AgentPaymentReceiptExtraction x){
-        java.util.ArrayList<String> errors=new java.util.ArrayList<>(); Integer company=addon.getConversation().getConnection().getEmpresa().getIdEmpresa();
-        if(!x.paymentReceipt())errors.add("la imagen no parece ser un comprobante");
+    static List<String> validateFilmAmount(CrmWhatsappFilmEvidence e){
+        java.util.ArrayList<String> errors=new java.util.ArrayList<>();
+        // En el cobro separado del film, solo el monto exacto es obligatorio.
+        // Los demas campos extraidos se guardan para auditoria, pero son opcionales.
         if(e.getDetectedAmount()==null||e.getDetectedAmount().compareTo(AgentFilmService.PRICE)!=0)errors.add("el monto debe ser exactamente S/2.00");
-        if(!"PEN".equalsIgnoreCase(clean(e.getDetectedCurrency())))errors.add("la moneda debe ser PEN");
-        if(!"YAPE".equalsIgnoreCase(clean(x.paymentMethod())))errors.add("el proveedor debe ser Yape");
-        if(clean(e.getOperationCode()).isBlank())errors.add("no se encontró el código de operación");
-        if(e.getConfidence()==null||e.getConfidence()<config.forSession(addon.getAgentSession().getIdAgentSession()).receiptMinimumConfidence())errors.add("la imagen no se lee con suficiente claridad");
-        if(e.getMessage().getCreatedAt()==null||addon.getExpiresAt()==null||e.getMessage().getCreatedAt().isAfter(addon.getExpiresAt()))errors.add("el comprobante llegó después del plazo de 1 hora");
-        if(e.getOperationAt()==null||e.getOperationAt().isBefore(addon.getPaymentStartedAt().minusMinutes(15))||e.getOperationAt().isAfter(e.getMessage().getCreatedAt().plusMinutes(15)))errors.add("la fecha u hora no corresponde a esta solicitud");
-        if(!mainEvidence.findOtherByHash(-1L,e.getSha256(),company,PageRequest.of(0,1)).isEmpty()||!evidence.findOtherByHash(e.getIdFilmEvidence(),e.getSha256(),company,PageRequest.of(0,1)).isEmpty())errors.add("el archivo del comprobante ya fue utilizado");
-        if(!clean(e.getOperationCode()).isBlank()&&(!mainEvidence.findOtherByOperation(-1L,e.getOperationCode(),company,PageRequest.of(0,1)).isEmpty()||!evidence.findOtherByOperation(e.getIdFilmEvidence(),e.getOperationCode(),company,PageRequest.of(0,1)).isEmpty()))errors.add("el código de operación ya fue utilizado");
         return errors.stream().distinct().toList();
     }
     private void fail(Long id,RuntimeException ex){CrmWhatsappFilmEvidence e=evidence.findForUpdate(id).orElse(null);if(e==null)return;e.setLastError(ex.getMessage());if(e.getAttempts()<3){e.setProcessingStatus(CrmWhatsappPaymentProcessingStatus.QUEUED);e.setAvailableAt(LocalDateTime.now().plusSeconds((long)e.getAttempts()*5));}else{e.setProcessingStatus(CrmWhatsappPaymentProcessingStatus.FAILED);e.setValidationStatus(CrmWhatsappPaymentEvidenceStatus.OBSERVADO);}evidence.save(e);}

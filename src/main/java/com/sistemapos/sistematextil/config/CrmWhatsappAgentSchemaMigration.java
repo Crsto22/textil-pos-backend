@@ -188,12 +188,23 @@ public class CrmWhatsappAgentSchemaMigration implements ApplicationRunner {
         addColumnIfMissing(connection, statement, "crm_whatsapp_film_payment", "confirmed_by", "INT NULL");
         addColumnIfMissing(connection, statement, "crm_whatsapp_film_payment", "confirmation_source",
                 "VARCHAR(40) NOT NULL DEFAULT 'RECEIPT_AI'");
+        addColumnIfMissing(connection, statement, "crm_whatsapp_film_payment", "id_payment_evidence", "BIGINT NULL");
+        addColumnIfMissing(connection, statement, "crm_whatsapp_film_payment", "id_metodo_pago", "INT NULL");
+        addColumnIfMissing(connection, statement, "crm_whatsapp_film_payment", "id_metodo_pago_cuenta", "INT NULL");
         statement.execute("ALTER TABLE crm_whatsapp_film_payment MODIFY COLUMN id_film_evidence BIGINT NULL");
         statement.execute("ALTER TABLE crm_whatsapp_film_payment MODIFY COLUMN operation_code VARCHAR(120) NULL");
         addIndexIfMissing(connection, statement, "crm_whatsapp_film_payment", "idx_crm_film_payment_reviewer",
                 "(confirmed_by)");
         addForeignKeyIfMissing(connection, statement, "crm_whatsapp_film_payment", "fk_crm_film_payment_reviewer",
                 "FOREIGN KEY (confirmed_by) REFERENCES usuario(id_usuario) ON DELETE SET NULL");
+        addUniqueIndexIfMissing(connection, statement, "crm_whatsapp_film_payment",
+                "uk_crm_film_payment_main_evidence", "(id_payment_evidence)");
+        addForeignKeyIfMissing(connection, statement, "crm_whatsapp_film_payment", "fk_crm_film_payment_main_evidence",
+                "FOREIGN KEY (id_payment_evidence) REFERENCES crm_whatsapp_payment_evidence(id_payment_evidence) ON DELETE SET NULL");
+        addForeignKeyIfMissing(connection, statement, "crm_whatsapp_film_payment", "fk_crm_film_payment_method",
+                "FOREIGN KEY (id_metodo_pago) REFERENCES metodo_pago_config(id_metodo_pago) ON DELETE SET NULL");
+        addForeignKeyIfMissing(connection, statement, "crm_whatsapp_film_payment", "fk_crm_film_payment_account",
+                "FOREIGN KEY (id_metodo_pago_cuenta) REFERENCES metodo_pago_cuenta(id_metodo_pago_cuenta) ON DELETE SET NULL");
     }
 
     static boolean isMysqlDatabase(String url) {
@@ -799,6 +810,8 @@ public class CrmWhatsappAgentSchemaMigration implements ApplicationRunner {
 
     private void adaptPaymentTables(Connection connection, Statement statement) throws Exception {
         addColumnIfMissing(connection, statement, "crm_whatsapp_payment_request", "id_agent_session", "BIGINT NULL");
+        addColumnIfMissing(connection, statement, "crm_whatsapp_payment_request", "included_film_amount",
+                "DECIMAL(12,2) NOT NULL DEFAULT 0.00");
         addColumnIfMissing(connection, statement, "crm_whatsapp_payment_request", "agent_idempotency_key",
                 "VARCHAR(64) NULL");
         addColumnIfMissing(connection, statement, "crm_whatsapp_payment_request", "evidence_accepted_at",

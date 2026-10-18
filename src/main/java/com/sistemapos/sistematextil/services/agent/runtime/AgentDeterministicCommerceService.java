@@ -540,6 +540,10 @@ public class AgentDeterministicCommerceService {
         customers.register(sessionId, decision.customerName(), phone,
                 TipoDocumento.SIN_DOC, null, operation);
         payments.bindApprovedCustomer(sessionId);
+        if (payments.hasCombinedFilmPayment(sessionId)) {
+            fulfillment.selectShalom(sessionId, operation + ":combined-shalom");
+            return Outcome.executed(combinedFilmShalomDataRequest());
+        }
         return Outcome.executed(deliveryQuestion(sessionId));
     }
 
@@ -557,6 +561,10 @@ public class AgentDeterministicCommerceService {
         }
         customers.link(sessionId, session.getCliente().getIdCliente(), operation);
         payments.bindApprovedCustomer(sessionId);
+        if (payments.hasCombinedFilmPayment(sessionId)) {
+            fulfillment.selectShalom(sessionId, operation + ":combined-shalom");
+            return Outcome.executed(combinedFilmShalomDataRequest());
+        }
         return Outcome.executed(deliveryQuestion(sessionId));
     }
 
@@ -669,6 +677,10 @@ public class AgentDeterministicCommerceService {
     private Outcome confirmShalomAgency(Long sessionId, AgentConversationDecision decision, String operation) {
         var confirmed = fulfillment.confirmShalomAgency(sessionId, decision.shalomAgency(), operation);
         var sale = sales.createSalesNote(sessionId, operation + ":sale");
+        if (payments.hasCombinedFilmPayment(sessionId)) {
+            var film = films.confirmCombinedPayment(sessionId, sale.saleId());
+            return Outcome.executed(finalCombinedShalomMessage(film));
+        }
         films.awaitPreviousOrderDecision(sessionId, sale.saleId());
         return Outcome.executed(previousOrderQuestion(confirmed, sale.saleId()));
     }
@@ -710,6 +722,16 @@ public class AgentDeterministicCommerceService {
                 + "🚌 Tipo de entrega: Envío por Shalom\n"
                 + "📍 Agencia: " + film.shalomAgency() + "\n\n"
                 + review + "\n\n¡Gracias por confiar en Kiments! 💛";
+    }
+
+    private String finalCombinedShalomMessage(AgentFilmService.FilmResult film) {
+        return "✅ Tu pedido fue registrado correctamente.\n"
+                + "🧾 Número de pedido: " + film.saleId() + "\n"
+                + "🚌 Tipo de entrega: Envío por Shalom\n"
+                + "📍 Agencia: " + film.shalomAgency() + "\n"
+                + "📦 Film protector: Pagado\n\n"
+                + "Una asesora del área de envíos se comunicará contigo para corroborar tus datos.\n\n"
+                + "¡Gracias por confiar en Kiments! 💛";
     }
 
     private Outcome acceptFilm(Long sessionId) {
@@ -833,6 +855,9 @@ public class AgentDeterministicCommerceService {
                 .append("💰 Monto exacto: *").append(money(request.expectedAmount())).append("*\n");
         if (!blank(request.accountNumber())) text.append("📱 Cuenta: *").append(request.accountNumber()).append("*\n");
         if (!blank(request.accountHolder())) text.append("👤 Titular: ").append(request.accountHolder()).append("\n");
+        text.append("\nSi deseas envío por Shalom, puedes realizar un solo pago de *")
+                .append(money(request.expectedAmount().add(AgentFilmService.PRICE)))
+                .append("*, que incluye S/2 por el film protector.\n");
         long minutes = Math.max(1, (request.expiresInSeconds() + 59) / 60);
         text.append("\n✅ Tus productos quedaron reservados durante *").append(minutes)
                 .append(minutes == 1 ? " minuto" : " minutos")
@@ -853,6 +878,13 @@ public class AgentDeterministicCommerceService {
         return "Saludos 🤝🚌\nPara el envío por *SHALOM*, envíame:\n\n"
                 + "☑️ Nombres y apellidos\n☑️ DNI\n☑️ Celular\n☑️ Agencia de Shalom\n\n"
                 + "Puedes enviarlos juntos o uno por uno; guardaré cada dato válido y te indicaré únicamente lo que falte.";
+    }
+
+    private String combinedFilmShalomDataRequest() {
+        return "✅ El pago de las prendas y el film protector fue confirmado.\n"
+                + "📦 Film protector: S/2.00 — Pagado\n"
+                + "🚌 Tipo de entrega: Envío por Shalom\n\n"
+                + shalomDataRequest();
     }
 
     private String shalomValidationMessage(IllegalArgumentException error) {

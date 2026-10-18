@@ -1,6 +1,7 @@
 package com.sistemapos.sistematextil.services.agent.runtime;
 
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
@@ -27,6 +28,10 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class AgentTurnFinalizer {
     public static final String ADVISOR_CONTACT = "Para recibir ayuda con tu caso, comunícate con nuestra asesora al 933918047.";
+    public static final String PROVIDER_MAINTENANCE_MESSAGE = "Disculpa, bella 💛 Nuestro asistente virtual se encuentra "
+            + "temporalmente en mantenimiento. Para continuar con tu compra y recibir atención, comunícate con "
+            + "nuestra asesora al 933918047. Gracias por tu comprensión.";
+    private static final long PROVIDER_MAINTENANCE_NOTICE_MINUTES = 30L;
     private final AgentOutboxService outbox;
     private final AgentCatalogQueryService catalog;
     private final CrmWhatsappAgentSessionRepository sessions;
@@ -162,7 +167,18 @@ public class AgentTurnFinalizer {
     public void failPermanently(JobLease lease, String reason) {
         CrmWhatsappAgentSession session = sessions.findForUpdate(lease.sessionId()).orElse(null);
         if (session == null || !Boolean.TRUE.equals(session.getActiveSlot())) return;
-        if (advisorAttentionEnabled(lease.sessionId())) {
+        if (providerCreditsDepleted(reason)) {
+            // Un problema de facturación del proveedor no debe alterar el flujo
+            // comercial, crear un caso humano ni borrar carrito o reservas.
+            resumeAutomaticAttention(session);
+            markAgentActive(session);
+            if (!maintenanceNoticeRecentlyQueued(session)) {
+                int ordinal = Math.floorMod(Objects.hash("AGENT_PROVIDER_MAINTENANCE", lease.jobId()),
+                        Integer.MAX_VALUE);
+                outbox.enqueueText(lease.sessionId(), null, lease.anchorMessageId(), ordinal,
+                        PROVIDER_MAINTENANCE_MESSAGE);
+            }
+        } else if (advisorAttentionEnabled(lease.sessionId())) {
             escalate(session, lease.jobId(), truncate(clean(reason), 160));
             int ordinal=Math.floorMod(Objects.hash("AGENT_FAILURE_HELP",lease.jobId()),Integer.MAX_VALUE);
             outbox.enqueueText(lease.sessionId(),null,lease.anchorMessageId(),ordinal,ADVISOR_CONTACT);
@@ -176,6 +192,37 @@ public class AgentTurnFinalizer {
                     recoverableCustomerMessage(reason));
         }
         sessions.save(session);
+    }
+
+    private boolean providerCreditsDepleted(String reason) {
+        String normalized = clean(reason).toLowerCase(java.util.Locale.ROOT);
+        return normalized.contains("http 402")
+                || normalized.contains("credits are depleted")
+                || normalized.contains("prepayment credits")
+                || normalized.contains("saldo prepago agotado");
+    }
+
+    private boolean maintenanceNoticeRecentlyQueued(CrmWhatsappAgentSession session) {
+        if (session.getConversation() == null || session.getConversation().getIdConversation() == null) return false;
+        Long conversationId = session.getConversation().getIdConversation();
+        LocalDateTime since = LocalDateTime.now().minus(PROVIDER_MAINTENANCE_NOTICE_MINUTES, ChronoUnit.MINUTES);
+        Long matches = jdbc.queryForObject("""
+                SELECT COUNT(*)
+                FROM (
+                    SELECT id_agent_outbox AS id
+                    FROM crm_whatsapp_agent_outbox
+                    WHERE id_conversation=? AND body=? AND created_at>=?
+                      AND status IN ('PENDING','PROCESSING','RETRY','SENT')
+                    UNION ALL
+                    SELECT id_message AS id
+                    FROM crm_whatsapp_message
+                    WHERE id_conversation=? AND direction='OUTGOING' AND deleted_at IS NULL
+                      AND body=? AND created_at>=?
+                ) maintenance_notices
+                """, Long.class,
+                conversationId, PROVIDER_MAINTENANCE_MESSAGE, since,
+                conversationId, PROVIDER_MAINTENANCE_MESSAGE, since);
+        return matches != null && matches > 0;
     }
 
     private String recoverableCustomerMessage(String reason) {

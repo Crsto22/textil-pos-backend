@@ -146,6 +146,56 @@ public class AgentFilmService {
         return result(addons.save(addon), false);
     }
 
+    /** Allocates the S/2 surplus from the already approved main receipt to film. */
+    @Transactional
+    public FilmResult confirmCombinedPayment(Long sessionId, Integer saleId) {
+        CrmWhatsappAgentSession session = requireSession(sessionId);
+        CrmWhatsappFulfillment fulfillment = requireShalom(sessionId);
+        CombinedPayment payment = jdbc.queryForObject("""
+                SELECT e.id_payment_evidence, r.id_metodo_pago, r.id_metodo_pago_cuenta,
+                       m.nombre, r.currency, e.operation_code, e.operation_at
+                FROM crm_whatsapp_payment_request r
+                JOIN crm_whatsapp_payment_evidence e ON e.id_payment_request=r.id_payment_request
+                JOIN metodo_pago_config m ON m.id_metodo_pago=r.id_metodo_pago
+                WHERE r.id_agent_session=? AND r.included_film_amount=2.00
+                  AND e.validation_status='ACEPTABLE'
+                ORDER BY e.created_at DESC LIMIT 1
+                """, (rs, row) -> new CombinedPayment(rs.getLong("id_payment_evidence"),
+                        rs.getInt("id_metodo_pago"), (Integer) rs.getObject("id_metodo_pago_cuenta"),
+                        rs.getString("nombre"), rs.getString("currency"), rs.getString("operation_code"),
+                        rs.getTimestamp("operation_at") == null ? LocalDateTime.now()
+                                : rs.getTimestamp("operation_at").toLocalDateTime()), sessionId);
+        if (payment == null) throw new IllegalStateException("No existe un pago combinado aprobado");
+        CrmWhatsappFilmAddon addon = addons.findByAgentSession_IdAgentSession(sessionId).orElseGet(() -> {
+            CrmWhatsappFilmAddon created = new CrmWhatsappFilmAddon();
+            created.setAgentSession(session); created.setFulfillment(fulfillment);
+            created.setConversation(session.getConversation()); created.setAmount(PRICE);
+            created.setStatus(CrmWhatsappFilmStatus.OFFERED);
+            created.setIdempotencyKey(hash("film:" + sessionId));
+            return addons.save(created);
+        });
+        if (addon.getVenta() == null) addon.setVenta(sales.findById(saleId)
+                .orElseThrow(() -> new IllegalStateException("La venta no existe")));
+        if (addon.getStatus() == CrmWhatsappFilmStatus.CONFIRMED
+                && "COMBINED_MAIN_RECEIPT".equals(addon.getResolutionSource())) return result(addon, false);
+        addon.setPaymentAccount(session.getSelectedPaymentAccount());
+        addon.setStatus(CrmWhatsappFilmStatus.CONFIRMED); addon.setPaidAt(payment.paidAt());
+        addon.setResolvedAt(LocalDateTime.now()); addon.setResolutionSource("COMBINED_MAIN_RECEIPT");
+        addon.setExpiresAt(null); addon = addons.save(addon);
+        fulfillment.setStatus(CrmWhatsappFulfillmentStatus.READY); fulfillments.save(fulfillment);
+        jdbc.update("""
+                INSERT INTO crm_whatsapp_film_payment
+                  (id_film_addon,id_venta,id_film_evidence,id_payment_evidence,
+                   id_metodo_pago,id_metodo_pago_cuenta,confirmation_source,
+                   amount,currency,provider,operation_code,paid_at)
+                VALUES (?,?,NULL,?,?,?,'COMBINED_MAIN_RECEIPT',?,?,?,?,?)
+                ON DUPLICATE KEY UPDATE id_film_payment=id_film_payment
+                """, addon.getIdFilmAddon(), addon.getVenta().getIdVenta(), payment.evidenceId(),
+                payment.paymentMethodId(), payment.accountId(), PRICE,
+                payment.currency(), payment.provider(), payment.operationCode(), payment.paidAt());
+        return result(addon, false);
+    }
+
     @Transactional
     public FilmResult accept(Long sessionId) {
         CrmWhatsappAgentSession session = requireSession(sessionId);
@@ -282,4 +332,7 @@ public class AgentFilmService {
     public record FilmResult(Long addonId, String status, BigDecimal amount, String accountNumber,
             String accountHolder, LocalDateTime expiresAt, boolean continueWithoutFilm,
             Integer saleId, String shalomAgency, String shalomAgencyAddress) {}
+
+    private record CombinedPayment(Long evidenceId, Integer paymentMethodId, Integer accountId,
+            String provider, String currency, String operationCode, LocalDateTime paidAt) {}
 }

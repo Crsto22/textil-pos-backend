@@ -629,6 +629,35 @@ class AgentDeterministicCommerceServiceTest {
         verify(payments).bindApprovedCustomer(41L);
     }
 
+    @Test
+    void combinedFilmPaymentSkipsDeliveryChoiceAfterCustomerData() {
+        CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        AgentPaymentService payments = mock(AgentPaymentService.class);
+        AgentCustomerService customers = mock(AgentCustomerService.class);
+        AgentFulfillmentService fulfillment = mock(AgentFulfillmentService.class);
+        CrmWhatsappConversation conversation = new CrmWhatsappConversation();
+        conversation.setPhone("51932889985@s.whatsapp.net");
+        CrmWhatsappAgentSession session = new CrmWhatsappAgentSession(); session.setConversation(conversation);
+        when(sessions.findById(41L)).thenReturn(Optional.of(session));
+        when(payments.hasCombinedFilmPayment(41L)).thenReturn(true);
+        AgentDeterministicCommerceService service = new AgentDeterministicCommerceService(
+                sessions, null, null, null, payments, customers, fulfillment, null, null, null, null);
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.CUSTOMER_DATA, "registrar mis datos", "", "", "", 0, "", List.of(),
+                AgentCartAction.NONE, AgentCommercialAction.PROVIDE_CUSTOMER_DATA, "", "",
+                "Juancito Perez", "", "", "", "", "", List.of(),
+                AgentCatalogAvailability.ALL, "", List.of(), "", 100, false);
+
+        AgentDeterministicCommerceService.Outcome result = service.provideCustomer(
+                41L, decision, "agent-job-1:provide_customer_data");
+
+        verify(fulfillment).selectShalom(41L, "agent-job-1:provide_customer_data:combined-shalom");
+        assertTrue(result.customerMessage().contains("Film protector: S/2.00"));
+        assertTrue(result.customerMessage().contains("datos de Shalom")
+                || result.customerMessage().contains("SHALOM"));
+        assertFalse(result.customerMessage().contains("¿Cuál opción deseas?"));
+    }
+
     private AgentDeterministicCommerceService serviceWithNoDependencies() {
         return new AgentDeterministicCommerceService(null, null, null, null, null, null, null, null, null, null, null);
     }

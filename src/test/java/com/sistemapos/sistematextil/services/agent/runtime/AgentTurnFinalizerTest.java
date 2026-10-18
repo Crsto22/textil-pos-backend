@@ -428,6 +428,69 @@ class AgentTurnFinalizerTest {
     }
 
     @Test
+    void sendsOneMaintenanceNoticeWhenGeminiCreditsAreDepletedWithoutEscalating() {
+        AgentOutboxService outbox = mock(AgentOutboxService.class);
+        CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        AgentRuntimeConfigService runtime = mock(AgentRuntimeConfigService.class);
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
+        session.setIdAgentSession(8L);
+        session.setActiveSlot(true);
+        session.setState(CrmWhatsappAgentState.EXPLORANDO_PRODUCTOS);
+        CrmWhatsappConversation conversation = new CrmWhatsappConversation();
+        conversation.setIdConversation(20L);
+        session.setConversation(conversation);
+        when(sessions.findForUpdate(8L)).thenReturn(java.util.Optional.of(session));
+        when(runtime.forSession(8L)).thenReturn(new AgentRuntimeConfigService.RuntimeConfig(false,
+                com.sistemapos.sistematextil.model.CrmWhatsappAgentActivationStage.AUTOMATIC_SALES,
+                java.util.Set.of(), 100, 5000, 240, 85, true, 3, 5, 15, 12, 6));
+        when(jdbc.queryForObject(anyString(), eq(Long.class),
+                eq(20L), eq(AgentTurnFinalizer.PROVIDER_MAINTENANCE_MESSAGE), any(LocalDateTime.class),
+                eq(20L), eq(AgentTurnFinalizer.PROVIDER_MAINTENANCE_MESSAGE), any(LocalDateTime.class)))
+                .thenReturn(0L);
+        AgentTurnFinalizer finalizer = new AgentTurnFinalizer(outbox, mock(AgentCatalogQueryService.class), sessions,
+                mock(CrmWhatsappAgentStateMachine.class), runtime, jdbc);
+        JobLease lease = new JobLease(41L, 8L, 99L, 1, "worker:lease", LocalDateTime.now());
+
+        finalizer.failPermanently(lease,
+                "Gemini respondio HTTP 402: Your prepayment credits are depleted");
+
+        int expectedOrdinal = Math.floorMod(java.util.Objects.hash("AGENT_PROVIDER_MAINTENANCE", 41L),
+                Integer.MAX_VALUE);
+        verify(outbox).enqueueText(8L, null, 99L, expectedOrdinal,
+                AgentTurnFinalizer.PROVIDER_MAINTENANCE_MESSAGE);
+        verify(jdbc, never()).update(org.mockito.ArgumentMatchers.contains("crm_whatsapp_support_case"),
+                any(Object[].class));
+        org.junit.jupiter.api.Assertions.assertEquals(CrmWhatsappAgentState.EXPLORANDO_PRODUCTOS,
+                session.getState());
+    }
+
+    @Test
+    void doesNotRepeatMaintenanceNoticeDuringTheProviderOutageWindow() {
+        AgentOutboxService outbox = mock(AgentOutboxService.class);
+        CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
+        session.setIdAgentSession(8L);
+        session.setActiveSlot(true);
+        CrmWhatsappConversation conversation = new CrmWhatsappConversation();
+        conversation.setIdConversation(20L);
+        session.setConversation(conversation);
+        when(sessions.findForUpdate(8L)).thenReturn(java.util.Optional.of(session));
+        when(jdbc.queryForObject(anyString(), eq(Long.class),
+                eq(20L), eq(AgentTurnFinalizer.PROVIDER_MAINTENANCE_MESSAGE), any(LocalDateTime.class),
+                eq(20L), eq(AgentTurnFinalizer.PROVIDER_MAINTENANCE_MESSAGE), any(LocalDateTime.class)))
+                .thenReturn(1L);
+        AgentTurnFinalizer finalizer = new AgentTurnFinalizer(outbox, mock(AgentCatalogQueryService.class), sessions,
+                mock(CrmWhatsappAgentStateMachine.class), mock(AgentRuntimeConfigService.class), jdbc);
+        JobLease lease = new JobLease(42L, 8L, 100L, 1, "worker:lease", LocalDateTime.now());
+
+        finalizer.failPermanently(lease, "Gemini respondio HTTP 402");
+
+        verify(outbox, never()).enqueueText(eq(8L), any(), eq(100L), any(Integer.class), anyString());
+    }
+
+    @Test
     void explainsRealStockFailureInsteadOfClaimingTheMessageWasNotUnderstood() {
         AgentOutboxService outbox = mock(AgentOutboxService.class);
         CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);

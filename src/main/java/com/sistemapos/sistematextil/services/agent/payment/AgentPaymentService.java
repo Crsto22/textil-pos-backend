@@ -211,6 +211,7 @@ public class AgentPaymentService {
                     request.setAgentIdempotencyKey(operationKey);
                     request.setCreatedBy(actor);
                     request.setExpectedAmount(money(cart.total()));
+                    request.setIncludedFilmAmount(BigDecimal.ZERO.setScale(2));
                     request.setCurrency(currency(cart.currency()));
                     request.setSaleRequestJson(write(saleSnapshot));
                     request.setReservationStatus(CrmWhatsappPaymentReservationStatus.LEGACY_NONE);
@@ -245,6 +246,16 @@ public class AgentPaymentService {
         requestRepository.save(request);
         return new PaymentCustomerBinding(request.getIdPaymentRequest(), session.getCliente().getIdCliente(),
                 session.getCliente().getNombres(), session.getCliente().getTelefono());
+    }
+
+    @Transactional(readOnly = true)
+    public boolean hasCombinedFilmPayment(Long sessionId) {
+        return requestRepository.findFirstByAgentSession_IdAgentSessionAndStatusInOrderByCreatedAtDesc(
+                        sessionId, List.of(CrmWhatsappPaymentRequestStatus.UNDER_REVIEW,
+                                CrmWhatsappPaymentRequestStatus.READY_FOR_SALE))
+                .map(request -> request.getIncludedFilmAmount() != null
+                        && request.getIncludedFilmAmount().compareTo(new BigDecimal("2.00")) == 0)
+                .orElse(false);
     }
 
     @Transactional

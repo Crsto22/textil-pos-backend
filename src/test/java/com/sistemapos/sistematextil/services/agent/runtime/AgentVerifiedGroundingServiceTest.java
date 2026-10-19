@@ -1041,7 +1041,7 @@ class AgentVerifiedGroundingServiceTest {
     }
 
     @Test
-    void sendsUpToFiveAvailableColorImagesAndKeepsEveryAvailableColorInEvidence() {
+    void sendsUpToEightAvailableColorImagesAndKeepsEveryAvailableColorInEvidence() {
         AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
         AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
         AgentConversationDecision decision = new AgentConversationDecision(
@@ -1052,7 +1052,7 @@ class AgentVerifiedGroundingServiceTest {
         when(decisions.interpret(4L, "Muestrame los colores de Melina en imagenes")).thenReturn(
                 new AgentInterpretationResult("GEMINI", "model", "DB", 10, 0, decision));
         List<String> availableColors = List.of(
-                "NEGRO", "TOPO", "PLATA", "ROSADO", "VINO", "CAMEL", "CHOCOLATE");
+                "NEGRO", "TOPO", "PLATA", "ROSADO", "VINO", "CAMEL", "CHOCOLATE", "AZUL", "PERLA");
         ProductSummary summary = new ProductSummary(88, "MELINA", "ARUBA", "CONJUNTO",
                 false, null, 79D, 50, availableColors, List.of("XS", "S", "M", "L"));
         when(catalog.searchProducts(9L, "Melina", 20,
@@ -1067,7 +1067,10 @@ class AgentVerifiedGroundingServiceTest {
                 new ProductImage("PLATA", "/productos/melina-plata.webp", null, true),
                 new ProductImage("ROSADO", "/productos/melina-rosado.webp", null, true),
                 new ProductImage("VINO", "/productos/melina-vino.webp", null, true),
-                new ProductImage("CAMEL", "/productos/melina-camel.webp", null, true))));
+                new ProductImage("CAMEL", "/productos/melina-camel.webp", null, true),
+                new ProductImage("CHOCOLATE", "/productos/melina-chocolate.webp", null, true),
+                new ProductImage("AZUL", "/productos/melina-azul.webp", null, true),
+                new ProductImage("PERLA", "/productos/melina-perla.webp", null, true))));
         AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
                 mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
                 mock(AgentCartService.class), passThroughAudit());
@@ -1075,8 +1078,8 @@ class AgentVerifiedGroundingServiceTest {
         var result = service.ground(4L, 9L, 30L, "Muestrame los colores de Melina en imagenes");
 
         assertEquals(3, result.verifiedToolCalls());
-        assertEquals(5, result.media().size());
-        assertEquals(List.of("NEGRO", "TOPO", "PLATA", "ROSADO", "VINO"),
+        assertEquals(8, result.media().size());
+        assertEquals(List.of("NEGRO", "TOPO", "PLATA", "ROSADO", "VINO", "CAMEL", "CHOCOLATE", "AZUL"),
                 result.media().stream().map(media -> media.color()).toList());
         assertTrue(result.evidenceJson().contains("productColorGallery"));
         assertTrue(result.evidenceJson().contains("CHOCOLATE"));

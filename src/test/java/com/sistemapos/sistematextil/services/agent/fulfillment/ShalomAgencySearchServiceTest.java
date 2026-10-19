@@ -88,6 +88,39 @@ class ShalomAgencySearchServiceTest {
         assertEquals(2, result.candidates().size());
     }
 
+    @Test
+    void resolvesANumericReplyUsingTheOfferedOrder() {
+        ShalomAgencyRepository repository = mock(ShalomAgencyRepository.class);
+        ShalomAgency first = agency(80L, "CHICLAYO / CALLE TACNA",
+                "LAMBAYEQUE", "CHICLAYO", "CHICLAYO", "CALLE TACNA", "CALLE TACNA 1095");
+        ShalomAgency second = agency(81L, "CHICLAYO / TAHUANTINSUYO",
+                "LAMBAYEQUE", "CHICLAYO", "JOSE LEONARDO ORTIZ", "TAHUANTINSUYO", "CALLE TAHUANTINSUYO 995");
+        when(repository.findById(80L)).thenReturn(java.util.Optional.of(first));
+        when(repository.findById(81L)).thenReturn(java.util.Optional.of(second));
+
+        ShalomAgencySearchService service = new ShalomAgencySearchService(repository);
+
+        assertEquals(80L, service.resolveReference("1", List.of(80L, 81L)).agencyId());
+        assertEquals(81L, service.resolveReference("2", List.of(80L, 81L)).agencyId());
+        assertEquals("NO_MATCH", service.resolveReference("3", List.of(80L, 81L)).status());
+    }
+
+    @Test
+    void returnsUpToFiveAgenciesForAnAmbiguousSearch() {
+        ShalomAgencyRepository repository = mock(ShalomAgencyRepository.class);
+        List<ShalomAgency> agencies = java.util.stream.LongStream.rangeClosed(1, 6)
+                .mapToObj(id -> agency(id, "CHICLAYO / SEDE " + id,
+                        "LAMBAYEQUE", "CHICLAYO", "CHICLAYO", "SEDE " + id,
+                        "CALLE CHICLAYO " + id))
+                .toList();
+        when(repository.findByActiveTrueAndDestinationEnabledTrueOrderByNameAsc()).thenReturn(agencies);
+
+        var result = new ShalomAgencySearchService(repository).search("Chiclayo");
+
+        assertEquals("AMBIGUOUS", result.status());
+        assertEquals(5, result.candidates().size());
+    }
+
     private ShalomAgency agency(Long id, String name, String department, String province,
             String zone, String place, String address) {
         ShalomAgency value = new ShalomAgency();

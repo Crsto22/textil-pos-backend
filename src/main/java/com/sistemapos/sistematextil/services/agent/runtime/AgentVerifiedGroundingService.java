@@ -61,8 +61,8 @@ import com.sistemapos.sistematextil.services.agent.sizeguide.ProductSizeGuideQue
 @Service
 public class AgentVerifiedGroundingService {
     private static final int AUDIT_ORDINAL_BASE = 10_000;
-    private static final int MAX_CART_COLOR_IMAGES = 5;
-    private static final int MAX_PRODUCT_COLOR_GALLERY_IMAGES = 5;
+    private static final int MAX_CART_COLOR_IMAGES = 8;
+    private static final int MAX_PRODUCT_COLOR_GALLERY_IMAGES = 8;
     private static final int MAX_INITIAL_CATALOG_IMAGES = 8;
     private static final int MAX_KNOWLEDGE_QUESTION_LENGTH = 500;
     private static final Pattern COMPONENT_WITH_SIZE = Pattern.compile(

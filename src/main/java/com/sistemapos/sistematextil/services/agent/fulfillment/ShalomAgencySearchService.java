@@ -17,6 +17,7 @@ import lombok.RequiredArgsConstructor;
 @Service
 @RequiredArgsConstructor
 public class ShalomAgencySearchService {
+    private static final int MAX_CANDIDATES = 5;
     private static final Set<String> QUERY_NOISE = Set.of(
             "agencia", "agencias", "shalom", "sede", "destino", "envio", "en", "de", "la", "el");
     private final ShalomAgencyRepository repository;
@@ -34,7 +35,7 @@ public class ShalomAgencySearchService {
                 .thenComparing(item -> item.agency().getName()));
         boolean clearMatch = !scored.isEmpty() && (scored.size() == 1
                 || scored.get(0).score() - scored.get(1).score() >= .18);
-        List<AgencyView> candidates = scored.stream().limit(clearMatch ? 1 : 3)
+        List<AgencyView> candidates = scored.stream().limit(clearMatch ? 1 : MAX_CANDIDATES)
                 .map(item -> view(item.agency(), item.score())).toList();
         String status = candidates.isEmpty() ? "NOT_FOUND" : clearMatch ? "MATCH" : "AMBIGUOUS";
         return new SearchResult(status, candidates);
@@ -55,6 +56,8 @@ public class ShalomAgencySearchService {
      */
     @Transactional(readOnly = true)
     public ReferenceResolution resolveReference(String reference, List<Long> offeredIds) {
+        ReferenceResolution ordinal = resolveOfferedPosition(reference, offeredIds);
+        if (ordinal != null) return ordinal;
         String normalized = cleanQuery(ShalomAgencySyncService.normalize(reference));
         if (normalized.length() < 2 || offeredIds == null || offeredIds.isEmpty()) {
             return new ReferenceResolution("NO_MATCH", null, List.of());
@@ -69,10 +72,32 @@ public class ShalomAgencySearchService {
                 .toList();
         if (matches.isEmpty()) return new ReferenceResolution("NO_MATCH", null, List.of());
         boolean unique = matches.size() == 1 || matches.get(0).score() - matches.get(1).score() >= .18;
-        List<AgencyView> candidates = matches.stream().limit(unique ? 1 : 3)
+        List<AgencyView> candidates = matches.stream().limit(unique ? 1 : MAX_CANDIDATES)
                 .map(item -> view(item.agency(), item.score())).toList();
         return new ReferenceResolution(unique ? "MATCH" : "AMBIGUOUS",
                 unique ? candidates.getFirst().agencyId() : null, candidates);
+    }
+
+    private ReferenceResolution resolveOfferedPosition(String reference, List<Long> offeredIds) {
+        if (reference == null || offeredIds == null || offeredIds.isEmpty()) return null;
+        String value = reference.trim();
+        if (!value.matches("[1-9]\\d*")) return null;
+        int position;
+        try {
+            position = Integer.parseInt(value);
+        } catch (NumberFormatException ignored) {
+            return new ReferenceResolution("NO_MATCH", null, List.of());
+        }
+        List<Long> offered = offeredIds.stream().distinct().toList();
+        if (position > offered.size()) return new ReferenceResolution("NO_MATCH", null, List.of());
+        return repository.findById(offered.get(position - 1))
+                .filter(ShalomAgency::isActive)
+                .filter(ShalomAgency::isDestinationEnabled)
+                .map(agency -> {
+                    AgencyView selected = view(agency, 1);
+                    return new ReferenceResolution("MATCH", selected.agencyId(), List.of(selected));
+                })
+                .orElseGet(() -> new ReferenceResolution("NO_MATCH", null, List.of()));
     }
 
     private double score(String query, ShalomAgency agency) {

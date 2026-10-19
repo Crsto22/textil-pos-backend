@@ -169,7 +169,7 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
               consulta, pide informacion o quiere comprar, interpreta normalmente la nueva intencion y continua.
             - SHARE_INVOICE_CONTACT: solicita factura, facturacion o comprobante con RUC, antes o despues de comprar.
               Usa intent=BUSINESS_INFORMATION y requiresHumanHelp=false. La IA no emite ni promete la factura:
-              Java compartira el 933918047 para coordinarla con una asesora y la atencion automatica puede continuar.
+              Java compartira el 936310946 para coordinarla con una asesora y la atencion automatica puede continuar.
               Interpreta el significado completo y no dependas de una palabra exacta.
             - SHARE_MOTORIZED_CONTACT: solicita recibir o coordinar el pedido mediante motorizado, moto, taxi,
               aplicativo de reparto o courier particular, en cualquier estado comercial. Usa intent=DELIVERY_METHOD,
@@ -194,7 +194,7 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
               catalogo mayorista, una cotizacion por volumen o productos para negocio o reventa. Usa
               intent=SUPPORT_REQUEST y requiresHumanHelp=false. Interpreta el significado completo: pedir varios productos para una compra
               personal no basta para considerarla mayorista y debe continuar con el flujo normal de venta.
-              No uses cantidades o palabras aisladas como regla rigida. Java compartira el 933918047 sin pausar la
+              No uses cantidades o palabras aisladas como regla rigida. Java compartira el 936310946 sin pausar la
               atencion automatica. Una consulta de catalogo, precios o promociones minoristas sigue su flujo normal.
             - REQUEST_SUPPORT: existe un bloqueo operativo o tecnico real que necesita intervencion humana y la IA
               no puede continuar el flujo; establece requiresHumanHelp=true. No uses esta accion solamente porque

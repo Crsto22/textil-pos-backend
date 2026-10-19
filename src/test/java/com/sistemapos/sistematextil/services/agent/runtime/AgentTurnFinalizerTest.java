@@ -103,13 +103,13 @@ class AgentTurnFinalizerTest {
         AgentTurnFinalizer finalizer=new AgentTurnFinalizer(outbox,mock(AgentCatalogQueryService.class),sessions,
                 mock(CrmWhatsappAgentStateMachine.class),runtime,jdbc);
         JobLease lease=new JobLease(41L,8L,99L,1,"worker:lease",LocalDateTime.now());
-        GeneratedTurn turn=new GeneratedTurn("Puedes comunicarte al 933918047.","Resumen",true,
+        GeneratedTurn turn=new GeneratedTurn("Puedes comunicarte al 936310946.","Resumen",true,
                 "GEMINI","gemini",10,0,"fp",List.of());
 
         finalizer.finalizeTurn(lease,turn);
 
         org.junit.jupiter.api.Assertions.assertEquals(CrmWhatsappAgentState.EXPLORANDO_PRODUCTOS,session.getState());
-        verify(outbox).enqueueText(8L,41L,99L,0,"Puedes comunicarte al 933918047.");
+        verify(outbox).enqueueText(8L,41L,99L,0,"Puedes comunicarte al 936310946.");
         verify(jdbc, never()).update(org.mockito.ArgumentMatchers.contains("crm_whatsapp_support_case"),
                 any(Object[].class));
     }

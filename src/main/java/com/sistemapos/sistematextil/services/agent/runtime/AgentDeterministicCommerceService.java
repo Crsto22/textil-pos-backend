@@ -819,23 +819,23 @@ public class AgentDeterministicCommerceService {
 
     private Outcome declineFilm(Long sessionId) {
         return Outcome.executed("El film protector de S/2 es obligatorio para los envíos por Shalom. "
-                + "Si necesitas ayuda con el pago, comunícate con nuestra asesora al 933918047.");
+                + "Si necesitas ayuda con el pago, comunícate con nuestra asesora al 936310946.");
     }
 
     private Outcome advisorContact() {
-        return Outcome.message("Claro que si, bella. Puedes comunicarte con nuestra asesora al 933918047. "
+        return Outcome.message("Claro que si, bella. Puedes comunicarte con nuestra asesora al 936310946. "
                 + "Yo tambien puedo seguir ayudandote por aqui con productos, colores, tallas, stock y tu compra.");
     }
 
     private Outcome invoiceContact() {
-        return Outcome.message("Para solicitar una factura, comunicate con nuestra asesora al 933918047. "
+        return Outcome.message("Para solicitar una factura, comunicate con nuestra asesora al 936310946. "
                 + "Ella te ayudara a coordinar los datos de facturacion. "
                 + "Yo tambien puedo seguir ayudandote por aqui con tus productos y tu compra.");
     }
 
     private Outcome motorizedContact() {
         return Outcome.message("Para coordinar el envio por motorizado, comunicate con nuestra asesora al "
-                + "933918047. Ella te ayudara a revisar la disponibilidad y el costo del servicio. "
+                + "936310946. Ella te ayudara a revisar la disponibilidad y el costo del servicio. "
                 + "Yo tambien puedo seguir ayudandote por aqui con tus productos y tu compra.");
     }
 
@@ -851,7 +851,7 @@ public class AgentDeterministicCommerceService {
     private Outcome wholesaleContact() {
         return Outcome.message("Hermosa, soy la asistente virtual de Kiments y atiendo compras rápidas al por menor. "
                 + "Para solicitar el catálogo mayorista, precios por mayor o realizar una compra para negocio, "
-                + "comunícate con nuestra asesora al 933918047. 💛");
+                + "comunícate con nuestra asesora al 936310946. 💛");
     }
 
     private Outcome immediatePaymentPolicy(Long sessionId) {
@@ -864,7 +864,7 @@ public class AgentDeterministicCommerceService {
                 + "ahora, ya que no reservamos productos para otro día y el stock cambia diariamente. Si deseas pagar "
                 + "más adelante, deberás realizar nuevamente tu pedido para verificar la disponibilidad.\n\n"
                 + "Soy la asistente virtual de Kiments y puedo ayudarte a realizar tu compra de forma rápida y segura. "
-                + "Si necesitas una atención más personalizada, puedes comunicarte con nuestra asesora al 933918047. 💛";
+                + "Si necesitas una atención más personalizada, puedes comunicarte con nuestra asesora al 936310946. 💛";
         return releasedReservation ? Outcome.executed(message) : Outcome.message(message);
     }
 
@@ -884,7 +884,7 @@ public class AgentDeterministicCommerceService {
                 + "Para completar la preparación del envío, queda pendiente el pago obligatorio de S/2 por el film protector.";
         if (film.accountNumber() == null) {
             return registered + "\n\nNo hay una cuenta Yape activa. Tu venta se conserva. Para recibir ayuda, "
-                    + "comunícate con nuestra asesora al 933918047.";
+                    + "comunícate con nuestra asesora al 936310946.";
         }
         String holder = blank(film.accountHolder()) ? "" : "\nTitular: " + film.accountHolder();
         return registered + "\n\n📦 Pago obligatorio del film protector\nMonto exacto: S/2.00\nYape: "
@@ -900,7 +900,7 @@ public class AgentDeterministicCommerceService {
         return "✅ *Tu pedido fue registrado para envío por Shalom*\n\n📍 *Agencia:* "
                 + result.shalomAgency() + (result.shalomAgencyAddress() == null ? "" : "\n" + result.shalomAgencyAddress())
                 + "\n\n🧾 *Tu número de pedido es " + saleId + ".*\n\n"
-                + "Si necesitas ayuda, comunícate con nuestra asesora al 933918047.\n\n"
+                + "Si necesitas ayuda, comunícate con nuestra asesora al 936310946.\n\n"
                 + "Gracias por confiar en Kiments 💛";
     }
 

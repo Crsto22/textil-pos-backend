@@ -45,11 +45,11 @@ public class AgentConversationOrchestrator {
 
             Una asesora revisara tu solicitud y te indicara si el cambio es posible. Ten en cuenta que puede aplicarse una penalidad de S/10 por prenda.
 
-            Para recibir ayuda con tu caso, comunícate con nuestra asesora al 933918047.""";
+            Para recibir ayuda con tu caso, comunícate con nuestra asesora al 936310946.""";
     static final String POST_SALE_CHANGE_CONTACT_ONLY_MESSAGE = """
             Entiendo. Como tu pedido ya fue confirmado, no puedo realizar cambios de color, talla, modelo, cantidad, pago o entrega desde este chat.
 
-            Para consultar si el cambio es posible, comunícate con nuestra asesora al 933918047. Puedes seguir escribiéndome si deseas información o realizar una compra nueva.""";
+            Para consultar si el cambio es posible, comunícate con nuestra asesora al 936310946. Puedes seguir escribiéndome si deseas información o realizar una compra nueva.""";
     static final String GENERAL_IMAGE_MESSAGE = """
             Recibí tu imagen, bella 💛
             Para ayudarte correctamente, indícame el nombre del modelo, el color y la talla que deseas.""";
@@ -211,7 +211,7 @@ public class AgentConversationOrchestrator {
                           atención. PREORDER dice solamente que el envío se realizará según la fecha indicada en la
                           preventa; no escribas una fecha exacta. En ambos casos indica que una asesora del área de
                           envíos se comunicará para coordinar. NOT_LINKED_TO_AGENT no informa plazos ni promete
-                          contacto: explica que no encontraste una venta registrada por este chat y comparte 933918047.
+                          contacto: explica que no encontraste una venta registrada por este chat y comparte 936310946.
                         - Si la clienta solicita todos los productos de un grupo, incluye todos los productos presentes
                           en la evidencia; no agregues modelos, tipos de prenda ni variantes que no aparezcan alli.
                         - Cuando commercialAction sea SHOW_PRODUCTS, incluye siempre https://kiments.com.pe/productos
@@ -388,7 +388,7 @@ public class AgentConversationOrchestrator {
         if (!modelRequestsHandoff && !disabledDecisionRequestsHandoff && !promisesAutomaticHandoff) return "";
         return "No esta autorizada una derivacion humana para esta respuesta. Redacta nuevamente con "
                 + "requiresHumanHelp=false, sin prometer transferencia, espera, revision ni contacto automatico. "
-                + "Responde la consulta normalmente; si esta fuera de alcance, comparte 933918047 solo como "
+                + "Responde la consulta normalmente; si esta fuera de alcance, comparte 936310946 solo como "
                 + "contacto informativo y mantente disponible para seguir informando o vendiendo.";
     }
 
@@ -556,10 +556,10 @@ public class AgentConversationOrchestrator {
         String evidence = grounding.evidenceJson() == null ? "" : grounding.evidenceJson();
         String response = normalizeText(customerMessage);
         if (evidence.contains("NOT_LINKED_TO_AGENT")) {
-            if (response.contains("933918047") && !response.contains("1 a 3")
+            if (response.contains("936310946") && !response.contains("1 a 3")
                     && !containsShippingContact(response)) return "";
             return "No existe una venta vinculada a este chat. No informes plazos ni prometas contacto del area "
-                    + "de envios; comparte el 933918047 para que una asesora revise el pedido.";
+                    + "de envios; comparte el 936310946 para que una asesora revise el pedido.";
         }
         if (evidence.contains("READY_STOCK")) {
             if (response.contains("1 a 3") && containsShippingContact(response)) return "";

@@ -680,7 +680,7 @@ class AgentConversationOrchestratorTest {
         var grounding = deliveryGrounding("NOT_LINKED_TO_AGENT");
 
         assertEquals("", AgentConversationOrchestrator.deliveryTimingCorrectionInstruction(
-                grounding, "Para revisar ese pedido, comunícate con nuestra asesora al 933918047."));
+                grounding, "Para revisar ese pedido, comunícate con nuestra asesora al 936310946."));
         assertFalse(AgentConversationOrchestrator.deliveryTimingCorrectionInstruction(
                 grounding, "El área de envíos se comunicará contigo en 1 a 3 días.").isBlank());
     }

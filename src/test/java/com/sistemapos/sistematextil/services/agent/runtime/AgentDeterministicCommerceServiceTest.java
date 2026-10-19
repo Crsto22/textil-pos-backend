@@ -466,7 +466,7 @@ class AgentDeterministicCommerceServiceTest {
 
         assertTrue(result.handled());
         assertFalse(result.mutationExecuted());
-        assertTrue(result.customerMessage().contains("933918047"));
+        assertTrue(result.customerMessage().contains("936310946"));
         assertTrue(result.customerMessage().contains("seguir ayudandote"));
         assertEquals(CrmWhatsappAgentState.EXPLORANDO_PRODUCTOS, session.getState());
     }
@@ -487,7 +487,7 @@ class AgentDeterministicCommerceServiceTest {
         assertTrue(result.handled());
         assertFalse(result.mutationExecuted());
         assertTrue(result.customerMessage().contains("motorizado"));
-        assertTrue(result.customerMessage().contains("933918047"));
+        assertTrue(result.customerMessage().contains("936310946"));
         assertTrue(result.customerMessage().contains("seguir ayudandote"));
         assertEquals(CrmWhatsappAgentState.ARMANDO_CARRITO, session.getState());
     }
@@ -508,7 +508,7 @@ class AgentDeterministicCommerceServiceTest {
         assertTrue(result.handled());
         assertFalse(result.mutationExecuted());
         assertTrue(result.customerMessage().contains("factura"));
-        assertTrue(result.customerMessage().contains("933918047"));
+        assertTrue(result.customerMessage().contains("936310946"));
         assertTrue(result.customerMessage().contains("seguir ayudandote"));
         assertEquals(CrmWhatsappAgentState.ARMANDO_CARRITO, session.getState());
     }
@@ -555,7 +555,7 @@ class AgentDeterministicCommerceServiceTest {
         assertFalse(result.mutationExecuted());
         assertTrue(result.customerMessage().contains("compras rápidas al por menor"));
         assertTrue(result.customerMessage().contains("catálogo mayorista"));
-        assertTrue(result.customerMessage().contains("933918047"));
+        assertTrue(result.customerMessage().contains("936310946"));
         assertEquals(CrmWhatsappAgentState.EXPLORANDO_PRODUCTOS, session.getState());
     }
 
@@ -579,7 +579,7 @@ class AgentDeterministicCommerceServiceTest {
         assertTrue(result.customerMessage().contains("no reservamos productos para otro día"));
         assertTrue(result.customerMessage().contains("realizar nuevamente tu pedido"));
         assertTrue(result.customerMessage().contains("asistente virtual de Kiments"));
-        assertTrue(result.customerMessage().contains("933918047"));
+        assertTrue(result.customerMessage().contains("936310946"));
         verify(payments, never()).beginCartEdit(41L);
     }
 

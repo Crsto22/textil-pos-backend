@@ -62,7 +62,7 @@ class AgentMainPromptFactoryTest {
         assertTrue(prompt.systemInstruction().contains("el tiempo de llegada depende de Shalom"));
         assertTrue(prompt.systemInstruction().contains("el horario de atención no"));
         assertTrue(prompt.systemInstruction().contains("Continúa vendiendo"));
-        assertTrue(prompt.systemInstruction().contains("933918047"));
+        assertTrue(prompt.systemInstruction().contains("936310946"));
         assertTrue(prompt.systemInstruction().contains("catálogo mayorista"));
         assertTrue(prompt.systemInstruction().contains("factura"));
         assertTrue(prompt.systemInstruction().contains("no anotes, separes ni reserves prendas"));

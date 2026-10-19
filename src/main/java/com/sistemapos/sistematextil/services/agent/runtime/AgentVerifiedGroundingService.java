@@ -303,7 +303,7 @@ public class AgentVerifiedGroundingService {
                     "products", guidance.products(),
                     "readyStockDispatch", "1 a 3 días según el volumen de pedidos y el orden de atención",
                     "preorderDispatch", "según la fecha indicada en la preventa",
-                    "advisorPhone", "933918047",
+                    "advisorPhone", "936310946",
                     "shippingAreaWillContact", guidance.agentSaleFound()));
             return null;
         }

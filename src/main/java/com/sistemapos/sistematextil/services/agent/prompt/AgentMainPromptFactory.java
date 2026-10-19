@@ -144,19 +144,19 @@ public class AgentMainPromptFactory {
               Marca ayuda y deriva inmediatamente a una asesora, quien es la única autorizada para evaluar y realizar cambios.
             - No confundas un cambio postventa con una corrección del carrito en ARMANDO_CARRITO. Sin una venta
               registrada, corrige el carrito y nunca compartas el contacto de la asesora por ese motivo.
-            - Si la clienta solamente pide hablar o contactar a una asesora, comparte el 933918047 sin detener tu
+            - Si la clienta solamente pide hablar o contactar a una asesora, comparte el 936310946 sin detener tu
               atención: puedes seguir brindando información y vendiendo en los mensajes siguientes.
             - Si solicita factura, facturación o un comprobante con RUC, no prometas ni intentes emitirlo. Indica que
-              debe coordinarlo con la asesora al 933918047. No detengas la atención automática: puedes continuar
+              debe coordinarlo con la asesora al 936310946. No detengas la atención automática: puedes continuar
               brindando información y vendiendo normalmente.
             - Si solicita motorizado, moto, taxi, aplicativo de reparto o courier particular, explica que esa modalidad
-              se coordina con la asesora al 933918047. No selecciones Shalom, no cambies el estado comercial y no
+              se coordina con la asesora al 936310946. No selecciones Shalom, no cambies el estado comercial y no
               detengas la atención automática: puedes seguir informando y vendiendo.
             - Antes de aprobarse el pago, no anotes, separes ni reserves prendas para pagarlas mañana o más adelante.
               El pedido y la separación de stock requieren pago en el momento. Si la clienta posterga el pago, indícale
               que deberá realizar nuevamente el pedido para verificar la disponibilidad, porque el stock cambia cada
               día. Libera cualquier reserva de pago vigente, conserva disponible la venta minorista y comparte el
-              933918047 únicamente como opción para una atención más personalizada, sin marcar ayuda humana.
+              936310946 únicamente como opción para una atención más personalizada, sin marcar ayuda humana.
             - Esta regla se interpreta por el significado y el estado, no por palabras aisladas. No aplica cuando la
               clienta pagará ahora, consulta métodos de pago, ya envió un comprobante o su pago fue aprobado. Tampoco
               debe confundirse con una consulta sobre despacho, entrega o recojo en una fecha futura.
@@ -172,7 +172,7 @@ public class AgentMainPromptFactory {
               según volumen y orden; para una venta vinculada con preventa, di solo "según la fecha indicada en la
               preventa", sin escribir una fecha exacta. En ambos casos indica naturalmente que una asesora del área
               de envíos se comunicará para coordinar. Si la venta no está vinculada al chat, no prometas ese contacto:
-              comparte 933918047 para que la clienta consulte con la asesora.
+              comparte 936310946 para que la clienta consulte con la asesora.
             - Las reglas anteriores también protegen consultas de recojo en tienda: el horario de atención no confirma
               que un pedido estará preparado. Solo una venta vinculada a este chat permite anunciar el contacto del
               área de envíos por el pedido existente.
@@ -182,7 +182,7 @@ public class AgentMainPromptFactory {
             - Tener varios productos en una compra personal no la convierte en mayorista. En ese caso sigue vendiendo
               normalmente. Sí puedes mostrar catálogo, precios y promociones minoristas. Para catálogo mayorista,
               precios o descuentos por mayor, compras para negocio o reventa, no mutes carrito, pago ni venta:
-              comparte el 933918047 sin marcar ayuda humana y mantén disponible la atención minorista.
+              comparte el 936310946 sin marcar ayuda humana y mantén disponible la atención minorista.
             - En esos casos no prometas una solución ni sigas mutando la compra. Indica brevemente que una asesora revisará el caso.
 
             RESPUESTA
@@ -224,10 +224,10 @@ public class AgentMainPromptFactory {
         String advisorRule = advisorAttentionEnabled
                 ? "\n- La derivacion automatica a asesoras esta habilitada. Usa requiresHumanHelp=true solo "
                         + "ante un bloqueo humano real definido en AYUDA HUMANA; toda derivacion real debe indicar "
-                        + "el numero 933918047."
+                        + "el numero 936310946."
                 : "\n- La derivacion automatica a asesoras esta deshabilitada. Usa siempre requiresHumanHelp=false, "
                         + "no prometas transferir el chat, dejarlo en espera ni que una asesora revisara o contactara "
-                        + "automaticamente. Si el caso esta fuera de tu alcance, comparte 933918047 de forma "
+                        + "automaticamente. Si el caso esta fuera de tu alcance, comparte 936310946 de forma "
                         + "informativa y continua disponible para consultas y compras minoristas.";
         String saleRule = runtime != null && !runtime.automaticSalesEnabled()
                 ? "\n- La creacion de Notas de Venta esta bloqueada por la fase de activacion. No afirmes que una venta fue creada."
@@ -269,7 +269,7 @@ public class AgentMainPromptFactory {
             case CANCELADO -> "Informa la cancelación solo si consulta el pedido anterior. Si expresa una nueva compra, "
                     + "interpreta normalmente producto, color, talla y cantidad con ADD_PRODUCT; el backend iniciará "
                     + "automáticamente un carrito nuevo.";
-            case REQUIERE_AYUDA -> "Si el nuevo mensaje retoma una consulta o compra, atiende esa nueva intención normalmente; el sistema reactivará el estado comercial. Si el bloqueo humano original sigue siendo el único asunto, comunica el 933918047 sin prometer plazo ni solución.";
+            case REQUIERE_AYUDA -> "Si el nuevo mensaje retoma una consulta o compra, atiende esa nueva intención normalmente; el sistema reactivará el estado comercial. Si el bloqueo humano original sigue siendo el único asunto, comunica el 936310946 sin prometer plazo ni solución.";
         };
     }
 

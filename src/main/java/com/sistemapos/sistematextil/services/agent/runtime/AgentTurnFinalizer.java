@@ -29,10 +29,10 @@ import lombok.RequiredArgsConstructor;
 @Service
 @RequiredArgsConstructor
 public class AgentTurnFinalizer {
-    public static final String ADVISOR_CONTACT = "Para recibir ayuda con tu caso, comunícate con nuestra asesora al 933918047.";
+    public static final String ADVISOR_CONTACT = "Para recibir ayuda con tu caso, comunícate con nuestra asesora al 936310946.";
     public static final String PROVIDER_MAINTENANCE_MESSAGE = "Disculpa, bella 💛 Nuestro asistente virtual se encuentra "
             + "temporalmente en mantenimiento. Para continuar con tu compra y recibir atención, comunícate con "
-            + "nuestra asesora al 933918047. Gracias por tu comprensión.";
+            + "nuestra asesora al 936310946. Gracias por tu comprensión.";
     private static final long PROVIDER_MAINTENANCE_NOTICE_MINUTES = 30L;
     private static final DateTimeFormatter CATALOG_DATE = DateTimeFormatter.ofPattern(
             "d 'de' MMMM 'de' uuuu", Locale.forLanguageTag("es-PE"));
@@ -67,7 +67,7 @@ public class AgentTurnFinalizer {
         int ordinal = enqueueWelcomeForNewConversation(session, lease, 0);
         ordinal = enqueueValidatedMedia(session, lease, turn, ordinal);
         String customerMessage=turn.customerMessage().trim();
-        if(escalated&&!customerMessage.contains("933918047"))customerMessage=customerMessage+"\n\n"+ADVISOR_CONTACT;
+        if(escalated&&!customerMessage.contains("936310946"))customerMessage=customerMessage+"\n\n"+ADVISOR_CONTACT;
         outbox.enqueueText(lease.sessionId(), lease.jobId(), lease.anchorMessageId(), ordinal,customerMessage);
     }
 

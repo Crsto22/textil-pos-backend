@@ -10,6 +10,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -354,7 +355,7 @@ class AgentTurnFinalizerTest {
     }
 
     @Test
-    void sendsThreeGlobalCatalogImagesAndMarksThePreviewAsSent() {
+    void sendsGlobalCatalogImagesWithProductStatusAndMarksThePreviewAsSent() {
         AgentOutboxService outbox = mock(AgentOutboxService.class);
         AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
         CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
@@ -377,6 +378,15 @@ class AgentTurnFinalizerTest {
                 79, "ANNIE", "", "/productos/annie-global.webp", null, List.of()));
         when(catalog.getProductImage(8L, 80, "")).thenReturn(new ProductImageResult(
                 80, "LYANA", "", "/productos/lyana-global.webp", null, List.of()));
+        when(catalog.getProduct(8L, 78)).thenReturn(new ProductDetail(
+                78, "MELINA", "", "CONJUNTO", true, LocalDate.of(2026, 10, 26),
+                null, null, List.of(), List.of(), 1, 79D, 1));
+        when(catalog.getProduct(8L, 79)).thenReturn(new ProductDetail(
+                79, "ANNIE", "", "CONJUNTO", false, null,
+                null, null, List.of(), List.of(), 1, 75D, 1));
+        when(catalog.getProduct(8L, 80)).thenReturn(new ProductDetail(
+                80, "LYANA", "", "CONJUNTO", false, null,
+                null, null, List.of(), List.of(), 1, 70D, 1));
         AgentTurnFinalizer finalizer = new AgentTurnFinalizer(outbox, catalog, sessions,
                 mock(CrmWhatsappAgentStateMachine.class), mock(AgentRuntimeConfigService.class), jdbc);
         JobLease lease = new JobLease(41L, 8L, 99L, 1, "worker:lease", LocalDateTime.now());
@@ -391,11 +401,14 @@ class AgentTurnFinalizerTest {
 
         org.mockito.InOrder order = inOrder(outbox);
         order.verify(outbox).enqueueImage(8L, 41L, 99L, 0,
-                "/productos/melina-global.webp", "melina-global.webp", "image/webp", "MELINA");
+                "/productos/melina-global.webp", "melina-global.webp", "image/webp",
+                "MELINA\nPreventa: despachos a partir del 26 de octubre de 2026.");
         order.verify(outbox).enqueueImage(8L, 41L, 99L, 1,
-                "/productos/annie-global.webp", "annie-global.webp", "image/webp", "ANNIE");
+                "/productos/annie-global.webp", "annie-global.webp", "image/webp",
+                "ANNIE\nDisponible: despacho aproximado de 1 a 4 días según el volumen de pedidos.");
         order.verify(outbox).enqueueImage(8L, 41L, 99L, 2,
-                "/productos/lyana-global.webp", "lyana-global.webp", "image/webp", "LYANA");
+                "/productos/lyana-global.webp", "lyana-global.webp", "image/webp",
+                "LYANA\nDisponible: despacho aproximado de 1 a 4 días según el volumen de pedidos.");
         order.verify(outbox).enqueueText(8L, 41L, 99L, 3, "Aquí tienes el catálogo");
         org.junit.jupiter.api.Assertions.assertNotNull(session.getCatalogPreviewSentAt());
     }

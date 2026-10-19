@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 
 import java.util.List;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -64,6 +65,20 @@ class AgentCatalogQueryServiceTest {
         var result = service.searchProducts(41L, "que productos tienes", 10);
 
         assertEquals(2, result.products().size());
+    }
+
+    @Test
+    void genericCatalogQuestionListsNewestProductsFirst() {
+        SucursalStock older = stock(10, "ALICE RAYAS", 101, "PERLA", "M", 4);
+        older.getProductoVariante().getProducto().setFechaCreacion(LocalDateTime.of(2026, 10, 1, 10, 0));
+        SucursalStock newest = stock(20, "EMMA", 201, "CAMEL", "S", 2);
+        newest.getProductoVariante().getProducto().setFechaCreacion(LocalDateTime.of(2026, 10, 18, 10, 0));
+        when(catalogRepository.findCatalogByBranch(7)).thenReturn(List.of(older, newest));
+
+        var result = service.searchProducts(41L, "que productos tienes", 10);
+
+        assertEquals(List.of("EMMA", "ALICE RAYAS"),
+                result.products().stream().map(AgentCatalogQueryService.ProductSummary::name).toList());
     }
 
     @Test

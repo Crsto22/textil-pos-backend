@@ -8,7 +8,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
@@ -64,7 +63,7 @@ public class AgentVerifiedGroundingService {
     private static final int AUDIT_ORDINAL_BASE = 10_000;
     private static final int MAX_CART_COLOR_IMAGES = 5;
     private static final int MAX_PRODUCT_COLOR_GALLERY_IMAGES = 5;
-    private static final int MAX_INITIAL_CATALOG_IMAGES = 3;
+    private static final int MAX_INITIAL_CATALOG_IMAGES = 8;
     private static final int MAX_KNOWLEDGE_QUESTION_LENGTH = 500;
     private static final Pattern COMPONENT_WITH_SIZE = Pattern.compile(
             "(?iu)\\b(blazer|saco|chaqueta|chaleco|top|blusa|camisa|polo|casaca|pantal[oó]n|falda|short|"
@@ -458,10 +457,15 @@ public class AgentVerifiedGroundingService {
                         measurements, decision.fitPreference(), decision.colorReference()));
         evidence.put("sizeRecommendation", recommendation);
         if (recommendation.components() != null && recommendation.components().size() > 1) {
-            evidence.put("sizeRecommendationBusinessRule",
-                    "Este producto se vende como conjunto completo en una sola talla. "
+            String sizingRule = "Este producto se vende como conjunto completo en una sola talla. "
                     + "Comunica una unica talla para todo el conjunto; nunca ofrezcas combinar tallas entre piezas. "
-                    + "Si la talla orientada no tiene stock en el color elegido, indicalo sin sustituirla por otra talla.");
+                    + "Si la talla orientada no tiene stock en el color elegido, indicalo sin sustituirla por otra talla.";
+            if (recommendation.betweenSizes()) {
+                sizingRule += " La clienta esta entre tallas: compara las candidatas verificadas, explica que medida "
+                        + "hace ajustada la talla menor y presenta la talla mayor como la opcion mas segura, sin "
+                        + "garantizar el ajuste ni inventar elasticidad.";
+            }
+            evidence.put("sizeRecommendationBusinessRule", sizingRule);
         }
     }
 
@@ -1252,7 +1256,6 @@ public class AgentVerifiedGroundingService {
     private void queueInitialCatalogImages(Long sessionId, Long jobId, ProductSearchResult search,
             AtomicInteger ordinal, Map<String, Object> evidence, List<AgentMediaRequest> media) {
         List<AgentCatalogQueryService.ProductSummary> candidates = new ArrayList<>(search.products());
-        java.util.Collections.shuffle(candidates, new Random(Objects.hash(sessionId, jobId)));
         List<Map<String, Object>> imageEvidence = new ArrayList<>();
         for (var candidate : candidates) {
             if (media.size() >= MAX_INITIAL_CATALOG_IMAGES) break;
@@ -1262,14 +1265,16 @@ public class AgentVerifiedGroundingService {
                     ProductImageResult.class, () -> catalog.getProductImage(sessionId, productId, ""));
             boolean available = images != null && images.globalImageUrl() != null
                     && !images.globalImageUrl().isBlank();
-            imageEvidence.add(Map.of("productId", productId, "productName", candidate.name(),
-                    "globalImageAvailable", available));
+            imageEvidence.add(nullableMap("productId", productId, "productName", candidate.name(),
+                    "globalImageAvailable", available, "preorder", candidate.preorder(),
+                    "preorderShippingDate", candidate.preorderShippingDate()));
             if (available) {
                 media.add(new AgentMediaRequest(MediaType.PRODUCT_IMAGE, productId, "", false, true));
             }
         }
         evidence.put("initialCatalogPreviewImages", imageEvidence);
         evidence.put("initialCatalogPreviewImageCount", media.size());
+        evidence.put("initialCatalogPreviewImageLimit", MAX_INITIAL_CATALOG_IMAGES);
     }
 
     private AgentConversationDecision reconcileExplicitCatalogReferences(

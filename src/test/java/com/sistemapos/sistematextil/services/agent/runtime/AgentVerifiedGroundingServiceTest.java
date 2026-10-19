@@ -1302,16 +1302,58 @@ class AgentVerifiedGroundingServiceTest {
 
         var result = service.ground(4L, 9L, 30L, "quiero todos los productos que no son preventa");
 
-        assertEquals(4, result.verifiedToolCalls());
+        assertEquals(5, result.verifiedToolCalls());
         assertEquals(null, result.customerMessage());
-        assertEquals(3, result.media().size());
-        assertEquals(3, result.media().stream().map(
+        assertEquals(4, result.media().size());
+        assertEquals(4, result.media().stream().map(
                 com.sistemapos.sistematextil.services.agent.ai.AgentMediaRequest::productId).distinct().count());
         assertTrue(result.media().stream().allMatch(
                 com.sistemapos.sistematextil.services.agent.ai.AgentMediaRequest::catalogPreview));
         assertTrue(result.evidenceJson().contains("READY_STOCK_ONLY"));
         verify(catalog).searchProducts(9L, "", 20,
                 com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.READY_STOCK_ONLY);
+    }
+
+    @Test
+    void initialCatalogPreviewQueuesAtMostEightProductsInCatalogOrder() {
+        AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.PRODUCT_SEARCH, "mostrar catálogo", "", "", "", 0, "",
+                AgentCartAction.NONE, AgentCommercialAction.SHOW_PRODUCTS,
+                "", "", "", "", "", "", "", "",
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL,
+                99, false);
+        when(decisions.interpret(4L, "catálogo por favor")).thenReturn(
+                new AgentInterpretationResult("GEMINI", "model", "DB", 10, 0, decision));
+        List<ProductSummary> newestFirst = java.util.stream.IntStream.rangeClosed(1, 9)
+                .mapToObj(index -> new ProductSummary(100 + index, "MODELO " + index,
+                        "ARUBA", "CONJUNTO", false, null, 75D, 2,
+                        List.of("NEGRO"), List.of("S")))
+                .toList();
+        when(catalog.searchProducts(9L, "", 20,
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL))
+                .thenReturn(new ProductSearchResult("", 7,
+                        com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL,
+                        newestFirst, false));
+        for (ProductSummary product : newestFirst) {
+            when(catalog.getProductImage(9L, product.productId(), "")).thenReturn(new ProductImageResult(
+                    product.productId(), product.name(), "",
+                    "/productos/modelo-" + product.productId() + ".webp", null, List.of()));
+        }
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
+                mock(AgentCartService.class), passThroughAudit());
+
+        var result = service.ground(4L, 9L, 30L, "catálogo por favor");
+
+        assertEquals(8, result.media().size());
+        assertEquals(java.util.stream.IntStream.rangeClosed(101, 108).boxed().toList(),
+                result.media().stream().map(
+                        com.sistemapos.sistematextil.services.agent.ai.AgentMediaRequest::productId).toList());
+        assertTrue(result.media().stream().allMatch(
+                com.sistemapos.sistematextil.services.agent.ai.AgentMediaRequest::catalogPreview));
+        org.mockito.Mockito.verify(catalog, org.mockito.Mockito.never()).getProductImage(9L, 109, "");
     }
 
     @Test

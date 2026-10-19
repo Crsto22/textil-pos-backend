@@ -66,6 +66,37 @@ class ProductSizeGuideRecommendationTest {
                 .extracting(component -> component.recommendedSize()).isEqualTo("M");
     }
 
+    @Test
+    void keepsTheSaferLargerSizeWhenWaistFitsMButHipExceedsIt() {
+        List<MeasurementRow> rows = List.of(
+                row(1L, "CHALECO", "M", "CONTORNO_DE_CINTURA", 80),
+                row(1L, "CHALECO", "M", "CONTORNO_DE_CADERA", 102),
+                row(1L, "CHALECO", "L", "CONTORNO_DE_CINTURA", 84),
+                row(1L, "CHALECO", "L", "CONTORNO_DE_CADERA", 106),
+                row(2L, "PANTALON", "M", "CONTORNO_DE_CINTURA", 80),
+                row(2L, "PANTALON", "M", "CONTORNO_DE_CADERA", 100),
+                row(2L, "PANTALON", "L", "CONTORNO_DE_CINTURA", 84),
+                row(2L, "PANTALON", "L", "CONTORNO_DE_CADERA", 104));
+
+        var result = service.calculate(60, "LYANA", "INDETERMINADO", "",
+                List.of(new BodyMeasurement("cadera", new BigDecimal("101"), "CM"),
+                        new BodyMeasurement("cintura", new BigDecimal("78"), "CM")),
+                "NORMAL", rows, Map.of("M", 4, "L", 4));
+
+        assertThat(result.components()).hasSize(2)
+                .allSatisfy(component -> assertThat(component.recommendedSize()).isEqualTo("L"));
+        assertThat(result.betweenSizes()).isTrue();
+        assertThat(result.candidates()).filteredOn(candidate -> candidate.size().equals("M"))
+                .singleElement().satisfies(candidate -> {
+                    assertThat(candidate.undersized()).isTrue();
+                    assertThat(candidate.evidence()).anySatisfy(match -> {
+                        assertThat(match.measurement()).containsIgnoringCase("CADERA");
+                        assertThat(match.customerValue()).isEqualByComparingTo("101");
+                        assertThat(match.guideValue()).isEqualByComparingTo("100");
+                    });
+                });
+    }
+
     private MeasurementRow row(long componentId, String component, String size, String measure, int value) {
         return new MeasurementRow(componentId, component, "", size, measure,
                 measure.replace('_', ' '), new BigDecimal(value), null, null);

@@ -67,7 +67,7 @@ public class ProductSizeGuideQueryService {
         if (!"AVAILABLE".equals(status.analysisStatus())) {
             return new SizeRecommendation(productId, detail.name(), status.analysisStatus(),
                     status.measurementType(), true, false, clean(fitPreference), List.of(), List.of(),
-                    "", "La guia aun no tiene medidas estructuradas disponibles");
+                    "", "La guia aun no tiene medidas estructuradas disponibles", List.of(), false);
         }
         Map<String, Integer> availableStock = new LinkedHashMap<>();
         String color = clean(requestedColor);
@@ -94,12 +94,12 @@ public class ProductSizeGuideQueryService {
         } catch (IllegalArgumentException error) {
             return new SizeRecommendation(productId, productName, "AVAILABLE",
                     measurementType, true, false, clean(fitPreference), List.of(), List.of(),
-                    "", error.getMessage());
+                    "", error.getMessage(), List.of(), false);
         }
         if (requested.isEmpty()) {
             return new SizeRecommendation(productId, productName, "AVAILABLE",
                     measurementType, true, false, clean(fitPreference), List.of(), List.of(),
-                    "", "Falta una medida corporal para orientar la talla");
+                    "", "Falta una medida corporal para orientar la talla", List.of(), false);
         }
         List<MeasurementRow> allRows = guideRows == null ? List.of() : guideRows;
         String componentFilter = normalize(requestedComponent);
@@ -113,19 +113,22 @@ public class ProductSizeGuideQueryService {
             } else if (!matches(productName, componentFilter)) {
                 return new SizeRecommendation(productId, productName, "AVAILABLE",
                         measurementType, true, false, clean(fitPreference), List.of(), List.of(),
-                        "", "El componente indicado no aparece en la guia del producto");
+                        "", "El componente indicado no aparece en la guia del producto", List.of(), false);
             }
         }
         Map<Long, List<MeasurementRow>> byComponent = allRows.stream()
                 .collect(java.util.stream.Collectors.groupingBy(MeasurementRow::componentId,
                         LinkedHashMap::new, java.util.stream.Collectors.toList()));
+        List<SizeCandidateAssessment> candidates = candidateAssessments(
+                allRows, requested, clean(fitPreference));
         if (byComponent.size() > 1) {
             List<ComponentRecommendation> setRecommendation = recommendWholeSet(
                     byComponent, requested, clean(fitPreference), availableStock);
             if (!setRecommendation.isEmpty()) {
                 return new SizeRecommendation(productId, productName, "AVAILABLE",
                         measurementType, true, false, clean(fitPreference),
-                        List.copyOf(setRecommendation), List.of(), "", "");
+                        List.copyOf(setRecommendation), List.of(), "", "", candidates,
+                        isBetweenSizes(setRecommendation.getFirst().recommendedSize(), candidates));
             }
         }
         List<ComponentRecommendation> recommendations = new ArrayList<>();
@@ -145,13 +148,44 @@ public class ProductSizeGuideQueryService {
                     measurementType, true, false, clean(fitPreference), List.of(),
                     requested.stream().map(NormalizedMeasurement::code).toList(),
                     nextUsefulMeasure(allRows, requested),
-                    "Las medidas indicadas no aparecen en la guia de este producto");
+                    "Las medidas indicadas no aparecen en la guia de este producto", List.of(), false);
         }
         boolean conflict = recommendedSizes.size() > 1;
         String next = conflict ? nextUsefulMeasure(allRows, requested) : "";
         return new SizeRecommendation(productId, productName, "AVAILABLE",
                 measurementType, "INDETERMINADO".equals(measurementType), conflict,
-                clean(fitPreference), List.copyOf(recommendations), List.copyOf(missing), next, "");
+                clean(fitPreference), List.copyOf(recommendations), List.copyOf(missing), next, "",
+                candidates, isBetweenSizes(recommendations.getFirst().recommendedSize(), candidates));
+    }
+
+    private List<SizeCandidateAssessment> candidateAssessments(List<MeasurementRow> rows,
+            List<NormalizedMeasurement> requested, String fitPreference) {
+        Set<String> sizes = rows.stream().map(MeasurementRow::sizeLabel).map(this::normalizeSize)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        List<SizeCandidateAssessment> result = new ArrayList<>();
+        for (String size : sizes) {
+            List<MeasurementMatch> matches = matchesForSize(rows, size, requested);
+            boolean coversEveryInput = requested.stream().allMatch(input -> rows.stream()
+                    .anyMatch(row -> normalizeSize(row.sizeLabel()).equals(size)
+                            && measureMatches(row.measurementCode(), input.code())));
+            if (!coversEveryInput || matches.isEmpty()) continue;
+            SizeScore score = score(size, matches, fitPreference);
+            result.add(new SizeCandidateAssessment(size, score.undersized(), score.rawDifference(),
+                    score.matches()));
+        }
+        result.sort(Comparator.comparingInt(item -> sizeOrder(item.size())));
+        return List.copyOf(result);
+    }
+
+    private boolean isBetweenSizes(String selectedSize, List<SizeCandidateAssessment> candidates) {
+        if (candidates == null || candidates.size() < 2) return false;
+        SizeCandidateAssessment closest = candidates.stream()
+                .min(Comparator.comparing(SizeCandidateAssessment::totalDifference)
+                        .thenComparing(Comparator.comparingInt(
+                                (SizeCandidateAssessment item) -> sizeOrder(item.size())).reversed()))
+                .orElse(null);
+        return closest != null && closest.undersized()
+                && !normalizeSize(closest.size()).equals(normalizeSize(selectedSize));
     }
 
     /**
@@ -266,13 +300,16 @@ public class ProductSizeGuideQueryService {
     }
 
     private SizeScore score(String size, List<MeasurementMatch> matches, String fitPreference) {
-        BigDecimal score = matches.stream().map(MeasurementMatch::difference)
+        BigDecimal rawDifference = matches.stream().map(MeasurementMatch::difference)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         boolean preferNotSmaller = !"AJUSTADO".equals(normalize(fitPreference));
-        if (preferNotSmaller && matches.stream().anyMatch(item -> item.guideValue().compareTo(item.customerValue()) < 0)) {
+        boolean undersized = matches.stream()
+                .anyMatch(item -> item.guideValue().compareTo(item.customerValue()) < 0);
+        BigDecimal score = rawDifference;
+        if (preferNotSmaller && undersized) {
             score = score.add(new BigDecimal("1000"));
         }
-        return new SizeScore(size, score, List.copyOf(matches));
+        return new SizeScore(size, score, rawDifference, undersized, List.copyOf(matches));
     }
 
     private List<NormalizedMeasurement> normalizeMeasurements(List<BodyMeasurement> values) {
@@ -374,7 +411,8 @@ public class ProductSizeGuideQueryService {
             String sizeLabel, String measurementCode, String measurementName, BigDecimal referenceCm,
             BigDecimal minimumCm, BigDecimal maximumCm) {}
     private record NormalizedMeasurement(String code, BigDecimal valueCm) {}
-    private record SizeScore(String size, BigDecimal score, List<MeasurementMatch> matches) {}
+    private record SizeScore(String size, BigDecimal score, BigDecimal rawDifference,
+            boolean undersized, List<MeasurementMatch> matches) {}
 
     public record BodyMeasurement(String name, BigDecimal value, String unit) {}
     public record GuideMeasurement(String size, String measurementCode, String measurementName,
@@ -387,8 +425,10 @@ public class ProductSizeGuideQueryService {
     public record ComponentRecommendation(String component, String recommendedSize, boolean available,
             int availableStock, List<MeasurementMatch> evidence, List<String> missingMeasurements,
             List<String> availableGuideSizes) {}
+    public record SizeCandidateAssessment(String size, boolean undersized, BigDecimal totalDifference,
+            List<MeasurementMatch> evidence) {}
     public record SizeRecommendation(Integer productId, String productName, String status, String measurementType,
             boolean orientationOnly, boolean componentConflict, String fitPreference,
             List<ComponentRecommendation> components, List<String> missingMeasurements, String nextUsefulMeasurement,
-            String message) {}
+            String message, List<SizeCandidateAssessment> candidates, boolean betweenSizes) {}
 }

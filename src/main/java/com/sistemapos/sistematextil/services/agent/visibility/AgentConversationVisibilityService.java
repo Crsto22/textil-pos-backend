@@ -81,8 +81,17 @@ public class AgentConversationVisibilityService {
                 LEFT JOIN metodo_pago_config mp ON mp.id_metodo_pago = r.id_metodo_pago
                 LEFT JOIN metodo_pago_cuenta a ON a.id_metodo_pago_cuenta = r.id_metodo_pago_cuenta
                 LEFT JOIN crm_whatsapp_payment_evidence e ON e.id_payment_evidence = (
-                    SELECT MAX(e2.id_payment_evidence) FROM crm_whatsapp_payment_evidence e2
-                    WHERE e2.id_payment_request = r.id_payment_request)
+                    SELECT e2.id_payment_evidence FROM crm_whatsapp_payment_evidence e2
+                    WHERE e2.id_payment_request = r.id_payment_request
+                    ORDER BY CASE e2.validation_status
+                        WHEN 'VALIDADO' THEN 0
+                        WHEN 'ACEPTABLE' THEN 1
+                        WHEN 'PENDIENTE_VALIDACION' THEN 2
+                        WHEN 'OBSERVADO' THEN 3
+                        WHEN 'RECHAZADO' THEN 4
+                        ELSE 5 END,
+                        e2.id_payment_evidence DESC
+                    LIMIT 1)
                 WHERE r.id_agent_session = ?
                 ORDER BY r.id_payment_request DESC LIMIT 1
                 """, (rs, row) -> mapPayment(rs), sessionId);

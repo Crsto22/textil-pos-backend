@@ -75,14 +75,19 @@ public class AgentCatalogQueryService {
         boolean browseAll = normalizedQuery.isBlank() || tokens.isEmpty();
 
         Map<Integer, List<SucursalStock>> grouped = groupByProduct(catalogRepository.findCatalogByBranch(scope.branchId()));
+        Comparator<ScoredProduct> ranking = browseAll
+                ? Comparator.comparing(this::productCreatedAt,
+                                Comparator.nullsLast(Comparator.reverseOrder()))
+                        .thenComparing(this::productId, Comparator.nullsLast(Comparator.reverseOrder()))
+                : Comparator.comparingInt(ScoredProduct::score).reversed()
+                        .thenComparing(candidate -> candidate.rows().getFirst().getProductoVariante()
+                                .getProducto().getNombre(), String.CASE_INSENSITIVE_ORDER);
         List<ScoredProduct> ranked = grouped.values().stream()
                 .filter(this::hasAvailableStock)
                 .filter(rows -> matchesAvailability(rows, safeAvailability))
                 .map(rows -> score(rows, browseAll ? "" : normalizedQuery, tokens))
                 .filter(candidate -> browseAll || candidate.score() > 0)
-                .sorted(Comparator.comparingInt(ScoredProduct::score).reversed()
-                        .thenComparing(candidate -> candidate.rows().getFirst().getProductoVariante()
-                                .getProducto().getNombre(), String.CASE_INSENSITIVE_ORDER))
+                .sorted(ranking)
                 .toList();
 
         List<ProductSummary> products = ranked.stream().limit(limit)
@@ -243,6 +248,14 @@ public class AgentCatalogQueryService {
             else if (minimumTokenDistance(token, name) <= 1) score += 20;
         }
         return new ScoredProduct(rows, score);
+    }
+
+    private LocalDateTime productCreatedAt(ScoredProduct candidate) {
+        return candidate.rows().getFirst().getProductoVariante().getProducto().getFechaCreacion();
+    }
+
+    private Integer productId(ScoredProduct candidate) {
+        return candidate.rows().getFirst().getProductoVariante().getProducto().getIdProducto();
     }
 
     private int minimumTokenDistance(String token, String normalizedName) {

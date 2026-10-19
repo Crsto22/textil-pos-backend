@@ -220,7 +220,10 @@ public class AgentConversationOrchestrator {
                         - Cuando exista promotions, responde la consulta usando esa lista real. Solo puedes afirmar que
                           no hay promociones cuando promotions este presente y su lista sea vacia.
                         - Si existe sizeRecommendationBusinessRule, el conjunto se vende en una sola talla: comunica
-                          una unica talla para todas sus piezas y nunca propongas mezclar tallas.
+                          una unica talla para todas sus piezas y nunca propongas mezclar tallas. Si
+                          sizeRecommendation.betweenSizes es true, explica el equilibrio entre las candidatas usando
+                          su evidencia completa y recomienda la mayor como opcion segura; no respondas basandote solo
+                          en la ultima medida mencionada ni garantices como quedara la prenda.
                         - Si cartOperation.executed es true, confirma el carrito real devuelto por el backend.
                         - Si cartOperation.executed es false y no ejecutaste una herramienta, no afirmes que agregaste,
                           cambiaste o confirmaste nada; solicita unicamente el dato que falta.

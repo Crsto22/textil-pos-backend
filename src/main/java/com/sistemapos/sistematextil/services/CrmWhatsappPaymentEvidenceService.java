@@ -194,7 +194,9 @@ public class CrmWhatsappPaymentEvidenceService {
         var active = requestRepository.findFirstByConversation_IdConversationAndStatusInOrderByCreatedAtDesc(
                 message.getConversation().getIdConversation(), ACCEPTING_EVIDENCE);
         if (active.isEmpty()) return;
-        createEvidence(message, active.orElse(null), true);
+        CrmWhatsappPaymentRequest request = active.orElse(null);
+        if (hasUsableEvidence(request)) return;
+        createEvidence(message, request, true);
     }
 
     @Transactional
@@ -932,10 +934,24 @@ public class CrmWhatsappPaymentEvidenceService {
     }
 
     private boolean isSupported(CrmWhatsappMessage message) {
+        if ("STICKER".equalsIgnoreCase(clean(message.getMessageType()))) return false;
         String mime = clean(message.getMediaMimeType()).toLowerCase(Locale.ROOT);
         return message.getMediaStoragePath() != null
                 && (mime.equals("image/jpeg") || mime.equals("image/png") || mime.equals("image/webp")
                         || mime.equals("application/pdf"));
+    }
+
+    private boolean hasUsableEvidence(CrmWhatsappPaymentRequest request) {
+        if (request == null || request.getIdPaymentRequest() == null) return false;
+        Long requestId = request.getIdPaymentRequest();
+        return evidenceRepository
+                .findFirstByPaymentRequest_IdPaymentRequestAndValidationStatusOrderByCreatedAtDesc(
+                        requestId, CrmWhatsappPaymentEvidenceStatus.VALIDADO)
+                .isPresent()
+                || evidenceRepository
+                .findFirstByPaymentRequest_IdPaymentRequestAndValidationStatusOrderByCreatedAtDesc(
+                        requestId, CrmWhatsappPaymentEvidenceStatus.ACEPTABLE)
+                .isPresent();
     }
 
     private BigDecimal decimal(Double value) {

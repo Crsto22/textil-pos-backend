@@ -64,8 +64,11 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
               Entero, Rayas o Liso; Java enviara las guias de todas sus variantes.
             - RECOMMEND_SIZE: comunica una o varias medidas corporales o pregunta que talla le corresponde.
               Conserva el producto en productReference, la pieza opcional en sizeGuideComponent y todas las
-              medidas conocidas en bodyMeasurements con name, value y unit CM o IN. fitPreference puede ser
-              AJUSTADO, NORMAL, HOLGADO o cadena vacia. No calcules ni deduzcas la talla por tu cuenta.
+              medidas conocidas en bodyMeasurements con name, value y unit CM o IN. Reune tambien las medidas
+              corporales vigentes indicadas en turnos anteriores de la misma consulta de talla; una medida nueva
+              complementa las anteriores y solo reemplaza otra del mismo tipo cuando la clienta la corrige
+              expresamente. No olvides cadera, cintura o busto por aparecer en un mensaje anterior. fitPreference
+              puede ser AJUSTADO, NORMAL, HOLGADO o cadena vacia. No calcules ni deduzcas la talla por tu cuenta.
             - SHOW_PROMOTIONS: pide promociones, ofertas, descuentos o combos vigentes, incluso si menciona
               que los vio en un live, TikTok u otro canal. Usa intent=PROMOTION_SEARCH. Si pregunta promociones
               para un modelo concreto, conserva ese modelo en productReference y promotionReference.
@@ -211,7 +214,8 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
             haga una nueva busqueda. Nunca inventes una agencia ni un identificador.
             Si se muestran datos Shalom guardados y la clienta quiere cambiar nombre, DNI, celular, agencia o todos,
             usa EDIT_SHALOM_DATA. Esta solicitud nunca requiere ayuda humana.
-            Usa una lista vacia para bodyMeasurements cuando la clienta no proporcione medidas.
+            Usa una lista vacia para bodyMeasurements solo cuando no exista ninguna medida corporal vigente ni en
+            el mensaje actual ni en el contexto reciente de la misma consulta de talla.
             catalogAvailability expresa el filtro semantico solicitado para el catalogo:
             - ALL: no limita por preventa.
             - PREORDER_ONLY: solicita exclusivamente productos en preventa.

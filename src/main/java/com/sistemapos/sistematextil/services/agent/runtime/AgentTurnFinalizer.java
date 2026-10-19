@@ -1,10 +1,12 @@
 package com.sistemapos.sistematextil.services.agent.runtime;
 
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
+import java.util.Locale;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -32,6 +34,8 @@ public class AgentTurnFinalizer {
             + "temporalmente en mantenimiento. Para continuar con tu compra y recibir atención, comunícate con "
             + "nuestra asesora al 933918047. Gracias por tu comprensión.";
     private static final long PROVIDER_MAINTENANCE_NOTICE_MINUTES = 30L;
+    private static final DateTimeFormatter CATALOG_DATE = DateTimeFormatter.ofPattern(
+            "d 'de' MMMM 'de' uuuu", Locale.forLanguageTag("es-PE"));
     private final AgentOutboxService outbox;
     private final AgentCatalogQueryService catalog;
     private final CrmWhatsappAgentSessionRepository sessions;
@@ -101,13 +105,17 @@ public class AgentTurnFinalizer {
                 var images = catalog.getProductImage(lease.sessionId(), request.productId(), request.color());
                 if (request.catalogPreview()) {
                     source = images.globalImageUrl();
+                    var product = catalog.getProduct(lease.sessionId(), request.productId());
+                    caption = catalogPreviewCaption(product);
                 } else {
                     boolean exactColorRequested = request.color() != null && !request.color().isBlank();
                     if (exactColorRequested && images.colorImages().isEmpty()) continue;
                     source = images.colorImages().isEmpty()
                             ? images.globalImageUrl() : images.colorImages().getFirst().url();
                 }
-                caption = productImageCaption(images.productName(), request.color());
+                if (!request.catalogPreview()) {
+                    caption = productImageCaption(images.productName(), request.color());
+                }
             }
             if (source == null || source.isBlank()) continue;
             if (!queuedSources.add(source.trim())) continue;
@@ -146,6 +154,19 @@ public class AgentTurnFinalizer {
         String selectedColor = clean(color);
         if (product.isBlank()) return selectedColor.isBlank() ? null : selectedColor;
         return selectedColor.isBlank() ? product : product + " — " + selectedColor;
+    }
+
+    private String catalogPreviewCaption(AgentCatalogQueryService.ProductDetail product) {
+        String name = clean(product == null ? null : product.name());
+        if (name.isBlank()) name = "Producto Kiments";
+        if (product != null && product.preorder()) {
+            if (product.preorderShippingDate() != null) {
+                return name + "\nPreventa: despachos a partir del "
+                        + CATALOG_DATE.format(product.preorderShippingDate()) + ".";
+            }
+            return name + "\nPreventa: despacho según la fecha indicada.";
+        }
+        return name + "\nDisponible: despacho aproximado de 1 a 4 días según el volumen de pedidos.";
     }
 
     private String fileName(String source, AgentMediaRequest.MediaType type) {

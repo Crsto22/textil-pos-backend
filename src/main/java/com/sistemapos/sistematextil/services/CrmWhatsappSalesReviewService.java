@@ -62,9 +62,18 @@ public class CrmWhatsappSalesReviewService {
                     WHERE f2.id_venta = v.id_venta
                        OR (f2.id_venta IS NULL AND f2.id_payment_request = pr.id_payment_request))
                 LEFT JOIN crm_whatsapp_payment_evidence pe ON pe.id_payment_evidence = (
-                    SELECT MAX(pe2.id_payment_evidence)
+                    SELECT pe2.id_payment_evidence
                     FROM crm_whatsapp_payment_evidence pe2
-                    WHERE pe2.id_payment_request = pr.id_payment_request)
+                    WHERE pe2.id_payment_request = pr.id_payment_request
+                    ORDER BY CASE pe2.validation_status
+                        WHEN 'VALIDADO' THEN 0
+                        WHEN 'ACEPTABLE' THEN 1
+                        WHEN 'PENDIENTE_VALIDACION' THEN 2
+                        WHEN 'OBSERVADO' THEN 3
+                        WHEN 'RECHAZADO' THEN 4
+                        ELSE 5 END,
+                        pe2.id_payment_evidence DESC
+                    LIMIT 1)
                 LEFT JOIN crm_whatsapp_film_addon fa ON fa.id_venta = v.id_venta
                 LEFT JOIN usuario fur ON fur.id_usuario = fa.resolved_by
                 LEFT JOIN crm_whatsapp_film_evidence fe ON fe.id_film_evidence = (

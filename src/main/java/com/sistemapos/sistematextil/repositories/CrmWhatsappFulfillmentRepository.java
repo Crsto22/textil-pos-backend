@@ -34,6 +34,8 @@ public interface CrmWhatsappFulfillmentRepository extends JpaRepository<CrmWhats
 
     Optional<CrmWhatsappFulfillment> findByVenta_IdVenta(Integer saleId);
 
+    List<CrmWhatsappFulfillment> findByVenta_IdVentaIn(Collection<Integer> saleIds);
+
     @Query("""
             select f.venta.idVenta as idVenta, f.method as method
             from CrmWhatsappFulfillment f

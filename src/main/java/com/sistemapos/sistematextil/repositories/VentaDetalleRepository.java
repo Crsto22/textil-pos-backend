@@ -217,6 +217,18 @@ public interface VentaDetalleRepository extends JpaRepository<VentaDetalle, Inte
             """)
     List<VentaDetalle> findActivosByVentaIds(@Param("ventaIds") List<Integer> ventaIds);
 
+    @Query("""
+            SELECT COALESCE(SUM(vd.cantidad), 0)
+            FROM VentaDetalle vd
+            WHERE vd.deletedAt IS NULL
+              AND vd.venta.deletedAt IS NULL
+              AND vd.venta.estado = :estado
+              AND vd.venta.cliente.idCliente = :idCliente
+            """)
+    Long sumarCantidadPorClienteYEstado(
+            @Param("idCliente") Integer idCliente,
+            @Param("estado") String estado);
+
     long countByVenta_IdVentaAndDeletedAtIsNull(Integer idVenta);
 
     @Query(

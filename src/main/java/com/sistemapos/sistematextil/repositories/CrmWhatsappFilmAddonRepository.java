@@ -18,6 +18,7 @@ import jakarta.persistence.LockModeType;
 public interface CrmWhatsappFilmAddonRepository extends JpaRepository<CrmWhatsappFilmAddon, Long> {
     Optional<CrmWhatsappFilmAddon> findByAgentSession_IdAgentSession(Long sessionId);
     Optional<CrmWhatsappFilmAddon> findByVenta_IdVenta(Integer saleId);
+    List<CrmWhatsappFilmAddon> findByVenta_IdVentaIn(Collection<Integer> saleIds);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select f from CrmWhatsappFilmAddon f where f.idFilmAddon=:id")
     Optional<CrmWhatsappFilmAddon> findForUpdate(@Param("id") Long id);

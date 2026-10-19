@@ -37,6 +37,8 @@ import com.sistemapos.sistematextil.model.CrmWhatsappConversation;
 import com.sistemapos.sistematextil.model.CrmWhatsappAttentionQueue;
 import com.sistemapos.sistematextil.model.CrmWhatsappAgentSession;
 import com.sistemapos.sistematextil.model.CrmWhatsappConversationTag;
+import com.sistemapos.sistematextil.model.CrmWhatsappFilmAddon;
+import com.sistemapos.sistematextil.model.CrmWhatsappFulfillment;
 import com.sistemapos.sistematextil.model.CrmWhatsappMessage;
 import com.sistemapos.sistematextil.model.CrmWhatsappPaymentRequest;
 import com.sistemapos.sistematextil.model.CrmWhatsappPaymentRequestStatus;
@@ -54,6 +56,8 @@ import com.sistemapos.sistematextil.repositories.ComprobanteConfigRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappConversationRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappAgentSessionRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappConversationTagRepository;
+import com.sistemapos.sistematextil.repositories.CrmWhatsappFilmAddonRepository;
+import com.sistemapos.sistematextil.repositories.CrmWhatsappFulfillmentRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappMessageRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappPaymentEvidenceRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappPaymentRequestRepository;
@@ -95,6 +99,8 @@ public class CrmWhatsappChatService {
     private final CrmWhatsappConversationRepository conversationRepository;
     private final CrmWhatsappAgentSessionRepository agentSessionRepository;
     private final CrmWhatsappConversationTagRepository conversationTagRepository;
+    private final CrmWhatsappFulfillmentRepository fulfillmentRepository;
+    private final CrmWhatsappFilmAddonRepository filmAddonRepository;
     private final CrmWhatsappMessageRepository messageRepository;
     private final CrmWhatsappPaymentEvidenceRepository paymentEvidenceRepository;
     private final CrmWhatsappPaymentRequestRepository paymentRequestRepository;
@@ -127,6 +133,8 @@ public class CrmWhatsappChatService {
             CrmWhatsappConversationRepository conversationRepository,
             CrmWhatsappAgentSessionRepository agentSessionRepository,
             CrmWhatsappConversationTagRepository conversationTagRepository,
+            CrmWhatsappFulfillmentRepository fulfillmentRepository,
+            CrmWhatsappFilmAddonRepository filmAddonRepository,
             CrmWhatsappMessageRepository messageRepository,
             CrmWhatsappPaymentEvidenceRepository paymentEvidenceRepository,
             CrmWhatsappPaymentRequestRepository paymentRequestRepository,
@@ -156,6 +164,8 @@ public class CrmWhatsappChatService {
         this.conversationRepository = conversationRepository;
         this.agentSessionRepository = agentSessionRepository;
         this.conversationTagRepository = conversationTagRepository;
+        this.fulfillmentRepository = fulfillmentRepository;
+        this.filmAddonRepository = filmAddonRepository;
         this.messageRepository = messageRepository;
         this.paymentEvidenceRepository = paymentEvidenceRepository;
         this.paymentRequestRepository = paymentRequestRepository;
@@ -876,28 +886,27 @@ public class CrmWhatsappChatService {
         return obtenerVentaRapidaContexto(conversationId, actor);
     }
 
-    public VentasClienteCrmResponse listarVentasCliente(Long conversationId, Integer idSucursal, int page, Usuario usuarioSesion) {
+    public VentasClienteCrmResponse listarVentasCliente(Long conversationId, Integer idSucursal, String estado,
+            int page, Usuario usuarioSesion) {
         Usuario actor = requireCrmUser(usuarioSesion);
         CrmWhatsappConversation conversation = requireConversation(conversationId);
         requireCanReadMessages(conversation, actor);
         if (conversation.getCliente() == null) {
             return new VentasClienteCrmResponse(
+                    false,
                     new PagedResponse<>(List.of(), Math.max(0, page), 10, 0, 0, 0, true, true, true),
+                    new ComprasClienteResumenResponse(0, BigDecimal.ZERO, 0, null),
                     List.of(),
                     List.of());
         }
         if (page < 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "page debe ser mayor o igual a 0");
         }
-        Integer idSucursalFiltro = null;
-        Page<Venta> ventas = ventaRepository.buscarConFiltros(
-                null,
-                idSucursalFiltro,
-                null,
-                conversation.getCliente().getIdCliente(),
-                null,
-                null,
-                null,
+        Integer idCliente = conversation.getCliente().getIdCliente();
+        String estadoFiltro = normalizarEstadoCompra(estado);
+        Page<Venta> ventas = ventaRepository.buscarComprasClienteCrm(
+                idCliente,
+                estadoFiltro,
                 PageRequest.of(page, 10, Sort.by("fecha").descending()));
         List<Integer> ventaIds = ventas.getContent().stream()
                 .map(Venta::getIdVenta)
@@ -916,21 +925,34 @@ public class CrmWhatsappChatService {
                                 pago -> pago.getVenta().getIdVenta(),
                                 LinkedHashMap::new,
                                 java.util.stream.Collectors.toList()));
+        Map<Integer, CrmWhatsappFulfillment> entregaPorVenta = ventaIds.isEmpty()
+                ? Map.of()
+                : fulfillmentRepository.findByVenta_IdVentaIn(ventaIds).stream()
+                        .collect(java.util.stream.Collectors.toMap(
+                                item -> item.getVenta().getIdVenta(),
+                                item -> item,
+                                (left, right) -> right,
+                                LinkedHashMap::new));
+        Map<Integer, CrmWhatsappFilmAddon> filmPorVenta = ventaIds.isEmpty()
+                ? Map.of()
+                : filmAddonRepository.findByVenta_IdVentaIn(ventaIds).stream()
+                        .collect(java.util.stream.Collectors.toMap(
+                                item -> item.getVenta().getIdVenta(),
+                                item -> item,
+                                (left, right) -> right,
+                                LinkedHashMap::new));
 
         PagedResponse<VentaRapidaHistorialResponse> historial = PagedResponse.fromPage(ventas.map(
                 venta -> toVentaRapidaHistorial(
                         venta,
                         detallesPorVenta.getOrDefault(venta.getIdVenta(), List.of()),
-                        pagosPorVenta.getOrDefault(venta.getIdVenta(), List.of()))));
+                        pagosPorVenta.getOrDefault(venta.getIdVenta(), List.of()),
+                        entregaPorVenta.get(venta.getIdVenta()),
+                        filmPorVenta.get(venta.getIdVenta()))));
 
-        Page<Venta> ventasAnalitica = ventaRepository.buscarConFiltros(
-                null,
-                idSucursalFiltro,
-                null,
-                conversation.getCliente().getIdCliente(),
-                null,
-                null,
-                null,
+        Page<Venta> ventasAnalitica = ventaRepository.buscarComprasClienteCrm(
+                idCliente,
+                "EMITIDA",
                 PageRequest.of(0, 1000, Sort.by("fecha").descending()));
         List<Integer> ventaIdsEmitidas = ventasAnalitica.getContent().stream()
                 .filter(venta -> "EMITIDA".equalsIgnoreCase(clean(venta.getEstado())))
@@ -942,9 +964,21 @@ public class CrmWhatsappChatService {
         List<Pago> pagosAnalitica = ventaIdsEmitidas.isEmpty()
                 ? List.of()
                 : pagoRepository.findActivosByVentaIds(ventaIdsEmitidas);
+        long comprasEmitidas = ventaRepository.countByClienteIdClienteAndDeletedAtIsNullAndEstado(idCliente, "EMITIDA");
+        BigDecimal montoTotal = ventaRepository.sumarTotalPorClienteYEstado(idCliente, "EMITIDA");
+        Long prendasCompradas = ventaDetalleRepository.sumarCantidadPorClienteYEstado(idCliente, "EMITIDA");
+        LocalDateTime ultimaCompra = ventaRepository
+                .findTop3ByClienteIdClienteAndDeletedAtIsNullAndEstadoOrderByFechaDesc(idCliente, "EMITIDA")
+                .stream().findFirst().map(Venta::getFecha).orElse(null);
 
         return new VentasClienteCrmResponse(
+                true,
                 historial,
+                new ComprasClienteResumenResponse(
+                        comprasEmitidas,
+                        montoTotal == null ? BigDecimal.ZERO : montoTotal,
+                        prendasCompradas == null ? 0 : prendasCompradas,
+                        ultimaCompra),
                 topVariantesCompradas(detallesAnalitica),
                 metodosPagoUsados(pagosAnalitica));
     }
@@ -2077,7 +2111,8 @@ public class CrmWhatsappChatService {
                 comprobante.getHabilitadoVenta());
     }
 
-    private VentaRapidaHistorialResponse toVentaRapidaHistorial(Venta venta, List<VentaDetalle> detalles, List<Pago> pagos) {
+    private VentaRapidaHistorialResponse toVentaRapidaHistorial(Venta venta, List<VentaDetalle> detalles,
+            List<Pago> pagos, CrmWhatsappFulfillment fulfillment, CrmWhatsappFilmAddon film) {
         return new VentaRapidaHistorialResponse(
                 venta.getIdVenta(),
                 venta.getFecha(),
@@ -2089,8 +2124,22 @@ public class CrmWhatsappChatService {
                 venta.getEstado(),
                 venta.getSucursal() == null ? null : venta.getSucursal().getIdSucursal(),
                 venta.getSucursal() == null ? null : venta.getSucursal().getNombre(),
+                venta.getOrigen(),
+                venta.getUsuario() == null ? null : venta.getUsuario().getNombre(),
+                toVentaRapidaEntrega(fulfillment),
+                film == null || film.getStatus() == null ? null : film.getStatus().name(),
                 detalles.stream().map(this::toVentaRapidaDetalle).toList(),
                 pagos.stream().map(this::toVentaRapidaPago).toList());
+    }
+
+    private VentaRapidaEntregaResponse toVentaRapidaEntrega(CrmWhatsappFulfillment fulfillment) {
+        if (fulfillment == null) return null;
+        return new VentaRapidaEntregaResponse(
+                fulfillment.getMethod() == null ? null : fulfillment.getMethod().name(),
+                fulfillment.getStatus() == null ? null : fulfillment.getStatus().name(),
+                fulfillment.getPickupBranch() == null ? null : fulfillment.getPickupBranch().getNombre(),
+                fulfillment.getShalomAgency(),
+                fulfillment.getShalomAgencyAddress());
     }
 
     private VentaRapidaDetalleResponse toVentaRapidaDetalle(VentaDetalle detalle) {
@@ -3009,6 +3058,13 @@ public class CrmWhatsappChatService {
         };
     }
 
+    private String normalizarEstadoCompra(String estado) {
+        String normalized = clean(estado).toUpperCase(Locale.ROOT);
+        if (normalized.isBlank() || "TODAS".equals(normalized)) return null;
+        if (Set.of("EMITIDA", "ANULADA", "NC_EMITIDA").contains(normalized)) return normalized;
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Estado de compra no valido");
+    }
+
     private boolean tieneDatosIncompletos(Cliente cliente) {
         if (cliente == null) {
             return true;
@@ -3309,8 +3365,20 @@ public class CrmWhatsappChatService {
             String estado,
             Integer idSucursal,
             String nombreSucursal,
+            String origen,
+            String vendedor,
+            VentaRapidaEntregaResponse entrega,
+            String estadoFilm,
             List<VentaRapidaDetalleResponse> detalles,
             List<VentaRapidaPagoResponse> pagos) {
+    }
+
+    public record VentaRapidaEntregaResponse(
+            String metodo,
+            String estado,
+            String sucursalRecojo,
+            String agenciaShalom,
+            String direccionShalom) {
     }
 
     public record VentaRapidaDetalleResponse(
@@ -3347,9 +3415,18 @@ public class CrmWhatsappChatService {
     }
 
     public record VentasClienteCrmResponse(
+            boolean clienteVinculado,
             PagedResponse<VentaRapidaHistorialResponse> historial,
+            ComprasClienteResumenResponse resumen,
             List<VarianteCompradaChartResponse> productosTop,
             List<MetodoPagoChartResponse> metodosPago) {
+    }
+
+    public record ComprasClienteResumenResponse(
+            long comprasEmitidas,
+            BigDecimal montoTotal,
+            long prendasCompradas,
+            LocalDateTime ultimaCompra) {
     }
 
     public record MetodoPagoCuentaVentaRapidaResponse(

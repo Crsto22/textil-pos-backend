@@ -265,6 +265,18 @@ public interface VentaRepository extends JpaRepository<Venta, Integer> {
 
     List<Venta> findTop3ByClienteIdClienteAndDeletedAtIsNullAndEstadoOrderByFechaDesc(Integer idCliente, String estado);
 
+    @Query("""
+            SELECT v
+            FROM Venta v
+            WHERE v.deletedAt IS NULL
+              AND v.cliente.idCliente = :idCliente
+              AND (:estado IS NULL OR v.estado = :estado)
+            """)
+    Page<Venta> buscarComprasClienteCrm(
+            @Param("idCliente") Integer idCliente,
+            @Param("estado") String estado,
+            Pageable pageable);
+
     Optional<Venta> findByIdVentaAndDeletedAtIsNull(Integer idVenta);
 
     Optional<Venta> findByIdVentaAndDeletedAtIsNullAndSucursal_IdSucursal(Integer idVenta, Integer idSucursal);

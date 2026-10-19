@@ -397,9 +397,11 @@ public class CrmWhatsappController {
     public ResponseEntity<?> listarVentasCliente(
             @PathVariable("id") Long id,
             @RequestParam(name = "idSucursal", required = false) Integer idSucursal,
+            @RequestParam(name = "estado", required = false) String estado,
             @RequestParam(name = "page", defaultValue = "0") int page,
             Authentication authentication) {
-        return ResponseEntity.ok(crmWhatsappChatService.listarVentasCliente(id, idSucursal, page, currentUser(authentication)));
+        return ResponseEntity.ok(crmWhatsappChatService.listarVentasCliente(
+                id, idSucursal, estado, page, currentUser(authentication)));
     }
 
     @GetMapping("/conversations/{id}/sale-catalog")

@@ -11,6 +11,8 @@ class CrmWhatsappConversationLegacyEnumConverterTest {
             new CrmWhatsappAttentionQueueConverter();
     private final CrmWhatsappWaitingReasonConverter reasonConverter =
             new CrmWhatsappWaitingReasonConverter();
+    private final CrmWhatsappAgentEventConverter eventConverter =
+            new CrmWhatsappAgentEventConverter();
 
     @Test
     void legacyAiActiveQueueMapsToTheNewAgentQueue() {
@@ -46,5 +48,19 @@ class CrmWhatsappConversationLegacyEnumConverterTest {
 
         assertEquals(CrmWhatsappAttentionQueue.AGENT_ACTIVE, conversation.getAttentionQueue());
         assertNull(conversation.getWaitingReason());
+    }
+
+    @Test
+    void legacyFilmPaymentEventMapsToCurrentEvent() {
+        assertEquals(CrmWhatsappAgentEvent.PAGO_FILM_APROBADO,
+                eventConverter.convertToEntityAttribute("FILM_PAYMENT_CONFIRMED"));
+        assertEquals("PAGO_FILM_APROBADO",
+                eventConverter.convertToDatabaseColumn(CrmWhatsappAgentEvent.PAGO_FILM_APROBADO));
+    }
+
+    @Test
+    void unknownHistoricalAgentEventDoesNotBreakSessionReads() {
+        assertNull(eventConverter.convertToEntityAttribute("future_retired_event"));
+        assertNull(eventConverter.convertToEntityAttribute(null));
     }
 }

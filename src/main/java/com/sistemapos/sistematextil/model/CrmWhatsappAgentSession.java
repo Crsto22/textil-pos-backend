@@ -3,6 +3,7 @@ package com.sistemapos.sistematextil.model;
 import java.time.LocalDateTime;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -79,7 +80,7 @@ public class CrmWhatsappAgentSession {
     @Column(name = "catalog_preview_sent_at")
     private LocalDateTime catalogPreviewSentAt;
 
-    @Enumerated(EnumType.STRING)
+    @Convert(converter = CrmWhatsappAgentEventConverter.class)
     @Column(name = "last_event", length = 60)
     private CrmWhatsappAgentEvent lastEvent;
 

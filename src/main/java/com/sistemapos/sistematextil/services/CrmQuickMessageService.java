@@ -314,8 +314,9 @@ public class CrmQuickMessageService {
         Usuario actor = usuarioRepository.findByIdUsuarioAndDeletedAtIsNull(sessionUser.getIdUsuario())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED));
         if (!"ACTIVO".equalsIgnoreCase(clean(actor.getEstado()))) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
-        if (actor.getRol() != Rol.ADMINISTRADOR && !Boolean.TRUE.equals(actor.getAccesoCrm())) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No tienes acceso al CRM");
+        if (actor.getRol() == null
+                || (actor.getRol() != Rol.ADMINISTRADOR && !actor.getRol().operaVentas())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No tienes acceso a los comandos del CRM");
         }
         return actor;
     }

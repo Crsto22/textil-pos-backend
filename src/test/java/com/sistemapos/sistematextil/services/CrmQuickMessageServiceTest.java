@@ -2,9 +2,11 @@ package com.sistemapos.sistematextil.services;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -77,7 +79,7 @@ class CrmQuickMessageServiceTest {
         command.getBlocks().add(image);
 
         when(usuarioRepository.findByIdUsuarioAndDeletedAtIsNull(12)).thenReturn(Optional.of(actor));
-        when(commandRepository.findByIdQuickMessageAndEmpresa_IdEmpresaAndDeletedAtIsNull(31L, 7))
+        lenient().when(commandRepository.findByIdQuickMessageAndEmpresa_IdEmpresaAndDeletedAtIsNull(31L, 7))
                 .thenReturn(Optional.of(command));
     }
 
@@ -109,6 +111,37 @@ class CrmQuickMessageServiceTest {
         assertEquals(1, result.failedPosition());
         assertEquals("WhatsApp no disponible", result.error());
         verify(chatService).enviarMensaje(eq(99L), any(), eq(actor));
+    }
+
+    @Test
+    void deniesWarehouseUsersEvenWhenTheyHaveGeneralCrmAccess() {
+        actor.setRol(Rol.ALMACEN);
+        actor.setAccesoCrm(true);
+
+        ResponseStatusException exception = assertThrows(ResponseStatusException.class,
+                () -> service.get(31L, actor));
+
+        assertEquals(HttpStatus.FORBIDDEN, exception.getStatusCode());
+        assertEquals("No tienes acceso a los comandos del CRM", exception.getReason());
+    }
+
+    @Test
+    void allowsSalesUsersRegardlessOfGeneralCrmAccessFlag() {
+        actor.setAccesoCrm(false);
+
+        var result = service.get(31L, actor);
+
+        assertEquals(31L, result.id());
+    }
+
+    @Test
+    void keepsCombinedSalesWarehouseRoleAuthorized() {
+        actor.setRol(Rol.VENTAS_ALMACEN);
+        actor.setAccesoCrm(false);
+
+        var result = service.get(31L, actor);
+
+        assertEquals(31L, result.id());
     }
 
     private CrmQuickMessageBlock block(Long id, String type, int position, String body, String storagePath) {

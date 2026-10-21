@@ -59,6 +59,12 @@ public class SecurityConfig {
                         .requestMatchers("/api/crm/whatsapp/sales")
                         .hasAnyAuthority("ADMINISTRADOR", "CRM_CHAT", "VENTAS", "ALMACEN", "VENTAS_ALMACEN")
                         .requestMatchers(
+                                "/api/crm/whatsapp/quick-messages",
+                                "/api/crm/whatsapp/quick-messages/**")
+                        .hasAnyAuthority("ADMINISTRADOR", "VENTAS", "VENTAS_ALMACEN")
+                        .requestMatchers(HttpMethod.GET, "/api/crm/whatsapp/connections/sales/status")
+                        .hasAnyAuthority("ADMINISTRADOR", "VENTAS", "VENTAS_ALMACEN")
+                        .requestMatchers(
                                 "/api/crm/whatsapp/conversations",
                                 "/api/crm/whatsapp/conversations/**",
                                  "/api/crm/whatsapp/events",

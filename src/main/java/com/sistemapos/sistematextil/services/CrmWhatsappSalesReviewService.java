@@ -58,9 +58,22 @@ public class CrmWhatsappSalesReviewService {
         List<Object> baseArgs = new ArrayList<>();
         baseArgs.add(companyId);
         if (!term.isBlank()) {
-            filters.append(" AND (CONCAT(COALESCE(v.serie, ''), '-', LPAD(COALESCE(v.correlativo, 0), 6, '0')) LIKE ? OR CAST(v.id_venta AS CHAR) = ?) ");
+            filters.append("""
+                     AND (
+                         CONCAT(COALESCE(v.serie, ''), '-', LPAD(COALESCE(v.correlativo, 0), 6, '0')) LIKE ?
+                         OR CAST(v.id_venta AS CHAR) = ?
+                         OR COALESCE(c.telefono, '') LIKE ?
+                         OR COALESCE(cv.phone_number, '') LIKE ?
+                         OR COALESCE(f.phone, '') LIKE ?
+                         OR LOWER(COALESCE(c.nombres, '')) LIKE LOWER(?)
+                     )
+                    """);
             baseArgs.add(like);
             baseArgs.add(term);
+            baseArgs.add(like);
+            baseArgs.add(like);
+            baseArgs.add(like);
+            baseArgs.add(like);
         }
         if (!blankOrAll(receiptType)) { filters.append(" AND UPPER(v.tipo_comprobante) = ? "); baseArgs.add(clean(receiptType)); }
         if (!blankOrAll(saleStatus)) { filters.append(" AND UPPER(v.estado) = ? "); baseArgs.add(clean(saleStatus)); }

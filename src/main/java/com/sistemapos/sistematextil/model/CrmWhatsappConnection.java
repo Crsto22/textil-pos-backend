@@ -8,6 +8,8 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
@@ -36,9 +38,13 @@ public class CrmWhatsappConnection {
     @JoinColumn(name = "id_empresa", nullable = false)
     private Empresa empresa;
 
-    @ManyToOne(fetch = FetchType.EAGER, optional = false)
-    @JoinColumn(name = "id_sucursal", nullable = false)
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "id_sucursal")
     private Sucursal sucursal;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "area", nullable = false, length = 20)
+    private CrmWhatsappArea area = CrmWhatsappArea.SALES;
 
     @Column(name = "connected_number", length = 100)
     private String connectedNumber;
@@ -51,6 +57,9 @@ public class CrmWhatsappConnection {
 
     @Column(name = "phone_changed_at")
     private LocalDateTime phoneChangedAt;
+
+    @Column(name = "phone_number_version", nullable = false)
+    private Integer phoneNumberVersion = 0;
 
     @Column(name = "disconnected_at")
     private LocalDateTime disconnectedAt;
@@ -67,6 +76,7 @@ public class CrmWhatsappConnection {
         if (connectionStatus == null || connectionStatus.isBlank()) {
             connectionStatus = "UNKNOWN";
         }
+        if (phoneNumberVersion == null) phoneNumberVersion = 0;
         createdAt = now;
         updatedAt = now;
     }

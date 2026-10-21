@@ -16,6 +16,15 @@ public interface CrmWhatsappConversationTagRepository extends JpaRepository<CrmW
     @Query(value = "DELETE FROM crm_whatsapp_conversation_tag", nativeQuery = true)
     int deleteAllConversationTags();
 
+    @Modifying
+    @Query(value = """
+            DELETE ct FROM crm_whatsapp_conversation_tag ct
+            JOIN crm_whatsapp_conversation c ON c.id_conversation = ct.id_conversation
+            LEFT JOIN crm_whatsapp_connection cn ON cn.id_connection = c.id_connection
+            WHERE COALESCE(cn.area, 'SALES') = :area
+            """, nativeQuery = true)
+    int deleteConversationTagsByArea(@Param("area") String area);
+
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(value = "DELETE FROM crm_whatsapp_conversation_tag WHERE id_conversation = :conversationId", nativeQuery = true)
     int deleteByConversationId(@Param("conversationId") Long conversationId);

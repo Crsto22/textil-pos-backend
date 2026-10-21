@@ -3,7 +3,6 @@ package com.sistemapos.sistematextil.services.agent.catalog;
 import java.text.Normalizer;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -28,6 +27,7 @@ import com.sistemapos.sistematextil.repositories.ProductoColorImagenRepository;
 import com.sistemapos.sistematextil.repositories.ProductoVarianteOfertaSucursalRepository;
 import com.sistemapos.sistematextil.services.agent.catalog.AgentCatalogScopeResolver.CatalogScope;
 import com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability;
+import com.sistemapos.sistematextil.util.producto.ProductoPreventaPolicy;
 
 @Service
 public class AgentCatalogQueryService {
@@ -35,7 +35,6 @@ public class AgentCatalogQueryService {
     private static final int DEFAULT_LIMIT = 10;
     private static final int MAX_LIMIT = 20;
     private static final int MIN_PRODUCT_TOKEN_LENGTH = 3;
-    private static final ZoneId BUSINESS_ZONE = ZoneId.of("America/Lima");
     private static final Set<String> STOP_WORDS = Set.of(
             "quiero", "deseo", "busco", "ver", "muestrame", "mostrar", "tienes", "tiene", "hay",
             "producto", "productos", "modelo", "modelos", "conjunto", "prenda", "ropa", "por", "favor",
@@ -107,7 +106,7 @@ public class AgentCatalogQueryService {
         List<VariantSummary> availableVariants = variants.stream().filter(VariantSummary::available).toList();
         return new ProductDetail(
                 product.getIdProducto(), product.getNombre(), product.getDescripcion(), categoryName(product),
-                activePreorder, activePreorder ? product.getFechaEnvioPreventa() : null,
+                activePreorder, ProductoPreventaPolicy.fechaEnvioVigente(product),
                 product.getGuiaTallasUrl(), product.getGuiaTallasThumbUrl(),
                 availableVariants.stream().map(VariantSummary::color).filter(value -> value != null && !value.isBlank())
                         .distinct().toList(),
@@ -294,7 +293,7 @@ public class AgentCatalogQueryService {
             stock += safeStock(row);
         }
         return new ProductSummary(product.getIdProducto(), product.getNombre(), product.getDescripcion(),
-                categoryName(product), activePreorder, activePreorder ? product.getFechaEnvioPreventa() : null,
+                categoryName(product), activePreorder, ProductoPreventaPolicy.fechaEnvioVigente(product),
                 prices.stream().min(Double::compareTo).orElse(null), stock, List.copyOf(colors), List.copyOf(sizes),
                 groupAvailabilityFromStock(availableRows), productPageUrl(product));
     }
@@ -304,14 +303,8 @@ public class AgentCatalogQueryService {
         return PRODUCT_PAGE_BASE_URL + product.getSlug().trim();
     }
 
-    /**
-     * La marca almacenada conserva la configuracion historica, pero comercialmente
-     * la preventa termina al llegar su fecha de despacho en la zona de Kiments.
-     */
     private boolean isActivePreorder(Producto product) {
-        if (product == null || !Boolean.TRUE.equals(product.getPreventa())) return false;
-        LocalDate shippingDate = product.getFechaEnvioPreventa();
-        return shippingDate == null || shippingDate.isAfter(LocalDate.now(BUSINESS_ZONE));
+        return ProductoPreventaPolicy.activa(product);
     }
 
     private List<ColorAvailability> groupAvailabilityFromStock(List<SucursalStock> rows) {

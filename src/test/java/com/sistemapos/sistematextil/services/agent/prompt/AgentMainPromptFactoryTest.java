@@ -60,7 +60,7 @@ class AgentMainPromptFactoryTest {
         assertTrue(prompt.systemInstruction().contains("según la fecha indicada en la"));
         assertTrue(prompt.systemInstruction().contains("Este plazo nunca representa el traslado ni la llegada"));
         assertTrue(prompt.systemInstruction().contains("el tiempo de llegada depende de Shalom"));
-        assertTrue(prompt.systemInstruction().contains("el horario de atención no"));
+        assertTrue(prompt.systemInstruction().contains("plazo aproximado de 2 a 3 días"));
         assertTrue(prompt.systemInstruction().contains("Continúa vendiendo"));
         assertTrue(prompt.systemInstruction().contains("936310946"));
         assertTrue(prompt.systemInstruction().contains("catálogo mayorista"));

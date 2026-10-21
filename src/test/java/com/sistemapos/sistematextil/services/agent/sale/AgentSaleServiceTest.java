@@ -149,9 +149,9 @@ class AgentSaleServiceTest {
         payment.setReviewExpiresAt(LocalDateTime.of(2026, 10, 10, 13, 59));
         payment.setSaleRequestJson(objectMapper.writeValueAsString(new CrmSaleCreateRequest(
                 1, null, "PEN", "CONTADO", 0D, 10D, "MONTO",
-                List.of(new VentaDetalleCreateItem(101, "EMMA L talla M", 2, "NIU", "10", 75D, 0D)),
-                List.of(new VentaPagoCreateItem(5, 140D, null, LocalDateTime.now(CLOCK))),
-                "999111222")));
+                 List.of(new VentaDetalleCreateItem(101, "EMMA L talla M", 2, "NIU", "10", 75D, 0D)),
+                 List.of(new VentaPagoCreateItem(5, 140D, null, LocalDateTime.now(CLOCK))),
+                 "999111222", null)));
 
         evidence = new CrmWhatsappPaymentEvidence();
         evidence.setIdPaymentEvidence(88L);

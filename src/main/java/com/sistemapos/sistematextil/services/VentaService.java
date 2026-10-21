@@ -67,6 +67,8 @@ import com.sistemapos.sistematextil.model.Cliente;
 import com.sistemapos.sistematextil.model.ComprobanteConfig;
 import com.sistemapos.sistematextil.model.CrmWhatsappFilmAddon;
 import com.sistemapos.sistematextil.model.CrmWhatsappFilmStatus;
+import com.sistemapos.sistematextil.model.CrmWarehouseOrder;
+import com.sistemapos.sistematextil.model.CrmWarehouseStatus;
 import com.sistemapos.sistematextil.model.EcommercePedido;
 import com.sistemapos.sistematextil.model.Empresa;
 import com.sistemapos.sistematextil.model.HistorialStock;
@@ -85,6 +87,7 @@ import com.sistemapos.sistematextil.repositories.ClienteRepository;
 import com.sistemapos.sistematextil.repositories.ComprobanteConfigRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappFilmAddonRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappFulfillmentRepository;
+import com.sistemapos.sistematextil.repositories.CrmWarehouseOrderRepository;
 import com.sistemapos.sistematextil.repositories.EcommercePedidoRepository;
 import com.sistemapos.sistematextil.repositories.EmpresaRepository;
 import com.sistemapos.sistematextil.repositories.MetodoPagoConfigRepository;
@@ -142,6 +145,8 @@ public class VentaService {
     private final VentaComprobanteConversionHistorialRepository ventaConversionHistorialRepository;
     private final CrmWhatsappFulfillmentRepository crmWhatsappFulfillmentRepository;
     private final CrmWhatsappFilmAddonRepository crmWhatsappFilmAddonRepository;
+    private final CrmWarehouseOrderRepository crmWarehouseOrderRepository;
+    private final VentaPosEntregaService ventaPosEntregaService;
     private final EmpresaRepository empresaRepository;
     private final StockMovimientoService stockMovimientoService;
     private final PrecioOfertaService precioOfertaService;
@@ -1836,6 +1841,21 @@ public class VentaService {
         Usuario usuarioAutenticado = obtenerUsuarioAutenticado(correoUsuarioAutenticado);
         validarRolVenta(usuarioAutenticado);
 
+        String idempotencyKey = normalizarIdempotencyKey(request.idempotencyKey());
+        if (idempotencyKey != null) {
+            Venta existente = ventaRepository.findByIdempotencyKeyAndDeletedAtIsNull(idempotencyKey).orElse(null);
+            if (existente != null) {
+                if (existente.getUsuario() == null
+                        || !existente.getUsuario().getIdUsuario().equals(usuarioAutenticado.getIdUsuario())) {
+                    throw new RuntimeException("La clave de la venta ya fue utilizada");
+                }
+                return toResponse(
+                        existente,
+                        ventaDetalleRepository.findByVenta_IdVentaAndDeletedAtIsNullOrderByIdVentaDetalleAsc(existente.getIdVenta()),
+                        pagoRepository.findByVenta_IdVentaAndDeletedAtIsNullOrderByIdPagoAsc(existente.getIdVenta()));
+            }
+        }
+
         Sucursal sucursalVenta = resolverSucursalParaVenta(request.idSucursal(), usuarioAutenticado);
         return registrarVentaInterna(request, usuarioAutenticado, sucursalVenta, true, "POS");
     }
@@ -1883,6 +1903,9 @@ public class VentaService {
             Sucursal sucursalVenta,
             boolean moverStock,
             String origen) {
+        VentaPosEntregaService.PreparedDelivery entregaPreparada = "POS".equals(origen)
+                ? ventaPosEntregaService.prepare(request.entrega(), sucursalVenta)
+                : null;
         String tipoComprobante = normalizarTipoComprobante(request.tipoComprobante());
         boolean aplicaIgv = aplicaIgvSegunTipoComprobante(tipoComprobante);
         Cliente cliente = resolverCliente(request.idCliente(), sucursalVenta);
@@ -1929,9 +1952,14 @@ public class VentaService {
         venta.setTotal(totales.total());
         venta.setEstado("EMITIDA");
         venta.setOrigen(origen);
+        venta.setIdempotencyKey("POS".equals(origen) ? normalizarIdempotencyKey(request.idempotencyKey()) : null);
         venta.setActivo("ACTIVO");
 
         Venta ventaGuardada = ventaRepository.save(venta);
+        CrmWarehouseOrder warehouseOrder = new CrmWarehouseOrder();
+        warehouseOrder.setVenta(ventaGuardada);
+        warehouseOrder.setStatus(CrmWarehouseStatus.PENDING);
+        crmWarehouseOrderRepository.save(warehouseOrder);
 
         List<VentaDetalle> detallesGuardar = new ArrayList<>();
         for (DetalleCalculado detalleCalculado : detallesFinales) {
@@ -1967,6 +1995,14 @@ public class VentaService {
         }
         List<Pago> pagosGuardados = pagoRepository.saveAll(pagosGuardar);
 
+        if (entregaPreparada != null) {
+            ventaPosEntregaService.save(
+                    entregaPreparada,
+                    ventaGuardada,
+                    pagosGuardados.isEmpty() ? null : pagosGuardados.getFirst(),
+                    usuarioAutenticado);
+        }
+
         if (moverStock) {
             for (DetalleCalculado detalleCalculado : detallesFinales) {
                 stockMovimientoService.descontar(
@@ -1984,6 +2020,15 @@ public class VentaService {
         }
 
         return toResponse(ventaGuardada, detallesGuardados, pagosGuardados);
+    }
+
+    private String normalizarIdempotencyKey(String value) {
+        if (value == null || value.isBlank()) return null;
+        String normalized = value.trim();
+        if (normalized.length() > 64) {
+            throw new RuntimeException("La clave de idempotencia no debe superar 64 caracteres");
+        }
+        return normalized;
     }
 
     @Transactional

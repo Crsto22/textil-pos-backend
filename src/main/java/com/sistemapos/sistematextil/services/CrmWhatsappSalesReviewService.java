@@ -5,7 +5,10 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
+import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -14,7 +17,13 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.sistemapos.sistematextil.model.Usuario;
+import com.sistemapos.sistematextil.model.Producto;
+import com.sistemapos.sistematextil.model.ProductoVariante;
+import com.sistemapos.sistematextil.model.VentaDetalle;
+import com.sistemapos.sistematextil.repositories.ProductoColorImagenRepository;
 import com.sistemapos.sistematextil.repositories.SucursalRepository;
+import com.sistemapos.sistematextil.repositories.VentaDetalleRepository;
+import com.sistemapos.sistematextil.util.producto.ProductoImagenColorRow;
 
 import lombok.RequiredArgsConstructor;
 
@@ -25,13 +34,18 @@ public class CrmWhatsappSalesReviewService {
 
     private final JdbcTemplate jdbc;
     private final SucursalRepository sucursalRepository;
+    private final VentaDetalleRepository saleDetailRepository;
+    private final ProductoColorImagenRepository productImageRepository;
 
     @Transactional(readOnly = true)
-    public SalesPage list(Usuario actor, String query, String reviewStatus, int page, int size) {
+    public SalesPage list(Usuario actor, String query, String reviewStatus, String receiptType,
+            String saleStatus, String period, LocalDate fromDate, LocalDate toDate, String source,
+            String order, int page, int size) {
         int companyId = companyId(actor);
         int safePage = Math.max(0, page);
         int safeSize = Math.min(100, Math.max(1, size));
         String term = query == null ? "" : query.trim();
+        String orderDirection = "ASC".equalsIgnoreCase(clean(order)) ? "ASC" : "DESC";
         String status = reviewStatus == null ? "ALL" : reviewStatus.trim().toUpperCase();
         String like = "%" + term + "%";
         String reviewFilter = switch (status) {
@@ -40,14 +54,43 @@ public class CrmWhatsappSalesReviewService {
             case "REJECTED" -> " AND (pe.validation_status = 'RECHAZADO' OR v.estado = 'ANULADA') ";
             default -> "";
         };
-        String searchFilter = term.isBlank() ? "" : """
-                AND (CONCAT(COALESCE(v.serie, ''), '-', LPAD(COALESCE(v.correlativo, 0), 6, '0')) LIKE ?
-                     OR COALESCE(c.nombres, '') LIKE ? OR COALESCE(c.telefono, '') LIKE ?
-                     OR COALESCE(pe.operation_code, '') LIKE ?)
-                """;
+        StringBuilder filters = new StringBuilder(reviewFilter);
+        List<Object> baseArgs = new ArrayList<>();
+        baseArgs.add(companyId);
+        if (!term.isBlank()) {
+            filters.append(" AND (CONCAT(COALESCE(v.serie, ''), '-', LPAD(COALESCE(v.correlativo, 0), 6, '0')) LIKE ? OR CAST(v.id_venta AS CHAR) = ?) ");
+            baseArgs.add(like);
+            baseArgs.add(term);
+        }
+        if (!blankOrAll(receiptType)) { filters.append(" AND UPPER(v.tipo_comprobante) = ? "); baseArgs.add(clean(receiptType)); }
+        if (!blankOrAll(saleStatus)) { filters.append(" AND UPPER(v.estado) = ? "); baseArgs.add(clean(saleStatus)); }
+
+        LocalDate[] dates = resolveDates(period, fromDate, toDate);
+        if (dates[0] != null) { filters.append(" AND v.fecha >= ? "); baseArgs.add(dates[0].atStartOfDay()); }
+        if (dates[1] != null) { filters.append(" AND v.fecha < ? "); baseArgs.add(dates[1].plusDays(1).atStartOfDay()); }
+
+        String normalizedSource = clean(source);
+        if ("IA_KIMENTS".equals(normalizedSource)) {
+            if (actor.getRol() == null || !actor.getRol().esAdministrador()) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Filtro IA Kiments exclusivo para administradores");
+            }
+            filters.append(" AND ag.id_agent_session IS NOT NULL ");
+        }
+        if (actor.getRol() != null && actor.getRol().operaAlmacen() && !actor.getRol().esAdministrador()) {
+            if (actor.getSucursal() == null) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Usuario sin sucursal asignada");
+            filters.append(" AND v.id_sucursal = ? ");
+            baseArgs.add(actor.getSucursal().getIdSucursal());
+        } else if (actor.getRol() != null && actor.getRol().operaVentas() && !actor.getRol().esAdministrador()) {
+            filters.append(" AND v.id_usuario = ? AND UPPER(v.origen) IN ('CRM_WHATSAPP','POS') ");
+            baseArgs.add(actor.getIdUsuario());
+        } else if (actor.getRol() == null || !actor.getRol().esAdministrador()) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Rol sin acceso a ventas");
+        }
+
         String from = """
                 FROM venta v
                 JOIN sucursal s ON s.id_sucursal = v.id_sucursal
+                JOIN usuario u ON u.id_usuario = v.id_usuario
                 LEFT JOIN cliente c ON c.id_cliente = v.id_cliente
                 LEFT JOIN crm_whatsapp_payment_request pr ON pr.id_payment_request = (
                     SELECT MAX(pr2.id_payment_request)
@@ -79,21 +122,23 @@ public class CrmWhatsappSalesReviewService {
                 LEFT JOIN crm_whatsapp_film_evidence fe ON fe.id_film_evidence = (
                     SELECT MAX(fe2.id_film_evidence) FROM crm_whatsapp_film_evidence fe2
                     WHERE fe2.id_film_addon = fa.id_film_addon)
-                WHERE s.id_empresa = ? AND v.origen = 'CRM_WHATSAPP'
-                """ + searchFilter + reviewFilter;
-        Object[] baseArgs = term.isBlank()
-                ? new Object[] {companyId}
-                : new Object[] {companyId, like, like, like, like};
-        long total = jdbc.queryForObject("SELECT COUNT(DISTINCT v.id_venta) " + from, Long.class, baseArgs);
+                LEFT JOIN crm_warehouse_order wo ON wo.id_venta = v.id_venta
+                LEFT JOIN crm_whatsapp_conversation scv ON scv.id_conversation = wo.id_shipping_conversation
+                WHERE s.id_empresa = ? AND v.deleted_at IS NULL
+                """ + filters;
+        Object[] baseArray = baseArgs.toArray();
+        long total = jdbc.queryForObject("SELECT COUNT(DISTINCT v.id_venta) " + from, Long.class, baseArray);
         String sql = """
                 SELECT v.id_venta, v.tipo_comprobante, v.serie, v.correlativo, v.total, v.moneda,
-                       v.estado, v.fecha, v.motivo_anulacion, s.nombre AS branch_name,
+                       v.estado, v.fecha, v.motivo_anulacion, v.origen, s.nombre AS branch_name,
+                       u.id_usuario AS created_by_user_id, CONCAT_WS(' ', u.nombre, u.apellido) AS created_by_name,
                        c.nombres AS customer_name, c.telefono AS customer_phone,
                        pr.id_payment_request, pr.status AS payment_request_status,
                        pe.id_payment_evidence, pe.validation_status, pe.processing_status,
                        pe.detected_amount, pe.detected_provider, pe.operation_code, pe.operation_at,
                        pe.confidence, pe.review_note, pe.reviewed_at, mp.nombre AS payment_method,
                        cv.id_conversation, cv.phone_number, ag.id_agent_session,
+                       f.phone AS fulfillment_phone, scv.id_conversation AS shipping_conversation_id,
                        f.method AS delivery_method, f.shalom_agency, f.shalom_agency_address,
                        fa.id_film_addon, fa.status AS film_status, fa.amount AS film_amount,
                        fa.expires_at AS film_expires_at, fa.resolution_source AS film_resolution_source,
@@ -104,14 +149,28 @@ public class CrmWhatsappSalesReviewService {
                        fe.operation_code AS film_operation_code, fe.operation_at AS film_operation_at,
                        fe.confidence AS film_confidence, fe.review_note AS film_review_note,
                        fe.reviewed_at AS film_reviewed_at
-                """ + from + " ORDER BY v.fecha DESC, v.id_venta DESC LIMIT ? OFFSET ?";
-        Object[] args = new Object[baseArgs.length + 2];
-        System.arraycopy(baseArgs, 0, args, 0, baseArgs.length);
+                """ + from + " ORDER BY v.fecha " + orderDirection
+                + ", v.id_venta " + orderDirection + " LIMIT ? OFFSET ?";
+        Object[] args = new Object[baseArray.length + 2];
+        System.arraycopy(baseArray, 0, args, 0, baseArray.length);
         args[args.length - 2] = safeSize;
         args[args.length - 1] = safePage * safeSize;
         List<SaleRow> rows = jdbc.query(sql, (rs, rowNum) -> mapSale(rs), args);
         return new SalesPage(rows, total, safePage, safeSize, (int) Math.ceil(total / (double) safeSize));
     }
+
+    private LocalDate[] resolveDates(String period, LocalDate from, LocalDate to) {
+        if (from != null || to != null) return new LocalDate[] {from, to};
+        LocalDate today = LocalDate.now();
+        return switch (clean(period)) {
+            case "TODAY", "HOY" -> new LocalDate[] {today, today};
+            case "WEEK", "SEMANA" -> new LocalDate[] {today.minusDays(today.getDayOfWeek().getValue() - 1L), today};
+            case "MONTH", "MES" -> new LocalDate[] {today.withDayOfMonth(1), today};
+            default -> new LocalDate[] {null, null};
+        };
+    }
+
+    private boolean blankOrAll(String value) { return value == null || value.isBlank() || "ALL".equals(clean(value)); }
 
     private SaleRow mapSale(ResultSet rs) throws SQLException {
         int saleId = rs.getInt("id_venta");
@@ -132,8 +191,9 @@ public class CrmWhatsappSalesReviewService {
                 rs.getString("moneda"), rs.getString("estado"), dateTime(rs, "fecha"),
                 rs.getString("motivo_anulacion"), rs.getString("branch_name"),
                 rs.getString("customer_name"), rs.getString("customer_phone"),
-                nullableLong(rs, "id_conversation"), rs.getString("phone_number"),
-                nullableLong(rs, "id_agent_session") == null ? "CRM" : "IA_KIMENTS",
+                nullableLong(rs, "id_conversation"), effectivePhone(rs),
+                source(rs), nullableLong(rs, "created_by_user_id"), rs.getString("created_by_name"),
+                nullableLong(rs, "shipping_conversation_id"),
                 nullableLong(rs, "id_payment_request"), rs.getString("payment_request_status"),
                 evidenceId, mainEvidenceStatus, reviewStatus, rs.getString("processing_status"),
                 rs.getBigDecimal("detected_amount"), rs.getString("detected_provider"),
@@ -149,6 +209,20 @@ public class CrmWhatsappSalesReviewService {
                 findItems(saleId));
     }
 
+    private String effectivePhone(ResultSet rs) throws SQLException {
+        for (String column : List.of("fulfillment_phone", "customer_phone", "phone_number")) {
+            String value = rs.getString(column);
+            if (value != null && !value.isBlank()) return value;
+        }
+        return null;
+    }
+
+    private String source(ResultSet rs) throws SQLException {
+        if (nullableLong(rs, "id_agent_session") != null) return "IA_KIMENTS";
+        String origin = clean(rs.getString("origen"));
+        return "CRM_WHATSAPP".equals(origin) ? "CRM" : origin;
+    }
+
     private FilmEvidenceRow filmEvidence(ResultSet rs) throws SQLException {
         Long id=nullableLong(rs,"id_film_evidence"); if(id==null)return null;
         return new FilmEvidenceRow(id,rs.getString("film_validation_status"),rs.getString("film_processing_status"),
@@ -159,14 +233,43 @@ public class CrmWhatsappSalesReviewService {
     }
 
     private List<SaleItem> findItems(int saleId) {
-        return jdbc.query("""
-                SELECT vd.descripcion, vd.cantidad, vd.precio_unitario, vd.descuento, vd.total_detalle
-                FROM venta_detalle vd
-                WHERE vd.id_venta = ? AND vd.deleted_at IS NULL
-                ORDER BY vd.id_venta_detalle
-                """, (rs, rowNum) -> new SaleItem(rs.getString("descripcion"), rs.getInt("cantidad"),
-                        rs.getBigDecimal("precio_unitario"), rs.getBigDecimal("descuento"),
-                        rs.getBigDecimal("total_detalle")), saleId);
+        List<VentaDetalle> details = saleDetailRepository
+                .findByVenta_IdVentaAndDeletedAtIsNullOrderByIdVentaDetalleAsc(saleId);
+        List<Integer> productIds = details.stream()
+                .map(VentaDetalle::getProductoVariante)
+                .filter(java.util.Objects::nonNull)
+                .map(ProductoVariante::getProducto)
+                .filter(java.util.Objects::nonNull)
+                .map(Producto::getIdProducto)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
+        List<ProductoImagenColorRow> images = productIds.isEmpty()
+                ? List.of()
+                : productImageRepository.obtenerResumenPorProductos(productIds);
+        return details.stream().map(detail -> saleItem(detail, images)).toList();
+    }
+
+    private SaleItem saleItem(VentaDetalle detail, List<ProductoImagenColorRow> images) {
+        ProductoVariante variant = detail.getProductoVariante();
+        Producto product = variant == null ? null : variant.getProducto();
+        Integer productId = product == null ? null : product.getIdProducto();
+        Integer colorId = variant == null || variant.getColor() == null ? null : variant.getColor().getIdColor();
+        String imageUrl = images.stream()
+                .filter(image -> java.util.Objects.equals(image.productoId(), productId)
+                        && java.util.Objects.equals(image.colorId(), colorId))
+                .map(image -> firstNotBlank(image.urlThumb(), image.url()))
+                .filter(url -> !url.isBlank())
+                .findFirst()
+                .orElseGet(() -> product == null ? ""
+                        : firstNotBlank(product.getImagenGlobalThumbUrl(), product.getImagenGlobalUrl()));
+        return new SaleItem(detail.getDescripcion(), detail.getCantidad(), detail.getPrecioUnitario(),
+                detail.getDescuento(), detail.getTotalDetalle(), imageUrl);
+    }
+
+    private String firstNotBlank(String preferred, String fallback) {
+        String value = preferred == null ? "" : preferred.trim();
+        return value.isBlank() ? (fallback == null ? "" : fallback.trim()) : value;
     }
 
     private int companyId(Usuario actor) {
@@ -203,13 +306,14 @@ public class CrmWhatsappSalesReviewService {
         return rs.wasNull() ? null : value;
     }
 
-    private String clean(String value) { return value == null ? "" : value.trim().toUpperCase(); }
+    private String clean(String value) { return value == null ? "" : value.trim().toUpperCase(Locale.ROOT); }
 
     public record SalesPage(List<SaleRow> content, long totalElements, int page, int size, int totalPages) {}
     public record SaleRow(Integer saleId, String receiptType, String number, BigDecimal total, String currency,
             String saleStatus, LocalDateTime createdAt, String cancellationReason, String branch,
             String customerName, String customerPhone, Long conversationId, String whatsappPhone,
-            String source, Long paymentRequestId, String paymentRequestStatus, Long evidenceId,
+            String source, Long createdByUserId, String createdByName, Long shippingConversationId,
+            Long paymentRequestId, String paymentRequestStatus, Long evidenceId,
             String mainEvidenceStatus, String reviewStatus, String processingStatus, BigDecimal detectedAmount, String detectedProvider,
             String operationCode, LocalDateTime operationAt, Integer confidence, String reviewNote,
             LocalDateTime reviewedAt, String paymentMethod, String deliveryMethod,
@@ -220,5 +324,5 @@ public class CrmWhatsappSalesReviewService {
             BigDecimal detectedAmount,String operationCode,LocalDateTime operationAt,Integer confidence,
             String reviewNote,LocalDateTime reviewedAt,String mediaUrl) {}
     public record SaleItem(String description, Integer quantity, BigDecimal unitPrice, BigDecimal discount,
-            BigDecimal total) {}
+            BigDecimal total, String imageUrl) {}
 }

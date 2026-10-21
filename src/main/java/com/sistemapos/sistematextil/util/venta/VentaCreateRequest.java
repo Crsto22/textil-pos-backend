@@ -9,6 +9,9 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
 public record VentaCreateRequest(
+        @Size(max = 64, message = "La clave de idempotencia no debe superar 64 caracteres")
+        String idempotencyKey,
+
         Integer idSucursal,
 
         Integer idCliente,
@@ -43,6 +46,9 @@ public record VentaCreateRequest(
 
         @NotEmpty(message = "Ingrese al menos un pago")
         @Valid
-        List<VentaPagoCreateItem> pagos
+        List<VentaPagoCreateItem> pagos,
+
+        @Valid
+        VentaEntregaCreateRequest entrega
 ) {
 }

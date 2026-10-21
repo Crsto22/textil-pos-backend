@@ -18,6 +18,7 @@ import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.server.ResponseStatusException;
+import com.sistemapos.sistematextil.model.CrmWhatsappArea;
 
 @Service
 public class CrmWhatsappBridgeService {
@@ -48,6 +49,22 @@ public class CrmWhatsappBridgeService {
         return request(HttpMethod.POST, "/logout");
     }
 
+    public ResponseEntity<String> obtenerConexiones() {
+        return request(HttpMethod.GET, "/connections");
+    }
+
+    public ResponseEntity<String> obtenerEstado(CrmWhatsappArea area) {
+        return request(HttpMethod.GET, areaPath(area, "/status"));
+    }
+
+    public ResponseEntity<String> obtenerQr(CrmWhatsappArea area) {
+        return request(HttpMethod.GET, areaPath(area, "/qr"));
+    }
+
+    public ResponseEntity<String> cerrarSesion(CrmWhatsappArea area) {
+        return request(HttpMethod.POST, areaPath(area, "/logout"));
+    }
+
     public boolean isBridgeToken(String token) {
         return !bridgeToken.isBlank() && bridgeToken.equals(token);
     }
@@ -57,14 +74,19 @@ public class CrmWhatsappBridgeService {
     }
 
     public ResponseEntity<String> enviarTexto(String to, String message, Object quotedMessage, String idempotencyKey) {
-        connectionStateService.requireOperational();
+        return enviarTexto(CrmWhatsappArea.SALES, to, message, quotedMessage, idempotencyKey);
+    }
+
+    public ResponseEntity<String> enviarTexto(CrmWhatsappArea area, String to, String message,
+            Object quotedMessage, String idempotencyKey) {
+        connectionStateService.requireOperational(area);
         java.util.Map<String, Object> body = new java.util.LinkedHashMap<>();
         body.put("to", to);
         body.put("message", message);
         if (quotedMessage != null) {
             body.put("quoted", quotedMessage);
         }
-        return request(HttpMethod.POST, "/send-text", body, idempotencyKey);
+        return request(HttpMethod.POST, areaPath(area, "/send-text"), body, idempotencyKey);
     }
 
     public ResponseEntity<String> enviarMedia(String to, MultipartFile file, String caption, String quotedMessageJson) {
@@ -83,7 +105,13 @@ public class CrmWhatsappBridgeService {
 
     public ResponseEntity<String> enviarMedia(String to, byte[] bytes, String originalFilename,
             String contentType, String caption, String quotedMessageJson, String idempotencyKey) {
-        connectionStateService.requireOperational();
+        return enviarMedia(CrmWhatsappArea.SALES, to, bytes, originalFilename, contentType, caption,
+                quotedMessageJson, idempotencyKey);
+    }
+
+    public ResponseEntity<String> enviarMedia(CrmWhatsappArea area, String to, byte[] bytes, String originalFilename,
+            String contentType, String caption, String quotedMessageJson, String idempotencyKey) {
+        connectionStateService.requireOperational(area);
         if (bridgeUrl.isBlank()) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "WHATSAPP_BRIDGE_URL no configurado");
         }
@@ -122,7 +150,7 @@ public class CrmWhatsappBridgeService {
             body.add("file", new HttpEntity<>(fileResource, fileHeaders));
 
             ResponseEntity<String> response = restTemplate.exchange(
-                    bridgeUrl + "/send-media",
+                    bridgeUrl + areaPath(area, "/send-media"),
                     HttpMethod.POST,
                     new HttpEntity<>(body, headers),
                     String.class);
@@ -184,6 +212,11 @@ public class CrmWhatsappBridgeService {
         return ResponseEntity.status(status)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(body == null || body.isBlank() ? "{}" : body);
+    }
+
+    private String areaPath(CrmWhatsappArea area, String suffix) {
+        if (area == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Area de WhatsApp requerida");
+        return "/connections/" + area.path() + suffix;
     }
 
     private MediaType parseMediaType(String value) {

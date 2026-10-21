@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node src/server.js",
-    "start": "node src/server.js",
+    "dev": "node src/manager.js",
+    "start": "node src/manager.js",
     "test": "node --test"
   },
   "dependencies": {

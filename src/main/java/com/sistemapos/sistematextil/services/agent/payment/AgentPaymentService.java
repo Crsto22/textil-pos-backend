@@ -423,7 +423,7 @@ public class AgentPaymentService {
         return new CrmSaleCreateRequest(branchId(session), null, currency(cart.currency()), "CONTADO", 0D,
                 discount.doubleValue(), discount.signum() > 0 ? "MONTO" : null, details,
                 List.of(new VentaPagoCreateItem(paymentMethodId, money(cart.total()).doubleValue(), null, now)),
-                session.getConversation() == null ? null : session.getConversation().getPhone());
+                session.getConversation() == null ? null : session.getConversation().getPhone(), null);
     }
 
     private String description(CartItemRow item) {

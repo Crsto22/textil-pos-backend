@@ -11,6 +11,7 @@ import com.sistemapos.sistematextil.model.VentaDetalle;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappAgentSessionRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappFulfillmentRepository;
 import com.sistemapos.sistematextil.repositories.VentaDetalleRepository;
+import com.sistemapos.sistematextil.util.producto.ProductoPreventaPolicy;
 
 import lombok.RequiredArgsConstructor;
 
@@ -36,7 +37,7 @@ public class AgentOrderDeliveryQueryService {
                 .filter(java.util.Objects::nonNull)
                 .map(value -> value.getProducto())
                 .filter(java.util.Objects::nonNull)
-                .anyMatch(product -> Boolean.TRUE.equals(product.getPreventa()));
+                .anyMatch(ProductoPreventaPolicy::activa);
         List<String> products = details.stream()
                 .map(VentaDetalle::getProductoVariante)
                 .filter(java.util.Objects::nonNull)

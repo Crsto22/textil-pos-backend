@@ -16,11 +16,14 @@ import jakarta.persistence.LockModeType;
 
 public interface CrmWhatsappMessageRepository extends JpaRepository<CrmWhatsappMessage, Long> {
     boolean existsByConversation_IdConversationAndDirection(Long conversationId, String direction);
+    boolean existsByConversation_IdConversationAndRelatedSaleIdAndOrigin(
+            Long conversationId, Integer relatedSaleId, String origin);
 
     Optional<CrmWhatsappMessage> findFirstByConversation_IdConversationAndRelatedSaleIdAndReceiptFormatAndDeletedAtIsNull(
             Long conversationId, Integer relatedSaleId, String receiptFormat);
     List<CrmWhatsappMessage> findByConversation_IdConversationOrderByCreatedAtAsc(Long idConversation);
     Optional<CrmWhatsappMessage> findFirstByWhatsappMessageId(String whatsappMessageId);
+    Optional<CrmWhatsappMessage> findFirstByRelatedSaleIdOrderByIdMessageDesc(Integer relatedSaleId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT m FROM CrmWhatsappMessage m WHERE m.idMessage = :id")
@@ -177,6 +180,20 @@ public interface CrmWhatsappMessageRepository extends JpaRepository<CrmWhatsappM
             """, nativeQuery = true)
     List<String> findAllDisposableMediaStoragePaths();
 
+    @Query(value = """
+            SELECT m.media_storage_path
+            FROM crm_whatsapp_message m
+            JOIN crm_whatsapp_conversation c ON c.id_conversation = m.id_conversation
+            LEFT JOIN crm_whatsapp_connection cn ON cn.id_connection = c.id_connection
+            WHERE COALESCE(cn.area, 'SALES') = :area
+              AND m.media_storage_path IS NOT NULL AND m.media_storage_path <> ''
+              AND NOT EXISTS (
+                  SELECT 1 FROM crm_whatsapp_payment_evidence e
+                  WHERE BINARY e.storage_path = BINARY m.media_storage_path
+              )
+            """, nativeQuery = true)
+    List<String> findDisposableMediaStoragePathsByArea(@Param("area") String area);
+
     @Query("""
             SELECT m.mediaStoragePath
             FROM CrmWhatsappMessage m
@@ -193,6 +210,15 @@ public interface CrmWhatsappMessageRepository extends JpaRepository<CrmWhatsappM
     @Modifying
     @Query(value = "DELETE FROM crm_whatsapp_message", nativeQuery = true)
     int deleteAllWhatsappMessages();
+
+    @Modifying
+    @Query(value = """
+            DELETE m FROM crm_whatsapp_message m
+            JOIN crm_whatsapp_conversation c ON c.id_conversation = m.id_conversation
+            LEFT JOIN crm_whatsapp_connection cn ON cn.id_connection = c.id_connection
+            WHERE COALESCE(cn.area, 'SALES') = :area
+            """, nativeQuery = true)
+    int deleteWhatsappMessagesByArea(@Param("area") String area);
 
     @Query(value = """
             SELECT COUNT(*)

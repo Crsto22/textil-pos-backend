@@ -26,6 +26,7 @@ import com.sistemapos.sistematextil.services.NotaCreditoService;
 import com.sistemapos.sistematextil.services.VentaAnulacionService;
 import com.sistemapos.sistematextil.services.VentaResumenReporteService;
 import com.sistemapos.sistematextil.services.VentaService;
+import com.sistemapos.sistematextil.services.agent.fulfillment.ShalomAgencySearchService;
 import com.sistemapos.sistematextil.util.notacredito.NotaCreditoCreateRequest;
 import com.sistemapos.sistematextil.util.notacredito.NotaCreditoResponse;
 import com.sistemapos.sistematextil.util.paginacion.PagedResponse;
@@ -50,6 +51,18 @@ public class VentaController {
     private final VentaResumenReporteService ventaResumenReporteService;
     private final VentaAnulacionService ventaAnulacionService;
     private final NotaCreditoService notaCreditoService;
+    private final ShalomAgencySearchService shalomAgencySearchService;
+
+    @GetMapping("/shalom/agencias")
+    public ResponseEntity<?> buscarAgenciasShalom(
+            @RequestParam(name = "q", required = false) String query) {
+        try {
+            return ResponseEntity.ok(shalomAgencySearchService.search(query));
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? "No se pudieron buscar agencias de Shalom" : e.getMessage();
+            return ResponseEntity.badRequest().body(Map.of("message", message));
+        }
+    }
 
     @GetMapping("/listar")
     public ResponseEntity<?> listar(

@@ -52,6 +52,7 @@ import com.sistemapos.sistematextil.util.producto.ProductoImagenCreateItem;
 import com.sistemapos.sistematextil.util.producto.ProductoImagenDetalleResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoListItemResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoListadoResumenResponse;
+import com.sistemapos.sistematextil.util.producto.ProductoPreventaPolicy;
 import com.sistemapos.sistematextil.util.producto.ProductoTallaResumen;
 import com.sistemapos.sistematextil.util.producto.ProductoUpdateRequest;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteCreateItem;
@@ -892,7 +893,7 @@ List<ProductoColorImagen> imagenesActuales = productoColorImagenRepository.findB
                 guideStatus == null ? null : guideStatus.measurementType(),
                 Boolean.TRUE.equals(producto.getPublicarEcommerce()),
                 preventaActiva(producto),
-                preventaActiva(producto) ? producto.getFechaEnvioPreventa() : null,
+                ProductoPreventaPolicy.fechaEnvioVigente(producto),
                 producto.getEstado(),
                 producto.getFechaCreacion(),
                 producto.getCategoria() != null ? producto.getCategoria().getIdCategoria() : null,
@@ -921,7 +922,7 @@ List<ProductoColorImagen> imagenesActuales = productoColorImagenRepository.findB
                 producto.getGuiaTallasThumbUrl(),
                 Boolean.TRUE.equals(producto.getPublicarEcommerce()),
                 preventaActiva(producto),
-                preventaActiva(producto) ? producto.getFechaEnvioPreventa() : null,
+                ProductoPreventaPolicy.fechaEnvioVigente(producto),
                 producto.getEstado(),
                 producto.getFechaCreacion(),
                 catalogo != null ? catalogo.precioMin() : null,
@@ -1047,7 +1048,7 @@ List<ProductoColorImagen> imagenesActuales = productoColorImagenRepository.findB
         if (fechaEnvioPreventa == null) {
             throw new RuntimeException("Ingrese la fecha de envio de preventa");
         }
-        if (!fechaEnvioPreventa.isAfter(LocalDate.now())) {
+        if (!fechaEnvioPreventa.isAfter(LocalDate.now(ProductoPreventaPolicy.BUSINESS_ZONE))) {
             throw new RuntimeException("La fecha de envio de preventa debe ser futura");
         }
         producto.setPreventa(Boolean.TRUE);
@@ -1055,10 +1056,7 @@ List<ProductoColorImagen> imagenesActuales = productoColorImagenRepository.findB
     }
 
     private boolean preventaActiva(Producto producto) {
-        return producto != null
-                && Boolean.TRUE.equals(producto.getPreventa())
-                && producto.getFechaEnvioPreventa() != null
-                && producto.getFechaEnvioPreventa().isAfter(LocalDate.now());
+        return ProductoPreventaPolicy.activa(producto);
     }
 
     private Usuario obtenerUsuarioAutenticado(String correoUsuarioAutenticado) {

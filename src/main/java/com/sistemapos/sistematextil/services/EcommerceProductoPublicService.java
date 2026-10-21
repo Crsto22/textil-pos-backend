@@ -36,6 +36,7 @@ import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoGlobalListIt
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoGlobalListadoResponse;
 import com.sistemapos.sistematextil.util.ecommerce.EcommerceProductoListadoResponse;
 import com.sistemapos.sistematextil.util.producto.ProductoVarianteStockSucursalRow;
+import com.sistemapos.sistematextil.util.producto.ProductoPreventaPolicy;
 
 import lombok.RequiredArgsConstructor;
 
@@ -633,14 +634,11 @@ public class EcommerceProductoPublicService {
                 producto.getGuiaTallasUrl(),
                 producto.getGuiaTallasThumbUrl(),
                 preventaActiva(producto),
-                preventaActiva(producto) ? producto.getFechaEnvioPreventa() : null);
+                ProductoPreventaPolicy.fechaEnvioVigente(producto));
     }
 
     private boolean preventaActiva(Producto producto) {
-        return producto != null
-                && Boolean.TRUE.equals(producto.getPreventa())
-                && producto.getFechaEnvioPreventa() != null
-                && producto.getFechaEnvioPreventa().isAfter(java.time.LocalDate.now());
+        return ProductoPreventaPolicy.activa(producto);
     }
 
     private List<EcommerceInicioImagenProductoResponse> obtenerImagenesProductosInicio() {

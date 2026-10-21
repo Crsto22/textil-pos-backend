@@ -21,6 +21,9 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.http.HttpStatus;
 
 import java.time.LocalDate;
+import java.util.List;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import com.sistemapos.sistematextil.services.CrmWhatsappChatService;
 import com.sistemapos.sistematextil.services.CrmWhatsappBridgeService;
@@ -31,6 +34,10 @@ import com.sistemapos.sistematextil.services.CrmWhatsappAiCredentialService;
 import com.sistemapos.sistematextil.services.CrmWhatsappPaymentEvidenceService;
 import com.sistemapos.sistematextil.services.CrmWhatsappSalesReviewService;
 import com.sistemapos.sistematextil.services.CrmWhatsappFilmReviewService;
+import com.sistemapos.sistematextil.services.CrmQuickMessageService;
+import com.sistemapos.sistematextil.services.CrmQuickMessageService.QuickMessageMedia;
+import com.sistemapos.sistematextil.services.CrmQuickMessageService.QuickMessageRequest;
+import com.sistemapos.sistematextil.services.CrmQuickMessageService.SendQuickMessageRequest;
 import com.sistemapos.sistematextil.services.CrmWhatsappPaymentEvidenceService.PaymentRequestCreateRequest;
 import com.sistemapos.sistematextil.services.CrmWhatsappPaymentEvidenceService.PaymentEvidenceDownload;
 import com.sistemapos.sistematextil.services.CrmWhatsappAiCredentialService.CredentialRequest;
@@ -45,6 +52,8 @@ import com.sistemapos.sistematextil.services.agent.knowledge.AgentKnowledgeAdmin
 import com.sistemapos.sistematextil.services.agent.fulfillment.ShalomAgencySyncService;
 import com.sistemapos.sistematextil.model.CustomUser;
 import com.sistemapos.sistematextil.model.Usuario;
+import com.sistemapos.sistematextil.model.CrmWhatsappArea;
+import com.sistemapos.sistematextil.util.usuario.Rol;
 import com.sistemapos.sistematextil.services.CrmWhatsappChatService.MediaDownload;
 import com.sistemapos.sistematextil.services.CrmWhatsappChatService.CrmSaleCreateRequest;
 import com.sistemapos.sistematextil.services.CrmWhatsappChatService.CrmTagRequest;
@@ -75,21 +84,128 @@ public class CrmWhatsappController {
     private final CrmWhatsappSalesReviewService crmWhatsappSalesReviewService;
     private final ShalomAgencySyncService shalomAgencySyncService;
     private final CrmWhatsappFilmReviewService crmWhatsappFilmReviewService;
+    private final CrmQuickMessageService crmQuickMessageService;
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    @GetMapping("/quick-messages")
+    public ResponseEntity<?> listarMensajesRapidos(
+            @RequestParam(name = "q", defaultValue = "") String query,
+            Authentication authentication) {
+        return ResponseEntity.ok(crmQuickMessageService.list(query, currentUser(authentication)));
+    }
+
+    @GetMapping("/quick-messages/{commandId}")
+    public ResponseEntity<?> obtenerMensajeRapido(@PathVariable Long commandId, Authentication authentication) {
+        return ResponseEntity.ok(crmQuickMessageService.get(commandId, currentUser(authentication)));
+    }
+
+    @PostMapping(value = "/quick-messages", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<?> crearMensajeRapido(
+            @RequestParam("payload") String payload,
+            @RequestParam(name = "files", required = false) List<MultipartFile> files,
+            Authentication authentication) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(crmQuickMessageService.create(
+                readQuickMessageRequest(payload), files, currentUser(authentication)));
+    }
+
+    @PutMapping(value = "/quick-messages/{commandId}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<?> actualizarMensajeRapido(
+            @PathVariable Long commandId,
+            @RequestParam("payload") String payload,
+            @RequestParam(name = "files", required = false) List<MultipartFile> files,
+            Authentication authentication) {
+        return ResponseEntity.ok(crmQuickMessageService.update(commandId,
+                readQuickMessageRequest(payload), files, currentUser(authentication)));
+    }
+
+    @DeleteMapping("/quick-messages/{commandId}")
+    public ResponseEntity<Void> eliminarMensajeRapido(@PathVariable Long commandId, Authentication authentication) {
+        crmQuickMessageService.delete(commandId, currentUser(authentication));
+        return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping(value = "/quick-messages/{commandId}/blocks/{blockId}/media", produces = MediaType.ALL_VALUE)
+    public ResponseEntity<byte[]> descargarImagenMensajeRapido(
+            @PathVariable Long commandId,
+            @PathVariable Long blockId,
+            Authentication authentication) {
+        QuickMessageMedia media = crmQuickMessageService.download(commandId, blockId, currentUser(authentication));
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(media.contentType()))
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "inline; filename=\"" + media.fileName().replace("\"", "") + "\"")
+                .body(media.bytes());
+    }
+
+    @PostMapping("/quick-messages/{commandId}/send")
+    public ResponseEntity<?> enviarMensajeRapido(
+            @PathVariable Long commandId,
+            @RequestBody SendQuickMessageRequest request,
+            Authentication authentication) {
+        return ResponseEntity.ok(crmQuickMessageService.send(commandId, request, currentUser(authentication)));
+    }
+
+    @PostMapping("/quick-messages/{commandId}/blocks/{blockId}/send")
+    public ResponseEntity<?> enviarBloqueMensajeRapido(
+            @PathVariable Long commandId,
+            @PathVariable Long blockId,
+            @RequestBody SendQuickMessageRequest request,
+            Authentication authentication) {
+        return ResponseEntity.ok(crmQuickMessageService.sendBlock(
+                commandId, blockId, request, currentUser(authentication)));
+    }
 
     @GetMapping("/sales")
     public ResponseEntity<?> listarVentasCrm(
             @RequestParam(name = "q", defaultValue = "") String query,
             @RequestParam(name = "reviewStatus", defaultValue = "ALL") String reviewStatus,
+            @RequestParam(name = "receiptType", defaultValue = "ALL") String receiptType,
+            @RequestParam(name = "saleStatus", defaultValue = "ALL") String saleStatus,
+            @RequestParam(name = "period", defaultValue = "ALL") String period,
+            @RequestParam(name = "from", required = false) LocalDate from,
+            @RequestParam(name = "to", required = false) LocalDate to,
+            @RequestParam(name = "source", defaultValue = "ALL") String source,
+            @RequestParam(name = "order", defaultValue = "DESC") String order,
             @RequestParam(name = "page", defaultValue = "0") int page,
             @RequestParam(name = "size", defaultValue = "20") int size,
             Authentication authentication) {
         return ResponseEntity.ok(crmWhatsappSalesReviewService.list(
-                currentUser(authentication), query, reviewStatus, page, size));
+                currentUser(authentication), query, reviewStatus, receiptType, saleStatus,
+                period, from, to, source, order, page, size));
     }
 
     @GetMapping("/status")
     public ResponseEntity<?> obtenerEstado(Authentication authentication) {
         return crmWhatsappConnectionService.obtenerEstado(currentUser(authentication));
+    }
+
+    @GetMapping("/connections")
+    public ResponseEntity<?> listarConexiones(Authentication authentication) {
+        return ResponseEntity.ok(crmWhatsappConnectionService.listarConexiones(currentUser(authentication)));
+    }
+
+    @GetMapping("/connections/{area}/status")
+    public ResponseEntity<?> obtenerEstadoArea(@PathVariable String area, Authentication authentication) {
+        return crmWhatsappConnectionService.obtenerEstado(parseArea(area), currentUser(authentication));
+    }
+
+    @GetMapping("/connections/{area}/qr")
+    public ResponseEntity<String> obtenerQrArea(@PathVariable String area, Authentication authentication) {
+        requireAdmin(authentication);
+        return crmWhatsappBridgeService.obtenerQr(parseArea(area));
+    }
+
+    @PostMapping("/connections/{area}/logout")
+    public ResponseEntity<String> cerrarSesionArea(@PathVariable String area, Authentication authentication) {
+        requireAdmin(authentication);
+        return crmWhatsappBridgeService.cerrarSesion(parseArea(area));
+    }
+
+    @PostMapping("/connections/{area}/acknowledge-phone-change")
+    public ResponseEntity<?> confirmarCambioNumeroArea(@PathVariable String area, Authentication authentication) {
+        requireAdmin(authentication);
+        return ResponseEntity.ok(crmWhatsappConnectionService.confirmarCambioNumero(
+                parseArea(area), currentUser(authentication)));
     }
 
     @PostMapping("/connection-event")
@@ -201,12 +317,14 @@ public class CrmWhatsappController {
 
 
     @GetMapping("/qr")
-    public ResponseEntity<String> obtenerQr() {
+    public ResponseEntity<String> obtenerQr(Authentication authentication) {
+        requireAdmin(authentication);
         return crmWhatsappBridgeService.obtenerQr();
     }
 
     @PostMapping("/logout")
-    public ResponseEntity<String> cerrarSesion() {
+    public ResponseEntity<String> cerrarSesion(Authentication authentication) {
+        requireAdmin(authentication);
         return crmWhatsappBridgeService.cerrarSesion();
     }
 
@@ -337,8 +455,10 @@ public class CrmWhatsappController {
     }
 
     @DeleteMapping("/conversations")
-    public ResponseEntity<?> eliminarTodoElHistorial(Authentication authentication) {
-        return ResponseEntity.ok(crmWhatsappChatService.eliminarTodosLosMensajes(currentUser(authentication)));
+    public ResponseEntity<?> eliminarTodoElHistorial(
+            @RequestParam(value = "area", required = false) String area,
+            Authentication authentication) {
+        return ResponseEntity.ok(crmWhatsappChatService.eliminarTodosLosMensajes(currentUser(authentication), area));
     }
 
     @GetMapping("/conversations/{id}/tags")
@@ -641,10 +761,34 @@ public class CrmWhatsappController {
                 .body(emitter);
     }
 
+    private QuickMessageRequest readQuickMessageRequest(String payload) {
+        try {
+            return objectMapper.readValue(payload, QuickMessageRequest.class);
+        } catch (Exception exception) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El contenido del comando no es valido");
+        }
+    }
+
     private Usuario currentUser(Authentication authentication) {
         if (authentication == null || !(authentication.getPrincipal() instanceof CustomUser customUser)) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "No autorizado");
         }
         return customUser.getUsuario();
+    }
+
+    private CrmWhatsappArea parseArea(String value) {
+        try {
+            return CrmWhatsappArea.from(value);
+        } catch (RuntimeException exception) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Area de WhatsApp invalida");
+        }
+    }
+
+    private Usuario requireAdmin(Authentication authentication) {
+        Usuario actor = currentUser(authentication);
+        if (actor.getRol() != Rol.ADMINISTRADOR) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Solo un administrador puede administrar WhatsApp");
+        }
+        return actor;
     }
 }

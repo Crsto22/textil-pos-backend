@@ -41,6 +41,7 @@ class AgentRuntimeConfigServiceTest {
         entity.setPaymentReservationSeconds(240);
         entity.setReceiptMinimumConfidence(92);
         entity.setAdvisorAttentionEnabled(true);
+        entity.setFirstImageToAdvisorEnabled(true);
         entity.setJobMaxAttempts(4);
         entity.setOutboxMaxAttempts(7);
         entity.setMaxMessagesPerBatch(20);
@@ -59,6 +60,8 @@ class AgentRuntimeConfigServiceTest {
         assertEquals(12, config.limitedConversationsPerHour());
         assertEquals(8000, config.messageGroupingMs());
         assertEquals(92, config.receiptMinimumConfidence());
+        assertTrue(config.firstImageToAdvisorEnabled());
+        assertTrue(service.routesFirstImageToAdvisor(9L));
         assertEquals(7, config.outboxMaxAttempts());
         assertEquals(8, config.maxOutputMessagesPerRun());
         assertEquals("Bienvenida personalizada", config.welcomeMessage());
@@ -91,6 +94,21 @@ class AgentRuntimeConfigServiceTest {
 
         assertTrue(service.allowsIncoming(9L, 20L, "999111222"));
         assertTrue(service.allowsIncoming(9L, 21L, "988777666"));
+    }
+
+    @Test
+    void firstImageRoutingRequiresAgentAndAdvisorAttentionToBeEnabled() {
+        CrmWhatsappAiConfig entity = configured(CrmWhatsappAgentActivationStage.AUTOMATIC_SALES);
+        entity.setAdvisorAttentionEnabled(false);
+        entity.setFirstImageToAdvisorEnabled(true);
+        CrmWhatsappAiConfigRepository repository = mock(CrmWhatsappAiConfigRepository.class);
+        when(repository.findByConnection_IdConnection(9L)).thenReturn(Optional.of(entity));
+        var service = new AgentRuntimeConfigService(repository, mock(CrmWhatsappAgentSessionRepository.class));
+
+        assertFalse(service.routesFirstImageToAdvisor(9L));
+
+        entity.setAdvisorAttentionEnabled(true);
+        assertTrue(service.routesFirstImageToAdvisor(9L));
     }
 
     private CrmWhatsappAiConfig configured(CrmWhatsappAgentActivationStage stage) {

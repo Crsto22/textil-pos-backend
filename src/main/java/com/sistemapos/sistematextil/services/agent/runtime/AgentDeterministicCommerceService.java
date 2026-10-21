@@ -92,7 +92,7 @@ public class AgentDeterministicCommerceService {
         boolean earlyDeliveryPreference = rememberEarlyDeliveryPreference(sessionId, effectiveDecision);
         if (action == AgentCommercialAction.SELECT_PICKUP
                 && requireSession(sessionId).getState() != CrmWhatsappAgentState.ESPERANDO_METODO_ENTREGA) {
-            return Outcome.message("Contamos con recojo en tienda sin costo adicional y envío por Shalom con "
+            return Outcome.message("Contamos con recojo en tienda, disponible aproximadamente en 2 a 3 días y sin costo adicional, y envío por Shalom con "
                     + "film protector obligatorio de S/2. Primero terminaremos de confirmar tu pedido y el pago; "
                     + "después podrás elegir una modalidad de entrega.");
         }
@@ -145,7 +145,7 @@ public class AgentDeterministicCommerceService {
 
     public String earlyDeliveryPreferenceMessage() {
         return "Sí realizamos envíos 💛\n"
-                + "🏬 Recojo en tienda: sin costo adicional.\n"
+                + "🏬 Recojo en tienda: disponible aproximadamente en 2 a 3 días y sin costo adicional.\n"
                 + "🚌 Envío por Shalom: requiere film protector obligatorio de S/2.\n"
                 + "He guardado tu preferencia por envío. Primero terminaremos de confirmar tu pedido y el pago; "
                 + "después te solicitaré los datos de Shalom.";
@@ -382,7 +382,7 @@ public class AgentDeterministicCommerceService {
         }
         text.append("*Total: ").append(money(cart.total())).append("*\n\n")
                 .append("📦 *Modalidades de entrega disponibles*\n")
-                .append("🏬 Recojo en tienda: sin costo adicional.\n")
+                .append("🏬 Recojo en tienda: disponible aproximadamente en 2 a 3 días y sin costo adicional.\n")
                 .append("🚌 Envío por Shalom: requiere S/2 adicionales por el film protector para embalaje.\n\n");
         if (preorder && regular) {
             text.append("📅 Los despachos del pedido comienzan cuando los productos en preventa estén disponibles, ")
@@ -624,6 +624,7 @@ public class AgentDeterministicCommerceService {
                 + "🧾 Número de pedido: " + saleId + "\n"
                 + "🏬 Tipo de entrega: Recojo en tienda\n"
                 + "📍 Dirección: Jr. Huánuco 1705-1707, piso 7, interior 701, Gamarra, La Victoria, Lima, Perú.\n\n"
+                + "Tu pedido estará disponible para recojo aproximadamente en 2 a 3 días.\n"
                 + "Una asesora del área de envíos se comunicará contigo para corroborar tus datos.\n\n"
                 + "¡Gracias por confiar en Kiments! 💛";
     }
@@ -939,7 +940,7 @@ public class AgentDeterministicCommerceService {
             return "Me indicaste que prefieres envío por Shalom. Este método requiere film protector obligatorio "
                     + "de S/2. ¿Confirmas que deseas recibirlo por Shalom?";
         }
-        return "¿Cómo deseas recibir tu pedido?\n🏬 Recojo en tienda: sin costo adicional.\n"
+        return "¿Cómo deseas recibir tu pedido?\n🏬 Recojo en tienda: disponible aproximadamente en 2 a 3 días y sin costo adicional.\n"
                 + "🚌 Envío por Shalom: requiere film protector obligatorio de S/2.\n¿Cuál opción deseas?";
     }
 

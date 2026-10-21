@@ -110,7 +110,7 @@ class AgentDeterministicCommerceServiceTest {
         assertFalse(message.contains("logística de Shalom"));
         assertTrue(message.contains("penalidad de S/10"));
         assertTrue(message.contains("📦 *Modalidades de entrega disponibles*"));
-        assertTrue(message.contains("Recojo en tienda: sin costo adicional"));
+        assertTrue(message.contains("Recojo en tienda: disponible aproximadamente en 2 a 3 días"));
         assertTrue(message.contains("Envío por Shalom: requiere S/2 adicionales"));
         assertFalse(message.contains("🛍️"));
     }

@@ -75,14 +75,24 @@ public class AgentTurnFinalizer {
         if (session.getConversation() == null || session.getConversation().getIdConversation() == null) {
             return ordinal;
         }
-        Long previousMessages = jdbc.queryForObject("""
-                SELECT COUNT(*)
-                FROM crm_whatsapp_message
-                WHERE id_conversation=? AND id_message < ?
-                """, Long.class, session.getConversation().getIdConversation(), lease.anchorMessageId());
-        if (previousMessages != null && previousMessages > 0) return ordinal;
-        String welcome = clean(runtimeConfig.forSession(lease.sessionId()).welcomeMessage());
+        var config = runtimeConfig.forSession(lease.sessionId());
+        String welcome = clean(config == null ? null : config.welcomeMessage());
         if (welcome.isBlank()) return ordinal;
+        Long existingWelcome = jdbc.queryForObject("""
+                SELECT
+                  (SELECT COUNT(*)
+                   FROM crm_whatsapp_message
+                   WHERE id_conversation=? AND direction='OUTGOING' AND origin='CRM_SYSTEM'
+                     AND body=? AND deleted_at IS NULL)
+                  +
+                  (SELECT COUNT(*)
+                   FROM crm_whatsapp_agent_outbox
+                   WHERE id_conversation=? AND body=? AND caption='CRM_SYSTEM'
+                     AND status IN ('PENDING','RETRY','PROCESSING','SENT'))
+                """, Long.class,
+                session.getConversation().getIdConversation(), welcome,
+                session.getConversation().getIdConversation(), welcome);
+        if (existingWelcome != null && existingWelcome > 0) return ordinal;
         outbox.enqueueOperationalText(lease.sessionId(), lease.jobId(), lease.anchorMessageId(), ordinal, welcome);
         return ordinal + 1;
     }

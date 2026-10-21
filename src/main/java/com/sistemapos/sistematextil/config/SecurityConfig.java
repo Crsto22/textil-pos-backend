@@ -49,11 +49,15 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/auth/me").authenticated()
                         .requestMatchers("/api/auth/cambiar-password", "/api/auth/foto-perfil")
                         .hasAnyAuthority("ADMINISTRADOR", "VENTAS", "ALMACEN", "VENTAS_ALMACEN", "SISTEMA")
+                        .requestMatchers("/api/crm/warehouse/**")
+                        .hasAnyAuthority("ADMINISTRADOR", "ALMACEN", "VENTAS_ALMACEN")
                         .requestMatchers("/api/dashboard")
                         .hasAnyAuthority("ADMINISTRADOR", "VENTAS", "ALMACEN", "VENTAS_ALMACEN", "SISTEMA")
                         .requestMatchers("/api/turno/**").hasAnyAuthority("ADMINISTRADOR", "SISTEMA")
                         .requestMatchers("/api/trabajadores/**", "/api/dispositivos-asistencia/**", "/api/asistencia/**")
                         .hasAnyAuthority("ADMINISTRADOR", "SISTEMA")
+                        .requestMatchers("/api/crm/whatsapp/sales")
+                        .hasAnyAuthority("ADMINISTRADOR", "CRM_CHAT", "VENTAS", "ALMACEN", "VENTAS_ALMACEN")
                         .requestMatchers(
                                 "/api/crm/whatsapp/conversations",
                                 "/api/crm/whatsapp/conversations/**",
@@ -63,10 +67,13 @@ public class SecurityConfig {
                                  "/api/crm/whatsapp/tags",
                                  "/api/crm/whatsapp/tags/**",
                                  "/api/crm/whatsapp/transfer-users",
-                                 "/api/crm/whatsapp/sales",
                                  "/api/crm/whatsapp/payment-evidences/**",
                                  "/api/crm/whatsapp/messages/*/media")
-                        .hasAnyAuthority("ADMINISTRADOR", "CRM_CHAT")
+                         .hasAnyAuthority("ADMINISTRADOR", "CRM_CHAT")
+                        .requestMatchers("/api/crm/whatsapp/shipping/**")
+                        .hasAnyAuthority("ADMINISTRADOR", "ALMACEN", "VENTAS_ALMACEN")
+                        .requestMatchers(HttpMethod.GET, "/api/crm/whatsapp/connections/shipping/status")
+                        .hasAnyAuthority("ADMINISTRADOR", "ALMACEN", "VENTAS_ALMACEN")
                         .requestMatchers("/api/crm/whatsapp/**").hasAuthority("ADMINISTRADOR")
                         .requestMatchers("/api/usuario/**").hasAnyAuthority("ADMINISTRADOR", "SISTEMA")
                         .requestMatchers("/api/cliente/**")

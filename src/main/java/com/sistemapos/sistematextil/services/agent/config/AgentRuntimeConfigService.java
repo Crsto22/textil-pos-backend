@@ -56,6 +56,13 @@ public class AgentRuntimeConfigService {
         return forConnection(connectionId).enabled();
     }
 
+    public boolean routesFirstImageToAdvisor(Long connectionId) {
+        RuntimeConfig config = forConnection(connectionId);
+        return config.enabled()
+                && config.advisorAttentionEnabled()
+                && config.firstImageToAdvisorEnabled();
+    }
+
     @Transactional(readOnly = true)
     public boolean allowsIncoming(Long connectionId, Long conversationId, String phone) {
         RuntimeConfig config = forConnection(connectionId);
@@ -82,6 +89,7 @@ public class AgentRuntimeConfigService {
                 value(config.getPaymentReservationSeconds(), defaults.paymentReservationSeconds()),
                 value(config.getReceiptMinimumConfidence(), defaults.receiptMinimumConfidence()),
                 Boolean.TRUE.equals(config.getAdvisorAttentionEnabled()),
+                Boolean.TRUE.equals(config.getFirstImageToAdvisorEnabled()),
                 value(config.getJobMaxAttempts(), defaults.jobMaxAttempts()),
                 value(config.getOutboxMaxAttempts(), defaults.outboxMaxAttempts()),
                 value(config.getMaxMessagesPerBatch(), defaults.maxMessagesPerBatch()),
@@ -113,7 +121,8 @@ public class AgentRuntimeConfigService {
     public record RuntimeConfig(boolean enabled, CrmWhatsappAgentActivationStage activationStage,
             Set<String> testPhoneNumbers, int limitedConversationsPerHour,
             int messageGroupingMs, int paymentReservationSeconds,
-            int receiptMinimumConfidence, boolean advisorAttentionEnabled, int jobMaxAttempts,
+            int receiptMinimumConfidence, boolean advisorAttentionEnabled,
+            boolean firstImageToAdvisorEnabled, int jobMaxAttempts,
             int outboxMaxAttempts, int maxMessagesPerBatch, int maxToolCallsPerRun,
             int maxOutputMessagesPerRun, String welcomeMessage, String agentBehaviorInstructions) {
         public RuntimeConfig(boolean enabled, CrmWhatsappAgentActivationStage activationStage,
@@ -123,7 +132,7 @@ public class AgentRuntimeConfigService {
                 int outboxMaxAttempts, int maxMessagesPerBatch, int maxToolCallsPerRun,
                 int maxOutputMessagesPerRun) {
             this(enabled, activationStage, testPhoneNumbers, limitedConversationsPerHour, messageGroupingMs,
-                    paymentReservationSeconds, receiptMinimumConfidence, advisorAttentionEnabled, jobMaxAttempts,
+                    paymentReservationSeconds, receiptMinimumConfidence, advisorAttentionEnabled, false, jobMaxAttempts,
                     outboxMaxAttempts, maxMessagesPerBatch, maxToolCallsPerRun, maxOutputMessagesPerRun,
                     DEFAULT_WELCOME_MESSAGE, DEFAULT_AGENT_BEHAVIOR_INSTRUCTIONS);
         }
@@ -135,14 +144,26 @@ public class AgentRuntimeConfigService {
                 int outboxMaxAttempts, int maxMessagesPerBatch, int maxToolCallsPerRun,
                 int maxOutputMessagesPerRun, String welcomeMessage) {
             this(enabled, activationStage, testPhoneNumbers, limitedConversationsPerHour, messageGroupingMs,
-                    paymentReservationSeconds, receiptMinimumConfidence, advisorAttentionEnabled, jobMaxAttempts,
+                    paymentReservationSeconds, receiptMinimumConfidence, advisorAttentionEnabled, false, jobMaxAttempts,
                     outboxMaxAttempts, maxMessagesPerBatch, maxToolCallsPerRun, maxOutputMessagesPerRun,
                     welcomeMessage, DEFAULT_AGENT_BEHAVIOR_INSTRUCTIONS);
         }
 
+        public RuntimeConfig(boolean enabled, CrmWhatsappAgentActivationStage activationStage,
+                Set<String> testPhoneNumbers, int limitedConversationsPerHour,
+                int messageGroupingMs, int paymentReservationSeconds,
+                int receiptMinimumConfidence, boolean advisorAttentionEnabled, int jobMaxAttempts,
+                int outboxMaxAttempts, int maxMessagesPerBatch, int maxToolCallsPerRun,
+                int maxOutputMessagesPerRun, String welcomeMessage, String agentBehaviorInstructions) {
+            this(enabled, activationStage, testPhoneNumbers, limitedConversationsPerHour, messageGroupingMs,
+                    paymentReservationSeconds, receiptMinimumConfidence, advisorAttentionEnabled, false, jobMaxAttempts,
+                    outboxMaxAttempts, maxMessagesPerBatch, maxToolCallsPerRun, maxOutputMessagesPerRun,
+                    welcomeMessage, agentBehaviorInstructions);
+        }
+
         public static RuntimeConfig defaults() {
             return new RuntimeConfig(false, CrmWhatsappAgentActivationStage.LOCAL_TEST, Set.of(), 10,
-                    5000, 360, 85, false, 3, 5, 15, 12, 6, DEFAULT_WELCOME_MESSAGE,
+                    5000, 360, 85, false, false, 3, 5, 15, 12, 6, DEFAULT_WELCOME_MESSAGE,
                     DEFAULT_AGENT_BEHAVIOR_INSTRUCTIONS);
         }
 

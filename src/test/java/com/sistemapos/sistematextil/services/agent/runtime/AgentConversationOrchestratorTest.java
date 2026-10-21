@@ -493,20 +493,17 @@ class AgentConversationOrchestratorTest {
         when(fixture.gateway.respond(eq(7L), any(), eq(12)))
                 .thenReturn(new AgentResponseResult("GEMINI", "gemini", 100, 1,
                         new AgentTurnResponse(
-                                "Melina negro está disponible en talla L (15 disponibles) a S/79.00.",
-                                "Disponibilidad", false, java.util.List.of())))
-                .thenReturn(new AgentResponseResult("GEMINI", "gemini", 80, 0,
-                        new AgentTurnResponse(
-                                "Melina negro está disponible en talla L a S/79.00.",
+                                "Melina negro está disponible en talla L (15 disponibles) a S/79.00. "
+                                        + "Puedes agregarlo al carrito.",
                                 "Disponibilidad", false, java.util.List.of())));
 
         assertEquals(AgentConversationOrchestrator.Outcome.COMPLETED,
                 fixture.orchestrator.process(fixture.lease));
 
-        verify(fixture.gateway, times(2)).respond(eq(7L), any(), eq(12));
+        verify(fixture.gateway, times(1)).respond(eq(7L), any(), eq(12));
         ArgumentCaptor<GeneratedTurn> turn = ArgumentCaptor.forClass(GeneratedTurn.class);
         verify(fixture.jobs).saveGeneratedTurn(eq(41L), eq("worker:lease"), turn.capture(), any());
-        assertEquals("Melina negro está disponible en talla L a S/79.00.",
+        assertEquals("Melina negro está disponible en talla L a S/79.00. Puedes agregarlo al carrito.",
                 turn.getValue().customerMessage());
     }
 

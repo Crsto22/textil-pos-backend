@@ -90,6 +90,9 @@ public class Venta {
     @Column(nullable = false, length = 20)
     private String origen;
 
+    @Column(name = "idempotency_key", length = 64, unique = true)
+    private String idempotencyKey;
+
     @Column(name = "tipo_anulacion", length = 20)
     private String tipoAnulacion;
 

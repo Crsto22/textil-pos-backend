@@ -14,6 +14,7 @@ import org.springframework.web.server.ResponseStatusException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sistemapos.sistematextil.model.CrmWhatsappConnection;
+import com.sistemapos.sistematextil.model.CrmWhatsappArea;
 import com.sistemapos.sistematextil.model.CrmWhatsappConversation;
 import com.sistemapos.sistematextil.model.Sucursal;
 import com.sistemapos.sistematextil.model.SucursalTipo;
@@ -37,16 +38,22 @@ public class CrmWhatsappConnectionService {
     private final CrmWhatsappConnectionStateService connectionStateService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    @Value("${whatsapp.bridge.client-id:kiments-main}")
+    @Value("${whatsapp.bridge.client-id:kiments-sales}")
     private String configuredClientId;
 
     @Transactional
     public ResponseEntity<Map<String, Object>> obtenerEstado(Usuario actor) {
-        ResponseEntity<String> bridgeResponse = bridgeService.obtenerEstado();
+        return obtenerEstado(CrmWhatsappArea.SALES, actor);
+    }
+
+    @Transactional
+    public ResponseEntity<Map<String, Object>> obtenerEstado(CrmWhatsappArea area, Usuario actor) {
+        ensureConnection(area, actor);
+        ResponseEntity<String> bridgeResponse = bridgeService.obtenerEstado(area);
         Map<String, Object> payload = parsePayload(bridgeResponse.getBody());
         String clientId = clean(payload.get("clientId"));
         if (clientId.isBlank()) {
-            clientId = clientIdConfigurado();
+            clientId = area.clientId();
             payload.put("clientId", clientId);
         }
 
@@ -57,7 +64,7 @@ public class CrmWhatsappConnectionService {
         }
 
         Integer idEmpresa = resolverIdEmpresa(actor);
-        recuperarConexionLegacy(clientId, idEmpresa);
+        if (area == CrmWhatsappArea.SALES) recuperarConexionLegacy(clientId, idEmpresa);
         ConnectionStateResponse state = connectionStateService.update(new BridgeConnectionState(
                 clientId,
                 clean(payload.get("status")),
@@ -75,7 +82,11 @@ public class CrmWhatsappConnectionService {
         payload.put("disconnectedAt", state.disconnectedAt());
         payload.put("phoneChangedAt", state.phoneChangedAt());
         payload.put("connectionConfigured", connection != null && sucursalValida(connection.getSucursal(), idEmpresa));
-        payload.put("branch", connection == null ? null : toBranch(connection.getSucursal()));
+        payload.put("area", area.name());
+        if (area == CrmWhatsappArea.SHIPPING) payload.put("connectionConfigured", connection != null);
+        payload.put("branch", connection == null || connection.getSucursal() == null
+                ? null
+                : toBranch(connection.getSucursal()));
         return ResponseEntity.ok(payload);
     }
 
@@ -87,6 +98,19 @@ public class CrmWhatsappConnectionService {
     @Transactional
     public ConnectionStateResponse confirmarCambioNumero(Usuario actor) {
         return connectionStateService.acknowledgePhoneChange(actor);
+    }
+
+    @Transactional
+    public ConnectionStateResponse confirmarCambioNumero(CrmWhatsappArea area, Usuario actor) {
+        ensureConnection(area, actor);
+        return connectionStateService.acknowledgePhoneChange(actor, area);
+    }
+
+    @Transactional
+    public List<Map<String, Object>> listarConexiones(Usuario actor) {
+        return java.util.Arrays.stream(CrmWhatsappArea.values())
+                .map(area -> obtenerEstado(area, actor).getBody())
+                .toList();
     }
 
     @Transactional(readOnly = true)
@@ -216,7 +240,38 @@ public class CrmWhatsappConnectionService {
 
     public String clientIdConfigurado() {
         String value = clean(configuredClientId);
-        return value.isBlank() ? "kiments-main" : value;
+        return value.isBlank() ? CrmWhatsappArea.SALES.clientId() : value;
+    }
+
+    private CrmWhatsappConnection ensureConnection(CrmWhatsappArea area, Usuario actor) {
+        Integer idEmpresa = resolverIdEmpresa(actor);
+        CrmWhatsappConnection existing = connectionRepository
+                .findByEmpresa_IdEmpresaAndArea(idEmpresa, area).orElse(null);
+        if (existing != null) return existing;
+        if (area == CrmWhatsappArea.SALES) {
+            existing = recuperarConexionLegacy(area.clientId(), idEmpresa);
+            if (existing != null) return existing;
+        }
+        var empresa = actor != null && actor.getSucursal() != null
+                ? actor.getSucursal().getEmpresa()
+                : null;
+        if (empresa == null || !idEmpresa.equals(empresa.getIdEmpresa())) {
+            empresa = sucursalRepository.findByDeletedAtIsNullAndEstadoOrderByIdSucursalAsc("ACTIVO").stream()
+                    .filter(sucursal -> sucursal.getEmpresa() != null)
+                    .filter(sucursal -> idEmpresa.equals(sucursal.getEmpresa().getIdEmpresa()))
+                    .map(Sucursal::getEmpresa)
+                    .findFirst()
+                    .orElseThrow(() -> new ResponseStatusException(
+                            HttpStatus.BAD_REQUEST,
+                            "No se pudo determinar la empresa"));
+        }
+        CrmWhatsappConnection created = new CrmWhatsappConnection();
+        created.setClientId(area.clientId());
+        created.setArea(area);
+        created.setEmpresa(empresa);
+        created.setSucursal(null);
+        created.setConnectionStatus("UNKNOWN");
+        return connectionRepository.saveAndFlush(created);
     }
 
     private boolean sucursalValida(Sucursal sucursal, Integer idEmpresa) {

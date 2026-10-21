@@ -17,18 +17,104 @@ import jakarta.persistence.LockModeType;
 
 public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhatsappConversation, Long> {
     Optional<CrmWhatsappConversation> findFirstByPhoneOrderByIdConversationAsc(String phone);
+    Optional<CrmWhatsappConversation> findByConnection_IdConnectionAndPhone(Long connectionId, String phone);
+    List<CrmWhatsappConversation> findByConnection_IdConnection(Long connectionId);
+
+    @Query(value = """
+            SELECT c
+            FROM CrmWhatsappConversation c
+            LEFT JOIN c.cliente cl
+            WHERE c.connection.area = com.sistemapos.sistematextil.model.CrmWhatsappArea.SHIPPING
+              AND c.connection.empresa.idEmpresa = :companyId
+              AND (:branchId IS NULL OR EXISTS (
+                    SELECT 1 FROM CrmWarehouseOrder w
+                    WHERE w.shippingConversation = c
+                      AND w.venta.sucursal.idSucursal = :branchId
+                      AND w.venta.deletedAt IS NULL
+                      AND UPPER(COALESCE(w.venta.estado, '')) <> 'ANULADA'
+              ))
+              AND EXISTS (
+                    SELECT 1 FROM CrmWhatsappMessage m
+                    WHERE m.conversation = c
+                      AND m.deletedAt IS NULL
+                      AND m.direction IN ('INCOMING', 'OUTGOING')
+              )
+              AND (:term IS NULL
+                   OR LOWER(COALESCE(c.contactName, '')) LIKE LOWER(CONCAT('%', :term, '%'))
+                   OR LOWER(COALESCE(c.whatsappUsername, '')) LIKE LOWER(CONCAT('%', :term, '%'))
+                   OR COALESCE(c.phoneNumber, '') LIKE CONCAT('%', :term, '%')
+                   OR COALESCE(c.phone, '') LIKE CONCAT('%', :term, '%')
+                   OR LOWER(COALESCE(cl.nombres, '')) LIKE LOWER(CONCAT('%', :term, '%'))
+                   OR COALESCE(cl.telefono, '') LIKE CONCAT('%', :term, '%'))
+            ORDER BY COALESCE(c.lastMessageAt, c.updatedAt, c.createdAt) DESC, c.idConversation DESC
+            """,
+            countQuery = """
+            SELECT COUNT(c)
+            FROM CrmWhatsappConversation c
+            LEFT JOIN c.cliente cl
+            WHERE c.connection.area = com.sistemapos.sistematextil.model.CrmWhatsappArea.SHIPPING
+              AND c.connection.empresa.idEmpresa = :companyId
+              AND (:branchId IS NULL OR EXISTS (
+                    SELECT 1 FROM CrmWarehouseOrder w
+                    WHERE w.shippingConversation = c
+                      AND w.venta.sucursal.idSucursal = :branchId
+                      AND w.venta.deletedAt IS NULL
+                      AND UPPER(COALESCE(w.venta.estado, '')) <> 'ANULADA'
+              ))
+              AND EXISTS (
+                    SELECT 1 FROM CrmWhatsappMessage m
+                    WHERE m.conversation = c
+                      AND m.deletedAt IS NULL
+                      AND m.direction IN ('INCOMING', 'OUTGOING')
+              )
+              AND (:term IS NULL
+                   OR LOWER(COALESCE(c.contactName, '')) LIKE LOWER(CONCAT('%', :term, '%'))
+                   OR LOWER(COALESCE(c.whatsappUsername, '')) LIKE LOWER(CONCAT('%', :term, '%'))
+                   OR COALESCE(c.phoneNumber, '') LIKE CONCAT('%', :term, '%')
+                   OR COALESCE(c.phone, '') LIKE CONCAT('%', :term, '%')
+                   OR LOWER(COALESCE(cl.nombres, '')) LIKE LOWER(CONCAT('%', :term, '%'))
+                   OR COALESCE(cl.telefono, '') LIKE CONCAT('%', :term, '%'))
+            """)
+    Page<CrmWhatsappConversation> findShippingChatConversations(
+            @Param("companyId") Integer companyId,
+            @Param("branchId") Integer branchId,
+            @Param("term") String term,
+            Pageable pageable);
+
+    @Query("""
+            SELECT c
+            FROM CrmWhatsappConversation c
+            WHERE c.connection.area = com.sistemapos.sistematextil.model.CrmWhatsappArea.SALES
+              AND c.connection.empresa.idEmpresa = :companyId
+              AND ((:clientId IS NOT NULL AND c.cliente.idCliente = :clientId)
+                   OR c.phone = :phone
+                   OR (:phoneNumber <> '' AND (c.phoneNumber = :phoneNumber
+                       OR c.whatsappUsername = :phoneNumber
+                       OR c.phone = CONCAT(:phoneNumber, '@s.whatsapp.net'))))
+            ORDER BY COALESCE(c.lastMessageAt, c.updatedAt, c.createdAt) DESC, c.idConversation DESC
+            """)
+    List<CrmWhatsappConversation> findSalesConversationForShippingContact(
+            @Param("companyId") Integer companyId,
+            @Param("clientId") Integer clientId,
+            @Param("phone") String phone,
+            @Param("phoneNumber") String phoneNumber,
+            Pageable pageable);
 
     @Modifying
     @Query(value = """
             INSERT IGNORE INTO crm_whatsapp_conversation
-                (phone, status, unread_count, created_at, updated_at)
-            VALUES (:phone, 'ESPERA', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                (phone, id_connection, status, unread_count, phone_number_version, created_at, updated_at)
+            SELECT :phone, :connectionId, 'ESPERA', 0, COALESCE(phone_number_version, 0),
+                   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            FROM crm_whatsapp_connection
+            WHERE id_connection = :connectionId
             """, nativeQuery = true)
-    int insertIfAbsent(@Param("phone") String phone);
+    int insertIfAbsent(@Param("phone") String phone, @Param("connectionId") Long connectionId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("SELECT c FROM CrmWhatsappConversation c WHERE c.phone = :phone")
-    Optional<CrmWhatsappConversation> findForUpdateByPhone(@Param("phone") String phone);
+    @Query("SELECT c FROM CrmWhatsappConversation c WHERE c.connection.idConnection = :connectionId AND c.phone = :phone")
+    Optional<CrmWhatsappConversation> findForUpdateByConnectionAndPhone(
+            @Param("connectionId") Long connectionId, @Param("phone") String phone);
 
     List<CrmWhatsappConversation> findByStatusOrderByLastMessageAtDesc(String status);
     List<CrmWhatsappConversation> findAllByOrderByLastMessageAtDesc();
@@ -41,6 +127,27 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
     @Query(value = "DELETE FROM crm_whatsapp_conversation", nativeQuery = true)
     int deleteAllWhatsappConversations();
 
+    @Modifying
+    @Query(value = """
+            DELETE c FROM crm_whatsapp_conversation c
+            LEFT JOIN crm_whatsapp_connection cn ON cn.id_connection = c.id_connection
+            WHERE COALESCE(cn.area, 'SALES') = :area
+            """, nativeQuery = true)
+    int deleteWhatsappConversationsByArea(@Param("area") String area);
+
+    @Modifying
+    @Query(value = """
+            UPDATE crm_warehouse_order w
+            LEFT JOIN crm_whatsapp_conversation sales_c ON sales_c.id_conversation = w.id_sales_conversation
+            LEFT JOIN crm_whatsapp_connection sales_cn ON sales_cn.id_connection = sales_c.id_connection
+            LEFT JOIN crm_whatsapp_conversation shipping_c ON shipping_c.id_conversation = w.id_shipping_conversation
+            LEFT JOIN crm_whatsapp_connection shipping_cn ON shipping_cn.id_connection = shipping_c.id_connection
+            SET w.id_sales_conversation = CASE WHEN COALESCE(sales_cn.area, 'SALES') = :area THEN NULL ELSE w.id_sales_conversation END,
+                w.id_shipping_conversation = CASE WHEN COALESCE(shipping_cn.area, 'SALES') = :area THEN NULL ELSE w.id_shipping_conversation END
+            WHERE COALESCE(sales_cn.area, 'SALES') = :area OR COALESCE(shipping_cn.area, 'SALES') = :area
+            """, nativeQuery = true)
+    int clearWarehouseConversationReferencesByArea(@Param("area") String area);
+
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(value = "DELETE FROM crm_whatsapp_conversation WHERE id_conversation = :conversationId", nativeQuery = true)
     int deleteWhatsappConversationById(@Param("conversationId") Long conversationId);
@@ -49,11 +156,25 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
             SELECT c
             FROM CrmWhatsappConversation c
             LEFT JOIN c.cliente cl
-            WHERE (:status = 'ALL' OR c.status = :status)
+            WHERE (c.connection IS NULL OR c.connection.area = com.sistemapos.sistematextil.model.CrmWhatsappArea.SALES)
+              AND (c.phone NOT LIKE '%@lid'
+                   OR COALESCE(TRIM(c.phoneNumber), '') <> ''
+                   OR COALESCE(TRIM(c.whatsappUsername), '') <> ''
+                   OR COALESCE(TRIM(c.contactName), '') <> ''
+                   OR c.cliente IS NOT NULL
+                   OR EXISTS (
+                        SELECT 1 FROM CrmWhatsappMessage ghostMessage
+                        WHERE ghostMessage.conversation = c AND ghostMessage.direction = 'INCOMING'
+                   ))
+              AND (:status = 'ALL' OR c.status = :status)
               AND (:view = 'ALL'
+                   OR (:view = 'MINE'
+                       AND c.status <> 'RESUELTO'
+                       AND c.assignedUser IS NOT NULL
+                       AND c.assignedUser.idUsuario = :idUsuario)
                    OR (:view = 'ATTENDED'
                        AND c.status <> 'RESUELTO'
-                       AND (c.assignedUser IS NOT NULL OR c.status = 'ATENDIDO'))
+                       AND c.assignedUser IS NOT NULL)
                    OR (:view = 'AGENT'
                        AND c.status <> 'RESUELTO'
                        AND c.assignedUser IS NULL
@@ -61,12 +182,13 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
                    OR (:view = 'RESOLVED'
                        AND c.status = 'RESUELTO'))
               AND (:waitingOnly = false OR (
-                    c.status <> 'RESUELTO' AND c.status <> 'ATENDIDO'
+                    c.status <> 'RESUELTO'
                     AND c.assignedUser IS NULL
-                    AND c.waitingReason = com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.ADVISOR_REQUIRED))
+                    AND (c.attentionQueue IS NULL
+                         OR c.attentionQueue <> com.sistemapos.sistematextil.model.CrmWhatsappAttentionQueue.AGENT_ACTIVE)))
               AND (:isAdmin = true
                    OR (c.assignedUser IS NOT NULL AND c.assignedUser.idUsuario = :idUsuario)
-                   OR (c.status = 'ESPERA' AND c.assignedUser IS NULL))
+                   OR (c.status <> 'RESUELTO' AND c.assignedUser IS NULL))
               AND (:term IS NULL
                    OR LOWER(COALESCE(c.contactName, '')) LIKE LOWER(CONCAT('%', :term, '%'))
                    OR LOWER(COALESCE(c.whatsappUsername, '')) LIKE LOWER(CONCAT('%', :term, '%'))
@@ -87,11 +209,25 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
             SELECT COUNT(c)
             FROM CrmWhatsappConversation c
             LEFT JOIN c.cliente cl
-            WHERE (:status = 'ALL' OR c.status = :status)
+            WHERE (c.connection IS NULL OR c.connection.area = com.sistemapos.sistematextil.model.CrmWhatsappArea.SALES)
+              AND (c.phone NOT LIKE '%@lid'
+                   OR COALESCE(TRIM(c.phoneNumber), '') <> ''
+                   OR COALESCE(TRIM(c.whatsappUsername), '') <> ''
+                   OR COALESCE(TRIM(c.contactName), '') <> ''
+                   OR c.cliente IS NOT NULL
+                   OR EXISTS (
+                        SELECT 1 FROM CrmWhatsappMessage ghostMessage
+                        WHERE ghostMessage.conversation = c AND ghostMessage.direction = 'INCOMING'
+                   ))
+              AND (:status = 'ALL' OR c.status = :status)
               AND (:view = 'ALL'
+                   OR (:view = 'MINE'
+                       AND c.status <> 'RESUELTO'
+                       AND c.assignedUser IS NOT NULL
+                       AND c.assignedUser.idUsuario = :idUsuario)
                    OR (:view = 'ATTENDED'
                        AND c.status <> 'RESUELTO'
-                       AND (c.assignedUser IS NOT NULL OR c.status = 'ATENDIDO'))
+                       AND c.assignedUser IS NOT NULL)
                    OR (:view = 'AGENT'
                        AND c.status <> 'RESUELTO'
                        AND c.assignedUser IS NULL
@@ -99,12 +235,13 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
                    OR (:view = 'RESOLVED'
                        AND c.status = 'RESUELTO'))
               AND (:waitingOnly = false OR (
-                    c.status <> 'RESUELTO' AND c.status <> 'ATENDIDO'
+                    c.status <> 'RESUELTO'
                     AND c.assignedUser IS NULL
-                    AND c.waitingReason = com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.ADVISOR_REQUIRED))
+                    AND (c.attentionQueue IS NULL
+                         OR c.attentionQueue <> com.sistemapos.sistematextil.model.CrmWhatsappAttentionQueue.AGENT_ACTIVE)))
               AND (:isAdmin = true
                    OR (c.assignedUser IS NOT NULL AND c.assignedUser.idUsuario = :idUsuario)
-                   OR (c.status = 'ESPERA' AND c.assignedUser IS NULL))
+                   OR (c.status <> 'RESUELTO' AND c.assignedUser IS NULL))
               AND (:term IS NULL
                    OR LOWER(COALESCE(c.contactName, '')) LIKE LOWER(CONCAT('%', :term, '%'))
                    OR LOWER(COALESCE(c.whatsappUsername, '')) LIKE LOWER(CONCAT('%', :term, '%'))
@@ -134,9 +271,19 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
             SELECT c.status, COUNT(c)
             FROM CrmWhatsappConversation c
             LEFT JOIN c.cliente cl
-            WHERE (:isAdmin = true
+            WHERE (c.connection IS NULL OR c.connection.area = com.sistemapos.sistematextil.model.CrmWhatsappArea.SALES)
+              AND (c.phone NOT LIKE '%@lid'
+                   OR COALESCE(TRIM(c.phoneNumber), '') <> ''
+                   OR COALESCE(TRIM(c.whatsappUsername), '') <> ''
+                   OR COALESCE(TRIM(c.contactName), '') <> ''
+                   OR c.cliente IS NOT NULL
+                   OR EXISTS (
+                        SELECT 1 FROM CrmWhatsappMessage ghostMessage
+                        WHERE ghostMessage.conversation = c AND ghostMessage.direction = 'INCOMING'
+                   ))
+              AND (:isAdmin = true
                    OR (c.assignedUser IS NOT NULL AND c.assignedUser.idUsuario = :idUsuario)
-                   OR (c.status = 'ESPERA' AND c.assignedUser IS NULL))
+                   OR (c.status <> 'RESUELTO' AND c.assignedUser IS NULL))
               AND (:term IS NULL
                    OR LOWER(COALESCE(c.contactName, '')) LIKE LOWER(CONCAT('%', :term, '%'))
                    OR LOWER(COALESCE(c.whatsappUsername, '')) LIKE LOWER(CONCAT('%', :term, '%'))
@@ -162,22 +309,37 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
     @Query("""
             SELECT
               COALESCE(SUM(CASE WHEN c.status <> 'RESUELTO'
-                                     AND (c.assignedUser IS NOT NULL OR c.status = 'ATENDIDO')
+                                     AND c.assignedUser IS NOT NULL
                                 THEN 1 ELSE 0 END), 0),
               COALESCE(SUM(CASE WHEN c.status <> 'RESUELTO'
                                      AND c.assignedUser IS NULL
                                      AND c.attentionQueue = com.sistemapos.sistematextil.model.CrmWhatsappAttentionQueue.AGENT_ACTIVE
                                 THEN 1 ELSE 0 END), 0),
-              COALESCE(SUM(CASE WHEN c.status <> 'RESUELTO' AND c.status <> 'ATENDIDO'
+              COALESCE(SUM(CASE WHEN c.status <> 'RESUELTO'
                                      AND c.assignedUser IS NULL
-                                     AND c.waitingReason = com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason.ADVISOR_REQUIRED
+                                     AND (c.attentionQueue IS NULL
+                                          OR c.attentionQueue <> com.sistemapos.sistematextil.model.CrmWhatsappAttentionQueue.AGENT_ACTIVE)
                                 THEN 1 ELSE 0 END), 0),
-              COALESCE(SUM(CASE WHEN c.status = 'RESUELTO' THEN 1 ELSE 0 END), 0)
+              COALESCE(SUM(CASE WHEN c.status = 'RESUELTO' THEN 1 ELSE 0 END), 0),
+              COALESCE(SUM(CASE WHEN c.status <> 'RESUELTO'
+                                     AND c.assignedUser IS NOT NULL
+                                     AND c.assignedUser.idUsuario = :idUsuario
+                                THEN 1 ELSE 0 END), 0)
             FROM CrmWhatsappConversation c
             LEFT JOIN c.cliente cl
-            WHERE (:isAdmin = true
+            WHERE (c.connection IS NULL OR c.connection.area = com.sistemapos.sistematextil.model.CrmWhatsappArea.SALES)
+              AND (c.phone NOT LIKE '%@lid'
+                   OR COALESCE(TRIM(c.phoneNumber), '') <> ''
+                   OR COALESCE(TRIM(c.whatsappUsername), '') <> ''
+                   OR COALESCE(TRIM(c.contactName), '') <> ''
+                   OR c.cliente IS NOT NULL
+                   OR EXISTS (
+                        SELECT 1 FROM CrmWhatsappMessage ghostMessage
+                        WHERE ghostMessage.conversation = c AND ghostMessage.direction = 'INCOMING'
+                   ))
+              AND (:isAdmin = true
                    OR (c.assignedUser IS NOT NULL AND c.assignedUser.idUsuario = :idUsuario)
-                   OR (c.status = 'ESPERA' AND c.assignedUser IS NULL))
+                   OR (c.status <> 'RESUELTO' AND c.assignedUser IS NULL))
               AND (:term IS NULL
                    OR LOWER(COALESCE(c.contactName, '')) LIKE LOWER(CONCAT('%', :term, '%'))
                    OR LOWER(COALESCE(c.whatsappUsername, '')) LIKE LOWER(CONCAT('%', :term, '%'))
@@ -202,6 +364,7 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
             FROM CrmWhatsappConversation c
             JOIN c.cliente cl
             WHERE cl.deletedAt IS NULL
+              AND (c.connection IS NULL OR c.connection.area = com.sistemapos.sistematextil.model.CrmWhatsappArea.SALES)
               AND cl.empresa.idEmpresa = :idEmpresa
               AND (:isAdmin = true
                    OR (c.assignedUser IS NOT NULL AND c.assignedUser.idUsuario = :idUsuario)
@@ -243,6 +406,7 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
             FROM CrmWhatsappConversation c
             JOIN c.cliente cl
             WHERE cl.deletedAt IS NULL
+              AND (c.connection IS NULL OR c.connection.area = com.sistemapos.sistematextil.model.CrmWhatsappArea.SALES)
               AND cl.empresa.idEmpresa = :idEmpresa
               AND (:isAdmin = true
                    OR (c.assignedUser IS NOT NULL AND c.assignedUser.idUsuario = :idUsuario)

@@ -6,6 +6,7 @@ import java.util.List;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -13,6 +14,20 @@ import com.sistemapos.sistematextil.model.Producto;
 import com.sistemapos.sistematextil.model.SucursalTipo;
 
 public interface ProductoRepository extends JpaRepository<Producto, Integer> {
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE Producto p
+            SET p.fechaEnvioPreventa = :manana,
+                p.updatedAt = :ahora
+            WHERE p.deletedAt IS NULL
+              AND p.preventa = true
+              AND p.fechaEnvioPreventa IS NOT NULL
+              AND p.fechaEnvioPreventa <= :hoy
+            """)
+    int avanzarFechasPreventaVencidas(@Param("hoy") java.time.LocalDate hoy,
+            @Param("manana") java.time.LocalDate manana,
+            @Param("ahora") java.time.LocalDateTime ahora);
 
     Page<Producto> findByDeletedAtIsNullOrderByIdProductoAsc(Pageable pageable);
 

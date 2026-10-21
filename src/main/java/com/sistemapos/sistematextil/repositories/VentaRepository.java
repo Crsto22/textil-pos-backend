@@ -17,6 +17,8 @@ import com.sistemapos.sistematextil.util.sunat.SunatEstado;
 
 public interface VentaRepository extends JpaRepository<Venta, Integer> {
 
+    Optional<Venta> findByIdempotencyKeyAndDeletedAtIsNull(String idempotencyKey);
+
     @Query("""
             SELECT COALESCE(SUM(v.total), 0)
             FROM Venta v

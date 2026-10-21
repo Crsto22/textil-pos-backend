@@ -489,6 +489,7 @@ public class EcommercePedidoService {
         validarTipoComprobanteAceptacion(tipoComprobante, pedido, request, facturaRuc, dniCliente);
         Cliente cliente = obtenerOCrearCliente(pedido, tipoComprobante, facturaRuc, dniCliente, request.razonSocial(), usuario);
         VentaCreateRequest ventaRequest = new VentaCreateRequest(
+                null,
                 pedido.getSucursal().getIdSucursal(),
                 cliente.getIdCliente(),
                 tipoComprobante,
@@ -513,7 +514,8 @@ public class EcommercePedidoService {
                         pedido.getMetodoPago().getIdMetodoPago(),
                         pedido.getTotal().doubleValue(),
                         pedido.getCodigo(),
-                        LocalDateTime.now())));
+                        LocalDateTime.now())),
+                null);
 
         VentaResponse ventaResponse = ventaService.registrarVentaDesdeEcommerce(
                 ventaRequest,

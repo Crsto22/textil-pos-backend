@@ -40,6 +40,7 @@ const config = {
   sessionDir: process.env.WHATSAPP_SESSION_DIR || path.join(repoRoot, "storage/whatsapp/session"),
   mediaDir: process.env.WHATSAPP_MEDIA_DIR || path.join(repoRoot, "storage/whatsapp/media"),
   clientId: process.env.WHATSAPP_CLIENT_ID || "kiments-main",
+  area: (process.env.WHATSAPP_AREA || "SALES").toUpperCase(),
   backendWebhookAttempts: Number(process.env.BACKEND_WEBHOOK_ATTEMPTS || 20),
 };
 
@@ -79,6 +80,7 @@ function requireBridgeToken(req, res, next) {
 function publicStatus() {
   return {
     clientId: config.clientId,
+    area: config.area,
     status: state.status,
     connectedNumber: state.connectedNumber,
     hasQr: Boolean(state.qr),
@@ -223,14 +225,14 @@ async function saveIncomingMedia(message) {
   return {
     mimeType: media.mimetype,
     fileName,
-    storagePath: `/storage/whatsapp/media/${fileName}`,
+    storagePath: `/storage/whatsapp/media/${config.area.toLowerCase()}/${fileName}`,
     ...(durationSeconds ? { durationSeconds } : {}),
   };
 }
 
 async function postToBackend(payload) {
   const url = `${config.backendBaseUrl}${config.backendWebhookPath}`;
-  await postJsonWithRetry(url, { clientId: config.clientId, ...payload }, {
+  await postJsonWithRetry(url, { clientId: config.clientId, area: config.area, ...payload }, {
     attempts: config.backendWebhookAttempts,
     headers: {
       "Content-Type": "application/json",
@@ -296,6 +298,11 @@ async function buildMediaPayload(file, caption) {
   return { document: file.buffer, ...common };
 }
 
+function phoneNumberFromJid(jid) {
+  const user = String(jid || "").split("@")[0].split(":")[0];
+  return normalizePhone(user) || null;
+}
+
 function getPhoneNumberFromMessage(message) {
   const candidate = [
     message.key.remoteJidAlt,
@@ -307,20 +314,38 @@ function getPhoneNumberFromMessage(message) {
     return value.endsWith("@s.whatsapp.net") || value.endsWith("@c.us");
   });
 
-  return candidate ? normalizePhone(candidate) : null;
+  return candidate ? phoneNumberFromJid(candidate) : null;
 }
 
 function rememberLidMapping(mapping) {
   const lid = String(mapping?.lid || "");
   const pn = String(mapping?.pn || "");
-  const phone = normalizePhone(pn);
+  const phone = phoneNumberFromJid(pn);
   if (lid.endsWith("@lid") && phone) {
     lidToPhoneNumber.set(lid, phone);
   }
 }
 
-function getVisiblePhoneNumber(message) {
-  return getPhoneNumberFromMessage(message) || lidToPhoneNumber.get(normalizeChatId(message.key.remoteJid)) || null;
+async function getVisiblePhoneNumber(message) {
+  const directPhone = getPhoneNumberFromMessage(message);
+  if (directPhone) return directPhone;
+
+  const lid = normalizeChatId(message.key.remoteJid);
+  const cachedPhone = lidToPhoneNumber.get(lid);
+  if (cachedPhone) return cachedPhone;
+
+  if (!lid.endsWith("@lid")) return null;
+  try {
+    const mappedJid = await sock?.signalRepository?.lidMapping?.getPNForLID(lid);
+    const mappedPhone = phoneNumberFromJid(mappedJid);
+    if (mappedPhone) {
+      lidToPhoneNumber.set(lid, mappedPhone);
+      return mappedPhone;
+    }
+  } catch (error) {
+    console.warn(`No se pudo resolver el numero para ${lid}:`, error.message);
+  }
+  return null;
 }
 
 function getUsernameFromMessage(message) {
@@ -362,6 +387,12 @@ async function handleIncomingMessage(message) {
     }
   }
 
+  const visiblePhoneNumber = await getVisiblePhoneNumber(message);
+  if (isOutgoing && from.endsWith("@lid") && !visiblePhoneNumber) {
+    console.warn(`Mensaje saliente omitido porque WhatsApp no resolvio el numero de ${from}`);
+    return;
+  }
+
   const viewOnce = isViewOnceMessage(message);
   const sticker = isStickerMessage(message);
   const mediaPayload = viewOnce ? null : await saveIncomingMedia(message);
@@ -370,7 +401,7 @@ async function handleIncomingMessage(message) {
     event: isOutgoing ? "message.sent" : "message.received",
     messageId: message.key.id,
     from,
-    phoneNumber: getVisiblePhoneNumber(message),
+    phoneNumber: visiblePhoneNumber,
     username: getUsernameFromMessage(message),
     fromName: isOutgoing ? null : message.pushName || from,
     body: getMessageText(message),

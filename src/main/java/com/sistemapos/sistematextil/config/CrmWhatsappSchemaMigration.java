@@ -43,6 +43,7 @@ public class CrmWhatsappSchemaMigration implements ApplicationRunner {
                       id_cliente INT NULL,
                       assigned_user_id INT NULL,
                       assigned_at DATETIME NULL,
+                      phone_number_version INT NOT NULL DEFAULT 0,
                       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       PRIMARY KEY (id_conversation),
@@ -114,20 +115,57 @@ public class CrmWhatsappSchemaMigration implements ApplicationRunner {
                     )
                     """);
             statement.execute("""
+                    CREATE TABLE IF NOT EXISTS crm_quick_message (
+                      id_quick_message BIGINT NOT NULL AUTO_INCREMENT,
+                      id_empresa INT NOT NULL,
+                      created_by INT NOT NULL,
+                      keyword VARCHAR(40) NOT NULL,
+                      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      deleted_at DATETIME NULL,
+                      PRIMARY KEY (id_quick_message),
+                      KEY idx_crm_quick_message_company (id_empresa, deleted_at, keyword),
+                      CONSTRAINT fk_crm_quick_message_company FOREIGN KEY (id_empresa) REFERENCES empresa (id_empresa),
+                      CONSTRAINT fk_crm_quick_message_creator FOREIGN KEY (created_by) REFERENCES usuario (id_usuario)
+                    )
+                    """);
+            statement.execute("""
+                    CREATE TABLE IF NOT EXISTS crm_quick_message_block (
+                      id_block BIGINT NOT NULL AUTO_INCREMENT,
+                      id_quick_message BIGINT NOT NULL,
+                      block_type VARCHAR(10) NOT NULL,
+                      position INT NOT NULL,
+                      body TEXT NULL,
+                      media_storage_path VARCHAR(500) NULL,
+                      media_file_name VARCHAR(255) NULL,
+                      media_mime_type VARCHAR(120) NULL,
+                      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      deleted_at DATETIME NULL,
+                      PRIMARY KEY (id_block),
+                      KEY idx_crm_quick_message_block_order (id_quick_message, deleted_at, position),
+                      CONSTRAINT fk_crm_quick_message_block_command
+                        FOREIGN KEY (id_quick_message) REFERENCES crm_quick_message (id_quick_message)
+                    )
+                    """);
+            statement.execute("""
                     CREATE TABLE IF NOT EXISTS crm_whatsapp_connection (
                       id_connection BIGINT NOT NULL AUTO_INCREMENT,
                       client_id VARCHAR(80) NOT NULL,
+                      area VARCHAR(20) NOT NULL DEFAULT 'SALES',
                       id_empresa INT NOT NULL,
-                      id_sucursal INT NOT NULL,
+                      id_sucursal INT NULL,
                       connected_number VARCHAR(100) NULL,
                       approved_number VARCHAR(100) NULL,
                       connection_status VARCHAR(30) NOT NULL DEFAULT 'UNKNOWN',
                       phone_changed_at DATETIME NULL,
+                      phone_number_version INT NOT NULL DEFAULT 0,
                       disconnected_at DATETIME NULL,
                       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       PRIMARY KEY (id_connection),
                       UNIQUE KEY uk_crm_whatsapp_connection_client (client_id),
+                      UNIQUE KEY uk_crm_whatsapp_connection_empresa_area (id_empresa, area),
                       KEY idx_crm_whatsapp_connection_empresa (id_empresa),
                       KEY idx_crm_whatsapp_connection_sucursal (id_sucursal),
                       CONSTRAINT fk_crm_whatsapp_connection_empresa
@@ -138,12 +176,33 @@ public class CrmWhatsappSchemaMigration implements ApplicationRunner {
                     """);
             addColumnIfMissing(connection, statement, "crm_whatsapp_connection", "approved_number",
                     "VARCHAR(100) NULL");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_connection", "area",
+                    "VARCHAR(20) NOT NULL DEFAULT 'SALES'");
             addColumnIfMissing(connection, statement, "crm_whatsapp_connection", "connection_status",
                     "VARCHAR(30) NOT NULL DEFAULT 'UNKNOWN'");
             addColumnIfMissing(connection, statement, "crm_whatsapp_connection", "phone_changed_at",
                     "DATETIME NULL");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_connection", "phone_number_version",
+                    "INT NOT NULL DEFAULT 0");
             addColumnIfMissing(connection, statement, "crm_whatsapp_connection", "disconnected_at",
                     "DATETIME NULL");
+            statement.execute("ALTER TABLE crm_whatsapp_connection MODIFY id_sucursal INT NULL");
+            statement.executeUpdate("""
+                    UPDATE crm_whatsapp_connection
+                    SET area = 'SALES'
+                    WHERE area IS NULL OR area = ''
+                    """);
+            statement.executeUpdate("""
+                    UPDATE IGNORE crm_whatsapp_connection
+                    SET client_id = 'kiments-sales'
+                    WHERE client_id = 'kiments-main'
+                    """);
+            if (!indexExists(connection, "crm_whatsapp_connection", "uk_crm_whatsapp_connection_empresa_area")) {
+                statement.execute("""
+                        ALTER TABLE crm_whatsapp_connection
+                        ADD UNIQUE KEY uk_crm_whatsapp_connection_empresa_area (id_empresa, area)
+                        """);
+            }
             statement.executeUpdate("""
                     UPDATE crm_whatsapp_connection
                     SET approved_number = connected_number
@@ -164,6 +223,7 @@ public class CrmWhatsappSchemaMigration implements ApplicationRunner {
                       payment_reservation_seconds INT NOT NULL DEFAULT 360,
                       receipt_minimum_confidence INT NOT NULL DEFAULT 85,
                       advisor_attention_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+                      first_image_to_advisor_enabled BOOLEAN NOT NULL DEFAULT FALSE,
                       job_max_attempts INT NOT NULL DEFAULT 3,
                       outbox_max_attempts INT NOT NULL DEFAULT 5,
                       max_messages_per_batch INT NOT NULL DEFAULT 15,
@@ -210,6 +270,8 @@ public class CrmWhatsappSchemaMigration implements ApplicationRunner {
                         ADD COLUMN phone_number VARCHAR(30) NULL
                         """);
             }
+            addColumnIfMissing(connection, statement, "crm_whatsapp_conversation", "phone_number_version",
+                    "INT NOT NULL DEFAULT 0");
             if (!columnExists(connection, "crm_whatsapp_ai_config", "gemini_api_key_ciphertext")) {
                 statement.execute("""
                         ALTER TABLE crm_whatsapp_ai_config
@@ -252,6 +314,8 @@ public class CrmWhatsappSchemaMigration implements ApplicationRunner {
             addColumnIfMissing(connection, statement, "crm_whatsapp_ai_config", "receipt_minimum_confidence",
                     "INT NOT NULL DEFAULT 85");
             addColumnIfMissing(connection, statement, "crm_whatsapp_ai_config", "advisor_attention_enabled",
+                    "BOOLEAN NOT NULL DEFAULT FALSE");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_ai_config", "first_image_to_advisor_enabled",
                     "BOOLEAN NOT NULL DEFAULT FALSE");
             addColumnIfMissing(connection, statement, "crm_whatsapp_ai_config", "job_max_attempts",
                     "INT NOT NULL DEFAULT 3");

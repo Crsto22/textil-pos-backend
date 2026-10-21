@@ -14,14 +14,14 @@ import lombok.Setter;
 public class CrmWhatsappFilmAddon {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "id_film_addon") private Long idFilmAddon;
-    @OneToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "id_agent_session", nullable = false, unique = true)
+    @OneToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "id_agent_session", unique = true)
     private CrmWhatsappAgentSession agentSession;
     @OneToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "id_fulfillment", nullable = false, unique = true)
     private CrmWhatsappFulfillment fulfillment;
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "id_conversation", nullable = false)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "id_conversation")
     private CrmWhatsappConversation conversation;
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "id_metodo_pago_cuenta") private MetodoPagoCuenta paymentAccount;

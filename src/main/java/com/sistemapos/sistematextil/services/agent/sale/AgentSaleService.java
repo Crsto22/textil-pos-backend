@@ -151,6 +151,7 @@ public class AgentSaleService {
         validateSnapshot(snapshot, payment);
         LocalDateTime paidAt = evidence.getOperationAt() == null ? now() : evidence.getOperationAt();
         VentaCreateRequest request = new VentaCreateRequest(
+                null,
                 payment.getSucursal().getIdSucursal(),
                 payment.getCliente().getIdCliente(),
                 RECEIPT_TYPE,
@@ -166,7 +167,8 @@ public class AgentSaleService {
                         payment.getMetodoPago().getIdMetodoPago(),
                         money(payment.getExpectedAmount()).doubleValue(),
                         blankToNull(evidence.getOperationCode()),
-                        paidAt)));
+                        paidAt)),
+                null);
 
         Usuario actor = requireAgentUser();
         VentaResponse created = saleService.registrarVentaReservadaDesdeCrm(request, actor);

@@ -395,6 +395,7 @@ public class CotizacionService {
         DescuentoConversionVenta descuentoConversion = resolverDescuentoParaVenta(cotizacion, factorIgv);
 
         VentaCreateRequest ventaRequest = new VentaCreateRequest(
+                null,
                 cotizacion.getSucursal() != null ? cotizacion.getSucursal().getIdSucursal() : null,
                 cotizacion.getCliente() != null ? cotizacion.getCliente().getIdCliente() : null,
                 request.tipoComprobante(),
@@ -406,7 +407,8 @@ public class CotizacionService {
                 descuentoConversion.descuentoTotal(),
                 descuentoConversion.tipoDescuento(),
                 detallesVenta,
-                request.pagos());
+                request.pagos(),
+                null);
 
         VentaResponse venta = ventaService.registrarVenta(ventaRequest, correoUsuarioAutenticado);
 

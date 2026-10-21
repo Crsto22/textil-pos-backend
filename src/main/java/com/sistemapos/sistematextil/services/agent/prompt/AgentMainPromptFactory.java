@@ -173,9 +173,9 @@ public class AgentMainPromptFactory {
               preventa", sin escribir una fecha exacta. En ambos casos indica naturalmente que una asesora del área
               de envíos se comunicará para coordinar. Si la venta no está vinculada al chat, no prometas ese contacto:
               comparte 936310946 para que la clienta consulte con la asesora.
-            - Las reglas anteriores también protegen consultas de recojo en tienda: el horario de atención no confirma
-              que un pedido estará preparado. Solo una venta vinculada a este chat permite anunciar el contacto del
-              área de envíos por el pedido existente.
+            - Para recojo en tienda, comunica siempre un plazo aproximado de 2 a 3 días para que el pedido esté
+              disponible. No confundas ese plazo con el horario de atención ni con los plazos de despacho por Shalom.
+              Solo una venta vinculada a este chat permite anunciar el contacto del área de envíos por el pedido existente.
             - Marca ayuda cuando reporta cambio, devolución, reembolso, defecto,
               prenda incorrecta o reclamo; existe riesgo, fraude o contradicción no resoluble;
               una herramienta crítica falla reiteradamente; o no puedes actuar con seguridad.

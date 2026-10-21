@@ -1693,4 +1693,36 @@ SET activo = CASE
         ELSE 'ACTIVO'
     END;
 
+CREATE TABLE IF NOT EXISTS crm_quick_message (
+  id_quick_message BIGINT NOT NULL AUTO_INCREMENT,
+  id_empresa INT NOT NULL,
+  created_by INT NOT NULL,
+  keyword VARCHAR(40) NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  deleted_at DATETIME NULL,
+  PRIMARY KEY (id_quick_message),
+  KEY idx_crm_quick_message_company (id_empresa, deleted_at, keyword),
+  CONSTRAINT fk_crm_quick_message_company FOREIGN KEY (id_empresa) REFERENCES empresa (id_empresa),
+  CONSTRAINT fk_crm_quick_message_creator FOREIGN KEY (created_by) REFERENCES usuario (id_usuario)
+);
+
+CREATE TABLE IF NOT EXISTS crm_quick_message_block (
+  id_block BIGINT NOT NULL AUTO_INCREMENT,
+  id_quick_message BIGINT NOT NULL,
+  block_type VARCHAR(10) NOT NULL,
+  position INT NOT NULL,
+  body TEXT NULL,
+  media_storage_path VARCHAR(500) NULL,
+  media_file_name VARCHAR(255) NULL,
+  media_mime_type VARCHAR(120) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  deleted_at DATETIME NULL,
+  PRIMARY KEY (id_block),
+  KEY idx_crm_quick_message_block_order (id_quick_message, deleted_at, position),
+  CONSTRAINT fk_crm_quick_message_block_command
+    FOREIGN KEY (id_quick_message) REFERENCES crm_quick_message (id_quick_message)
+);
+
 COMMIT;

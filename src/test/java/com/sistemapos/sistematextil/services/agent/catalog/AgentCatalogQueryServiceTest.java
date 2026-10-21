@@ -117,7 +117,7 @@ class AgentCatalogQueryServiceTest {
     }
 
     @Test
-    void expiredPreorderIsTreatedAsReadyStockAndItsOldDateIsNotExposed() {
+    void expiredPreorderRemainsActiveAndRollsItsShippingDateToTomorrow() {
         SucursalStock expired = stock(20, "ANNIE RAYAS", 201, "NEGRO", "S", 5);
         Producto product = expired.getProductoVariante().getProducto();
         product.setPreventa(true);
@@ -132,16 +132,16 @@ class AgentCatalogQueryServiceTest {
         var ready = service.searchProducts(41L, "", 20, AgentCatalogAvailability.READY_STOCK_ONLY);
         var detail = service.getProduct(41L, 20);
 
-        assertEquals(0, preorder.products().size());
-        assertEquals(1, ready.products().size());
-        assertEquals(false, ready.products().getFirst().preorder());
-        assertEquals(null, ready.products().getFirst().preorderShippingDate());
-        assertEquals(false, detail.preorder());
-        assertEquals(null, detail.preorderShippingDate());
+        assertEquals(1, preorder.products().size());
+        assertEquals(0, ready.products().size());
+        assertEquals(true, preorder.products().getFirst().preorder());
+        assertEquals(LocalDate.now().plusDays(1), preorder.products().getFirst().preorderShippingDate());
+        assertEquals(true, detail.preorder());
+        assertEquals(LocalDate.now().plusDays(1), detail.preorderShippingDate());
     }
 
     @Test
-    void preorderEndingTodayIsNoLongerAdvertisedAsPreorder() {
+    void preorderEndingTodayRemainsActiveAndMovesToTomorrow() {
         SucursalStock row = stock(20, "ANNIE ENTERO", 201, "NEGRO", "S", 5);
         row.getProductoVariante().getProducto().setPreventa(true);
         row.getProductoVariante().getProducto().setFechaEnvioPreventa(LocalDate.now());
@@ -149,7 +149,9 @@ class AgentCatalogQueryServiceTest {
 
         var result = service.searchProducts(41L, "", 20, AgentCatalogAvailability.PREORDER_ONLY);
 
-        assertEquals(0, result.products().size());
+        assertEquals(1, result.products().size());
+        assertEquals(true, result.products().getFirst().preorder());
+        assertEquals(LocalDate.now().plusDays(1), result.products().getFirst().preorderShippingDate());
     }
 
     @Test

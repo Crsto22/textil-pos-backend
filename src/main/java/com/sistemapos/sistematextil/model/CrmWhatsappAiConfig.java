@@ -68,6 +68,9 @@ public class CrmWhatsappAiConfig {
     @Column(name = "advisor_attention_enabled", nullable = false)
     private Boolean advisorAttentionEnabled;
 
+    @Column(name = "first_image_to_advisor_enabled", nullable = false)
+    private Boolean firstImageToAdvisorEnabled;
+
     @Column(name = "job_max_attempts", nullable = false)
     private Integer jobMaxAttempts;
 
@@ -124,6 +127,7 @@ public class CrmWhatsappAiConfig {
         if (paymentReservationSeconds == null) paymentReservationSeconds = 360;
         if (receiptMinimumConfidence == null) receiptMinimumConfidence = 85;
         if (advisorAttentionEnabled == null) advisorAttentionEnabled = false;
+        if (firstImageToAdvisorEnabled == null) firstImageToAdvisorEnabled = false;
         if (jobMaxAttempts == null) jobMaxAttempts = 3;
         if (outboxMaxAttempts == null) outboxMaxAttempts = 5;
         if (maxMessagesPerBatch == null) maxMessagesPerBatch = 15;

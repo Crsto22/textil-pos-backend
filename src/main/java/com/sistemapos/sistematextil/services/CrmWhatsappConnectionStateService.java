@@ -14,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.sistemapos.sistematextil.model.CrmWhatsappConnection;
+import com.sistemapos.sistematextil.model.CrmWhatsappArea;
 import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappConnectionRepository;
 import com.sistemapos.sistematextil.util.usuario.Rol;
@@ -30,8 +31,10 @@ public class CrmWhatsappConnectionStateService {
 
     private final CrmWhatsappConnectionRepository connectionRepository;
     private final CrmWhatsappEventService eventService;
+    private final CrmWhatsappNumberChangeNoticeService numberChangeNoticeService;
+    private final CrmWarehouseEventService warehouseEventService;
 
-    @Value("${whatsapp.bridge.client-id:kiments-main}")
+    @Value("${whatsapp.bridge.client-id:kiments-sales}")
     private String configuredClientId;
 
     @Transactional
@@ -88,10 +91,15 @@ public class CrmWhatsappConnectionStateService {
 
     @Transactional
     public ConnectionStateResponse acknowledgePhoneChange(Usuario actor) {
+        return acknowledgePhoneChange(actor, CrmWhatsappArea.SALES);
+    }
+
+    @Transactional
+    public ConnectionStateResponse acknowledgePhoneChange(Usuario actor, CrmWhatsappArea area) {
         if (actor == null || actor.getRol() != Rol.ADMINISTRADOR) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Solo un administrador puede confirmar el cambio de numero");
         }
-        CrmWhatsappConnection connection = connectionRepository.findByClientId(configuredClientId())
+        CrmWhatsappConnection connection = connectionRepository.findByClientId(area.clientId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Conexion de WhatsApp no configurada"));
         if (!CONNECTED.equals(normalizedStatus(connection.getConnectionStatus()))) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "WhatsApp debe estar conectado para confirmar el numero");
@@ -100,11 +108,20 @@ public class CrmWhatsappConnectionStateService {
         if (connected.isBlank()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "No se pudo identificar el numero conectado");
         }
+        String approved = normalizeWhatsappNumber(connection.getApprovedNumber());
+        if (!approved.isBlank() && !connected.equals(approved)) {
+            connection.setPhoneNumberVersion((connection.getPhoneNumberVersion() == null
+                    ? 0 : connection.getPhoneNumberVersion()) + 1);
+        }
         connection.setApprovedNumber(connected);
         connection.setPhoneChangedAt(null);
         connection = connectionRepository.save(connection);
+        numberChangeNoticeService.registerForConnection(connection.getIdConnection());
         ConnectionStateResponse response = toResponse(connection);
         publish(response);
+        if (area == CrmWhatsappArea.SHIPPING) {
+            warehouseEventService.publishAfterCommit(Map.of("type", "warehouse.number.changed"));
+        }
         return response;
     }
 
@@ -124,7 +141,12 @@ public class CrmWhatsappConnectionStateService {
 
     @Transactional(readOnly = true)
     public void requireOperational() {
-        CrmWhatsappConnection connection = connectionRepository.findByClientId(configuredClientId())
+        requireOperational(CrmWhatsappArea.SALES);
+    }
+
+    @Transactional(readOnly = true)
+    public void requireOperational(CrmWhatsappArea area) {
+        CrmWhatsappConnection connection = connectionRepository.findByClientId(area.clientId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "Configure la conexion de WhatsApp"));
         ConnectionStateResponse state = toResponse(connection);
         if (!state.operational()) {
@@ -195,7 +217,7 @@ public class CrmWhatsappConnectionStateService {
 
     private String configuredClientId() {
         String value = clean(configuredClientId);
-        return value.isBlank() ? "kiments-main" : value;
+        return value.isBlank() ? CrmWhatsappArea.SALES.clientId() : value;
     }
 
     private String clean(Object value) {

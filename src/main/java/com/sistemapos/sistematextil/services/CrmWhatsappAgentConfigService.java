@@ -84,6 +84,8 @@ public class CrmWhatsappAgentConfigService {
         config.setPaymentReservationSeconds(reservation);
         config.setReceiptMinimumConfidence(confidence);
         config.setAdvisorAttentionEnabled(Boolean.TRUE.equals(request.advisorAttentionEnabled()));
+        config.setFirstImageToAdvisorEnabled(Boolean.TRUE.equals(request.advisorAttentionEnabled())
+                && Boolean.TRUE.equals(request.firstImageToAdvisorEnabled()));
         config.setJobMaxAttempts(jobAttempts);
         config.setOutboxMaxAttempts(outboxAttempts);
         config.setMaxMessagesPerBatch(maxMessages);
@@ -103,7 +105,8 @@ public class CrmWhatsappAgentConfigService {
                 List.copyOf(config.testPhoneNumbers()), config.limitedConversationsPerHour(),
                 config.automaticSalesEnabled(), config.messageGroupingMs(),
                 config.paymentReservationSeconds(), config.receiptMinimumConfidence(),
-                config.advisorAttentionEnabled(), config.jobMaxAttempts(), config.outboxMaxAttempts(),
+                config.advisorAttentionEnabled(), config.firstImageToAdvisorEnabled(),
+                config.jobMaxAttempts(), config.outboxMaxAttempts(),
                 config.maxMessagesPerBatch(), config.maxToolCallsPerRun(), config.maxOutputMessagesPerRun(),
                 config.welcomeMessage(), config.agentBehaviorInstructions(), monitorService.snapshot(connectionId));
     }
@@ -167,14 +170,16 @@ public class CrmWhatsappAgentConfigService {
     public record AgentConfigRequest(Boolean enabled, String model, String activationStage,
             List<String> testPhoneNumbers, Integer limitedConversationsPerHour, Integer messageGroupingMs,
             Integer paymentReservationSeconds, Integer receiptMinimumConfidence,
-            Boolean advisorAttentionEnabled, Integer jobMaxAttempts, Integer outboxMaxAttempts,
+            Boolean advisorAttentionEnabled, Boolean firstImageToAdvisorEnabled,
+            Integer jobMaxAttempts, Integer outboxMaxAttempts,
             Integer maxMessagesPerBatch, Integer maxToolCallsPerRun, Integer maxOutputMessagesPerRun,
             String welcomeMessage, String agentBehaviorInstructions) {}
 
     public record AgentConfigResponse(Long connectionId, boolean enabled, String model, String activationStage,
             List<String> testPhoneNumbers, int limitedConversationsPerHour, boolean automaticSalesEnabled,
             int messageGroupingMs, int paymentReservationSeconds, int receiptMinimumConfidence,
-            boolean advisorAttentionEnabled, int jobMaxAttempts, int outboxMaxAttempts,
+            boolean advisorAttentionEnabled, boolean firstImageToAdvisorEnabled,
+            int jobMaxAttempts, int outboxMaxAttempts,
             int maxMessagesPerBatch, int maxToolCallsPerRun, int maxOutputMessagesPerRun,
             String welcomeMessage, String agentBehaviorInstructions, MonitorSnapshot monitoring) {}
 }

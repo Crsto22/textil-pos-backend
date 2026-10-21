@@ -201,6 +201,8 @@ public class AgentConversationOrchestrator {
                         - Para preventas, di "despachos a partir de [fecha]". La fecha es referencial y el despacho
                           depende del volumen de pedidos. Nunca digas "llega el [fecha]" ni garantices que saldra
                           exactamente ese dia.
+                        - Para recojo en tienda, comunica siempre que el pedido estará disponible aproximadamente en
+                          2 a 3 días. Este plazo es distinto del horario de atención y de los despachos por Shalom.
                         - Cuando NO existe orderDeliveryGuidance, se trata de una consulta previa a la compra: para
                           disponibilidad inmediata, el plazo permitido es el despacho aproximado desde Kiments en
                           1 a 4 días según el volumen de pedidos; para preventa, usa el inicio referencial verificado.
@@ -232,7 +234,7 @@ public class AgentConversationOrchestrator {
                 Map.copyOf(toolContext));
         int maxTools = runtime.maxToolCallsPerRun();
         var generated = gateway.respond(context.connectionId(), prompt, maxTools);
-        var response = generated.response();
+        var response = withoutExactInventoryQuantities(generated.response());
         validateTurn(grounding, response.customerMessage());
         var priceValidation = priceValidator.validate(grounding.evidenceJson(), response.customerMessage());
         var promotionValidation = promotionValidator.validate(
@@ -264,7 +266,7 @@ public class AgentConversationOrchestrator {
             AgentMainPrompt correctionPrompt = groundingCorrectionPrompt(
                     prompt, response.customerMessage(), correctionInstruction);
             var corrected = gateway.respond(context.connectionId(), correctionPrompt, maxTools);
-            var correctedResponse = corrected.response();
+            var correctedResponse = withoutExactInventoryQuantities(corrected.response());
             validateTurn(grounding, correctedResponse.customerMessage());
             var correctedValidation = priceValidator.validate(
                     grounding.evidenceJson(), correctedResponse.customerMessage());
@@ -686,6 +688,28 @@ public class AgentConversationOrchestrator {
         return "El inventario exacto es interno. Elimina toda cantidad de stock, unidades disponibles o "
                 + "existencias restantes. Conserva solamente los colores y tallas disponibles, el precio y el "
                 + "siguiente paso natural de compra.";
+    }
+
+    /**
+     * Inventory counts are useful for deterministic availability checks but are
+     * internal commercial data. Remove only count-bearing fragments from the
+     * customer-facing prose so a valid sales answer is not discarded merely
+     * because the language model repeated those internal values.
+     */
+    private AgentTurnResponse withoutExactInventoryQuantities(AgentTurnResponse response) {
+        if (response == null || response.customerMessage() == null) return response;
+        String message = response.customerMessage()
+                .replaceAll("(?iu)\\s*\\(\\s*\\d+\\s+(?:unidades?\\s+)?(?:disponibles?|restantes?|en\\s+stock)\\s*\\)", "")
+                .replaceAll("(?iu)\\b\\d+\\s+(?:unidades?|prendas?|piezas?)\\s+(?:disponibles?|restantes?|en\\s+stock)\\b", "")
+                .replaceAll("(?iu)\\b(?:quedan?|tenemos|hay)\\s+\\d+\\s+(?:unidades?|prendas?|piezas?)\\b", "")
+                .replaceAll("(?iu)\\b(?:stock|existencias?)\\s*(?:disponible)?\\s*[:=-]?\\s*\\d+\\b", "")
+                .replaceAll("[ \\t]+([,.;:!?])", "$1")
+                .replaceAll("(?m)[ \\t]+$", "")
+                .replaceAll("[ \\t]{2,}", " ")
+                .trim();
+        if (message.equals(response.customerMessage())) return response;
+        return new AgentTurnResponse(message, response.conversationSummary(), response.requiresHumanHelp(),
+                response.media(), response.pendingStepReminder(), response.remindedPendingData());
     }
 
     private static boolean containsShippingContact(String response) {

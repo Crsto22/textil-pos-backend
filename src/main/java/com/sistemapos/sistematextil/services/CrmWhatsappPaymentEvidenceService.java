@@ -166,7 +166,8 @@ public class CrmWhatsappPaymentEvidenceService {
         request.setCurrency(clean(sale.moneda()).isBlank() ? "PEN" : clean(sale.moneda()).toUpperCase(Locale.ROOT));
         request.setSaleRequestJson(writeJson(new CrmSaleCreateRequest(
                 branchId, sale.idComprobante(), request.getCurrency(), sale.formaPago(), sale.igvPorcentaje(),
-                sale.descuentoTotal(), sale.tipoDescuento(), sale.detalles(), sale.pagos(), sale.telefonoRespaldo())));
+                sale.descuentoTotal(), sale.tipoDescuento(), sale.detalles(), sale.pagos(),
+                sale.telefonoRespaldo(), sale.nombreRespaldo())));
         request.setStatus(CrmWhatsappPaymentRequestStatus.PENDING_EVIDENCE);
         request.setExpiresAt(LocalDateTime.now().plusMinutes(10));
         request = requestRepository.save(request);
@@ -364,7 +365,7 @@ public class CrmWhatsappPaymentEvidenceService {
                 sale.descuentoTotal(), sale.tipoDescuento(), sale.detalles(),
                 List.of(new VentaPagoCreateItem(request.getMetodoPago().getIdMetodoPago(),
                         request.getExpectedAmount().doubleValue(), blankToNull(evidence.getOperationCode()), paidAt)),
-                sale.telefonoRespaldo());
+                sale.telefonoRespaldo(), sale.nombreRespaldo());
         try {
             boolean reserved = request.getReservationStatus() == CrmWhatsappPaymentReservationStatus.ACTIVE;
             VentaCrmResponse result = reserved
@@ -436,7 +437,7 @@ public class CrmWhatsappPaymentEvidenceService {
                         clean(evidence.getOperationCode()).isBlank()
                                 ? selectedPayment.codigoOperacion() : evidence.getOperationCode(),
                         evidence.getOperationAt() == null ? selectedPayment.fecha() : evidence.getOperationAt())),
-                body.telefonoRespaldo());
+                body.telefonoRespaldo(), body.nombreRespaldo());
 
         try {
             VentaCrmResponse result = chatServiceProvider.getObject().registrarVentaReservadaDesdeCrm(

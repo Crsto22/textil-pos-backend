@@ -29,7 +29,7 @@ public class CrmWhatsappConversation {
     @Column(name = "id_conversation")
     private Long idConversation;
 
-    @Column(name = "phone", nullable = false, unique = true, length = 80)
+    @Column(name = "phone", nullable = false, length = 80)
     private String phone;
 
     @Column(name = "phone_number", length = 30)
@@ -82,6 +82,9 @@ public class CrmWhatsappConversation {
     @Column(name = "assigned_at")
     private LocalDateTime assignedAt;
 
+    @Column(name = "phone_number_version", nullable = false)
+    private Integer phoneNumberVersion = 0;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -99,6 +102,7 @@ public class CrmWhatsappConversation {
         if (unreadCount == null) {
             unreadCount = 0;
         }
+        if (phoneNumberVersion == null) phoneNumberVersion = 0;
         normalizeAttentionQueue();
     }
 
@@ -113,7 +117,7 @@ public class CrmWhatsappConversation {
             attentionQueue = CrmWhatsappAttentionQueue.RESOLVED;
             waitingReason = null;
             waitingDetail = null;
-        } else if (assignedUser != null || "ATENDIDO".equals(status)) {
+        } else if (assignedUser != null) {
             attentionQueue = CrmWhatsappAttentionQueue.HUMAN_ACTIVE;
             waitingReason = null;
             waitingDetail = null;

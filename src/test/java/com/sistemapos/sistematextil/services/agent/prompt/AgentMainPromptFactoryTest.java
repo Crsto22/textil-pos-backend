@@ -56,11 +56,16 @@ class AgentMainPromptFactoryTest {
         assertTrue(prompt.systemInstruction().contains("Antes de comprar"));
         assertTrue(prompt.systemInstruction().contains("Después de comprar"));
         assertTrue(prompt.systemInstruction().contains("1 a 4 días"));
+        assertTrue(prompt.systemInstruction().contains("no significa"));
+        assertTrue(prompt.systemInstruction().contains("Sigue mostrando y vendiendo estos productos normalmente"));
+        assertTrue(prompt.systemInstruction().contains("Nunca ofrezcas salida, despacho ni recojo el mismo día"));
         assertTrue(prompt.systemInstruction().contains("1 a 3 días de despacho"));
         assertTrue(prompt.systemInstruction().contains("según la fecha indicada en la"));
-        assertTrue(prompt.systemInstruction().contains("Este plazo nunca representa el traslado ni la llegada"));
+        assertTrue(prompt.systemInstruction().contains("representa el traslado ni la llegada"));
         assertTrue(prompt.systemInstruction().contains("el tiempo de llegada depende de Shalom"));
-        assertTrue(prompt.systemInstruction().contains("plazo aproximado de 2 a 3 días"));
+        assertTrue(prompt.systemInstruction().contains("de 2 a 3 días desde la compra"));
+        assertTrue(prompt.systemInstruction().contains("desde esa fecha, se cuentan aproximadamente"));
+        assertTrue(prompt.systemInstruction().contains("Nunca prometas recojo antes de la fecha de preventa"));
         assertTrue(prompt.systemInstruction().contains("Continúa vendiendo"));
         assertTrue(prompt.systemInstruction().contains("936310946"));
         assertTrue(prompt.systemInstruction().contains("catálogo mayorista"));

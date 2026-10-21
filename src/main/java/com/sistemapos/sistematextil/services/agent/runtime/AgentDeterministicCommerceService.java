@@ -381,9 +381,13 @@ public class AgentDeterministicCommerceService {
             text.append("Descuento: ").append(money(cart.discountTotal())).append("\n");
         }
         text.append("*Total: ").append(money(cart.total())).append("*\n\n")
-                .append("📦 *Modalidades de entrega disponibles*\n")
-                .append("🏬 Recojo en tienda: disponible aproximadamente en 2 a 3 días y sin costo adicional.\n")
-                .append("🚌 Envío por Shalom: requiere S/2 adicionales por el film protector para embalaje.\n\n");
+                .append("📦 *Modalidades de entrega disponibles*\n");
+        if (preorder) {
+            text.append("🏬 Recojo en tienda: disponible aproximadamente de 2 a 3 días después de la fecha indicada de la preventa y sin costo adicional.\n");
+        } else {
+            text.append("🏬 Recojo en tienda: disponible aproximadamente en 2 a 3 días desde la compra y sin costo adicional.\n");
+        }
+        text.append("🚌 Envío por Shalom: requiere S/2 adicionales por el film protector para embalaje.\n\n");
         if (preorder && regular) {
             text.append("📅 Los despachos del pedido comienzan cuando los productos en preventa estén disponibles, ")
                     .append("a partir de la fecha indicada y según el volumen de pedidos.\n\n");
@@ -843,8 +847,11 @@ public class AgentDeterministicCommerceService {
     private Outcome deliveryTimingContact() {
         return Outcome.message("Sí realizamos envíos por Shalom, hermosa 💛\n"
                 + "La fecha de despacho depende del producto:\n"
-                + "• Disponibilidad inmediata: despachamos aproximadamente en 1 a 4 días, según el volumen de pedidos.\n"
+                + "• Disponibilidad inmediata: significa que tiene stock y no es preventa. Despachamos por Shalom "
+                + "aproximadamente en 1 a 4 días, según el volumen de pedidos. Podría salir al día siguiente, pero no podemos garantizarlo.\n"
                 + "• Preventa: el despacho comienza desde la fecha indicada para el producto.\n\n"
+                + "No realizamos despachos el mismo día. Para recojo en tienda, un producto con disponibilidad inmediata "
+                + "está listo aproximadamente en 2 a 3 días desde la compra.\n\n"
                 + "Después del despacho, el tiempo de llegada depende de Shalom, por eso no podemos confirmar un día "
                 + "exacto de entrega.");
     }

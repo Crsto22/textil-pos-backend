@@ -187,6 +187,10 @@ public class AgentConversationOrchestrator {
                         - Cuando exista sizeGuideDelivery, redacta libremente una respuesta breve: menciona solo las
                           guias realmente incluidas en sent y explica cuales faltan usando missing. No uses una
                           plantilla fija ni afirmes que enviaste una guia que no aparece en sent.
+                        - Cuando exista ambiguousProductOptions, presenta por nombre todas las opciones verificadas
+                          sin pedir primero que elija un acabado. Indica que se adjuntaron solo las fotos y guias cuyo
+                          valor incluido sea true; luego pregunta cual modelo, color y talla desea. No reveles stock
+                          numerico. Las guias automaticas repetidas ya son suprimidas por el backend.
                         - Cuando exista productColorGallery, menciona por texto TODOS los availableColors, aunque solo
                           se adjunten hasta imageLimit imagenes. Indica naturalmente cuales se mostraron y, si
                           hasMoreColors=true, invita a la clienta a pedir cualquier otro color para ver su foto.
@@ -201,8 +205,9 @@ public class AgentConversationOrchestrator {
                         - Para preventas, di "despachos a partir de [fecha]". La fecha es referencial y el despacho
                           depende del volumen de pedidos. Nunca digas "llega el [fecha]" ni garantices que saldra
                           exactamente ese dia.
-                        - Para recojo en tienda, comunica siempre que el pedido estará disponible aproximadamente en
-                          2 a 3 días. Este plazo es distinto del horario de atención y de los despachos por Shalom.
+                        - Para recojo en tienda con disponibilidad inmediata, comunica 2 a 3 días desde la compra.
+                          Si incluye preventa, son 2 a 3 días desde la fecha indicada de la preventa. Este plazo es
+                          distinto del horario de atención y de los despachos por Shalom.
                         - Cuando NO existe orderDeliveryGuidance, se trata de una consulta previa a la compra: para
                           disponibilidad inmediata, el plazo permitido es el despacho aproximado desde Kiments en
                           1 a 4 días según el volumen de pedidos; para preventa, usa el inicio referencial verificado.

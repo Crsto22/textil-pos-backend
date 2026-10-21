@@ -601,6 +601,8 @@ class AgentVerifiedGroundingServiceTest {
 
         assertTrue(grounded.customerMessage().contains("envíos a Arequipa por Shalom"));
         assertTrue(grounded.customerMessage().contains("1 a 4 días"));
+        assertTrue(grounded.customerMessage().contains("Podría salir al día siguiente"));
+        assertTrue(grounded.customerMessage().contains("No realizamos despachos el mismo día"));
         assertTrue(grounded.customerMessage().contains("Preventa"));
         assertTrue(grounded.customerMessage().contains("tiempo de llegada depende de Shalom"));
         assertTrue(grounded.customerMessage().contains("no podemos confirmar un día exacto"));
@@ -1132,15 +1134,15 @@ class AgentVerifiedGroundingServiceTest {
     }
 
     @Test
-    void addsGlobalImagesForUpToThreeAmbiguousProductsWhenCustomerRequestsPhotos() {
+    void showsEveryMatchingFinishWithImagesAndSizeGuidesBeforeAskingWhichOne() {
         AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
         AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
         AgentConversationDecision decision = new AgentConversationDecision(
-                AgentDecisionIntent.PRODUCT_DETAILS, "mostrar fotos de Alessia", "Alessia", "", "", 0, "",
-                AgentCartAction.NONE, AgentCommercialAction.SHOW_PRODUCT_IMAGES,
+                AgentDecisionIntent.PRODUCT_DETAILS, "consultar Alessia", "Alessia", "", "", 0, "",
+                AgentCartAction.NONE, AgentCommercialAction.SHOW_PRODUCT,
                 "", "", "", "", "", "", "", "",
                 com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL, 99, false);
-        when(decisions.interpret(4L, "Si, pasame fotos de Alessia")).thenReturn(
+        when(decisions.interpret(4L, "Tienes Alessia?")).thenReturn(
                 new AgentInterpretationResult("GEMINI", "model", "DB", 10, 0, decision));
         ProductSummary entero = new ProductSummary(68, "ALESSIA ENTERO", "ARUBA", "CONJUNTO",
                 false, null, 75D, 10, List.of("NEGRO"), List.of("XS"));
@@ -1153,18 +1155,26 @@ class AgentVerifiedGroundingServiceTest {
                 68, "ALESSIA ENTERO", "", "/alessia-entero.webp", null, List.of()));
         when(catalog.getProductImage(9L, 77, "")).thenReturn(new ProductImageResult(
                 77, "ALESSIA RAYAS", "", "/alessia-rayas.webp", null, List.of()));
+        when(catalog.getProduct(9L, 68)).thenReturn(productWithGuide(68, "ALESSIA ENTERO", "/guias/alessia-entero.webp"));
+        when(catalog.getProduct(9L, 77)).thenReturn(productWithGuide(77, "ALESSIA RAYAS", "/guias/alessia-rayas.webp"));
         AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
                 mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
                 mock(AgentCartService.class), passThroughAudit());
 
-        var result = service.ground(4L, 9L, 30L, "Si, pasame fotos de Alessia");
+        var result = service.ground(4L, 9L, 30L, "Tienes Alessia?");
 
-        assertEquals(3, result.verifiedToolCalls());
-        assertEquals(2, result.media().size());
+        assertEquals(5, result.verifiedToolCalls());
+        assertEquals(4, result.media().size());
         assertEquals(68, result.media().get(0).productId());
-        assertEquals(77, result.media().get(1).productId());
-        assertTrue(result.evidenceJson().contains("matchingProductImages"));
-        assertTrue(result.evidenceJson().contains("\"verifiedMediaCount\":2"));
+        assertEquals(68, result.media().get(1).productId());
+        assertEquals(77, result.media().get(2).productId());
+        assertEquals(77, result.media().get(3).productId());
+        assertTrue(result.media().get(1).suppressIfRecentlySent());
+        assertTrue(result.media().get(3).suppressIfRecentlySent());
+        assertTrue(result.evidenceJson().contains("ambiguousProductOptions"));
+        assertTrue(result.evidenceJson().contains("showAllMatchingModelsBeforeAsking"));
+        assertTrue(result.evidenceJson().contains("askForModelColorAndSizeAfterMedia"));
+        assertTrue(result.evidenceJson().contains("\"verifiedMediaCount\":4"));
     }
 
     @Test

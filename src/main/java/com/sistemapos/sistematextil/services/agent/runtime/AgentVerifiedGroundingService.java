@@ -319,7 +319,8 @@ public class AgentVerifiedGroundingService {
         if (product == null) return generic;
         if (!product.preorder() || product.preorderShippingDate() == null) {
             return "Hermosa, el conjunto " + product.name() + " tiene disponibilidad inmediata. Su despacho desde "
-                    + "Kiments demora aproximadamente de 1 a 4 días, según el volumen de pedidos. Después del "
+                    + "Kiments demora aproximadamente de 1 a 4 días, según el volumen de pedidos. Podría salir al día "
+                    + "siguiente, pero no podemos garantizarlo, y no realizamos despachos el mismo día. Después del "
                     + "despacho, el tiempo de llegada depende de Shalom, por eso no podemos confirmar un día exacto "
                     + "de entrega. 💛";
         }
@@ -336,8 +337,11 @@ public class AgentVerifiedGroundingService {
                 : "a " + destination.trim() + " por Shalom";
         return "Sí realizamos envíos " + place + ", hermosa 💛\n"
                 + "La fecha de despacho depende del producto:\n"
-                + "• Disponibilidad inmediata: despachamos aproximadamente en 1 a 4 días, según el volumen de pedidos.\n"
+                + "• Disponibilidad inmediata: significa que tiene stock y no es preventa. Despachamos aproximadamente "
+                + "en 1 a 4 días, según el volumen de pedidos. Podría salir al día siguiente, pero no podemos garantizarlo.\n"
                 + "• Preventa: el despacho comienza desde la fecha indicada para el producto.\n\n"
+                + "No realizamos despachos el mismo día. Para recojo en tienda, un producto con disponibilidad inmediata "
+                + "está listo aproximadamente en 2 a 3 días desde la compra.\n\n"
                 + "Después del despacho, el tiempo de llegada depende de Shalom, por eso no podemos confirmar un día "
                 + "exacto de entrega.";
     }
@@ -1056,31 +1060,12 @@ public class AgentVerifiedGroundingService {
 
         var selected = unambiguousProduct(search, decision.productReference());
         if (selected == null) {
-            if (browsingCatalog) {
-                queueInitialCatalogImages(sessionId, jobId, search, ordinal, evidence, media);
-            }
             boolean requestedSpecificColor = decision.colorReference() != null
                     && !decision.colorReference().isBlank();
-            if (imagesRequested && !requestedSpecificColor) {
-                List<Map<String, Object>> imageEvidence = new ArrayList<>();
-                for (var candidate : search.products().stream().limit(5).toList()) {
-                    Integer candidateId = candidate.productId();
-                    ProductImageResult candidateImages = verified(sessionId, jobId, ordinal,
-                            "obtener_imagen_producto", nullableMap("productoId", candidateId, "color", ""),
-                            ProductImageResult.class,
-                            () -> catalog.getProductImage(sessionId, candidateId, ""));
-                    boolean hasGlobalImage = candidateImages.globalImageUrl() != null
-                            && !candidateImages.globalImageUrl().isBlank();
-                    imageEvidence.add(Map.of(
-                            "productId", candidateId,
-                            "productName", candidate.name(),
-                            "globalImageAvailable", hasGlobalImage));
-                    if (hasGlobalImage) {
-                        media.add(new AgentMediaRequest(MediaType.PRODUCT_IMAGE, candidateId, ""));
-                    }
-                }
-                evidence.put("matchingProductImages", imageEvidence);
-                evidence.put("matchingProductImagesTruncated", search.products().size() > 5);
+            if (!requestedSpecificColor && search.products().size() > 1 && !browsingCatalog) {
+                queueAmbiguousProductOptions(sessionId, jobId, search, ordinal, evidence, media);
+            } else if (browsingCatalog) {
+                queueInitialCatalogImages(sessionId, jobId, search, ordinal, evidence, media);
             } else if (imagesRequested) {
                 evidence.put("productSelectionRequiredBeforeColorImage", true);
             }
@@ -1130,6 +1115,43 @@ public class AgentVerifiedGroundingService {
                 && (hasRequestedColorImage || (!requestedSpecificColor && hasGlobalImage))) {
             media.add(new AgentMediaRequest(MediaType.PRODUCT_IMAGE, productId, imageColor));
         }
+    }
+
+    private void queueAmbiguousProductOptions(Long sessionId, Long jobId, ProductSearchResult search,
+            AtomicInteger ordinal, Map<String, Object> evidence, List<AgentMediaRequest> media) {
+        List<Map<String, Object>> optionEvidence = new ArrayList<>();
+        List<AgentCatalogQueryService.ProductSummary> candidates = search.products().stream()
+                .limit(MAX_INITIAL_CATALOG_IMAGES)
+                .toList();
+        for (var candidate : candidates) {
+            Integer productId = candidate.productId();
+            ProductImageResult images = verified(sessionId, jobId, ordinal,
+                    "obtener_imagen_producto", nullableMap("productoId", productId, "color", ""),
+                    ProductImageResult.class, () -> catalog.getProductImage(sessionId, productId, ""));
+            ProductDetail detail = verified(sessionId, jobId, ordinal,
+                    "obtener_producto", Map.of("productoId", productId), ProductDetail.class,
+                    () -> catalog.getProduct(sessionId, productId));
+            boolean hasImage = images != null && images.globalImageUrl() != null
+                    && !images.globalImageUrl().isBlank();
+            boolean hasSizeGuide = detail != null && detail.sizeGuideUrl() != null
+                    && !detail.sizeGuideUrl().isBlank();
+            if (hasImage) {
+                media.add(new AgentMediaRequest(MediaType.PRODUCT_IMAGE, productId, "", true));
+            }
+            if (hasSizeGuide) {
+                media.add(new AgentMediaRequest(MediaType.SIZE_GUIDE, productId, null, true));
+            }
+            optionEvidence.add(Map.of(
+                    "productId", productId,
+                    "productName", candidate.name(),
+                    "imageIncluded", hasImage,
+                    "sizeGuideIncluded", hasSizeGuide));
+        }
+        evidence.put("ambiguousProductOptions", optionEvidence);
+        evidence.put("showAllMatchingModelsBeforeAsking", true);
+        evidence.put("askForModelColorAndSizeAfterMedia", true);
+        evidence.put("sizeGuideRepeatSuppression", true);
+        evidence.put("ambiguousProductOptionsTruncated", search.products().size() > candidates.size());
     }
 
     /**

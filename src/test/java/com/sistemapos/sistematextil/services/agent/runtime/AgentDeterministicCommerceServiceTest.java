@@ -110,7 +110,7 @@ class AgentDeterministicCommerceServiceTest {
         assertFalse(message.contains("logística de Shalom"));
         assertTrue(message.contains("penalidad de S/10"));
         assertTrue(message.contains("📦 *Modalidades de entrega disponibles*"));
-        assertTrue(message.contains("Recojo en tienda: disponible aproximadamente en 2 a 3 días"));
+        assertTrue(message.contains("Recojo en tienda: disponible aproximadamente en 2 a 3 días desde la compra"));
         assertTrue(message.contains("Envío por Shalom: requiere S/2 adicionales"));
         assertFalse(message.contains("🛍️"));
     }
@@ -257,6 +257,7 @@ class AgentDeterministicCommerceServiceTest {
 
         assertTrue(message.contains("Preventa: despachos a partir del 16 de octubre de 2026"));
         assertTrue(message.contains("Los despachos del pedido comienzan cuando los productos en preventa estén disponibles"));
+        assertTrue(message.contains("Recojo en tienda: disponible aproximadamente de 2 a 3 días después de la fecha indicada de la preventa"));
         assertTrue(message.contains("según el volumen de pedidos"));
         assertFalse(message.contains("envío anticipado"));
         assertFalse(message.contains("serán despachados desde"));
@@ -529,6 +530,9 @@ class AgentDeterministicCommerceServiceTest {
         assertTrue(result.handled());
         assertFalse(result.mutationExecuted());
         assertTrue(result.customerMessage().contains("1 a 4 días"));
+        assertTrue(result.customerMessage().contains("Podría salir al día siguiente, pero no podemos garantizarlo"));
+        assertTrue(result.customerMessage().contains("No realizamos despachos el mismo día"));
+        assertTrue(result.customerMessage().contains("2 a 3 días desde la compra"));
         assertTrue(result.customerMessage().contains("Preventa"));
         assertTrue(result.customerMessage().contains("tiempo de llegada depende de Shalom"));
         assertTrue(result.customerMessage().contains("no podemos confirmar un día exacto"));

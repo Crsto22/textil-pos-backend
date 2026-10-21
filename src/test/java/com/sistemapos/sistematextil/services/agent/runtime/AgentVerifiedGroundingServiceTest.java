@@ -1005,7 +1005,7 @@ class AgentVerifiedGroundingServiceTest {
     }
 
     @Test
-    void groundsAnExactProductAndAddsOnlyTheVerifiedProductImage() {
+    void groundsAnExactProductAndAddsItsImageAndAutomaticSizeGuide() {
         AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
         AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
         AgentToolCallAuditService audit = passThroughAudit();
@@ -1033,8 +1033,10 @@ class AgentVerifiedGroundingServiceTest {
         var result = service.ground(4L, 9L, 30L, "Annie rayas color rosa");
 
         assertEquals(3, result.verifiedToolCalls());
-        assertEquals(1, result.media().size());
-        assertEquals(MediaType.PRODUCT_IMAGE, result.media().getFirst().type());
+        assertEquals(2, result.media().size());
+        assertEquals(MediaType.SIZE_GUIDE, result.media().getFirst().type());
+        assertTrue(result.media().getFirst().suppressIfRecentlySent());
+        assertEquals(MediaType.PRODUCT_IMAGE, result.media().get(1).type());
         assertEquals(null, result.customerMessage());
         assertTrue(result.evidenceJson().contains("ANNIE RAYAS"));
         assertTrue(result.evidenceJson().contains("annie-rosa.webp"));

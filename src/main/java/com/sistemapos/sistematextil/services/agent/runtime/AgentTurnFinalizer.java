@@ -129,7 +129,12 @@ public class AgentTurnFinalizer {
             }
             if (source == null || source.isBlank()) continue;
             if (!queuedSources.add(source.trim())) continue;
-            if (request.suppressIfRecentlySent() && wasRecentlySent(session, source)) continue;
+            if (request.suppressIfRecentlySent()
+                    && request.type() == AgentMediaRequest.MediaType.SIZE_GUIDE
+                    && wasSentInConversation(session, source)) continue;
+            if (request.suppressIfRecentlySent()
+                    && request.type() != AgentMediaRequest.MediaType.SIZE_GUIDE
+                    && wasRecentlySent(session, source)) continue;
             outbox.enqueueImage(lease.sessionId(), lease.jobId(), lease.anchorMessageId(), ordinal++, source,
                     fileName(source, request.type()), mimeType(source), caption);
             if (request.catalogPreview()) catalogPreviewQueued = true;
@@ -155,6 +160,18 @@ public class AgentTurnFinalizer {
                     LIMIT 20
                 ) recent_media
                 WHERE media_storage_path=?
+                """, Long.class, session.getConversation().getIdConversation(), source.trim());
+        return matches != null && matches > 0;
+    }
+
+    private boolean wasSentInConversation(CrmWhatsappAgentSession session, String source) {
+        if (session.getConversation() == null || session.getConversation().getIdConversation() == null
+                || source == null || source.isBlank()) return false;
+        Long matches = jdbc.queryForObject("""
+                SELECT COUNT(*)
+                FROM crm_whatsapp_message
+                WHERE id_conversation=? AND direction='OUTGOING' AND deleted_at IS NULL
+                  AND media_storage_path=?
                 """, Long.class, session.getConversation().getIdConversation(), source.trim());
         return matches != null && matches > 0;
     }

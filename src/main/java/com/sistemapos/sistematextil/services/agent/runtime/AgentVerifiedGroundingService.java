@@ -1103,6 +1103,13 @@ public class AgentVerifiedGroundingService {
                 () -> catalog.getProductImage(sessionId, productId, imageColor));
         evidence.put("selectedProduct", detail);
         evidence.put("selectedProductImages", images);
+        if (detail.sizeGuideUrl() != null && !detail.sizeGuideUrl().isBlank()) {
+            media.add(new AgentMediaRequest(MediaType.SIZE_GUIDE, productId, null, true));
+            evidence.put("automaticSizeGuide", Map.of(
+                    "productId", productId,
+                    "productName", detail.name(),
+                    "suppressIfAlreadySent", true));
+        }
 
         if (imagesRequested && !requestedSpecificColor) {
             queueAvailableColorGallery(productId, detail, images, evidence, media);

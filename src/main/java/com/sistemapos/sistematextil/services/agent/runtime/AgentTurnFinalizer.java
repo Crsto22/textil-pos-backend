@@ -78,21 +78,20 @@ public class AgentTurnFinalizer {
         var config = runtimeConfig.forSession(lease.sessionId());
         String welcome = clean(config == null ? null : config.welcomeMessage());
         if (welcome.isBlank()) return ordinal;
-        Long existingWelcome = jdbc.queryForObject("""
+        Long existingHistory = jdbc.queryForObject("""
                 SELECT
                   (SELECT COUNT(*)
                    FROM crm_whatsapp_message
-                   WHERE id_conversation=? AND direction='OUTGOING' AND origin='CRM_SYSTEM'
-                     AND body=? AND deleted_at IS NULL)
+                   WHERE id_conversation=? AND id_message<>? AND deleted_at IS NULL)
                   +
                   (SELECT COUNT(*)
                    FROM crm_whatsapp_agent_outbox
-                   WHERE id_conversation=? AND body=? AND caption='CRM_SYSTEM'
+                   WHERE id_conversation=?
                      AND status IN ('PENDING','RETRY','PROCESSING','SENT'))
                 """, Long.class,
-                session.getConversation().getIdConversation(), welcome,
-                session.getConversation().getIdConversation(), welcome);
-        if (existingWelcome != null && existingWelcome > 0) return ordinal;
+                session.getConversation().getIdConversation(), lease.anchorMessageId(),
+                session.getConversation().getIdConversation());
+        if (existingHistory != null && existingHistory > 0) return ordinal;
         outbox.enqueueOperationalText(lease.sessionId(), lease.jobId(), lease.anchorMessageId(), ordinal, welcome);
         return ordinal + 1;
     }

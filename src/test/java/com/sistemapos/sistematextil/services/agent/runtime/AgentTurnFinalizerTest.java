@@ -69,7 +69,7 @@ class AgentTurnFinalizerTest {
         CrmWhatsappConversation conversation=new CrmWhatsappConversation();conversation.setIdConversation(20L);session.setConversation(conversation);
         CrmWhatsappMessage anchor=new CrmWhatsappMessage();anchor.setIdMessage(99L);session.setLastCustomerMessage(anchor);
         when(sessions.findForUpdate(8L)).thenReturn(java.util.Optional.of(session));
-        JdbcTemplate jdbc=mock(JdbcTemplate.class);when(jdbc.queryForObject(anyString(),eq(Long.class),eq(20L),anyString(),eq(20L),anyString())).thenReturn(1L);
+        JdbcTemplate jdbc=mock(JdbcTemplate.class);when(jdbc.queryForObject(anyString(),eq(Long.class),eq(20L),eq(99L),eq(20L))).thenReturn(1L);
         when(runtime.forSession(8L)).thenReturn(new AgentRuntimeConfigService.RuntimeConfig(false,
                 com.sistemapos.sistematextil.model.CrmWhatsappAgentActivationStage.AUTOMATIC_SALES,
                 java.util.Set.of(),100,5000,240,85,true,3,5,15,12,6));
@@ -99,7 +99,7 @@ class AgentTurnFinalizerTest {
                 com.sistemapos.sistematextil.model.CrmWhatsappAgentActivationStage.AUTOMATIC_SALES,
                 java.util.Set.of(),100,5000,240,85,false,3,5,15,12,6));
         JdbcTemplate jdbc=mock(JdbcTemplate.class);
-        when(jdbc.queryForObject(anyString(),eq(Long.class),eq(20L),anyString(),eq(20L),anyString())).thenReturn(1L);
+        when(jdbc.queryForObject(anyString(),eq(Long.class),eq(20L),eq(99L),eq(20L))).thenReturn(1L);
         AgentTurnFinalizer finalizer=new AgentTurnFinalizer(outbox,mock(AgentCatalogQueryService.class),sessions,
                 mock(CrmWhatsappAgentStateMachine.class),runtime,jdbc);
         JobLease lease=new JobLease(41L,8L,99L,1,"worker:lease",LocalDateTime.now());
@@ -115,7 +115,7 @@ class AgentTurnFinalizerTest {
     }
 
     @Test
-    void queuesConfiguredWelcomeWhenEarlierAttemptWasCancelledAfterMoreCustomerMessages() {
+    void queuesConfiguredWelcomeOnlyForTheFirstMessageOfANewConversation() {
         AgentOutboxService outbox = mock(AgentOutboxService.class);
         CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
         AgentRuntimeConfigService runtime = mock(AgentRuntimeConfigService.class);
@@ -130,8 +130,7 @@ class AgentTurnFinalizerTest {
         anchor.setIdMessage(99L);
         session.setLastCustomerMessage(anchor);
         when(sessions.findForUpdate(8L)).thenReturn(java.util.Optional.of(session));
-        when(jdbc.queryForObject(anyString(), eq(Long.class), eq(20L), eq("Aviso inicial"),
-                eq(20L), eq("Aviso inicial"))).thenReturn(0L);
+        when(jdbc.queryForObject(anyString(), eq(Long.class), eq(20L), eq(99L), eq(20L))).thenReturn(0L);
         when(runtime.forSession(8L)).thenReturn(new AgentRuntimeConfigService.RuntimeConfig(false,
                 com.sistemapos.sistematextil.model.CrmWhatsappAgentActivationStage.AUTOMATIC_SALES,
                 java.util.Set.of(), 100, 5000, 240, 85, false, 3, 5, 15, 12, 6, "Aviso inicial"));
@@ -149,7 +148,7 @@ class AgentTurnFinalizerTest {
     }
 
     @Test
-    void doesNotDuplicateWelcomeAlreadySentOrPending() {
+    void doesNotSendWelcomeWhenTheConversationAlreadyHasHistoryEvenIfTextChanged() {
         AgentOutboxService outbox = mock(AgentOutboxService.class);
         CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
         AgentRuntimeConfigService runtime = mock(AgentRuntimeConfigService.class);
@@ -167,8 +166,7 @@ class AgentTurnFinalizerTest {
         when(runtime.forSession(8L)).thenReturn(new AgentRuntimeConfigService.RuntimeConfig(false,
                 com.sistemapos.sistematextil.model.CrmWhatsappAgentActivationStage.AUTOMATIC_SALES,
                 java.util.Set.of(), 100, 5000, 240, 85, false, 3, 5, 15, 12, 6, "Aviso inicial"));
-        when(jdbc.queryForObject(anyString(), eq(Long.class), eq(20L), eq("Aviso inicial"),
-                eq(20L), eq("Aviso inicial"))).thenReturn(1L);
+        when(jdbc.queryForObject(anyString(), eq(Long.class), eq(20L), eq(101L), eq(20L))).thenReturn(7L);
         AgentTurnFinalizer finalizer = new AgentTurnFinalizer(outbox, mock(AgentCatalogQueryService.class), sessions,
                 mock(CrmWhatsappAgentStateMachine.class), runtime, jdbc);
         JobLease lease = new JobLease(42L, 8L, 101L, 1, "worker:lease", LocalDateTime.now());

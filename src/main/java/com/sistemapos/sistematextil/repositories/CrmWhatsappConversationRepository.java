@@ -26,6 +26,11 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
             LEFT JOIN c.cliente cl
             WHERE c.connection.area = com.sistemapos.sistematextil.model.CrmWhatsappArea.SHIPPING
               AND c.connection.empresa.idEmpresa = :companyId
+              AND EXISTS (
+                   SELECT 1 FROM CrmWhatsappMessage visibleMessage
+                   WHERE visibleMessage.conversation = c
+                     AND visibleMessage.direction IN ('INCOMING', 'OUTGOING')
+              )
               AND (:term IS NULL
                    OR LOWER(COALESCE(c.contactName, '')) LIKE LOWER(CONCAT('%', :term, '%'))
                    OR LOWER(COALESCE(c.whatsappUsername, '')) LIKE LOWER(CONCAT('%', :term, '%'))
@@ -41,6 +46,11 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
             LEFT JOIN c.cliente cl
             WHERE c.connection.area = com.sistemapos.sistematextil.model.CrmWhatsappArea.SHIPPING
               AND c.connection.empresa.idEmpresa = :companyId
+              AND EXISTS (
+                   SELECT 1 FROM CrmWhatsappMessage visibleMessage
+                   WHERE visibleMessage.conversation = c
+                     AND visibleMessage.direction IN ('INCOMING', 'OUTGOING')
+              )
               AND (:term IS NULL
                    OR LOWER(COALESCE(c.contactName, '')) LIKE LOWER(CONCAT('%', :term, '%'))
                    OR LOWER(COALESCE(c.whatsappUsername, '')) LIKE LOWER(CONCAT('%', :term, '%'))

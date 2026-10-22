@@ -92,7 +92,7 @@ class CrmShippingChatServiceTest {
     }
 
     @Test
-    void warehouseRoleListsEveryShippingConversationFromItsCompany() {
+    void warehouseRoleListsShippingConversationsWithMessagesFromItsCompany() {
         Usuario actor = warehouse(7, 12);
         when(conversationRepository.findShippingChatConversations(eq(7), eq(null), any(Pageable.class)))
                 .thenReturn(Page.empty());

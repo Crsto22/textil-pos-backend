@@ -148,7 +148,7 @@ public class CrmWarehouseService {
                 conversation.getPhone(), body, null, UUID.randomUUID().toString());
         requireBridgeSuccess(response);
         beginWarehouseAttention(order, conversation, actor, firstContact);
-        CrmWhatsappMessage message = outgoingMessage(conversation, body, "TEXT", response.getBody());
+        CrmWhatsappMessage message = outgoingMessage(conversation, body, "TEXT", response.getBody(), actor);
         message.setRelatedSaleId(saleId);
         message = messageRepository.save(message);
         touchConversation(conversation, body, "TEXT", message.getCreatedAt());
@@ -184,7 +184,7 @@ public class CrmWarehouseService {
             beginWarehouseAttention(order, conversation, actor, firstContact);
             String messageType = mediaType(mimeType);
             String body = clean(caption).isBlank() ? fileName : clean(caption);
-            CrmWhatsappMessage message = outgoingMessage(conversation, body, messageType, response.getBody());
+            CrmWhatsappMessage message = outgoingMessage(conversation, body, messageType, response.getBody(), actor);
             message.setRelatedSaleId(saleId);
             message.setMediaFileName(fileName);
             message.setMediaMimeType(mimeType);
@@ -405,15 +405,19 @@ public class CrmWarehouseService {
                 deleted || clean(message.getMediaStoragePath()).isBlank() ? null
                         : "/api/crm/warehouse/messages/" + message.getIdMessage() + "/media",
                 deleted ? null : message.getMediaDurationSeconds(), message.getOrigin(),
-                message.getRelatedSaleId(), message.getReceiptFormat(), deleted);
+                message.getRelatedSaleId(), message.getReceiptFormat(),
+                message.getActor() == null ? null : message.getActor().getIdUsuario(),
+                message.getActorName(), deleted);
     }
 
     private CrmWhatsappMessage outgoingMessage(CrmWhatsappConversation conversation, String body,
-            String type, String json) {
+            String type, String json, Usuario actor) {
         CrmWhatsappMessage message = new CrmWhatsappMessage();
         message.setConversation(conversation);
         message.setDirection("OUTGOING");
         message.setOrigin("WAREHOUSE");
+        message.setActor(actor);
+        message.setActorName(fullName(actor));
         message.setMessageType(type);
         message.setBody(body);
         message.setMessageStatus("sent");
@@ -589,7 +593,7 @@ public class CrmWarehouseService {
     public record MessageDto(Long id, String direction, String messageType, String body, String status,
             LocalDateTime createdAt, String mediaMimeType, String mediaFileName, String mediaUrl,
             Integer mediaDurationSeconds, String origin, Integer relatedSaleId, String receiptFormat,
-            boolean deleted) {}
+            Integer sentByUserId, String sentByName, boolean deleted) {}
     public record MessagePage(List<MessageDto> content, Long oldestId, Long newestId,
             boolean hasMoreBefore) {}
     public record MessageRequest(String message) {}

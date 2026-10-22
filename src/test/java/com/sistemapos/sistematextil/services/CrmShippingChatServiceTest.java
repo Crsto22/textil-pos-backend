@@ -1,11 +1,13 @@
 package com.sistemapos.sistematextil.services;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verify;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 
 import java.util.Optional;
@@ -17,6 +19,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.web.server.ResponseStatusException;
@@ -78,29 +81,29 @@ class CrmShippingChatServiceTest {
     @Test
     void shippingConversationPageIsLimitedToTenItems() {
         Usuario actor = administrator(7);
-        when(conversationRepository.findShippingChatConversations(eq(7), eq(null), eq(null), any(Pageable.class)))
+        when(conversationRepository.findShippingChatConversations(eq(7), eq(null), any(Pageable.class)))
                 .thenReturn(Page.empty());
 
         service.conversations(actor, "", 0, 50);
 
         ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
-        verify(conversationRepository).findShippingChatConversations(eq(7), eq(null), eq(null), pageable.capture());
+        verify(conversationRepository).findShippingChatConversations(eq(7), eq(null), pageable.capture());
         assertEquals(10, pageable.getValue().getPageSize());
     }
 
     @Test
-    void warehouseRoleListsOnlyItsAssignedBranch() {
+    void warehouseRoleListsEveryShippingConversationFromItsCompany() {
         Usuario actor = warehouse(7, 12);
-        when(conversationRepository.findShippingChatConversations(eq(7), eq(12), eq(null), any(Pageable.class)))
+        when(conversationRepository.findShippingChatConversations(eq(7), eq(null), any(Pageable.class)))
                 .thenReturn(Page.empty());
 
         service.conversations(actor, "", 0, 10);
 
-        verify(conversationRepository).findShippingChatConversations(eq(7), eq(12), eq(null), any(Pageable.class));
+        verify(conversationRepository).findShippingChatConversations(eq(7), eq(null), any(Pageable.class));
     }
 
     @Test
-    void warehouseRoleCannotOpenConversationFromAnotherBranch() {
+    void warehouseRoleCanOpenAnyShippingConversationFromItsCompany() {
         Usuario actor = warehouse(7, 12);
         CrmWhatsappConnection connection = new CrmWhatsappConnection();
         connection.setArea(CrmWhatsappArea.SHIPPING);
@@ -109,12 +112,9 @@ class CrmShippingChatServiceTest {
         conversation.setIdConversation(22L);
         conversation.setConnection(connection);
         when(conversationRepository.findById(22L)).thenReturn(Optional.of(conversation));
-        when(warehouseOrderRepository.canAccessConversation(7, 12, 22L)).thenReturn(false);
+        var result = service.conversation(22L, actor);
 
-        ResponseStatusException error = assertThrows(ResponseStatusException.class,
-                () -> service.conversation(22L, actor));
-
-        assertEquals(HttpStatus.NOT_FOUND, error.getStatusCode());
+        assertEquals(22L, result.id());
     }
 
     @Test
@@ -142,6 +142,32 @@ class CrmShippingChatServiceTest {
 
         assertTrue(result.available());
         assertTrue(result.content().isEmpty());
+    }
+
+    @Test
+    void shippingReplyStoresTheAuthenticatedWarehouseUser() {
+        Usuario actor = warehouse(7, 12);
+        actor.setNombre("Ana");
+        actor.setApellido("Envios");
+        CrmWhatsappConnection connection = new CrmWhatsappConnection();
+        connection.setArea(CrmWhatsappArea.SHIPPING);
+        connection.setEmpresa(actor.getSucursal().getEmpresa());
+        CrmWhatsappConversation conversation = new CrmWhatsappConversation();
+        conversation.setIdConversation(22L);
+        conversation.setConnection(connection);
+        conversation.setPhone("51932889985@s.whatsapp.net");
+        when(conversationRepository.findById(22L)).thenReturn(Optional.of(conversation));
+        when(bridgeService.enviarTexto(eq(CrmWhatsappArea.SHIPPING), eq(conversation.getPhone()),
+                eq("Pedido enviado"), eq(null), anyString())).thenReturn(ResponseEntity.ok("{}"));
+        when(messageRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.sendText(22L, new CrmShippingChatService.MessageRequest("Pedido enviado"), actor);
+
+        ArgumentCaptor<com.sistemapos.sistematextil.model.CrmWhatsappMessage> message =
+                ArgumentCaptor.forClass(com.sistemapos.sistematextil.model.CrmWhatsappMessage.class);
+        verify(messageRepository).save(message.capture());
+        assertSame(actor, message.getValue().getActor());
+        assertEquals("Ana Envios", message.getValue().getActorName());
     }
 
     private Usuario administrator(int companyId) {

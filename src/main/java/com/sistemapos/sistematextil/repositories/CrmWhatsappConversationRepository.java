@@ -26,19 +26,6 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
             LEFT JOIN c.cliente cl
             WHERE c.connection.area = com.sistemapos.sistematextil.model.CrmWhatsappArea.SHIPPING
               AND c.connection.empresa.idEmpresa = :companyId
-              AND (:branchId IS NULL OR EXISTS (
-                    SELECT 1 FROM CrmWarehouseOrder w
-                    WHERE w.shippingConversation = c
-                      AND w.venta.sucursal.idSucursal = :branchId
-                      AND w.venta.deletedAt IS NULL
-                      AND UPPER(COALESCE(w.venta.estado, '')) <> 'ANULADA'
-              ))
-              AND EXISTS (
-                    SELECT 1 FROM CrmWhatsappMessage m
-                    WHERE m.conversation = c
-                      AND m.deletedAt IS NULL
-                      AND m.direction IN ('INCOMING', 'OUTGOING')
-              )
               AND (:term IS NULL
                    OR LOWER(COALESCE(c.contactName, '')) LIKE LOWER(CONCAT('%', :term, '%'))
                    OR LOWER(COALESCE(c.whatsappUsername, '')) LIKE LOWER(CONCAT('%', :term, '%'))
@@ -54,19 +41,6 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
             LEFT JOIN c.cliente cl
             WHERE c.connection.area = com.sistemapos.sistematextil.model.CrmWhatsappArea.SHIPPING
               AND c.connection.empresa.idEmpresa = :companyId
-              AND (:branchId IS NULL OR EXISTS (
-                    SELECT 1 FROM CrmWarehouseOrder w
-                    WHERE w.shippingConversation = c
-                      AND w.venta.sucursal.idSucursal = :branchId
-                      AND w.venta.deletedAt IS NULL
-                      AND UPPER(COALESCE(w.venta.estado, '')) <> 'ANULADA'
-              ))
-              AND EXISTS (
-                    SELECT 1 FROM CrmWhatsappMessage m
-                    WHERE m.conversation = c
-                      AND m.deletedAt IS NULL
-                      AND m.direction IN ('INCOMING', 'OUTGOING')
-              )
               AND (:term IS NULL
                    OR LOWER(COALESCE(c.contactName, '')) LIKE LOWER(CONCAT('%', :term, '%'))
                    OR LOWER(COALESCE(c.whatsappUsername, '')) LIKE LOWER(CONCAT('%', :term, '%'))
@@ -77,7 +51,6 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
             """)
     Page<CrmWhatsappConversation> findShippingChatConversations(
             @Param("companyId") Integer companyId,
-            @Param("branchId") Integer branchId,
             @Param("term") String term,
             Pageable pageable);
 

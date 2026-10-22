@@ -20,6 +20,7 @@ import { prepareImageForWhatsApp } from "./image.js";
 import { SendDeduplicator } from "./send-deduplicator.js";
 import { deterministicMessageId, RequestIdempotencyRegistry } from "./request-idempotency.js";
 import { postJsonWithRetry } from "./backend-webhook-retry.js";
+import { numericTimestamp, sortHistoryMessages } from "./history-sync.js";
 
 const bridgeRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = path.resolve(bridgeRoot, "..");
@@ -56,6 +57,7 @@ let reconnectTimer;
 let sessionReset;
 let connectionGeneration = 0;
 let credentialWrite = Promise.resolve();
+let historyImportQueue = Promise.resolve();
 const sendDeduplicator = new SendDeduplicator();
 const requestIdempotency = new RequestIdempotencyRegistry();
 const lidToPhoneNumber = new Map();
@@ -230,6 +232,18 @@ async function saveIncomingMedia(message) {
   };
 }
 
+function unavailableMediaPayload(message) {
+  const media = getMediaContent(getContent(message));
+  if (!media) return null;
+  const mimeType = media.mimetype || "application/octet-stream";
+  return {
+    mimeType,
+    fileName: `${message.key?.id || Date.now()}.${mediaExtension(mimeType)}`,
+    unavailable: true,
+    ...(mediaDurationSeconds(media.seconds) ? { durationSeconds: mediaDurationSeconds(media.seconds) } : {}),
+  };
+}
+
 async function postToBackend(payload) {
   const url = `${config.backendBaseUrl}${config.backendWebhookPath}`;
   await postJsonWithRetry(url, { clientId: config.clientId, area: config.area, ...payload }, {
@@ -352,7 +366,7 @@ function getUsernameFromMessage(message) {
   return message.key.remoteJidUsername || message.key.participantUsername || null;
 }
 
-async function handleIncomingMessage(message) {
+async function handleIncomingMessage(message, { historical = false } = {}) {
   if (!message.message) {
     return;
   }
@@ -395,8 +409,20 @@ async function handleIncomingMessage(message) {
 
   const viewOnce = isViewOnceMessage(message);
   const sticker = isStickerMessage(message);
-  const mediaPayload = viewOnce ? null : await saveIncomingMedia(message);
-  const timestamp = Number(message.messageTimestamp || Math.floor(Date.now() / 1000));
+  let mediaPayload = null;
+  if (!viewOnce) {
+    try {
+      mediaPayload = await saveIncomingMedia(message);
+      if (historical && !mediaPayload && getMediaContent(getContent(message))) {
+        mediaPayload = unavailableMediaPayload(message);
+      }
+    } catch (error) {
+      if (!historical) throw error;
+      mediaPayload = unavailableMediaPayload(message);
+      console.warn(`Adjunto historico no disponible para ${message.key?.id || "mensaje desconocido"}: ${error.message}`);
+    }
+  }
+  const timestamp = numericTimestamp(message.messageTimestamp) || Math.floor(Date.now() / 1000);
   const payload = {
     event: isOutgoing ? "message.sent" : "message.received",
     messageId: message.key.id,
@@ -410,6 +436,7 @@ async function handleIncomingMessage(message) {
     viewOnce,
     sticker,
     hasMedia: Boolean(mediaPayload),
+    historical,
     messageKey: message.key,
     baileysMessage: getBaileysMessageForQuote(message),
     ...(mediaPayload ? { media: mediaPayload } : {}),
@@ -417,6 +444,65 @@ async function handleIncomingMessage(message) {
 
   state.lastActivityAt = new Date().toISOString();
   await postToBackend(payload);
+}
+
+function contactLookup(contacts = []) {
+  const lookup = new Map();
+  for (const contact of contacts) {
+    for (const key of [contact?.id, contact?.lid, contact?.phoneNumber]) {
+      const normalized = normalizeChatId(key);
+      if (normalized) lookup.set(normalized, contact);
+    }
+  }
+  return lookup;
+}
+
+async function syncChat(chat, contacts) {
+  const from = normalizeChatId(chat?.id);
+  if (!from || !isIndividualChatId(from)) return;
+  const contact = contacts.get(from) || {};
+  const phoneNumber = phoneNumberFromJid(contact.phoneNumber)
+    || phoneNumberFromJid(chat?.phoneNumber)
+    || lidToPhoneNumber.get(from)
+    || phoneNumberFromJid(from);
+  const timestamp = numericTimestamp(chat?.conversationTimestamp || chat?.lastMessageRecvTimestamp || chat?.timestamp);
+  await postToBackend({
+    event: "chat.synced",
+    from,
+    phoneNumber,
+    username: contact.username || null,
+    fromName: contact.name || contact.notify || contact.verifiedName || chat?.name || null,
+    timestamp: timestamp > 0 ? new Date(timestamp * 1000).toISOString() : null,
+  });
+}
+
+async function importHistory({ chats = [], contacts = [], messages = [], lidPnMappings = [] } = {}) {
+  if (config.area !== "SHIPPING") return;
+  for (const mapping of lidPnMappings || []) rememberLidMapping(mapping);
+  const contactsById = contactLookup(contacts);
+  for (const chat of chats) {
+    try {
+      await syncChat(chat, contactsById);
+    } catch (error) {
+      console.warn(`No se pudo sincronizar un chat historico: ${error.message}`);
+    }
+  }
+  const orderedMessages = sortHistoryMessages(messages);
+  for (const message of orderedMessages) {
+    const from = normalizeChatId(message?.key?.remoteJid);
+    if (!from || !isIndividualChatId(from)) continue;
+    try {
+      await handleIncomingMessage(message, { historical: true });
+    } catch (error) {
+      console.warn(`No se pudo importar el mensaje historico ${message?.key?.id || "desconocido"}: ${error.message}`);
+    }
+  }
+}
+
+function queueHistoryImport(payload) {
+  historyImportQueue = historyImportQueue
+    .then(() => importHistory(payload))
+    .catch((error) => console.error("No se pudo importar el historial de WhatsApp:", error));
 }
 
 async function handleMessageStatusUpdates(updates) {
@@ -512,7 +598,7 @@ async function connectToWhatsApp() {
     logger,
     markOnlineOnConnect: false,
     printQRInTerminal: false,
-    syncFullHistory: false,
+    syncFullHistory: config.area === "SHIPPING",
     version,
   });
 
@@ -524,6 +610,10 @@ async function connectToWhatsApp() {
     });
   });
   sock.ev.on("lid-mapping.update", rememberLidMapping);
+  sock.ev.on("messaging-history.set", (history) => queueHistoryImport(history));
+  sock.ev.on("chats.upsert", (chats) => {
+    if (config.area === "SHIPPING") queueHistoryImport({ chats });
+  });
 
   sock.ev.on("connection.update", async (update) => {
     if (generation !== connectionGeneration || loggedOut) return;

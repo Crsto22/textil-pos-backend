@@ -23,7 +23,6 @@ import com.sistemapos.sistematextil.model.CrmWhatsappMessage;
 import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappConversationRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappMessageRepository;
-import com.sistemapos.sistematextil.repositories.CrmWarehouseOrderRepository;
 import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.util.usuario.Rol;
 
@@ -34,7 +33,6 @@ import lombok.RequiredArgsConstructor;
 public class CrmShippingChatService {
     private final CrmWhatsappConversationRepository conversationRepository;
     private final CrmWhatsappMessageRepository messageRepository;
-    private final CrmWarehouseOrderRepository warehouseOrderRepository;
     private final SucursalRepository sucursalRepository;
     private final CrmWhatsappBridgeService bridgeService;
     private final CrmWhatsappNumberChangeNoticeService numberChangeNoticeService;
@@ -47,7 +45,7 @@ public class CrmShippingChatService {
         requireShippingAccess(actor);
         String term = clean(query);
         var result = conversationRepository.findShippingChatConversations(
-                companyId(actor), branchId(actor), term.isBlank() ? null : term,
+                companyId(actor), term.isBlank() ? null : term,
                 PageRequest.of(Math.max(0, page), Math.min(10, Math.max(1, size))));
         return new ConversationPage(result.getContent().stream().map(this::conversation).toList(),
                 result.getNumber(), result.getSize(), result.getTotalPages(), result.getTotalElements(),
@@ -127,7 +125,7 @@ public class CrmShippingChatService {
         ResponseEntity<String> response = bridgeService.enviarTexto(CrmWhatsappArea.SHIPPING,
                 conversation.getPhone(), body, null, UUID.randomUUID().toString());
         requireBridgeSuccess(response);
-        CrmWhatsappMessage message = outgoing(conversation, body, "TEXT", response.getBody());
+        CrmWhatsappMessage message = outgoing(conversation, body, "TEXT", response.getBody(), actor);
         message = messageRepository.save(message);
         touch(conversation, body, "TEXT", message.getCreatedAt());
         publish(conversationId);
@@ -157,7 +155,7 @@ public class CrmShippingChatService {
             requireBridgeSuccess(response);
             String type = mediaType(mime);
             String body = clean(caption).isBlank() ? fileName : clean(caption);
-            CrmWhatsappMessage message = outgoing(conversation, body, type, response.getBody());
+            CrmWhatsappMessage message = outgoing(conversation, body, type, response.getBody(), actor);
             message.setMediaFileName(fileName);
             message.setMediaMimeType(mime);
             message.setMediaStoragePath(storagePath);
@@ -180,7 +178,6 @@ public class CrmShippingChatService {
         CrmWhatsappMessage message = messageRepository.findById(messageId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Mensaje no encontrado"));
         requireShippingCompany(message.getConversation(), actor);
-        requireShippingBranch(message.getConversation(), actor);
         if (message.getDeletedAt() != null || clean(message.getMediaStoragePath()).isBlank()) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "El mensaje no tiene archivo disponible");
         }
@@ -194,7 +191,6 @@ public class CrmShippingChatService {
         CrmWhatsappConversation conversation = conversationRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Conversacion no encontrada"));
         requireShippingCompany(conversation, actor);
-        requireShippingBranch(conversation, actor);
         return conversation;
     }
 
@@ -216,22 +212,6 @@ public class CrmShippingChatService {
                 && actor.getRol() != Rol.VENTAS_ALMACEN) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Acceso exclusivo para administradores y almacen");
         }
-    }
-
-    private void requireShippingBranch(CrmWhatsappConversation conversation, Usuario actor) {
-        Integer branchId = branchId(actor);
-        if (branchId != null && !warehouseOrderRepository.canAccessConversation(
-                companyId(actor), branchId, conversation.getIdConversation())) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Conversacion no encontrada");
-        }
-    }
-
-    private Integer branchId(Usuario actor) {
-        if (actor.getRol() == Rol.ADMINISTRADOR) return null;
-        if (actor.getSucursal() == null || actor.getSucursal().getIdSucursal() == null) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "El usuario no tiene una sucursal asignada");
-        }
-        return actor.getSucursal().getIdSucursal();
     }
 
     private Integer companyId(Usuario actor) {
@@ -264,14 +244,18 @@ public class CrmShippingChatService {
                 deleted || clean(value.getMediaStoragePath()).isBlank() ? null
                         : mediaBasePath + value.getIdMessage() + "/media",
                 deleted ? null : value.getMediaDurationSeconds(), value.getOrigin(), value.getRelatedSaleId(),
-                value.getReceiptFormat(), deleted);
+                value.getReceiptFormat(), value.getActor() == null ? null : value.getActor().getIdUsuario(),
+                value.getActorName(), deleted);
     }
 
-    private CrmWhatsappMessage outgoing(CrmWhatsappConversation conversation, String body, String type, String json) {
+    private CrmWhatsappMessage outgoing(CrmWhatsappConversation conversation, String body, String type, String json,
+            Usuario actor) {
         CrmWhatsappMessage message = new CrmWhatsappMessage();
         message.setConversation(conversation);
         message.setDirection("OUTGOING");
         message.setOrigin("WAREHOUSE");
+        message.setActor(actor);
+        message.setActorName(fullName(actor));
         message.setMessageType(type);
         message.setBody(body);
         message.setMessageStatus("sent");
@@ -320,6 +304,12 @@ public class CrmShippingChatService {
         return value == null ? "" : value.toString().trim();
     }
 
+    private String fullName(Usuario actor) {
+        if (actor == null) return "";
+        String name = (clean(actor.getNombre()) + " " + clean(actor.getApellido())).trim();
+        return name.isBlank() ? clean(actor.getCorreo()) : name;
+    }
+
     public record ConversationPage(List<ConversationDto> content, int page, int size, int totalPages,
             long totalElements, boolean last) {}
     public record ConversationDto(Long id, String phone, String phoneNumber, String whatsappUsername,
@@ -331,7 +321,7 @@ public class CrmShippingChatService {
     public record MessageDto(Long id, String direction, String messageType, String body, String status,
             LocalDateTime createdAt, String mediaMimeType, String mediaFileName, String mediaUrl,
             Integer mediaDurationSeconds, String origin, Integer relatedSaleId, String receiptFormat,
-            boolean deleted) {}
+            Integer sentByUserId, String sentByName, boolean deleted) {}
     public record MessageRequest(String message) {}
     public record MediaDownload(byte[] bytes, String contentType, String fileName) {}
 }

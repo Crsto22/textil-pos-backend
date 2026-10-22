@@ -79,7 +79,7 @@ class CrmShippingChatServiceTest {
     }
 
     @Test
-    void shippingConversationPageIsLimitedToTenItems() {
+    void shippingConversationPageIsLimitedToFiftyItems() {
         Usuario actor = administrator(7);
         when(conversationRepository.findShippingChatConversations(eq(7), eq(null), any(Pageable.class)))
                 .thenReturn(Page.empty());
@@ -88,7 +88,7 @@ class CrmShippingChatServiceTest {
 
         ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
         verify(conversationRepository).findShippingChatConversations(eq(7), eq(null), pageable.capture());
-        assertEquals(10, pageable.getValue().getPageSize());
+        assertEquals(50, pageable.getValue().getPageSize());
     }
 
     @Test

@@ -46,7 +46,7 @@ public class CrmShippingChatService {
         String term = clean(query);
         var result = conversationRepository.findShippingChatConversations(
                 companyId(actor), term.isBlank() ? null : term,
-                PageRequest.of(Math.max(0, page), Math.min(10, Math.max(1, size))));
+                PageRequest.of(Math.max(0, page), Math.min(50, Math.max(1, size))));
         return new ConversationPage(result.getContent().stream().map(this::conversation).toList(),
                 result.getNumber(), result.getSize(), result.getTotalPages(), result.getTotalElements(),
                 result.isLast());

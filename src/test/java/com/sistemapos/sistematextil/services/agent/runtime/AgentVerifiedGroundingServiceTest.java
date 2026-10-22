@@ -600,8 +600,9 @@ class AgentVerifiedGroundingServiceTest {
         var grounded = service.ground(4L, 9L, 30L, "Pueden enviarlo mañana?");
 
         assertTrue(grounded.customerMessage().contains("envíos a Arequipa por Shalom"));
-        assertTrue(grounded.customerMessage().contains("1 a 4 días"));
-        assertTrue(grounded.customerMessage().contains("Podría salir al día siguiente"));
+        assertTrue(grounded.customerMessage().contains("normalmente al día siguiente"));
+        assertTrue(grounded.customerMessage().contains("mucho volumen"));
+        assertTrue(grounded.customerMessage().contains("en 2 días"));
         assertTrue(grounded.customerMessage().contains("No realizamos despachos el mismo día"));
         assertTrue(grounded.customerMessage().contains("Preventa"));
         assertTrue(grounded.customerMessage().contains("tiempo de llegada depende de Shalom"));
@@ -632,7 +633,8 @@ class AgentVerifiedGroundingServiceTest {
         var grounded = service.ground(4L, 9L, 30L, "¿Cuándo envían Emma a Arequipa?");
 
         assertTrue(grounded.customerMessage().contains("EMMA tiene disponibilidad inmediata"));
-        assertTrue(grounded.customerMessage().contains("1 a 4 días"));
+        assertTrue(grounded.customerMessage().contains("normalmente al día siguiente"));
+        assertTrue(grounded.customerMessage().contains("en 2 días"));
         assertTrue(grounded.customerMessage().contains("tiempo de llegada depende de Shalom"));
         assertFalse(grounded.customerMessage().contains("1 a 3"));
     }

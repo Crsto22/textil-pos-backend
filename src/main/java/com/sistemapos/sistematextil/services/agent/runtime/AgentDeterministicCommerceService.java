@@ -92,7 +92,7 @@ public class AgentDeterministicCommerceService {
         boolean earlyDeliveryPreference = rememberEarlyDeliveryPreference(sessionId, effectiveDecision);
         if (action == AgentCommercialAction.SELECT_PICKUP
                 && requireSession(sessionId).getState() != CrmWhatsappAgentState.ESPERANDO_METODO_ENTREGA) {
-            return Outcome.message("Contamos con recojo en tienda, disponible aproximadamente en 2 a 3 días y sin costo adicional, y envío por Shalom con "
+            return Outcome.message("Contamos con recojo en tienda, disponible aproximadamente 2 días después de la compra; si cae domingo pasa al lunes, y sin costo adicional. También contamos con envío por Shalom con "
                     + "film protector obligatorio de S/2. Primero terminaremos de confirmar tu pedido y el pago; "
                     + "después podrás elegir una modalidad de entrega.");
         }
@@ -145,8 +145,8 @@ public class AgentDeterministicCommerceService {
 
     public String earlyDeliveryPreferenceMessage() {
         return "Sí realizamos envíos 💛\n"
-                + "🏬 Recojo en tienda: disponible aproximadamente en 2 a 3 días y sin costo adicional.\n"
-                + "🚌 Envío por Shalom: requiere film protector obligatorio de S/2.\n"
+                + "🏬 Recojo en tienda: disponible aproximadamente 2 días después de la compra; si cae domingo, pasa al lunes porque no atendemos los domingos. Sin costo adicional.\n"
+                + "🚌 Envío por Shalom: normalmente se entrega a Shalom al día siguiente; solo con mucho volumen, en 2 días. Requiere film protector obligatorio de S/2.\n"
                 + "He guardado tu preferencia por envío. Primero terminaremos de confirmar tu pedido y el pago; "
                 + "después te solicitaré los datos de Shalom.";
     }
@@ -346,11 +346,11 @@ public class AgentDeterministicCommerceService {
             var product = catalog.getProduct(sessionId, stock.productId());
             if (product.preorder()) {
                 preorder = true;
-                text.append("  Preventa: despachos a partir de");
+                text.append("  Preventa: fecha indicada");
                 if (product.preorderShippingDate() != null) {
-                    text.append("l ").append(product.preorderShippingDate().format(DATE));
+                    text.append(": ").append(product.preorderShippingDate().format(DATE));
                 } else {
-                    text.append(" la fecha indicada");
+                    text.append(" por el catálogo");
                 }
                 text.append("\n");
             } else {
@@ -383,16 +383,15 @@ public class AgentDeterministicCommerceService {
         text.append("*Total: ").append(money(cart.total())).append("*\n\n")
                 .append("📦 *Modalidades de entrega disponibles*\n");
         if (preorder) {
-            text.append("🏬 Recojo en tienda: disponible aproximadamente de 2 a 3 días después de la fecha indicada de la preventa y sin costo adicional.\n");
+            text.append("🏬 Recojo en tienda: disponible aproximadamente 2 días después de la fecha indicada de la preventa; si cae domingo, pasa al lunes. Sin costo adicional.\n");
         } else {
-            text.append("🏬 Recojo en tienda: disponible aproximadamente en 2 a 3 días desde la compra y sin costo adicional.\n");
+            text.append("🏬 Recojo en tienda: disponible aproximadamente 2 días después de la compra; si cae domingo, pasa al lunes. Sin costo adicional.\n");
         }
-        text.append("🚌 Envío por Shalom: requiere S/2 adicionales por el film protector para embalaje.\n\n");
+        text.append("🚌 Envío por Shalom: normalmente se entrega a Shalom al día siguiente; solo con mucho volumen, en 2 días. Requiere S/2 adicionales por el film protector para embalaje.\n\n");
         if (preorder && regular) {
-            text.append("📅 Los despachos del pedido comienzan cuando los productos en preventa estén disponibles, ")
-                    .append("a partir de la fecha indicada y según el volumen de pedidos.\n\n");
+            text.append("📅 Primero se espera la fecha indicada de la preventa. Desde esa fecha se aplican los plazos de recojo o entrega a Shalom informados arriba.\n\n");
         } else if (preorder) {
-            text.append("📅 Los despachos comienzan a partir de la fecha indicada y dependen del volumen de pedidos.\n\n");
+            text.append("📅 Primero se espera la fecha indicada de la preventa. Desde esa fecha se aplican los plazos de recojo o entrega a Shalom informados arriba.\n\n");
         }
         if (requestConfirmation) {
             text.append("⚠️ Revisa bien el modelo, color y talla. Los cambios tienen una penalidad de S/10 y pueden demorar.\n\n")
@@ -628,7 +627,7 @@ public class AgentDeterministicCommerceService {
                 + "🧾 Número de pedido: " + saleId + "\n"
                 + "🏬 Tipo de entrega: Recojo en tienda\n"
                 + "📍 Dirección: Jr. Huánuco 1705-1707, piso 7, interior 701, Gamarra, La Victoria, Lima, Perú.\n\n"
-                + "Tu pedido estará disponible para recojo aproximadamente en 2 a 3 días.\n"
+                + "Tu pedido estará disponible para recojo aproximadamente 2 días después de la compra; si la fecha cae domingo, pasa al lunes porque no atendemos los domingos. Si incluye preventa, el plazo se cuenta desde la fecha indicada.\n"
                 + "Una asesora del área de envíos se comunicará contigo para corroborar tus datos.\n\n"
                 + "¡Gracias por confiar en Kiments! 💛";
     }
@@ -847,11 +846,11 @@ public class AgentDeterministicCommerceService {
     private Outcome deliveryTimingContact() {
         return Outcome.message("Sí realizamos envíos por Shalom, hermosa 💛\n"
                 + "La fecha de despacho depende del producto:\n"
-                + "• Disponibilidad inmediata: significa que tiene stock y no es preventa. Despachamos por Shalom "
-                + "aproximadamente en 1 a 4 días, según el volumen de pedidos. Podría salir al día siguiente, pero no podemos garantizarlo.\n"
-                + "• Preventa: el despacho comienza desde la fecha indicada para el producto.\n\n"
-                + "No realizamos despachos el mismo día. Para recojo en tienda, un producto con disponibilidad inmediata "
-                + "está listo aproximadamente en 2 a 3 días desde la compra.\n\n"
+                + "• Disponibilidad inmediata: Kiments entrega el pedido a Shalom normalmente al día siguiente de la compra y, solo cuando hay mucho volumen, en 2 días.\n"
+                + "• Preventa: se espera la fecha indicada y desde ella se aplica la misma regla.\n\n"
+                + "No realizamos despachos el mismo día. Para recojo en tienda, el pedido está listo aproximadamente "
+                + "2 días después de la compra; si la fecha cae domingo, pasa al lunes porque no atendemos los domingos. "
+                + "En preventa, este plazo se cuenta desde la fecha indicada.\n\n"
                 + "Después del despacho, el tiempo de llegada depende de Shalom, por eso no podemos confirmar un día "
                 + "exacto de entrega.");
     }
@@ -947,8 +946,8 @@ public class AgentDeterministicCommerceService {
             return "Me indicaste que prefieres envío por Shalom. Este método requiere film protector obligatorio "
                     + "de S/2. ¿Confirmas que deseas recibirlo por Shalom?";
         }
-        return "¿Cómo deseas recibir tu pedido?\n🏬 Recojo en tienda: disponible aproximadamente en 2 a 3 días y sin costo adicional.\n"
-                + "🚌 Envío por Shalom: requiere film protector obligatorio de S/2.\n¿Cuál opción deseas?";
+        return "¿Cómo deseas recibir tu pedido?\n🏬 Recojo en tienda: disponible aproximadamente 2 días después de la compra; si cae domingo, pasa al lunes. Sin costo adicional.\n"
+                + "🚌 Envío por Shalom: normalmente se entrega a Shalom al día siguiente; solo con mucho volumen, en 2 días. Requiere film protector obligatorio de S/2.\n¿Cuál opción deseas?";
     }
 
     private String shalomDataRequest() {

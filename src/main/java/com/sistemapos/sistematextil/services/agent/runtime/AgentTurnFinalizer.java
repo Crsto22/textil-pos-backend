@@ -187,12 +187,12 @@ public class AgentTurnFinalizer {
         if (name.isBlank()) name = "Producto Kiments";
         if (product != null && product.preorder()) {
             if (product.preorderShippingDate() != null) {
-                return name + "\nPreventa: despachos a partir del "
-                        + CATALOG_DATE.format(product.preorderShippingDate()) + ".";
+                return name + "\nPreventa: desde el " + CATALOG_DATE.format(product.preorderShippingDate())
+                        + ", entrega a Shalom normalmente al día siguiente; solo con mucho volumen, en 2 días.";
             }
-            return name + "\nPreventa: despacho según la fecha indicada.";
+            return name + "\nPreventa: desde la fecha indicada, entrega a Shalom normalmente al día siguiente; solo con mucho volumen, en 2 días.";
         }
-        return name + "\nDisponible: despacho aproximado de 1 a 4 días según el volumen de pedidos.";
+        return name + "\nDisponible: entrega a Shalom normalmente al día siguiente; solo con mucho volumen, en 2 días.";
     }
 
     private String fileName(String source, AgentMediaRequest.MediaType type) {

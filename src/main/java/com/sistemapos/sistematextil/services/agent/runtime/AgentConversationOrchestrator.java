@@ -202,21 +202,23 @@ public class AgentConversationOrchestrator {
                         - El campo preorder de la evidencia es la unica autoridad para afirmar que un producto esta
                           en preventa. Si preorder=false, no lo llames preventa ni comuniques una antigua fecha de
                           despacho aunque la descripcion comercial conserve texto historico.
-                        - Para preventas, di "despachos a partir de [fecha]". La fecha es referencial y el despacho
-                          depende del volumen de pedidos. Nunca digas "llega el [fecha]" ni garantices que saldra
-                          exactamente ese dia.
-                        - Para recojo en tienda con disponibilidad inmediata, comunica 2 a 3 días desde la compra.
-                          Si incluye preventa, son 2 a 3 días desde la fecha indicada de la preventa. Este plazo es
-                          distinto del horario de atención y de los despachos por Shalom.
+                        - Para preventas, primero se espera la fecha verificada y desde ella se aplican los mismos
+                          plazos: entrega a Shalom normalmente al día siguiente o, solo con mucho volumen, en 2 días;
+                          y recojo aproximadamente 2 días después, pasando al lunes si cae domingo. Nunca digas
+                          "llega el [fecha]" ni prometas despacho o recojo el mismo día de la fecha de preventa.
+                        - Para recojo en tienda con disponibilidad inmediata, comunica aproximadamente 2 días después
+                          de la compra. Si cae domingo, pasa al lunes porque la tienda no atiende los domingos. Si incluye
+                          preventa, aplica la misma regla desde la fecha indicada. Nunca prometas recojo el mismo día ni
+                          antes de la preventa.
                         - Cuando NO existe orderDeliveryGuidance, se trata de una consulta previa a la compra: para
-                          disponibilidad inmediata, el plazo permitido es el despacho aproximado desde Kiments en
-                          1 a 4 días según el volumen de pedidos; para preventa, usa el inicio referencial verificado.
+                          disponibilidad inmediata, Kiments entrega el pedido a Shalom normalmente al día siguiente y,
+                          solo con mucho volumen, en 2 días; para preventa, aplica la misma regla desde el inicio verificado.
                           Nunca presentes esos plazos como tiempo de traslado o llegada: después del despacho, la
                           llegada depende de Shalom y no tiene un día exacto garantizado.
                         - Si existe orderDeliveryGuidance, redacta una respuesta breve y natural siguiendo solo su
-                          policy. READY_STOCK comunica despacho aproximado de 1 a 3 días según volumen y orden de
-                          atención. PREORDER dice solamente que el envío se realizará según la fecha indicada en la
-                          preventa; no escribas una fecha exacta. En ambos casos indica que una asesora del área de
+                          policy. READY_STOCK comunica entrega a Shalom normalmente al día siguiente y, solo con mucho
+                          volumen, en 2 días. PREORDER aplica esa misma regla desde la fecha indicada en la preventa,
+                          sin prometer una fecha de llegada. En ambos casos indica que una asesora del área de
                           envíos se comunicará para coordinar. NOT_LINKED_TO_AGENT no informa plazos ni promete
                           contacto: explica que no encontraste una venta registrada por este chat y comparte 936310946.
                         - Si la clienta solicita todos los productos de un grupo, incluye todos los productos presentes
@@ -569,20 +571,22 @@ public class AgentConversationOrchestrator {
                     + "de envios; comparte el 936310946 para que una asesora revise el pedido.";
         }
         if (evidence.contains("READY_STOCK")) {
-            if (response.contains("1 a 3") && containsShippingContact(response)) return "";
-            return "La venta fue registrada por la asistente y es de disponibilidad inmediata. Comunica despacho "
-                    + "aproximado de 1 a 3 dias segun volumen y orden, e indica que una asesora del area de envios "
+            if (response.contains("dia siguiente") && response.contains("2 dias")
+                    && containsShippingContact(response)) return "";
+            return "La venta fue registrada por la asistente y es de disponibilidad inmediata. Comunica que Kiments "
+                    + "entrega el pedido a Shalom normalmente al dia siguiente y, solo con mucho volumen, en 2 dias, e indica que una asesora del area de envios "
                     + "contactara a la clienta para coordinar. Redacta naturalmente, sin copiar una plantilla fija.";
         }
         if (evidence.contains("PREORDER")) {
             boolean exactDate = response.matches(".*\\b(enero|febrero|marzo|abril|mayo|junio|julio|agosto|"
                     + "septiembre|octubre|noviembre|diciembre)\\b.*")
                     || response.matches(".*\\b\\d{1,2}[/\\-]\\d{1,2}([/\\-]\\d{2,4})?\\b.*");
-            if (response.contains("fecha indicada") && containsShippingContact(response)
-                    && !response.contains("1 a 3") && !response.contains("1 a 4") && !exactDate) return "";
-            return "La venta registrada incluye preventa. Di solamente que el envio se realizara segun la fecha "
-                    + "indicada en la preventa y que una asesora del area de envios contactara a la clienta para "
-                    + "coordinar. No escribas una fecha exacta ni un plazo de dias. Redacta naturalmente.";
+            if (response.contains("fecha indicada") && response.contains("dia siguiente")
+                    && response.contains("2 dias") && containsShippingContact(response) && !exactDate) return "";
+            return "La venta registrada incluye preventa. Explica que primero se espera la fecha indicada y, desde "
+                    + "ella, Kiments entrega el pedido a Shalom normalmente al dia siguiente o, solo con mucho volumen, "
+                    + "en 2 dias. Indica tambien que una asesora del area de envios contactara a la clienta para "
+                    + "coordinar. No escribas una fecha exacta de llegada. Redacta naturalmente.";
         }
         return "";
     }

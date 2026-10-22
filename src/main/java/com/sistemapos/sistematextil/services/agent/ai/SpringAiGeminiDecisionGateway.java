@@ -182,8 +182,9 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
               llegaria para un evento. Usa intent=DELIVERY_METHOD, requiresHumanHelp=false y conserva en
               productReference el modelo mencionado para que Java consulte su preventa. Conserva una ciudad o
               destino mencionado en shalomDestination. Java comunicara que los productos con disponibilidad
-              inmediata se despachan aproximadamente en 1 a 4 dias segun el volumen de pedidos, o la fecha verificada
-              de inicio de despacho si es preventa. Ese plazo corresponde al despacho desde Kiments, nunca al tiempo
+              inmediata se entregan a Shalom normalmente al dia siguiente de la compra y, solo cuando hay mucho
+              volumen de pedidos, en 2 dias; nunca el mismo dia. Si es preventa, aplica la misma regla desde la fecha
+              verificada de inicio de despacho. Ese plazo corresponde al despacho desde Kiments, nunca al tiempo
               de traslado o llegada. No prometas un dia exacto de llegada, prioridad ni entrega: despues del despacho
               el tiempo depende de Shalom. Una fecha mencionada por la clienta, un live o TikTok no se confirma.
             - REFER_EXISTING_ORDER_DELIVERY: la clienta habla de su compra o pedido ya realizado y pregunta cuando

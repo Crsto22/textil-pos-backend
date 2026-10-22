@@ -301,8 +301,8 @@ public class AgentVerifiedGroundingService {
                     "saleId", guidance.saleId() == null ? "" : guidance.saleId(),
                     "policy", guidance.policy().name(),
                     "products", guidance.products(),
-                    "readyStockDispatch", "1 a 3 días según el volumen de pedidos y el orden de atención",
-                    "preorderDispatch", "según la fecha indicada en la preventa",
+                    "readyStockDispatch", "normalmente al día siguiente de la compra; solo con mucho volumen, en 2 días",
+                    "preorderDispatch", "la misma regla desde la fecha indicada en la preventa",
                     "advisorPhone", "936310946",
                     "shippingAreaWillContact", guidance.agentSaleFound()));
             return null;
@@ -318,16 +318,17 @@ public class AgentVerifiedGroundingService {
         AgentCatalogQueryService.ProductSummary product = unambiguousProduct(search, reference);
         if (product == null) return generic;
         if (!product.preorder() || product.preorderShippingDate() == null) {
-            return "Hermosa, el conjunto " + product.name() + " tiene disponibilidad inmediata. Su despacho desde "
-                    + "Kiments demora aproximadamente de 1 a 4 días, según el volumen de pedidos. Podría salir al día "
-                    + "siguiente, pero no podemos garantizarlo, y no realizamos despachos el mismo día. Después del "
+            return "Hermosa, el conjunto " + product.name() + " tiene disponibilidad inmediata. Kiments entrega el "
+                    + "pedido a Shalom normalmente al día siguiente de la compra y, solo cuando hay mucho volumen, "
+                    + "en 2 días. No realizamos despachos el mismo día. Después del "
                     + "despacho, el tiempo de llegada depende de Shalom, por eso no podemos confirmar un día exacto "
                     + "de entrega. 💛";
         }
 
-        return "Hermosa, el conjunto " + product.name() + " está en preventa y sus despachos comienzan a partir "
-                + "del " + DELIVERY_DATE.format(product.preorderShippingDate()) + ", según el volumen de pedidos. "
-                + "No es posible enviarlo antes de esa fecha. Después del despacho, el tiempo de llegada depende "
+        return "Hermosa, el conjunto " + product.name() + " está en preventa. Desde el "
+                + DELIVERY_DATE.format(product.preorderShippingDate()) + ", Kiments entrega el pedido a Shalom "
+                + "normalmente al día siguiente y, solo cuando hay mucho volumen, en 2 días. No es posible enviarlo "
+                + "antes de la fecha indicada ni el mismo día. Después del despacho, el tiempo de llegada depende "
                 + "de Shalom, por eso no podemos confirmar un día exacto de entrega. 💛";
     }
 
@@ -337,11 +338,12 @@ public class AgentVerifiedGroundingService {
                 : "a " + destination.trim() + " por Shalom";
         return "Sí realizamos envíos " + place + ", hermosa 💛\n"
                 + "La fecha de despacho depende del producto:\n"
-                + "• Disponibilidad inmediata: significa que tiene stock y no es preventa. Despachamos aproximadamente "
-                + "en 1 a 4 días, según el volumen de pedidos. Podría salir al día siguiente, pero no podemos garantizarlo.\n"
-                + "• Preventa: el despacho comienza desde la fecha indicada para el producto.\n\n"
-                + "No realizamos despachos el mismo día. Para recojo en tienda, un producto con disponibilidad inmediata "
-                + "está listo aproximadamente en 2 a 3 días desde la compra.\n\n"
+                + "• Disponibilidad inmediata: Kiments entrega el pedido a Shalom normalmente al día siguiente de la "
+                + "compra y, solo cuando hay mucho volumen, en 2 días.\n"
+                + "• Preventa: se espera la fecha indicada y desde ella se aplica la misma regla.\n\n"
+                + "No realizamos despachos el mismo día. Para recojo en tienda, el pedido está listo aproximadamente "
+                + "2 días después de la compra; si la fecha cae domingo, el recojo pasa al lunes porque la tienda no "
+                + "atiende los domingos. En preventa, este plazo se cuenta desde la fecha indicada.\n\n"
                 + "Después del despacho, el tiempo de llegada depende de Shalom, por eso no podemos confirmar un día "
                 + "exacto de entrega.";
     }

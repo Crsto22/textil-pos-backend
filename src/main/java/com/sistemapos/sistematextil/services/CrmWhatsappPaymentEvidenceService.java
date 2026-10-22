@@ -33,6 +33,7 @@ import org.springframework.web.server.ResponseStatusException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sistemapos.sistematextil.model.CrmWhatsappConversation;
+import com.sistemapos.sistematextil.model.CrmWhatsappArea;
 import com.sistemapos.sistematextil.model.CrmWhatsappAttentionQueue;
 import com.sistemapos.sistematextil.model.CrmWhatsappAgentEvent;
 import com.sistemapos.sistematextil.model.CrmWhatsappAgentSession;
@@ -919,17 +920,20 @@ public class CrmWhatsappPaymentEvidenceService {
     }
 
     private void requireCanRead(CrmWhatsappConversation conversation, Usuario actor) {
-        if (actor.getRol().esAdministrador()) return;
-        Integer assigned = conversation.getAssignedUser() == null ? null : conversation.getAssignedUser().getIdUsuario();
-        if (assigned != null && assigned.equals(actor.getIdUsuario())) return;
-        if (assigned == null && "ESPERA".equals(conversation.getStatus())) return;
+        boolean salesConversation = conversation != null && (conversation.getConnection() == null
+                || conversation.getConnection().getArea() == CrmWhatsappArea.SALES);
+        if (salesConversation && actor.getRol().permiteVentas()) return;
         throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No puedes acceder a esta conversacion");
     }
 
     private void requireCanOperate(CrmWhatsappConversation conversation, Usuario actor) {
         if (actor.getRol().esAdministrador()) return;
-        Integer assigned = conversation.getAssignedUser() == null ? null : conversation.getAssignedUser().getIdUsuario();
-        if (assigned == null || !assigned.equals(actor.getIdUsuario())) {
+        boolean salesConversation = conversation != null && (conversation.getConnection() == null
+                || conversation.getConnection().getArea() == CrmWhatsappArea.SALES);
+        if (!salesConversation || !actor.getRol().operaVentas()
+                || conversation.getAssignedUser() == null
+                || "RESUELTO".equals(conversation.getStatus())
+                || conversation.getAttentionQueue() == CrmWhatsappAttentionQueue.AGENT_ACTIVE) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Acepta el chat antes de operar");
         }
     }

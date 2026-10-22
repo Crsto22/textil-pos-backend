@@ -19,10 +19,10 @@ public class CrmWhatsappEventService {
 
     private final Map<String, Subscriber> subscribers = new ConcurrentHashMap<>();
 
-    public SseEmitter subscribe(Integer userId, boolean admin) {
+    public SseEmitter subscribe(Integer userId, boolean admin, boolean sharedSalesAccess) {
         String subscriberId = UUID.randomUUID().toString();
         SseEmitter emitter = new SseEmitter(EMITTER_TIMEOUT_MS);
-        Subscriber subscriber = new Subscriber(userId, admin, emitter);
+        Subscriber subscriber = new Subscriber(userId, admin, sharedSalesAccess, emitter);
         subscribers.put(subscriberId, subscriber);
         emitter.onCompletion(() -> subscribers.remove(subscriberId));
         emitter.onTimeout(() -> subscribers.remove(subscriberId));
@@ -116,14 +116,14 @@ public class CrmWhatsappEventService {
             boolean unassignedWaiting) {
         subscribers.forEach((subscriberId, subscriber) -> {
             Object payload = null;
-            if (subscriber.admin() || (assignedUserId != null && assignedUserId.equals(subscriber.userId()))) {
+            if (subscriber.sharedSalesAccess()
+                    || subscriber.admin()
+                    || (assignedUserId != null && assignedUserId.equals(subscriber.userId()))) {
                 payload = fullPayload;
             } else if (unassignedWaiting) {
                 payload = waitingPayload;
             }
-            if (payload == null) {
-                return;
-            }
+            if (payload == null) return;
             try {
                 synchronized (subscriber.emitter()) {
                     subscriber.emitter().send(SseEmitter.event().name("crm-event").data(payload));
@@ -149,6 +149,6 @@ public class CrmWhatsappEventService {
         });
     }
 
-    private record Subscriber(Integer userId, boolean admin, SseEmitter emitter) {
+    private record Subscriber(Integer userId, boolean admin, boolean sharedSalesAccess, SseEmitter emitter) {
     }
 }

@@ -24,6 +24,24 @@ public interface CrmWhatsappMessageRepository extends JpaRepository<CrmWhatsappM
     List<CrmWhatsappMessage> findByConversation_IdConversationOrderByCreatedAtAsc(Long idConversation);
     Optional<CrmWhatsappMessage> findFirstByWhatsappMessageId(String whatsappMessageId);
     Optional<CrmWhatsappMessage> findFirstByRelatedSaleIdOrderByIdMessageDesc(Integer relatedSaleId);
+    Optional<CrmWhatsappMessage> findFirstByConversation_IdConversationAndActor_IdUsuarioAndActivitySessionId(
+            Long conversationId, Integer actorUserId, String activitySessionId);
+
+    @Modifying(flushAutomatically = true)
+    @Query(value = """
+            INSERT IGNORE INTO crm_whatsapp_message
+                (id_conversation, direction, origin, actor_user_id, actor_name, activity_session_id,
+                 message_type, body, message_status, created_at)
+            VALUES
+                (:conversationId, 'SYSTEM', 'CRM_ACTIVITY', :actorUserId, :actorName, :sessionId,
+                 'TEXT', :body, 'sent', CURRENT_TIMESTAMP)
+            """, nativeQuery = true)
+    int insertVisitActivity(
+            @Param("conversationId") Long conversationId,
+            @Param("actorUserId") Integer actorUserId,
+            @Param("actorName") String actorName,
+            @Param("sessionId") String sessionId,
+            @Param("body") String body);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT m FROM CrmWhatsappMessage m WHERE m.idMessage = :id")

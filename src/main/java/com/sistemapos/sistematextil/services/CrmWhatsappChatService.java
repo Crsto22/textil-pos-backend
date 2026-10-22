@@ -200,6 +200,7 @@ public class CrmWhatsappChatService {
 
     public List<ConversationResponse> listarConversaciones(String status, Usuario usuarioSesion) {
         Usuario actor = requireCrmUser(usuarioSesion);
+        requireSalesChatAccess(actor);
         boolean admin = isAdmin(actor);
         String normalized = normalizeConversationStatus(status);
         List<CrmWhatsappConversation> conversations = switch (normalized) {
@@ -214,7 +215,7 @@ public class CrmWhatsappChatService {
 
     public SseEmitter suscribirEventos(Usuario usuarioSesion) {
         Usuario actor = requireCrmUser(usuarioSesion);
-        return eventService.subscribe(actor.getIdUsuario(), isAdmin(actor));
+        return eventService.subscribe(actor.getIdUsuario(), isAdmin(actor), canCollaborateInSales(actor));
     }
 
     @Transactional(readOnly = true)
@@ -227,6 +228,7 @@ public class CrmWhatsappChatService {
             int size,
             Usuario usuarioSesion) {
         Usuario actor = requireCrmUser(usuarioSesion);
+        requireSalesChatAccess(actor);
         boolean admin = isAdmin(actor);
         String normalizedView = clean(view).toUpperCase(Locale.ROOT);
         CrmWhatsappAttentionQueue requestedQueue = normalizeAttentionQueue(view);
@@ -357,6 +359,28 @@ public class CrmWhatsappChatService {
         return new MessagePageResponse(content, oldestId, newestId, hasMoreBefore);
     }
 
+    @Transactional
+    public MessageResponse registrarIngreso(Long conversationId, VisitRequest request, Usuario usuarioSesion) {
+        Usuario actor = requireCrmUser(usuarioSesion);
+        CrmWhatsappConversation conversation = requireConversation(conversationId);
+        requireCanReadMessages(conversation, actor);
+        String sessionId = clean(request == null ? null : request.sessionId());
+        if (!sessionId.matches("[A-Za-z0-9_-]{16,100}")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "sessionId invalido");
+        }
+        String actorName = fullName(actor);
+        int inserted = messageRepository.insertVisitActivity(
+                conversationId, actor.getIdUsuario(), actorName, sessionId,
+                actorName + " ingreso al chat.");
+        CrmWhatsappMessage activity = messageRepository
+                .findFirstByConversation_IdConversationAndActor_IdUsuarioAndActivitySessionId(
+                        conversationId, actor.getIdUsuario(), sessionId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "No se pudo registrar el ingreso"));
+        MessageResponse response = toMessageResponse(activity);
+        if (inserted > 0) publishRealtimeEvent("message.created", conversation, response);
+        return response;
+    }
+
     @Transactional(readOnly = true)
     public ConversationResponse obtenerConversacion(Long conversationId, Usuario usuarioSesion) {
         Usuario actor = requireCrmUser(usuarioSesion);
@@ -484,14 +508,10 @@ public class CrmWhatsappChatService {
             return toConversationResponse(conversation);
         }
 
-        Integer previousAssignedUserId = conversation.getAssignedUser().getIdUsuario();
         conversation.setAssignedUser(target);
         conversation.setAssignedAt(LocalDateTime.now());
         conversation = conversationRepository.save(conversation);
         ConversationResponse updated = toConversationResponse(conversation);
-        eventService.publishToUserAfterCommit(
-                new CrmRealtimeEvent("conversation.removed", conversation.getIdConversation(), updated, null),
-                previousAssignedUserId);
         publishRealtimeEvent("conversation.updated", conversation, null);
         return updated;
     }
@@ -854,8 +874,8 @@ public class CrmWhatsappChatService {
         if (request == null || request.idCliente() == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "idCliente es requerido");
         }
-        CrmWhatsappConversation conversation = asignarParaOperacion(conversationId, actor);
-        requireCanOperateAssigned(conversation, actor);
+        CrmWhatsappConversation conversation = requireConversation(conversationId);
+        requireCanCollaborate(conversation, actor);
         Cliente cliente = requireClienteEmpresa(request.idCliente(), actor);
         sincronizarClienteEnConversacion(conversation, cliente);
         conversationRepository.save(conversation);
@@ -865,8 +885,8 @@ public class CrmWhatsappChatService {
     @Transactional
     public QuickSaleContextResponse registrarYVincularCliente(Long conversationId, ClienteCreateRequest request, Usuario usuarioSesion) {
         Usuario actor = requireCrmUser(usuarioSesion);
-        CrmWhatsappConversation conversation = asignarParaOperacion(conversationId, actor);
-        requireCanOperateAssigned(conversation, actor);
+        CrmWhatsappConversation conversation = requireConversation(conversationId);
+        requireCanCollaborate(conversation, actor);
         Cliente cliente = crearClienteCrm(request, actor);
         sincronizarClienteEnConversacion(conversation, cliente);
         conversationRepository.save(conversation);
@@ -877,7 +897,7 @@ public class CrmWhatsappChatService {
     public QuickSaleContextResponse actualizarClienteConversacion(Long conversationId, ClienteUpdateRequest request, Usuario usuarioSesion) {
         Usuario actor = requireCrmUser(usuarioSesion);
         CrmWhatsappConversation conversation = requireConversation(conversationId);
-        requireCanOperateAssigned(conversation, actor);
+        requireCanCollaborate(conversation, actor);
         Cliente cliente = conversation.getCliente();
         if (cliente == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Primero registra un cliente");
@@ -1159,7 +1179,7 @@ public class CrmWhatsappChatService {
         }
         CrmWhatsappConversation conversation = conversationRepository.findForUpdateById(conversationId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Conversacion no encontrada"));
-        requireCanOperateAssigned(conversation, actor);
+        requireCanCollaborate(conversation, actor);
 
         Integer idSucursalVenta = resolverIdSucursalFiltroCrm(actor, conversation, request.idSucursal());
         ComprobanteConfig comprobante = requireComprobanteVenta(request.idComprobante());
@@ -1204,7 +1224,7 @@ public class CrmWhatsappChatService {
     public MessageResponse enviarMensaje(Long conversationId, SendMessageRequest request, Usuario usuarioSesion) {
         Usuario actor = requireCrmUser(usuarioSesion);
         CrmWhatsappConversation conversation = requireConversation(conversationId);
-        requireCanOperateAssigned(conversation, actor);
+        requireCanCollaborate(conversation, actor);
         String body = request == null ? "" : clean(request.message());
         if (body.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "message es requerido");
@@ -1231,6 +1251,7 @@ public class CrmWhatsappChatService {
         message.setConversation(conversation);
         message.setDirection("OUTGOING");
         message.setOrigin("HUMAN");
+        markHumanActor(message, actor);
         message.setMessageType("TEXT");
         message.setBody(body);
         message.setMessageStatus("sent");
@@ -1348,14 +1369,14 @@ public class CrmWhatsappChatService {
             String mimeType, String caption, Long replyToMessageId, Usuario usuarioSesion) {
         Usuario actor = requireCrmUser(usuarioSesion);
         CrmWhatsappConversation conversation = requireConversation(conversationId);
-        requireCanOperateAssigned(conversation, actor);
+        requireCanCollaborate(conversation, actor);
         if (replyToMessageId != null) resolveReplyMessage(conversation, replyToMessageId);
         return enviarMediaBytes(conversation, storageService.readBytes(sourceReference), fileName,
-                mimeType, caption, "HUMAN", true);
+                mimeType, caption, "HUMAN", true, actor);
     }
 
     private MessageResponse enviarMediaBytes(CrmWhatsappConversation conversation, byte[] bytes, String fileName,
-            String mimeType, String caption, String origin, boolean markAttended) {
+            String mimeType, String caption, String origin, boolean markAttended, Usuario actor) {
         if (bytes == null || bytes.length == 0 || bytes.length > 10 * 1024 * 1024) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La guia de tallas debe pesar hasta 10 MB");
         }
@@ -1379,6 +1400,7 @@ public class CrmWhatsappChatService {
             message.setConversation(conversation);
             message.setDirection("OUTGOING");
             message.setOrigin(origin);
+            if ("HUMAN".equals(origin)) markHumanActor(message, actor);
             message.setMessageType("IMAGE");
             message.setBody(clean(caption).isBlank() ? safeName : clean(caption));
             message.setMessageStatus("sent");
@@ -1411,7 +1433,7 @@ public class CrmWhatsappChatService {
         Usuario actor = requireCrmUser(usuarioSesion);
         CrmWhatsappConversation conversation = conversationRepository.findForUpdateById(conversationId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Conversacion no encontrada"));
-        requireCanOperateAssigned(conversation, actor);
+        requireCanCollaborate(conversation, actor);
         String format = clean(request == null ? null : request.format()).toUpperCase();
         if (!Set.of("PDF", "TICKET").contains(format)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Formato de comprobante invalido");
@@ -1439,11 +1461,11 @@ public class CrmWhatsappChatService {
             bytes = file.bytes();
             fileName = file.nombreArchivo();
         }
-        return enviarDocumentoVenta(conversation, bytes, fileName, saleId, format);
+        return enviarDocumentoVenta(conversation, bytes, fileName, saleId, format, actor);
     }
 
     private MessageResponse enviarDocumentoVenta(CrmWhatsappConversation conversation, byte[] bytes,
-            String fileName, Integer saleId, String format) {
+            String fileName, Integer saleId, String format, Usuario actor) {
         if (bytes == null || bytes.length == 0 || bytes.length > 10 * 1024 * 1024) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El comprobante debe pesar hasta 10 MB");
         }
@@ -1464,6 +1486,7 @@ public class CrmWhatsappChatService {
             message.setConversation(conversation);
             message.setDirection("OUTGOING");
             message.setOrigin("HUMAN");
+            markHumanActor(message, actor);
             message.setMessageType("DOCUMENT");
             message.setBody(safeName);
             message.setMessageStatus("sent");
@@ -1494,7 +1517,7 @@ public class CrmWhatsappChatService {
     public MessageResponse enviarMedia(Long conversationId, MultipartFile file, String caption, Long replyToMessageId, Usuario usuarioSesion) {
         Usuario actor = requireCrmUser(usuarioSesion);
         CrmWhatsappConversation conversation = requireConversation(conversationId);
-        requireCanOperateAssigned(conversation, actor);
+        requireCanCollaborate(conversation, actor);
         if (file == null || file.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "file es requerido");
         }
@@ -1531,6 +1554,7 @@ public class CrmWhatsappChatService {
             message.setConversation(conversation);
             message.setDirection("OUTGOING");
             message.setOrigin("HUMAN");
+            markHumanActor(message, actor);
             message.setMessageType(messageTypeFor(mimeType, fileName));
             message.setBody(clean(caption).isBlank() ? fileName : clean(caption));
             message.setMessageStatus("sent");
@@ -1586,7 +1610,10 @@ public class CrmWhatsappChatService {
     public MessageResponse eliminarMensaje(Long conversationId, Long messageId, Usuario usuarioSesion) {
         Usuario actor = requireCrmUser(usuarioSesion);
         CrmWhatsappConversation conversation = requireConversation(conversationId);
-        requireCanOperateAssigned(conversation, actor);
+        requireCanReadMessages(conversation, actor);
+        if (RESUELTO.equals(conversation.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Reabre la conversacion antes de operar");
+        }
         CrmWhatsappMessage message = messageRepository.findById(messageId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Mensaje no encontrado"));
         if (!message.getConversation().getIdConversation().equals(conversation.getIdConversation())) {
@@ -1594,6 +1621,11 @@ public class CrmWhatsappChatService {
         }
         if (!"OUTGOING".equals(message.getDirection())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Solo puedes eliminar mensajes enviados");
+        }
+        boolean authoredByActor = message.getActor() != null
+                && message.getActor().getIdUsuario().equals(actor.getIdUsuario());
+        if (!isAdmin(actor) && !isAssignedTo(conversation, actor) && !authoredByActor) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Solo puedes eliminar tus propios mensajes");
         }
         if (message.getDeletedAt() != null) {
             return toMessageResponse(message);
@@ -2536,6 +2568,11 @@ public class CrmWhatsappChatService {
             String type,
             CrmWhatsappConversation conversation,
             MessageResponse message) {
+        if (!isSalesConversation(conversation)) {
+            applicationEventPublisher.publishEvent(
+                    new CrmWarehouseConversationEvent(conversation.getIdConversation()));
+            return;
+        }
         ConversationResponse fullConversation = toConversationResponse(conversation, false);
         ConversationResponse waitingConversation = toConversationResponse(conversation, true);
         CrmRealtimeEvent fullEvent = new CrmRealtimeEvent(
@@ -2554,16 +2591,6 @@ public class CrmWhatsappChatService {
                 waitingEvent,
                 assignedUser == null ? null : assignedUser.getIdUsuario(),
                 !RESUELTO.equals(conversation.getStatus()) && assignedUser == null);
-        if (assignedUser != null) {
-            CrmRealtimeEvent revokedEvent = new CrmRealtimeEvent(
-                    "conversation.removed",
-                    conversation.getIdConversation(),
-                    fullConversation,
-                    null);
-            eventService.publishToUnassignedUsersAfterCommit(
-                    revokedEvent,
-                    assignedUser.getIdUsuario());
-        }
     }
 
     private ConversationResponse toConversationResponse(CrmWhatsappConversation conversation, boolean hidePreview) {
@@ -2595,6 +2622,9 @@ public class CrmWhatsappChatService {
                 : conversation.getLastMessageType();
         return new ConversationResponse(
                 conversation.getIdConversation(),
+                conversation.getConnection() == null || conversation.getConnection().getArea() == null
+                        ? CrmWhatsappArea.SALES.name()
+                        : conversation.getConnection().getArea().name(),
                 conversation.getPhone(),
                 displayPhone,
                 conversation.getWhatsappUsername(),
@@ -2749,6 +2779,8 @@ public class CrmWhatsappChatService {
                         : "/api/crm/whatsapp/messages/" + message.getIdMessage() + "/media",
                 replyTo,
                 message.getRelatedSaleId(),
+                message.getActor() == null ? null : message.getActor().getIdUsuario(),
+                message.getActorName(),
                 deleted);
     }
 
@@ -2791,6 +2823,8 @@ public class CrmWhatsappChatService {
                         : "/api/crm/whatsapp/messages/" + message.getIdMessage() + "/media",
                 quoted == null ? null : toQuoteResponse(quoted),
                 message.getRelatedSaleId(),
+                message.getActor() == null ? null : message.getActor().getIdUsuario(),
+                message.getActorName(),
                 deleted);
     }
 
@@ -2845,18 +2879,7 @@ public class CrmWhatsappChatService {
             Usuario actor,
             boolean admin,
             String requestedStatus) {
-        if (admin) {
-            return true;
-        }
-        boolean unassignedWaiting = !RESUELTO.equals(conversation.getStatus())
-                && conversation.getAssignedUser() == null;
-        if (ESPERA.equals(requestedStatus)) {
-            return unassignedWaiting;
-        }
-        if ("ALL".equals(requestedStatus) && unassignedWaiting) {
-            return true;
-        }
-        return isAssignedTo(conversation, actor);
+        return isSalesConversation(conversation) && canCollaborateInSales(actor);
     }
 
     private boolean shouldHideWaitingPreview(CrmWhatsappConversation conversation, boolean admin) {
@@ -2864,16 +2887,27 @@ public class CrmWhatsappChatService {
     }
 
     private void requireCanReadMessages(CrmWhatsappConversation conversation, Usuario actor) {
-        CrmWhatsappAttentionQueue queue = effectiveAttentionQueue(conversation);
-        boolean sharedUnassignedQueue = conversation.getAssignedUser() == null
-                && (queue == CrmWhatsappAttentionQueue.ADVISOR_REQUIRED
-                    || queue == CrmWhatsappAttentionQueue.AGENT_ACTIVE);
-        if (isAdmin(actor)
-                || isAssignedTo(conversation, actor)
-                || sharedUnassignedQueue) {
+        if (isSalesConversation(conversation) && canCollaborateInSales(actor)) {
             return;
         }
         throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No puedes ver esta conversacion");
+    }
+
+    private void requireCanCollaborate(CrmWhatsappConversation conversation, Usuario actor) {
+        requireCanReadMessages(conversation, actor);
+        if (RESUELTO.equals(conversation.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Reabre la conversacion antes de operar");
+        }
+        if (conversation.getAssignedUser() == null
+                || effectiveAttentionQueue(conversation) == CrmWhatsappAttentionQueue.AGENT_ACTIVE) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Acepta el chat antes de responder");
+        }
+    }
+
+    private void markHumanActor(CrmWhatsappMessage message, Usuario actor) {
+        if (message == null || actor == null) return;
+        message.setActor(actor);
+        message.setActorName(fullName(actor));
     }
 
     private void requireCanOperateAssigned(CrmWhatsappConversation conversation, Usuario actor) {
@@ -2884,6 +2918,21 @@ public class CrmWhatsappChatService {
             return;
         }
         throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No puedes operar esta conversacion");
+    }
+
+    private boolean canCollaborateInSales(Usuario actor) {
+        return actor != null && actor.getRol() != null && actor.getRol().permiteVentas();
+    }
+
+    private void requireSalesChatAccess(Usuario actor) {
+        if (!canCollaborateInSales(actor)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No tienes acceso al chat de ventas");
+        }
+    }
+
+    private boolean isSalesConversation(CrmWhatsappConversation conversation) {
+        return conversation != null && (conversation.getConnection() == null
+                || conversation.getConnection().getArea() == CrmWhatsappArea.SALES);
     }
 
     private void requireCanReopen(CrmWhatsappConversation conversation, Usuario actor) {
@@ -3217,6 +3266,7 @@ public class CrmWhatsappChatService {
 
     public record ConversationResponse(
             Long id,
+            String area,
             String phone,
             String phoneNumber,
             String whatsappUsername,
@@ -3351,13 +3401,15 @@ public class CrmWhatsappChatService {
             String mediaUrl,
             QuoteResponse replyTo,
             Integer relatedSaleId,
+            Integer sentByUserId,
+            String sentByName,
             boolean deleted) {
         public MessageResponse(
                 Long id, String direction, String origin, String messageType, String body, String status,
                 LocalDateTime createdAt, String mediaMimeType, String mediaFileName, String mediaStoragePath,
                 String mediaUrl, QuoteResponse replyTo, boolean deleted) {
             this(id, direction, origin, messageType, body, status, createdAt, mediaMimeType, mediaFileName,
-                    mediaStoragePath, mediaUrl, replyTo, null, deleted);
+                    mediaStoragePath, mediaUrl, replyTo, null, null, null, deleted);
         }
     }
 
@@ -3383,6 +3435,9 @@ public class CrmWhatsappChatService {
         public SendMessageRequest(String message, Long replyToMessageId) {
             this(message, replyToMessageId, null);
         }
+    }
+
+    public record VisitRequest(String sessionId) {
     }
 
     public record ReceiptRequest(String format) {

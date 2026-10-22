@@ -58,6 +58,10 @@ public class CrmWhatsappSchemaMigration implements ApplicationRunner {
                       id_message BIGINT NOT NULL AUTO_INCREMENT,
                       id_conversation BIGINT NOT NULL,
                       direction VARCHAR(20) NOT NULL,
+                      origin VARCHAR(30) NOT NULL DEFAULT 'EXTERNAL',
+                      actor_user_id INT NULL,
+                      actor_name VARCHAR(180) NULL,
+                      activity_session_id VARCHAR(100) NULL,
                       message_type VARCHAR(20) NOT NULL DEFAULT 'TEXT',
                       body TEXT NULL,
                       whatsapp_message_id VARCHAR(120) NULL,
@@ -77,9 +81,12 @@ public class CrmWhatsappSchemaMigration implements ApplicationRunner {
                       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       PRIMARY KEY (id_message),
                       UNIQUE KEY uk_crm_whatsapp_message_wamid (whatsapp_message_id),
+                      UNIQUE KEY uk_crm_message_activity_session (id_conversation, actor_user_id, activity_session_id),
                       KEY idx_crm_whatsapp_message_conversation_created (id_conversation, created_at),
                       CONSTRAINT fk_crm_whatsapp_message_conversation
-                        FOREIGN KEY (id_conversation) REFERENCES crm_whatsapp_conversation (id_conversation)
+                        FOREIGN KEY (id_conversation) REFERENCES crm_whatsapp_conversation (id_conversation),
+                      CONSTRAINT fk_crm_whatsapp_message_actor
+                        FOREIGN KEY (actor_user_id) REFERENCES usuario (id_usuario) ON DELETE SET NULL
                     )
                     """);
             statement.execute("""
@@ -659,6 +666,23 @@ public class CrmWhatsappSchemaMigration implements ApplicationRunner {
                     "VARCHAR(20) NULL");
             addColumnIfMissing(connection, statement, "crm_whatsapp_message", "audio_transcription_confidence",
                     "INT NULL");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_message", "actor_user_id", "INT NULL");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_message", "actor_name", "VARCHAR(180) NULL");
+            addColumnIfMissing(connection, statement, "crm_whatsapp_message", "activity_session_id", "VARCHAR(100) NULL");
+            if (!indexExists(connection, "crm_whatsapp_message", "uk_crm_message_activity_session")) {
+                statement.execute("""
+                        ALTER TABLE crm_whatsapp_message
+                        ADD UNIQUE KEY uk_crm_message_activity_session
+                          (id_conversation, actor_user_id, activity_session_id)
+                        """);
+            }
+            if (!foreignKeyExists(connection, "crm_whatsapp_message", "fk_crm_whatsapp_message_actor")) {
+                statement.execute("""
+                        ALTER TABLE crm_whatsapp_message
+                        ADD CONSTRAINT fk_crm_whatsapp_message_actor
+                          FOREIGN KEY (actor_user_id) REFERENCES usuario (id_usuario) ON DELETE SET NULL
+                        """);
+            }
             if (!indexExists(connection, "crm_whatsapp_message", "idx_crm_message_sale_receipt")) {
                 statement.execute("""
                         ALTER TABLE crm_whatsapp_message

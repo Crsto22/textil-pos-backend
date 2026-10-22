@@ -186,9 +186,6 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
                     AND c.assignedUser IS NULL
                     AND (c.attentionQueue IS NULL
                          OR c.attentionQueue <> com.sistemapos.sistematextil.model.CrmWhatsappAttentionQueue.AGENT_ACTIVE)))
-              AND (:isAdmin = true
-                   OR (c.assignedUser IS NOT NULL AND c.assignedUser.idUsuario = :idUsuario)
-                   OR (c.status <> 'RESUELTO' AND c.assignedUser IS NULL))
               AND (:term IS NULL
                    OR LOWER(COALESCE(c.contactName, '')) LIKE LOWER(CONCAT('%', :term, '%'))
                    OR LOWER(COALESCE(c.whatsappUsername, '')) LIKE LOWER(CONCAT('%', :term, '%'))
@@ -239,9 +236,6 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
                     AND c.assignedUser IS NULL
                     AND (c.attentionQueue IS NULL
                          OR c.attentionQueue <> com.sistemapos.sistematextil.model.CrmWhatsappAttentionQueue.AGENT_ACTIVE)))
-              AND (:isAdmin = true
-                   OR (c.assignedUser IS NOT NULL AND c.assignedUser.idUsuario = :idUsuario)
-                   OR (c.status <> 'RESUELTO' AND c.assignedUser IS NULL))
               AND (:term IS NULL
                    OR LOWER(COALESCE(c.contactName, '')) LIKE LOWER(CONCAT('%', :term, '%'))
                    OR LOWER(COALESCE(c.whatsappUsername, '')) LIKE LOWER(CONCAT('%', :term, '%'))
@@ -281,9 +275,6 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
                         SELECT 1 FROM CrmWhatsappMessage ghostMessage
                         WHERE ghostMessage.conversation = c AND ghostMessage.direction = 'INCOMING'
                    ))
-              AND (:isAdmin = true
-                   OR (c.assignedUser IS NOT NULL AND c.assignedUser.idUsuario = :idUsuario)
-                   OR (c.status <> 'RESUELTO' AND c.assignedUser IS NULL))
               AND (:term IS NULL
                    OR LOWER(COALESCE(c.contactName, '')) LIKE LOWER(CONCAT('%', :term, '%'))
                    OR LOWER(COALESCE(c.whatsappUsername, '')) LIKE LOWER(CONCAT('%', :term, '%'))

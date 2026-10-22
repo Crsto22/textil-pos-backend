@@ -38,6 +38,16 @@ public class CrmWhatsappMessage {
     @Column(name = "origin", nullable = false, length = 30)
     private String origin;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "actor_user_id")
+    private Usuario actor;
+
+    @Column(name = "actor_name", length = 180)
+    private String actorName;
+
+    @Column(name = "activity_session_id", length = 100)
+    private String activitySessionId;
+
     @Column(name = "message_type", nullable = false, length = 20)
     private String messageType;
 

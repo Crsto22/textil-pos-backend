@@ -61,6 +61,7 @@ import com.sistemapos.sistematextil.services.CrmWhatsappChatService.LinkClienteR
 import com.sistemapos.sistematextil.services.CrmWhatsappChatService.SendMessageRequest;
 import com.sistemapos.sistematextil.services.CrmWhatsappChatService.ReceiptRequest;
 import com.sistemapos.sistematextil.services.CrmWhatsappChatService.TransferRequest;
+import com.sistemapos.sistematextil.services.CrmWhatsappChatService.VisitRequest;
 import com.sistemapos.sistematextil.services.CrmWhatsappChatService.WebhookRequest;
 import com.sistemapos.sistematextil.util.cliente.ClienteCreateRequest;
 import com.sistemapos.sistematextil.util.cliente.ClienteUpdateRequest;
@@ -374,6 +375,14 @@ public class CrmWhatsappController {
                 afterId,
                 limit,
                 currentUser(authentication)));
+    }
+
+    @PostMapping("/conversations/{id}/visits")
+    public ResponseEntity<?> registrarIngreso(
+            @PathVariable("id") Long id,
+            @RequestBody VisitRequest request,
+            Authentication authentication) {
+        return ResponseEntity.ok(crmWhatsappChatService.registrarIngreso(id, request, currentUser(authentication)));
     }
 
     @GetMapping("/conversations/{id}")

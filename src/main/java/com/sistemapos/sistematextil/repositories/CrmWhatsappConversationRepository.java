@@ -20,6 +20,26 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
     Optional<CrmWhatsappConversation> findByConnection_IdConnectionAndPhone(Long connectionId, String phone);
     List<CrmWhatsappConversation> findByConnection_IdConnection(Long connectionId);
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            SELECT c
+            FROM CrmWhatsappConversation c
+            WHERE c.connection.idConnection = :connectionId
+              AND c.connection.area = com.sistemapos.sistematextil.model.CrmWhatsappArea.SHIPPING
+              AND (c.phoneNumber = :phoneNumber
+                   OR c.whatsappUsername = :phoneNumber
+                   OR c.phone = :canonicalChatId)
+            ORDER BY CASE WHEN c.phone = :canonicalChatId THEN 0
+                          WHEN c.cliente IS NOT NULL THEN 1
+                          ELSE 2 END,
+                     c.idConversation ASC
+            """)
+    List<CrmWhatsappConversation> findShippingIdentityCandidatesForUpdate(
+            @Param("connectionId") Long connectionId,
+            @Param("phoneNumber") String phoneNumber,
+            @Param("canonicalChatId") String canonicalChatId,
+            Pageable pageable);
+
     @Query(value = """
             SELECT c
             FROM CrmWhatsappConversation c

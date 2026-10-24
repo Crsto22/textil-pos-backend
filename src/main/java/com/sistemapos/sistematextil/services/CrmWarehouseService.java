@@ -269,11 +269,19 @@ public class CrmWarehouseService {
         String phone = contactPhone(order);
         if (phone.isBlank()) return;
         CrmWhatsappConnection connection = shippingConnection(actor);
-        conversationRepository.findByConnection_IdConnectionAndPhone(connection.getIdConnection(), chatId(phone))
+        findShippingConversation(connection.getIdConnection(), phone)
                 .ifPresent(conversation -> {
                     order.setShippingConversation(conversation);
                     orderRepository.save(order);
                 });
+    }
+
+    private java.util.Optional<CrmWhatsappConversation> findShippingConversation(Long connectionId, String phone) {
+        String canonicalChatId = chatId(phone);
+        return conversationRepository.findByConnection_IdConnectionAndPhone(connectionId, canonicalChatId)
+                .or(() -> conversationRepository.findShippingIdentityCandidatesForUpdate(
+                        connectionId, CrmWhatsappPhoneUtils.normalizePeruvianMobile(phone), canonicalChatId,
+                        PageRequest.of(0, 1)).stream().findFirst());
     }
 
     private CrmWhatsappConversation requireShippingConversation(CrmWarehouseOrder order, Usuario actor) {

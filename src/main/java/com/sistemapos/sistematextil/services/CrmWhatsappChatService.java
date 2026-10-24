@@ -37,6 +37,7 @@ import com.sistemapos.sistematextil.model.CrmWhatsappConversation;
 import com.sistemapos.sistematextil.model.CrmWhatsappAttentionQueue;
 import com.sistemapos.sistematextil.model.CrmWhatsappAgentSession;
 import com.sistemapos.sistematextil.model.CrmWhatsappArea;
+import com.sistemapos.sistematextil.model.CrmWhatsappConnection;
 import com.sistemapos.sistematextil.model.CrmWhatsappConversationTag;
 import com.sistemapos.sistematextil.model.CrmWhatsappFilmAddon;
 import com.sistemapos.sistematextil.model.CrmWhatsappFulfillment;
@@ -1744,13 +1745,9 @@ public class CrmWhatsappChatService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Conexion de WhatsApp no reconocida");
         }
 
-        // The bridge can deliver consecutive events for a new chat on different
-        // request threads. Create the row atomically, then serialize updates for
-        // this connection and phone so both WhatsApp areas stay independent.
-        conversationRepository.insertIfAbsent(from, whatsappConnection.getIdConnection());
-        CrmWhatsappConversation conversation = conversationRepository
-                .findForUpdateByConnectionAndPhone(whatsappConnection.getIdConnection(), from)
-                .orElseThrow(() -> new IllegalStateException("No se pudo crear la conversacion de WhatsApp"));
+        String phoneNumber = normalizeCrmPhoneNumber(request.phoneNumber());
+        CrmWhatsappConversation conversation = findOrCreateWebhookConversation(
+                whatsappConnection, from, phoneNumber);
 
         if (request.messageId() != null
                 && messageRepository.findFirstByWhatsappMessageId(request.messageId()).isPresent()) {
@@ -1761,7 +1758,6 @@ public class CrmWhatsappChatService {
 
         Long connectionId = conversation.getConnection() == null
                 ? null : conversation.getConnection().getIdConnection();
-        String phoneNumber = normalizeCrmPhoneNumber(request.phoneNumber());
         String incomingPhone = !phoneNumber.isBlank() ? phoneNumber : from;
         boolean shippingConversation = whatsappConnection.getArea() == CrmWhatsappArea.SHIPPING;
         boolean historical = Boolean.TRUE.equals(request.historical());
@@ -1880,13 +1876,10 @@ public class CrmWhatsappChatService {
             return;
         }
 
-        conversationRepository.insertIfAbsent(phone, connection.getIdConnection());
-        CrmWhatsappConversation conversation = conversationRepository
-                .findForUpdateByConnectionAndPhone(connection.getIdConnection(), phone)
-                .orElseThrow(() -> new IllegalStateException("No se pudo sincronizar la conversacion de WhatsApp"));
+        String phoneNumber = normalizeCrmPhoneNumber(request.phoneNumber());
+        CrmWhatsappConversation conversation = findOrCreateWebhookConversation(connection, phone, phoneNumber);
         conversation.setConnection(connection);
 
-        String phoneNumber = normalizeCrmPhoneNumber(request.phoneNumber());
         if (!phoneNumber.isBlank()) conversation.setPhoneNumber(phoneNumber);
         String username = clean(request.username());
         if (!username.isBlank()) conversation.setWhatsappUsername(username);
@@ -1901,6 +1894,26 @@ public class CrmWhatsappChatService {
         }
         conversation = conversationRepository.save(conversation);
         applicationEventPublisher.publishEvent(new CrmWarehouseConversationEvent(conversation.getIdConversation()));
+    }
+
+    private CrmWhatsappConversation findOrCreateWebhookConversation(
+            CrmWhatsappConnection connection,
+            String chatId,
+            String phoneNumber) {
+        if (connection.getArea() == CrmWhatsappArea.SHIPPING && !phoneNumber.isBlank()) {
+            String canonicalChatId = "51" + phoneNumber + "@s.whatsapp.net";
+            CrmWhatsappConversation existing = conversationRepository.findShippingIdentityCandidatesForUpdate(
+                    connection.getIdConnection(), phoneNumber, canonicalChatId, PageRequest.of(0, 1)).stream()
+                    .findFirst().orElse(null);
+            if (existing != null) return existing;
+        }
+
+        // The bridge can deliver consecutive events for a new chat on different
+        // request threads. Create the row atomically, then serialize updates for
+        // this connection and technical WhatsApp identity.
+        conversationRepository.insertIfAbsent(chatId, connection.getIdConnection());
+        return conversationRepository.findForUpdateByConnectionAndPhone(connection.getIdConnection(), chatId)
+                .orElseThrow(() -> new IllegalStateException("No se pudo crear la conversacion de WhatsApp"));
     }
 
     private void routeIncomingConversation(CrmWhatsappConversation conversation, boolean agentHandlesIncoming) {

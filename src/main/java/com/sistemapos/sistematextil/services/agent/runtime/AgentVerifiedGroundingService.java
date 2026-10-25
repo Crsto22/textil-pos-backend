@@ -65,6 +65,9 @@ public class AgentVerifiedGroundingService {
     private static final int MAX_PRODUCT_COLOR_GALLERY_IMAGES = 8;
     private static final int MAX_INITIAL_CATALOG_IMAGES = 8;
     private static final int MAX_KNOWLEDGE_QUESTION_LENGTH = 500;
+    private static final String PRODUCTS_URL = "https://kiments.com.pe/productos";
+    private static final String GENERIC_LIVE_PRODUCT_MESSAGE = "\u00a1Claro! \uD83D\uDE0A Puedes revisar nuestros productos aqu\u00ed:\n"
+            + PRODUCTS_URL + "\nDime el nombre del conjunto que buscas y te ayudar\u00e9 a elegir el color y la talla.";
     private static final Pattern COMPONENT_WITH_SIZE = Pattern.compile(
             "(?iu)\\b(blazer|saco|chaqueta|chaleco|top|blusa|camisa|polo|casaca|pantal[oó]n|falda|short|"
                     + "parte\\s+de\\s+arriba|parte\\s+superior|parte\\s+de\\s+abajo|parte\\s+inferior)\\b"
@@ -137,6 +140,12 @@ public class AgentVerifiedGroundingService {
         }
         decision = enforceHumanHandoffRules(decision);
         decision = normalizeFreshRetailPurchase(decision, conversation, state);
+        boolean genericLiveProductLookup = isGenericLiveProductLookup(conversation);
+        if (genericLiveProductLookup) {
+            decision = decision.withIntentAndCommercialAction(
+                    AgentDecisionIntent.OTHER, AgentCommercialAction.NONE)
+                    .withRequiresHumanHelp(false);
+        }
         if (commerce != null) {
             decision = commerce.normalizeShalomAgencyRefinement(sessionId, decision);
         }
@@ -152,7 +161,12 @@ public class AgentVerifiedGroundingService {
         evidence.put("decision", decision);
         List<AgentMediaRequest> media = new ArrayList<>();
         boolean mutationExecuted = false;
-        String customerMessage = null;
+        String customerMessage = genericLiveProductLookup ? GENERIC_LIVE_PRODUCT_MESSAGE : null;
+        if (genericLiveProductLookup) {
+            evidence.put("genericLiveProductLookup", Map.of(
+                    "productsUrl", PRODUCTS_URL,
+                    "askForProductName", true));
+        }
 
         boolean deliveryTiming = decision.commercialAction() == AgentCommercialAction.SHARE_DELIVERY_TIMING_CONTACT
                 || decision.commercialAction() == AgentCommercialAction.REFER_EXISTING_ORDER_DELIVERY;
@@ -160,7 +174,7 @@ public class AgentVerifiedGroundingService {
             customerMessage = groundDeliveryTiming(sessionId, jobId, decision, ordinal, evidence);
         }
 
-        var commercial = commerce == null || deliveryTiming
+        var commercial = commerce == null || deliveryTiming || genericLiveProductLookup
                 ? AgentDeterministicCommerceService.Outcome.notHandled()
                 : commerce.execute(sessionId, jobId, decision);
         if (commercial.handled()) {
@@ -200,7 +214,7 @@ public class AgentVerifiedGroundingService {
             groundCatalog(sessionId, jobId, decision, conversation, ordinal, evidence, media);
         } else if (!commercial.handled()
                 && decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY) {
-            groundProductAvailability(sessionId, jobId, decision, ordinal, evidence);
+            groundProductAvailability(sessionId, jobId, decision, ordinal, evidence, media);
         } else if (!commercial.handled()) switch (decision.intent()) {
             case PRODUCT_SEARCH, PRODUCT_DETAILS -> groundCatalog(
                     sessionId, jobId, decision, conversation, ordinal, evidence, media);
@@ -369,8 +383,20 @@ public class AgentVerifiedGroundingService {
         return decision;
     }
 
+    boolean isGenericLiveProductLookup(String conversation) {
+        String input = normalize(currentGroupedInput(conversation));
+        boolean mentionsLiveChannel = input.matches(".*\\b(live|tiktok|transmision|transmitiendo)\\b.*")
+                || input.contains("en vivo");
+        boolean explicitlyRequestsPromotion = input.matches(
+                ".*\\b(promocion|promociones|promo|promos|oferta|ofertas|descuento|descuentos|combo|combos)\\b.*");
+        boolean refersToAProduct = input.matches(
+                ".*\\b(conjunto|producto|modelo|prenda|ropa)\\b.*")
+                || input.matches(".*\\blo\\s+(?:del|de la)\\s+(?:live|transmision)\\b.*");
+        return mentionsLiveChannel && refersToAProduct && !explicitlyRequestsPromotion;
+    }
+
     private void groundProductAvailability(Long sessionId, Long jobId, AgentConversationDecision decision,
-            AtomicInteger ordinal, Map<String, Object> evidence) {
+            AtomicInteger ordinal, Map<String, Object> evidence, List<AgentMediaRequest> media) {
         List<String> references = decision.productReferences() == null
                 ? new ArrayList<>() : new ArrayList<>(decision.productReferences());
         if (references.isEmpty() && decision.productReference() != null
@@ -407,6 +433,10 @@ public class AgentVerifiedGroundingService {
 
         List<ProductAvailabilityView> availability = new ArrayList<>();
         for (var product : products.values()) {
+            if (decision.sizeReference() != null && !decision.sizeReference().isBlank()) {
+                queueAutomaticSizeGuide(sessionId, jobId, product.productId(), product.name(),
+                        ordinal, evidence, media);
+            }
             VariantResult variants = verified(sessionId, jobId, ordinal,
                     "consultar_variantes", nullableMap("productoId", product.productId(), "color",
                             decision.colorReference(), "talla", decision.sizeReference()),
@@ -615,6 +645,8 @@ public class AgentVerifiedGroundingService {
                 "agregar_producto_carrito", Map.of("varianteId", variantId, "cantidad", quantity),
                 CartResult.class, () -> cart.addProduct(sessionId, variantId, quantity, operationId));
         evidence.put("cartOperation", Map.of("executed", true, "result", result));
+        queueAutomaticSizeGuide(sessionId, jobId, selected.productId(), selected.name(),
+                ordinal, evidence, media);
         queueVerifiedCartColorImage(sessionId, jobId, selected.productId(), selected.name(),
                 variants.variants().getFirst().color(), ordinal, evidence, media);
         String message = commerce == null
@@ -644,6 +676,7 @@ public class AgentVerifiedGroundingService {
             String operation="agent-job-"+jobId+":verified-add-product:"+(index++);
             result=verified(sessionId,jobId,ordinal,"agregar_producto_carrito",Map.of("varianteId",variantId,"cantidad",quantity),
                     CartResult.class,()->cart.addProduct(sessionId,variantId,quantity,operation));
+            queueAutomaticSizeGuide(sessionId,jobId,product.productId(),product.name(),ordinal,evidence,media);
             imageCandidates.add(new CartImageCandidate(product.productId(),product.name(),variants.variants().getFirst().color()));
         }
         evidence.put("cartOperation",Map.of("executed",true,"result",result));
@@ -673,6 +706,26 @@ public class AgentVerifiedGroundingService {
                         && !images.colorImages().isEmpty()));
         if (images != null && images.colorImages() != null && !images.colorImages().isEmpty()) {
             media.add(new AgentMediaRequest(MediaType.PRODUCT_IMAGE, productId, requestedColor, true));
+        }
+    }
+
+    private void queueAutomaticSizeGuide(Long sessionId, Long jobId, Integer productId,
+            String productName, AtomicInteger ordinal, Map<String, Object> evidence,
+            List<AgentMediaRequest> media) {
+        if (productId == null || media.stream().anyMatch(item -> item.type() == MediaType.SIZE_GUIDE
+                && productId.equals(item.productId()))) return;
+        ProductDetail detail = verified(sessionId, jobId, ordinal,
+                "obtener_producto", Map.of("productoId", productId), ProductDetail.class,
+                () -> catalog.getProduct(sessionId, productId));
+        boolean available = detail != null && detail.sizeGuideUrl() != null
+                && !detail.sizeGuideUrl().isBlank();
+        evidence.put("automaticSizeGuide" + productId, Map.of(
+                "productId", productId,
+                "productName", productName == null ? "" : productName,
+                "included", available,
+                "suppressIfAlreadySent", true));
+        if (available) {
+            media.add(new AgentMediaRequest(MediaType.SIZE_GUIDE, productId, null, true));
         }
     }
 

@@ -60,6 +60,43 @@ import com.sistemapos.sistematextil.services.agent.promotion.AgentPromotionQuery
 
 class AgentVerifiedGroundingServiceTest {
     @Test
+    void redirectsGenericLiveProductRequestToTheProductsPageEvenIfGeminiCallsItAPromotion() {
+        AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
+        AgentPromotionQueryService promotions = mock(AgentPromotionQueryService.class);
+        AgentConversationDecision mistaken = new AgentConversationDecision(
+                AgentDecisionIntent.PROMOTION_SEARCH, "ver conjunto del live", "", "", "", 0, "",
+                List.of(), AgentCartAction.NONE, AgentCommercialAction.SHOW_PROMOTIONS,
+                "", "", "", "", "", "", "", "",
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL, 90, false);
+        String conversation = "Buenas noches, quisiera el conjunto que estan transmitiendo en vivo";
+        when(decisions.interpret(4L, conversation)).thenReturn(
+                new AgentInterpretationResult("GEMINI", "model", "DB", 10, 0, mistaken));
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(
+                decisions, mock(AgentCatalogQueryService.class), promotions,
+                mock(AgentKnowledgeRetriever.class), mock(AgentCartService.class), passThroughAudit());
+
+        var result = service.ground(4L, 9L, 30L, conversation);
+
+        assertEquals(AgentDecisionIntent.OTHER, result.decision().intent());
+        assertEquals(AgentCommercialAction.NONE, result.decision().commercialAction());
+        assertTrue(result.customerMessage().contains("https://kiments.com.pe/productos"));
+        assertTrue(result.customerMessage().contains("Dime el nombre del conjunto"));
+        verifyNoInteractions(promotions);
+    }
+
+    @Test
+    void keepsExplicitLivePromotionRequestsAsPromotions() {
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(
+                mock(AgentDecisionGateway.class), mock(AgentCatalogQueryService.class),
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
+                mock(AgentCartService.class), passThroughAudit());
+
+        assertFalse(service.isGenericLiveProductLookup(
+                "Quiero ver las promociones que mostraron en el live de TikTok"));
+        assertTrue(service.isGenericLiveProductLookup("Quiero el conjunto del live"));
+    }
+
+    @Test
     void ordinaryCommercialQuestionsNeverRequireHumanHandoff() {
         AgentConversationDecision mistaken = new AgentConversationDecision(
                 AgentDecisionIntent.BUSINESS_INFORMATION, "precio de chaqueta por separado", "", "", "", 0, "",
@@ -431,6 +468,8 @@ class AgentVerifiedGroundingServiceTest {
         when(catalog.searchProducts(9L, "EMMA", 20,
                 com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL)).thenReturn(
                 new ProductSearchResult("EMMA", 1, List.of(emma), false));
+        when(catalog.getProduct(9L, 46)).thenReturn(productWithGuide(
+                46, "ALICE LISO", "/guias/alice-liso.webp"));
 
         when(catalog.getVariants(9L, 46, "", "S")).thenReturn(new VariantResult(
                 46, "ALICE LISO", "", "S", List.of(
@@ -464,8 +503,10 @@ class AgentVerifiedGroundingServiceTest {
 
         assertEquals(AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY,
                 result.decision().commercialAction());
-        assertEquals(6, result.verifiedToolCalls());
-        assertTrue(result.media().isEmpty());
+        assertEquals(9, result.verifiedToolCalls());
+        assertEquals(List.of(46), result.media().stream()
+                .filter(item -> item.type() == MediaType.SIZE_GUIDE)
+                .map(item -> item.productId()).toList());
         assertNull(result.customerMessage());
         assertTrue(result.evidenceJson().contains("requestedVariantAvailability"));
         assertTrue(result.evidenceJson().contains("ALICE LISO"));
@@ -1230,6 +1271,8 @@ class AgentVerifiedGroundingServiceTest {
         when(catalog.getProductImage(9L, 45, "AZUL")).thenReturn(new ProductImageResult(
                 45, "BELEN", "AZUL", "/productos/belen.webp", null,
                 List.of(new ProductImage("AZUL", "/productos/belen-azul.webp", null, true))));
+        when(catalog.getProduct(9L, 45)).thenReturn(productWithGuide(
+                45, "BELEN", "/guias/belen.webp"));
         CartResult cartResult = new CartResult(70L, "DRAFT", "PEN", BigDecimal.valueOf(75),
                 BigDecimal.ZERO, BigDecimal.valueOf(75), List.of(), List.of());
         when(cart.addProduct(9L, 4501, 1, "agent-job-30:verified-add-product")).thenReturn(cartResult);
@@ -1240,9 +1283,12 @@ class AgentVerifiedGroundingServiceTest {
         var result = service.ground(4L, 9L, 30L, "Si deseo 1 unidad por favor");
 
         assertTrue(result.mutationExecuted());
-        assertEquals(6, result.verifiedToolCalls());
-        assertEquals(List.of(new com.sistemapos.sistematextil.services.agent.ai.AgentMediaRequest(
-                MediaType.PRODUCT_IMAGE, 45, "AZUL", true)), result.media());
+        assertEquals(7, result.verifiedToolCalls());
+        assertEquals(List.of(
+                new com.sistemapos.sistematextil.services.agent.ai.AgentMediaRequest(
+                        MediaType.SIZE_GUIDE, 45, null, true),
+                new com.sistemapos.sistematextil.services.agent.ai.AgentMediaRequest(
+                        MediaType.PRODUCT_IMAGE, 45, "AZUL", true)), result.media());
         assertTrue(result.evidenceJson().contains("\"executed\":true"));
         verify(cart).addProduct(9L, 4501, 1, "agent-job-30:verified-add-product");
     }

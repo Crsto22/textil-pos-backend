@@ -227,7 +227,11 @@ public class AgentConversationOrchestrator {
                           como galeria completa, ademas de responder con los productos reales de la evidencia. Redacta
                           naturalmente y continua ayudando a elegir o comprar; no conviertas esta regla en una plantilla.
                         - Cuando exista promotions, responde la consulta usando esa lista real. Solo puedes afirmar que
-                          no hay promociones cuando promotions este presente y su lista sea vacia.
+                          no hay promociones cuando promotions este presente y su lista sea vacia. Conserva la lista
+                          real de combos y agrega tambien https://kiments.com.pe/promociones para que la clienta pueda
+                          revisar la pagina completa.
+                        - Cuando exista genericLiveProductLookup, no lo trates como promociones ni inventes un modelo.
+                          Comparte https://kiments.com.pe/productos y pide el nombre del conjunto que busca.
                         - Si existe sizeRecommendationBusinessRule, el conjunto se vende en una sola talla: comunica
                           una unica talla para todas sus piezas y nunca propongas mezclar tallas. Si
                           sizeRecommendation.betweenSizes es true, explica el equilibrio entre las candidatas usando
@@ -319,7 +323,8 @@ public class AgentConversationOrchestrator {
         // Gemini redacta el texto, pero solo Java puede autorizar archivos. Esto evita
         // fotos repetidas o no solicitadas durante recomendaciones y reintentos.
         List<AgentMediaRequest> media = verifiedMedia(grounding.media());
-        String customerMessage = composeCustomerMessage(response, pendingReminderRequired);
+        String customerMessage = ensurePromotionsUrl(
+                grounding, composeCustomerMessage(response, pendingReminderRequired));
         GeneratedTurn turn = new GeneratedTurn(customerMessage, response.conversationSummary(),
                 advisorEnabled && grounding.decision().requiresHumanHelp(),
                 generated.provider(), generated.model(), generated.latencyMs(),
@@ -555,6 +560,18 @@ public class AgentConversationOrchestrator {
         return "La clienta solicito el catalogo o la lista general de productos. Conserva la lista real y agrega "
                 + "https://kiments.com.pe/productos como galeria completa. Redacta naturalmente y sigue ayudando "
                 + "con la compra; no uses una plantilla fija.";
+    }
+
+    static String ensurePromotionsUrl(AgentVerifiedGroundingService.Grounding grounding, String customerMessage) {
+        if (grounding == null || grounding.decision() == null) return customerMessage;
+        boolean promotionRequest = grounding.decision().commercialAction() == AgentCommercialAction.SHOW_PROMOTIONS
+                || grounding.decision().intent() == AgentDecisionIntent.PROMOTION_SEARCH;
+        String promotionsUrl = "https://kiments.com.pe/promociones";
+        if (!promotionRequest || customerMessage == null || customerMessage.contains(promotionsUrl)) {
+            return customerMessage;
+        }
+        return customerMessage.stripTrailing()
+                + "\n\nPuedes revisar tambi\u00e9n nuestras promociones aqu\u00ed \uD83D\uDE0A\n" + promotionsUrl;
     }
 
     static String deliveryTimingCorrectionInstruction(AgentVerifiedGroundingService.Grounding grounding,

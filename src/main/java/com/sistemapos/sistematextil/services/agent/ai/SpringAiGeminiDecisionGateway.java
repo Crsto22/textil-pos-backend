@@ -69,11 +69,14 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
               complementa las anteriores y solo reemplaza otra del mismo tipo cuando la clienta la corrige
               expresamente. No olvides cadera, cintura o busto por aparecer en un mensaje anterior. fitPreference
               puede ser AJUSTADO, NORMAL, HOLGADO o cadena vacia. No calcules ni deduzcas la talla por tu cuenta.
-            - SHOW_PROMOTIONS: pide promociones, ofertas, descuentos o combos vigentes, incluso si menciona
-              que los vio en un live, TikTok u otro canal. Usa intent=PROMOTION_SEARCH. Si pregunta promociones
+            - SHOW_PROMOTIONS: pide expresamente promociones, ofertas, descuentos o combos vigentes, incluso si
+              menciona que los vio en un live, TikTok u otro canal. Usa intent=PROMOTION_SEARCH. Si pregunta promociones
               para un modelo concreto, conserva ese modelo en productReference y promotionReference.
               Si solicita todas o pregunta de forma general cuales existen, deja productReference y
               promotionReference vacios para que Java liste las promociones vigentes sin filtrar.
+              Mencionar solamente un live, TikTok o una transmision no significa que solicite promociones. Frases como
+              "quiero el conjunto del en vivo" o "que conjunto estan transmitiendo" buscan identificar un producto,
+              no una promocion. Si no indica el nombre del modelo, no lo inventes ni elijas uno arbitrariamente.
             - ADD_PRODUCT: ya eligio producto, color, talla y cantidad o acepta la cantidad propuesta. Si el último
               mensaje confirma varios productos ofrecidos por el asistente, reúne todos en promotionSelections
               aunque no pertenezcan a una promoción; cada selección debe conservar producto, color, talla y cantidad.
@@ -203,9 +206,10 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
             Usa NONE cuando solo conversa o la accion no esta suficientemente clara.
             Una solicitud de promociones o combos nunca es PRODUCT_SEARCH, PRODUCT_DETAILS ni
             BUSINESS_INFORMATION. No concluyas si existen: Java lo consultara en la base de datos.
-            Ejemplos como "que promociones tienes", "hay ofertas", "quiero ver lo del live" o
+            Ejemplos como "que promociones tienes", "hay ofertas", "quiero ver las promociones del live" o
             "muestrame los combos" significan SHOW_PROMOTIONS con intent=PROMOTION_SEARCH, aunque tengan
-            errores ortograficos o esten divididos en varios mensajes. Interpreta el significado completo.
+            errores ortograficos o esten divididos en varios mensajes. En cambio, "quiero el conjunto del live"
+            no es una solicitud de promociones. Interpreta el significado completo.
             Usa cadenas vacias para paymentMethodReference, paymentAccountReference, customerName, customerPhone, deliveryMethod,
             documentNumber, shalomAgency, shalomDestination, sizeGuideComponent y fitPreference cuando no existan.
             Usa una lista vacia para shalomFieldsToChange salvo cuando commercialAction sea EDIT_SHALOM_DATA.

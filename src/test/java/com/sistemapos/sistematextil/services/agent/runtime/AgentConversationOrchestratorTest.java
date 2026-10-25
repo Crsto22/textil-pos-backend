@@ -42,6 +42,40 @@ import com.sistemapos.sistematextil.model.CrmWhatsappAgentState;
 
 class AgentConversationOrchestratorTest {
     @Test
+    void appendsPromotionsPageWithoutRemovingTheRealComboList() {
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.PROMOTION_SEARCH, "ver promociones", "", "", "", 0, "",
+                List.of(), com.sistemapos.sistematextil.services.agent.ai.AgentCartAction.NONE,
+                AgentCommercialAction.SHOW_PROMOTIONS,
+                "", "", "", "", "", "", "", "",
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL, 99, false);
+        var grounding = new AgentVerifiedGroundingService.Grounding(
+                decision, "{}", List.of(), 1, false, null);
+
+        String result = AgentConversationOrchestrator.ensurePromotionsUrl(
+                grounding, "Combo 124 a S/140\nCombo 99 a S/125");
+
+        assertTrue(result.contains("Combo 124 a S/140"));
+        assertTrue(result.contains("Combo 99 a S/125"));
+        assertTrue(result.contains("https://kiments.com.pe/promociones"));
+    }
+
+    @Test
+    void doesNotDuplicatePromotionsPageWhenGeminiAlreadyIncludedIt() {
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.PROMOTION_SEARCH, "ver promociones", "", "", "", 0, "",
+                List.of(), com.sistemapos.sistematextil.services.agent.ai.AgentCartAction.NONE,
+                AgentCommercialAction.SHOW_PROMOTIONS,
+                "", "", "", "", "", "", "", "",
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL, 99, false);
+        var grounding = new AgentVerifiedGroundingService.Grounding(
+                decision, "{}", List.of(), 1, false, null);
+        String message = "Combos disponibles: https://kiments.com.pe/promociones";
+
+        assertEquals(message, AgentConversationOrchestrator.ensurePromotionsUrl(grounding, message));
+    }
+
+    @Test
     void doesNotTreatACartReplacementAsAPostSaleChangeWithoutARegisteredSale() {
         AgentContext context = mock(AgentContext.class);
         AgentMessageBatch batch = new AgentMessageBatch(

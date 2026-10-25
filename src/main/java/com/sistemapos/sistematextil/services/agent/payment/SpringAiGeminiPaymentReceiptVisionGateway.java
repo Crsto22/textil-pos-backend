@@ -31,7 +31,9 @@ public class SpringAiGeminiPaymentReceiptVisionGateway implements AgentPaymentRe
             una cadena vacia (""); nunca devuelvas null porque el esquema exige textos.
             amount debe contener solamente el importe decimal, sin simbolos ni separadores de miles.
             currency debe ser un codigo ISO de tres letras, normalmente PEN.
-            operationDate debe estar en formato ISO yyyy-MM-dd.
+            operationDate debe estar en formato ISO yyyy-MM-dd cuando el aÃ±o sea visible.
+            Si el comprobante muestra dia y mes pero NO muestra el aÃ±o, no lo inventes: devuelve --MM-dd
+            (por ejemplo, "24 oct." sin aÃ±o se devuelve como --10-24).
             operationTime debe estar en formato HH:mm:ss de 24 horas; usa 00 segundos si no aparecen.
             operationNumber debe conservar las letras y numeros visibles del codigo o numero de operacion.
             recipient es el nombre visible de la persona o empresa que recibe el pago.

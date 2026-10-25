@@ -507,6 +507,49 @@ class AgentConversationOrchestratorTest {
     }
 
     @Test
+    void requiresTheCompleteAlternativeListWhenACombinationIsUnavailable() {
+        Fixture fixture = new Fixture();
+        fixture.current(true, true, true);
+        when(fixture.grounding.ground(eq(7L), eq(8L), eq(41L), any())).thenReturn(
+                new AgentVerifiedGroundingService.Grounding(
+                        new AgentConversationDecision(AgentDecisionIntent.PRODUCT_DETAILS,
+                                "Melina gris claro talla S", "MELINA", "GRIS CLARO", "S", 0, "",
+                                com.sistemapos.sistematextil.services.agent.ai.AgentCartAction.NONE,
+                                AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY,
+                                "", "", "", "", "", "", "", "",
+                                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL,
+                                100, false),
+                        "{\"requestedVariantAvailability\":{\"requestedColor\":\"GRIS CLARO\","
+                                + "\"requestedSize\":\"S\",\"products\":[{\"name\":\"MELINA\","
+                                + "\"price\":85.0,\"productPageUrl\":\"\",\"variants\":[],"
+                                + "\"availableAlternatives\":["
+                                + "{\"color\":\"NEGRO\",\"size\":\"XS\"},"
+                                + "{\"color\":\"NEGRO\",\"size\":\"L\"},"
+                                + "{\"color\":\"GRIS OSCURO\",\"size\":\"S\"}]}]}}",
+                        java.util.List.of(), 1, false));
+        when(fixture.gateway.respond(eq(7L), any(), eq(12)))
+                .thenReturn(new AgentResponseResult("GEMINI", "gemini", 100, 1,
+                        new AgentTurnResponse(
+                                "Melina gris claro talla S no esta disponible. Puedo revisar otra opcion.",
+                                "Disponibilidad", false, java.util.List.of())))
+                .thenReturn(new AgentResponseResult("GEMINI", "gemini", 90, 0,
+                        new AgentTurnResponse(
+                                "Melina gris claro talla S no esta disponible. A S/85.00 tenemos: "
+                                        + "Negro en XS y L; Gris Oscuro en S. Cual opcion prefieres?",
+                                "Alternativas disponibles", false, java.util.List.of())));
+
+        assertEquals(AgentConversationOrchestrator.Outcome.COMPLETED,
+                fixture.orchestrator.process(fixture.lease));
+
+        verify(fixture.gateway, times(2)).respond(eq(7L), any(), eq(12));
+        ArgumentCaptor<GeneratedTurn> turn = ArgumentCaptor.forClass(GeneratedTurn.class);
+        verify(fixture.jobs).saveGeneratedTurn(eq(41L), eq("worker:lease"), turn.capture(), any());
+        assertTrue(turn.getValue().customerMessage().contains("Negro en XS y L"));
+        assertTrue(turn.getValue().customerMessage().contains("Gris Oscuro en S"));
+        assertTrue(turn.getValue().customerMessage().contains("S/85.00"));
+    }
+
+    @Test
     void removesExactInventoryQuantitiesFromAvailabilityAnswers() {
         Fixture fixture = new Fixture();
         fixture.current(true, true, true);

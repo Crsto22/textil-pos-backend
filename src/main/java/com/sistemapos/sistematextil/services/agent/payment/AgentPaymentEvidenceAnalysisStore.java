@@ -7,6 +7,7 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.MonthDay;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
@@ -220,7 +221,7 @@ public class AgentPaymentEvidenceAnalysisStore {
         }
         CrmWhatsappPaymentEvidence evidence = locked.evidence();
         AgentPaymentReceiptExtraction extraction = Objects.requireNonNull(vision.extraction(), "Extraccion requerida");
-        persistExtraction(evidence, vision);
+        persistExtraction(locked, vision);
         Validation validation = validate(locked, extraction);
         applyOutcome(locked, validation, now());
         return result(locked, validation);
@@ -274,7 +275,8 @@ public class AgentPaymentEvidenceAnalysisStore {
         evidence.setDuplicateOfId(null);
 
         BigDecimal amount = parseAmount(extraction.amount());
-        LocalDateTime operationAt = parseOperationAt(extraction.operationDate(), extraction.operationTime());
+        LocalDateTime operationAt = parseOperationAt(
+                extraction.operationDate(), extraction.operationTime(), request, evidence);
         String operation = normalizeOperation(extraction.operationNumber());
         if (amount == null) warnings.add("No se pudo leer el monto");
         if (operationAt == null) warnings.add("No se pudo leer la fecha de operación");
@@ -496,13 +498,15 @@ public class AgentPaymentEvidenceAnalysisStore {
         return new Locked(evidence, request, session);
     }
 
-    private void persistExtraction(CrmWhatsappPaymentEvidence evidence, VisionResult vision) {
+    private void persistExtraction(Locked locked, VisionResult vision) {
+        CrmWhatsappPaymentEvidence evidence = locked.evidence();
         AgentPaymentReceiptExtraction extraction = vision.extraction();
         evidence.setDetectedProvider(truncate(clean(extraction.paymentMethod()), 40));
         evidence.setDetectedAmount(parseAmount(extraction.amount()));
         evidence.setDetectedCurrency(currency(extraction.currency()));
         evidence.setOperationCode(blankToNull(normalizeOperation(extraction.operationNumber())));
-        evidence.setOperationAt(parseOperationAt(extraction.operationDate(), extraction.operationTime()));
+        evidence.setOperationAt(parseOperationAt(
+                extraction.operationDate(), extraction.operationTime(), locked.request(), evidence));
         evidence.setRecipient(truncate(blankToNull(extraction.recipient()), 180));
         evidence.setConfidence(extraction.confidence());
         evidence.setExtractedText(truncate(blankToNull(extraction.visibleText()), 65000));
@@ -549,22 +553,56 @@ public class AgentPaymentEvidenceAnalysisStore {
         }
     }
 
-    private LocalDateTime parseOperationAt(String date, String time) {
-        LocalDate parsedDate = parseDate(date);
+    private LocalDateTime parseOperationAt(String date, String time,
+            CrmWhatsappPaymentRequest request, CrmWhatsappPaymentEvidence evidence) {
+        LocalDate parsedDate = parseDate(date, request, evidence);
         LocalTime parsedTime = parseTime(time);
         return parsedDate == null ? null : LocalDateTime.of(parsedDate,
                 parsedTime == null ? LocalTime.MIDNIGHT : parsedTime);
     }
 
-    private LocalDate parseDate(String value) {
+    private LocalDate parseDate(String value, CrmWhatsappPaymentRequest request,
+            CrmWhatsappPaymentEvidence evidence) {
+        String normalized = clean(value);
+        if (normalized.matches("--\\d{2}-\\d{2}")) {
+            return resolveYearlessDate(normalized, request, evidence);
+        }
         for (DateTimeFormatter formatter : DATE_FORMATS) {
             try {
-                return LocalDate.parse(clean(value), formatter);
+                return LocalDate.parse(normalized, formatter);
             } catch (DateTimeParseException ignored) {
                 // Try the next accepted representation.
             }
         }
         return null;
+    }
+
+    private LocalDate resolveYearlessDate(String value, CrmWhatsappPaymentRequest request,
+            CrmWhatsappPaymentEvidence evidence) {
+        try {
+            MonthDay monthDay = MonthDay.parse(value, DateTimeFormatter.ofPattern("--MM-dd"));
+            LocalDate start = Optional.ofNullable(request.getCreatedAt())
+                    .orElseGet(() -> Optional.ofNullable(request.getReservedAt()).orElse(now().minusMinutes(4)))
+                    .toLocalDate();
+            LocalDate received = Optional.ofNullable(evidence.getCreatedAt()).orElse(now()).toLocalDate();
+            if (received.isBefore(start) || received.getYear() - start.getYear() > 2) return null;
+            LocalDate match = null;
+            for (int year = start.getYear(); year <= received.getYear(); year++) {
+                LocalDate candidate;
+                try {
+                    candidate = monthDay.atYear(year);
+                } catch (java.time.DateTimeException invalidDate) {
+                    continue;
+                }
+                if (!candidate.isBefore(start) && !candidate.isAfter(received)) {
+                    if (match != null) return null;
+                    match = candidate;
+                }
+            }
+            return match;
+        } catch (DateTimeParseException ignored) {
+            return null;
+        }
     }
 
     private LocalTime parseTime(String value) {

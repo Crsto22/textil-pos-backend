@@ -171,11 +171,11 @@ public class AgentConversationOrchestrator {
                         - Cuando exista requestedVariantAvailability, redacta la respuesta de forma natural usando
                           exclusivamente sus productos, precios y variantes verificadas. No uses una plantilla fija.
                           Si variants esta vacio, informa que la combinacion solicitada no tiene stock y NUNCA
-                          preguntes si desea agregarla, comprarla o separarla. Invita de forma natural a explorar
-                          otros productos en https://kiments.com.pe/productos, sin repetir una frase fija. Si la
-                          clienta pidio algo parecido,
-                          ofrece solo alternativas que aparezcan verificadas con stock; si la evidencia no contiene
-                          alternativas, pregunta si desea que busques otros modelos con ese color y talla.
+                          preguntes si desea agregarla, comprarla o separarla. Si availableAlternatives contiene
+                          opciones, muestra SIEMPRE la lista completa agrupada por color con todas sus tallas
+                          disponibles, incluye el precio del producto y pregunta cual alternativa prefiere. No omitas
+                          colores ni tallas y no reveles cantidades de stock. Solo si availableAlternatives esta vacio,
+                          invita de forma natural a explorar otros productos en https://kiments.com.pe/productos.
                           Si variants contiene opciones, invita a elegir o agregar solo opciones disponibles.
                         - Usa la web como galeria visual solo en consultas generales. Si presentas de forma general
                           exactamente un producto y su productPageUrl no esta vacio, incluye ese enlace individual;
@@ -623,14 +623,30 @@ public class AgentConversationOrchestrator {
                     || !availability.path("requestedSize").asText("").isBlank();
             JsonNode products = availability.path("products");
             boolean anyAvailable = false;
+            boolean anyAlternatives = false;
             int productCount = 0;
             String singleProductUrl = "";
+            List<String> requiredAlternatives = new ArrayList<>();
             if (products.isArray()) {
                 for (JsonNode product : products) {
                     productCount++;
                     if (productCount == 1) singleProductUrl = product.path("productPageUrl").asText("");
                     if (product.path("variants").isArray() && !product.path("variants").isEmpty()) {
                         anyAvailable = true;
+                    }
+                    JsonNode alternatives = product.path("availableAlternatives");
+                    if (alternatives.isArray() && !alternatives.isEmpty()) {
+                        anyAlternatives = true;
+                        Map<String, List<String>> byColor = new LinkedHashMap<>();
+                        alternatives.forEach(variant -> {
+                            String color = variant.path("color").asText("").trim();
+                            String size = variant.path("size").asText("").trim();
+                            if (!color.isBlank() && !size.isBlank()) {
+                                byColor.computeIfAbsent(color, ignored -> new ArrayList<>()).add(size);
+                            }
+                        });
+                        byColor.forEach((color, sizes) -> requiredAlternatives.add(
+                                color + ": " + String.join(", ", sizes.stream().distinct().toList())));
                     }
                 }
             }
@@ -646,12 +662,29 @@ public class AgentConversationOrchestrator {
                 corrections.add("Ninguna variante solicitada tiene stock. No invites a agregar, comprar ni "
                         + "separar esa combinacion; informa la falta de stock.");
             }
+            if (!anyAvailable && anyAlternatives) {
+                List<String> omittedAlternatives = requiredAlternatives.stream()
+                        .filter(value -> {
+                            String[] parts = value.split(":", 2);
+                            if (!response.contains(normalizeText(parts[0]))) return true;
+                            return List.of(parts[1].split(",")).stream()
+                                    .map(String::trim)
+                                    .anyMatch(size -> !containsNormalizedToken(response, size));
+                        })
+                        .toList();
+                if (!omittedAlternatives.isEmpty()) {
+                    corrections.add("La combinacion solicitada no esta disponible, pero debes dar una solucion. "
+                            + "Incluye TODAS las alternativas verificadas, agrupadas exactamente por color y talla: "
+                            + String.join("; ", requiredAlternatives)
+                            + ". Incluye tambien el precio y pregunta cual opcion prefiere.");
+                }
+            }
             String catalogUrl = "https://kiments.com.pe/productos";
             boolean containsWebsiteUrl = customerMessage != null && customerMessage.contains(catalogUrl);
             if (specificSelection && containsWebsiteUrl) {
                 corrections.add("La clienta consulto una seleccion concreta de color o talla. Retira el enlace web "
                         + "y responde directamente con disponibilidad, precio y el siguiente paso de compra.");
-            } else if (!specificSelection && !anyAvailable
+            } else if (!specificSelection && !anyAvailable && !anyAlternatives
                     && (customerMessage == null || !customerMessage.contains(catalogUrl))) {
                 corrections.add("Como no hay stock, invita naturalmente a explorar otros productos e incluye "
                         + catalogUrl + ".");
@@ -668,6 +701,14 @@ public class AgentConversationOrchestrator {
         } catch (Exception ignored) {
             return "";
         }
+    }
+
+    private boolean containsNormalizedToken(String normalizedText, String token) {
+        String normalizedToken = normalizeText(token);
+        return !normalizedToken.isBlank()
+                && java.util.regex.Pattern.compile(
+                        "(?<![a-z0-9])" + java.util.regex.Pattern.quote(normalizedToken) + "(?![a-z0-9])")
+                        .matcher(normalizedText).find();
     }
 
     private String catalogAttributeCorrectionInstruction(JsonNode availability, String customerMessage) {

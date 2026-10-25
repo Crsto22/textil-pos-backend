@@ -229,6 +229,34 @@ class AgentPaymentEvidenceAnalysisStoreTest {
     }
 
     @Test
+    void resolvesAReceiptDateWithoutYearInsideThePaymentRequestWindow() {
+        AgentPaymentReceiptExtraction extraction = new AgentPaymentReceiptExtraction(
+                true, "140.00", "PEN", "--10-08", "14:01:00",
+                "Kiments SAC", "999000111", "OP-NO-YEAR", "PLIN",
+                "Pagaste con Plin 8 oct., 2:01 p. m.", 96);
+
+        AnalysisResult result = store.complete(91L,
+                new VisionResult("GEMINI", "gemini-test", "TEST", 50L, extraction));
+
+        assertEquals(AgentPaymentReceiptOutcome.APPROVED_INITIAL, result.outcome());
+        assertEquals(LocalDateTime.of(2026, 10, 8, 14, 1), evidence.getOperationAt());
+    }
+
+    @Test
+    void doesNotGuessAYearWhenTheYearlessDateFallsOutsideTheRequestWindow() {
+        AgentPaymentReceiptExtraction extraction = new AgentPaymentReceiptExtraction(
+                true, "140.00", "PEN", "--10-07", "14:01:00",
+                "Kiments SAC", "999000111", "OP-NO-YEAR-OLD", "PLIN",
+                "Pagaste con Plin 7 oct., 2:01 p. m.", 96);
+
+        AnalysisResult result = store.complete(91L,
+                new VisionResult("GEMINI", "gemini-test", "TEST", 50L, extraction));
+
+        assertEquals(AgentPaymentReceiptOutcome.OBSERVED, result.outcome());
+        assertNull(evidence.getOperationAt());
+    }
+
+    @Test
     void approvesWhenVisionConfidenceIsBelowMinimumButAmountAndDateAreValid() {
         AnalysisResult result = store.complete(91L, vision(70, "140.00", "OP-123"));
 

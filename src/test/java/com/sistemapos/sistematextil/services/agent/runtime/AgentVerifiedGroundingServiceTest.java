@@ -519,6 +519,48 @@ class AgentVerifiedGroundingServiceTest {
     }
 
     @Test
+    void loadsEveryAvailableVariantWhenTheRequestedCombinationIsUnavailable() {
+        AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.PRODUCT_DETAILS, "Melina gris claro talla S", "MELINA",
+                "GRIS CLARO", "S", 0, "", List.of(), AgentCartAction.NONE,
+                AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY,
+                "", "", "", "", "", "", "", "", List.of(),
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL,
+                "", List.of(), "", 99, false);
+        when(decisions.interpret(4L, "Melina gris claro talla S")).thenReturn(
+                new AgentInterpretationResult("GEMINI", "model", "DB", 10, 0, decision));
+        ProductSummary melina = new ProductSummary(70, "MELINA", "", "CONJUNTO",
+                false, null, 85D, 10, List.of("NEGRO", "GRIS OSCURO"), List.of("XS", "S", "L"));
+        when(catalog.searchProducts(9L, "MELINA", 20,
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL))
+                .thenReturn(new ProductSearchResult("MELINA", 1, List.of(melina), false));
+        when(catalog.getProduct(9L, 70)).thenReturn(productWithGuide(70, "MELINA", ""));
+        when(catalog.getVariants(9L, 70, "GRIS CLARO", "S"))
+                .thenReturn(new VariantResult(70, "MELINA", "GRIS CLARO", "S", List.of()));
+        when(catalog.getVariants(9L, 70, "", "")).thenReturn(new VariantResult(
+                70, "MELINA", "", "", List.of(
+                        availableVariant(7001, "NEGRO", "XS", 85D, 2),
+                        availableVariant(7002, "NEGRO", "L", 85D, 1),
+                        availableVariant(7003, "GRIS OSCURO", "S", 85D, 3))));
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
+                mock(AgentCartService.class), passThroughAudit());
+
+        var result = service.ground(4L, 9L, 30L, "Melina gris claro talla S");
+
+        assertTrue(result.evidenceJson().contains("\"variants\":[]"));
+        assertTrue(result.evidenceJson().contains("availableAlternatives"));
+        assertTrue(result.evidenceJson().contains("GRIS OSCURO"));
+        assertTrue(result.evidenceJson().contains("NEGRO"));
+        assertTrue(result.evidenceJson().contains("\"size\":\"XS\""));
+        assertTrue(result.evidenceJson().contains("\"size\":\"L\""));
+        assertTrue(result.evidenceJson().contains("\"price\":85.0"));
+        verify(catalog).getVariants(9L, 70, "", "");
+    }
+
+    @Test
     void searchesTheWholeCatalogByExactColorAndSizeWhenNoModelWasNamed() {
         AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
         AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);

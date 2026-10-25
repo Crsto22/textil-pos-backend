@@ -447,13 +447,26 @@ public class AgentVerifiedGroundingService {
                             .filter(AgentCatalogQueryService.VariantSummary::available)
                             .filter(variant -> variant.stock() > 0)
                             .toList();
-            Double price = availableVariants.stream()
+            List<AgentCatalogQueryService.VariantSummary> availableAlternatives = List.of();
+            if (availableVariants.isEmpty()) {
+                VariantResult alternatives = verified(sessionId, jobId, ordinal,
+                        "consultar_variantes_alternativas", Map.of("productoId", product.productId()),
+                        VariantResult.class, () -> catalog.getVariants(sessionId, product.productId(), "", ""));
+                availableAlternatives = alternatives.variants() == null
+                        ? List.of() : alternatives.variants().stream()
+                                .filter(AgentCatalogQueryService.VariantSummary::available)
+                                .filter(variant -> variant.stock() > 0)
+                                .toList();
+            }
+            Double price = java.util.stream.Stream.concat(
+                            availableVariants.stream(), availableAlternatives.stream())
                     .map(AgentCatalogQueryService.VariantSummary::effectivePrice)
                     .filter(Objects::nonNull)
                     .min(Double::compareTo)
                     .orElse(product.priceFrom());
             availability.add(new ProductAvailabilityView(
-                    product.productId(), product.name(), price, product.productPageUrl(), availableVariants));
+                    product.productId(), product.name(), price, product.productPageUrl(),
+                    availableVariants, availableAlternatives));
         }
         evidence.put("requestedVariantAvailability", Map.of(
                 "requestedSize", clean(decision.sizeReference()),
@@ -1695,10 +1708,12 @@ public class AgentVerifiedGroundingService {
             String name,
             Double price,
             String productPageUrl,
-            List<AgentCatalogQueryService.VariantSummary> variants) {
+            List<AgentCatalogQueryService.VariantSummary> variants,
+            List<AgentCatalogQueryService.VariantSummary> availableAlternatives) {
         private ProductAvailabilityView {
             productPageUrl = productPageUrl == null ? "" : productPageUrl;
             variants = variants == null ? List.of() : List.copyOf(variants);
+            availableAlternatives = availableAlternatives == null ? List.of() : List.copyOf(availableAlternatives);
         }
     }
 

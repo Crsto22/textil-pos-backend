@@ -32,23 +32,22 @@ public class AgentOrderDeliveryQueryService {
         Integer saleId = fulfillment.getVenta().getIdVenta();
         List<VentaDetalle> details = saleDetails
                 .findByVenta_IdVentaAndDeletedAtIsNullOrderByIdVentaDetalleAsc(saleId);
-        boolean preorder = details.stream()
+        List<com.sistemapos.sistematextil.model.Producto> saleProducts = details.stream()
                 .map(VentaDetalle::getProductoVariante)
                 .filter(java.util.Objects::nonNull)
                 .map(value -> value.getProducto())
                 .filter(java.util.Objects::nonNull)
-                .anyMatch(ProductoPreventaPolicy::activa);
-        List<String> products = details.stream()
-                .map(VentaDetalle::getProductoVariante)
-                .filter(java.util.Objects::nonNull)
-                .map(value -> value.getProducto())
-                .filter(java.util.Objects::nonNull)
+                .toList();
+        boolean preorder = saleProducts.stream().anyMatch(ProductoPreventaPolicy::activa);
+        boolean readyStock = saleProducts.stream().anyMatch(product -> !ProductoPreventaPolicy.activa(product));
+        List<String> products = saleProducts.stream()
                 .map(product -> product.getNombre())
                 .filter(name -> name != null && !name.isBlank())
                 .distinct()
                 .toList();
-        return new OrderDeliveryGuidance(true, saleId,
-                preorder ? DeliveryPolicy.PREORDER : DeliveryPolicy.READY_STOCK, products);
+        DeliveryPolicy policy = preorder && readyStock ? DeliveryPolicy.MIXED
+                : preorder ? DeliveryPolicy.PREORDER : DeliveryPolicy.READY_STOCK;
+        return new OrderDeliveryGuidance(true, saleId, policy, products);
     }
 
     private CrmWhatsappFulfillment fulfillmentLinkedToSessionOrConversation(Long sessionId) {
@@ -74,6 +73,7 @@ public class AgentOrderDeliveryQueryService {
     public enum DeliveryPolicy {
         READY_STOCK,
         PREORDER,
+        MIXED,
         NOT_LINKED_TO_AGENT
     }
 

@@ -54,4 +54,17 @@ public interface CrmWhatsappAgentSessionRepository extends JpaRepository<CrmWhat
             @Param("state") CrmWhatsappAgentState state,
             @Param("fulfillmentStatus") CrmWhatsappFulfillmentStatus fulfillmentStatus,
             Pageable pageable);
+
+    @Query("""
+            select s.idAgentSession
+            from CrmWhatsappAgentSession s
+            where s.activeSlot = true
+              and s.state in :states
+              and s.lastActivityAt <= :cutoff
+            order by s.lastActivityAt, s.idAgentSession
+            """)
+    List<Long> findDeliveryTimeoutCandidateIds(
+            @Param("states") List<CrmWhatsappAgentState> states,
+            @Param("cutoff") LocalDateTime cutoff,
+            Pageable pageable);
 }

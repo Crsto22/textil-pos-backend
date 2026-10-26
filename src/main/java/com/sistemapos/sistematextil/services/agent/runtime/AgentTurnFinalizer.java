@@ -188,11 +188,12 @@ public class AgentTurnFinalizer {
         if (product != null && product.preorder()) {
             if (product.preorderShippingDate() != null) {
                 return name + "\nPreventa: desde el " + CATALOG_DATE.format(product.preorderShippingDate())
-                        + ", entrega a Shalom normalmente al día siguiente; solo con mucho volumen, en 2 días.";
+                        + ", entrega a Shalom al día siguiente de atención; domingos y feriados pasan al siguiente día laborable. "
+                        + "Esa es la primera fecha disponible y puede coordinarse una posterior.";
             }
-            return name + "\nPreventa: desde la fecha indicada, entrega a Shalom normalmente al día siguiente; solo con mucho volumen, en 2 días.";
+            return name + "\nPreventa: desde la fecha indicada, entrega a Shalom al día siguiente de atención; domingos y feriados pasan al siguiente día laborable. Esa es la primera fecha disponible y puede coordinarse una posterior.";
         }
-        return name + "\nDisponible: entrega a Shalom normalmente al día siguiente; solo con mucho volumen, en 2 días.";
+        return name + "\nDisponible: entrega a Shalom al día siguiente de atención; domingos y feriados pasan al siguiente día laborable. Esa es la primera fecha disponible y puede coordinarse una posterior.";
     }
 
     private String fileName(String source, AgentMediaRequest.MediaType type) {

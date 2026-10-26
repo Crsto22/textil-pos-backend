@@ -36,6 +36,7 @@ import com.sistemapos.sistematextil.services.agent.payment.AgentPaymentService.P
 import com.sistemapos.sistematextil.services.agent.payment.AgentPaymentService;
 import com.sistemapos.sistematextil.services.agent.customer.AgentCustomerService;
 import com.sistemapos.sistematextil.services.agent.fulfillment.AgentFulfillmentService;
+import com.sistemapos.sistematextil.services.agent.sale.AgentSaleService;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.CartPromotionView;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.CartResult;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.CartItemView;
@@ -49,6 +50,63 @@ import java.time.LocalDateTime;
 import com.sistemapos.sistematextil.util.cliente.TipoDocumento;
 
 class AgentDeterministicCommerceServiceTest {
+
+    @Test
+    void createsTheSaleImmediatelyWhenNoShalomAgencyMatchesCompleteData() {
+        CrmWhatsappAgentSessionRepository sessions=mock(CrmWhatsappAgentSessionRepository.class);
+        AgentFulfillmentService fulfillment=mock(AgentFulfillmentService.class);
+        AgentSaleService sales=mock(AgentSaleService.class);
+        CrmWhatsappAgentSession session=new CrmWhatsappAgentSession();
+        session.setState(CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM);
+        when(sessions.findById(41L)).thenReturn(Optional.of(session));
+        var partial=new AgentFulfillmentService.FulfillmentResult(41L,51L,"SHALOM","DRAFT",
+                "Ana Perez","DNI","12345678","999111222",null,null,null,null,null,List.of(),
+                "ESPERANDO_DATOS_SHALOM",null);
+        when(fulfillment.savePartialShalomData(41L,"Ana Perez","12345678","999111222",
+                "Cerro Colorado, Arequipa")).thenReturn(new AgentFulfillmentService.ShalomDataProgress(
+                        partial,List.of("agencia de Shalom"),List.of(),true));
+        when(sales.createSalesNote(41L,"agent-job-null:provide_shalom_data:sale:agency-not-found"))
+                .thenReturn(new AgentSaleService.SaleResult(10649,"NOTA_VENTA","NV101",10649,
+                        BigDecimal.valueOf(165),"WHATSAPP_AI",31L,51L,12L,"CONSUMED",
+                        "VENTA_CREADA",false));
+        AgentDeterministicCommerceService service=new AgentDeterministicCommerceService(
+                sessions,null,null,null,null,null,fulfillment,sales,null,null,
+                new AgentToolCallAuditService(null));
+        AgentConversationDecision decision=new AgentConversationDecision(AgentDecisionIntent.SHALOM_DATA,
+                "datos para envio","","","",0,"",AgentCartAction.NONE,
+                AgentCommercialAction.PROVIDE_SHALOM_DATA,"","","Ana Perez","999111222","SHALOM",
+                "12345678","Cerro Colorado, Arequipa","",AgentCatalogAvailability.ALL,100,false);
+
+        var result=service.execute(41L,null,decision);
+
+        verify(fulfillment).handoffMissingShalomAgency(41L,"Cerro Colorado, Arequipa");
+        verify(sales).createSalesNote(41L,"agent-job-null:provide_shalom_data:sale:agency-not-found");
+        assertTrue(result.customerMessage().contains("Número de pedido: 10649"));
+        assertTrue(result.customerMessage().contains("Agencia: Pendiente de localizar y confirmar"));
+        assertTrue(result.customerMessage().contains("asesora del área de envíos"));
+    }
+
+    @Test
+    void lateDeliveryDataOnlyReceivesTheAdvisorHandoffMessage() {
+        AgentFulfillmentService fulfillment = mock(AgentFulfillmentService.class);
+        when(fulfillment.isPendingAdvisorDelivery(41L)).thenReturn(true);
+        AgentDeterministicCommerceService service = new AgentDeterministicCommerceService(
+                mock(CrmWhatsappAgentSessionRepository.class), null, null, null, null, null,
+                fulfillment, null, null, null, null);
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.SHALOM_DATA, "enviar datos tardíos", "", "", "", 0, "",
+                AgentCartAction.NONE, AgentCommercialAction.PROVIDE_SHALOM_DATA,
+                "", "", "", "", "SHALOM", "", "Agencia Centro", "Lima",
+                AgentCatalogAvailability.ALL, 100, false);
+
+        var result = service.execute(41L, 181L, decision);
+
+        assertTrue(result.handled());
+        assertFalse(result.mutationExecuted());
+        assertEquals("Gracias por la información 💛 Tu pedido ya fue registrado correctamente. "
+                + "Una asesora del área de envíos se comunicará contigo para completar y confirmar "
+                + "todos los datos de entrega.", result.customerMessage());
+    }
 
     @Test
     void remembersEarlyShippingPreferenceWithoutExecutingFulfillmentOrEscalating() {
@@ -112,7 +170,8 @@ class AgentDeterministicCommerceServiceTest {
         assertTrue(message.contains("📦 *Modalidades de entrega disponibles*"));
         assertTrue(message.contains("Recojo en tienda: disponible aproximadamente 2 días después de la compra"));
         assertTrue(message.contains("si cae domingo, pasa al lunes"));
-        assertTrue(message.contains("Envío por Shalom: normalmente se entrega a Shalom al día siguiente"));
+        assertTrue(message.contains("Envío por Shalom: se entrega a Shalom al día siguiente de atención"));
+        assertTrue(message.contains("domingos ni feriados"));
         assertFalse(message.contains("🛍️"));
     }
 
@@ -257,9 +316,13 @@ class AgentDeterministicCommerceServiceTest {
         String message = service.cartTemplate(41L, cart, true);
 
         assertTrue(message.contains("Preventa: fecha indicada: 16 de octubre de 2026"));
-        assertTrue(message.contains("Primero se espera la fecha indicada de la preventa"));
-        assertTrue(message.contains("Recojo en tienda: disponible aproximadamente 2 días después de la fecha indicada de la preventa"));
-        assertTrue(message.contains("Desde esa fecha se aplican los plazos de recojo o entrega a Shalom"));
+        assertTrue(message.contains("Producto disponible: aproximadamente 2 días después de la compra"));
+        assertTrue(message.contains("Producto en preventa: aproximadamente 2 días después de la fecha indicada"));
+        assertTrue(message.contains("tú eliges: puedes recibir o recoger primero el producto disponible"));
+        assertTrue(message.contains("esperar la preventa y coordinar todo junto en un solo paquete"));
+        assertTrue(message.contains("son la primera fecha disponible"));
+        assertTrue(message.contains("coordinarla con el área de envíos"));
+        assertFalse(message.contains("Primero se espera la fecha indicada de la preventa"));
         assertFalse(message.contains("envío anticipado"));
         assertFalse(message.contains("serán despachados desde"));
     }
@@ -530,8 +593,10 @@ class AgentDeterministicCommerceServiceTest {
 
         assertTrue(result.handled());
         assertFalse(result.mutationExecuted());
-        assertTrue(result.customerMessage().contains("normalmente al día siguiente"));
-        assertTrue(result.customerMessage().contains("solo cuando hay mucho volumen, en 2 días"));
+        assertTrue(result.customerMessage().contains("al día siguiente de atención"));
+        assertTrue(result.customerMessage().contains("domingos ni feriados"));
+        assertTrue(result.customerMessage().contains("siguiente día laborable"));
+        assertFalse(result.customerMessage().contains("mucho volumen"));
         assertTrue(result.customerMessage().contains("No realizamos despachos el mismo día"));
         assertTrue(result.customerMessage().contains("2 días después de la compra"));
         assertTrue(result.customerMessage().contains("si la fecha cae domingo, pasa al lunes"));
@@ -722,7 +787,7 @@ class AgentDeterministicCommerceServiceTest {
                 41L, decision, "agent-job-1:provide_customer_data");
 
         verify(fulfillment).selectShalom(41L, "agent-job-1:provide_customer_data:combined-shalom");
-        assertTrue(result.customerMessage().contains("Film protector: S/2.00"));
+        assertTrue(result.customerMessage().contains("Film protector para embalaje: S/2.00"));
         assertTrue(result.customerMessage().contains("datos de Shalom")
                 || result.customerMessage().contains("SHALOM"));
         assertFalse(result.customerMessage().contains("¿Cuál opción deseas?"));

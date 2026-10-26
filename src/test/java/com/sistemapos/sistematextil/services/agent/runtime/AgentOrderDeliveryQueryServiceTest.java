@@ -79,15 +79,26 @@ class AgentOrderDeliveryQueryServiceTest {
     }
 
     @Test
-    void usesPreorderPolicyWhenAtLeastOneSaleProductIsPreorder() {
+    void usesMixedPolicyWhenSaleCombinesReadyStockAndPreorder() {
         linkSale(9L, 11619);
         when(details.findByVenta_IdVentaAndDeletedAtIsNullOrderByIdVentaDetalleAsc(11619))
                 .thenReturn(List.of(detail("EMMA", false), detail("MELINA", true)));
 
         var result = service.findForAgentSession(9L);
 
-        assertEquals(AgentOrderDeliveryQueryService.DeliveryPolicy.PREORDER, result.policy());
+        assertEquals(AgentOrderDeliveryQueryService.DeliveryPolicy.MIXED, result.policy());
         assertEquals(List.of("EMMA", "MELINA"), result.products());
+    }
+
+    @Test
+    void usesPreorderPolicyWhenAllSaleProductsArePreorder() {
+        linkSale(9L, 11621);
+        when(details.findByVenta_IdVentaAndDeletedAtIsNullOrderByIdVentaDetalleAsc(11621))
+                .thenReturn(List.of(detail("MELINA", true), detail("ALESSIA", true)));
+
+        var result = service.findForAgentSession(9L);
+
+        assertEquals(AgentOrderDeliveryQueryService.DeliveryPolicy.PREORDER, result.policy());
     }
 
     private void linkSale(Long sessionId, Integer saleId) {

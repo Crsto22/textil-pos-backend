@@ -26,6 +26,7 @@ import com.sistemapos.sistematextil.model.CrmWhatsappConnection;
 import com.sistemapos.sistematextil.model.CrmWhatsappConversation;
 import com.sistemapos.sistematextil.model.CrmWhatsappFulfillment;
 import com.sistemapos.sistematextil.model.CrmWhatsappFulfillmentMethod;
+import com.sistemapos.sistematextil.model.CrmWhatsappFulfillmentStatus;
 import com.sistemapos.sistematextil.model.CrmWhatsappPaymentRequest;
 import com.sistemapos.sistematextil.model.CrmWhatsappPaymentRequestStatus;
 import com.sistemapos.sistematextil.model.CrmWhatsappPaymentReservationStatus;
@@ -105,6 +106,23 @@ class AgentFulfillmentServiceTest {
         var confirmed=service.confirmShalomAgency(41L,9L,"confirm");
         assertEquals("READY",confirmed.status());assertEquals(CrmWhatsappAgentState.LISTO_PARA_VENTA,session.getState());
         verify(profiles).save(any());
+    }
+
+    @Test
+    void handsOffACompleteShalomDeliveryWhenNoAgencyWasFound(){
+        session.setState(CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM);
+        fulfillment.setRecipientName("Ana Perez");
+        fulfillment.setDocumentNumber("12345678");
+        fulfillment.setPhone("999111222");
+        fulfillment.setShalomCandidateIds("");
+        when(fulfillments.findForUpdateBySessionId(41L)).thenReturn(Optional.of(fulfillment));
+
+        var result=service.handoffMissingShalomAgency(41L,"Cerro Colorado, Arequipa");
+
+        assertEquals(CrmWhatsappFulfillmentStatus.PENDING_ADVISOR,fulfillment.getStatus());
+        assertEquals("Cerro Colorado, Arequipa",fulfillment.getShalomDestination());
+        assertEquals(CrmWhatsappAgentState.LISTO_PARA_VENTA,session.getState());
+        assertEquals("PENDING_ADVISOR",result.status());
     }
 
     @Test

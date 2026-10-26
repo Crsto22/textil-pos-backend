@@ -5,5 +5,6 @@ public enum CrmWhatsappFulfillmentStatus {
     AWAITING_AGENCY_CONFIRMATION,
     FILM_PAYMENT_PENDING,
     FILM_PAYMENT_OVERDUE,
+    PENDING_ADVISOR,
     READY
 }

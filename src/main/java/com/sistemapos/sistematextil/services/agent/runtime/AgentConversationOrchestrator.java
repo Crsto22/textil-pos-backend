@@ -203,7 +203,7 @@ public class AgentConversationOrchestrator {
                           en preventa. Si preorder=false, no lo llames preventa ni comuniques una antigua fecha de
                           despacho aunque la descripcion comercial conserve texto historico.
                         - Para preventas, primero se espera la fecha verificada y desde ella se aplican los mismos
-                          plazos: entrega a Shalom normalmente al día siguiente o, solo con mucho volumen, en 2 días;
+                          plazos: entrega a Shalom al día siguiente de atención; domingos y feriados pasan al siguiente día laborable;
                           y recojo aproximadamente 2 días después, pasando al lunes si cae domingo. Nunca digas
                           "llega el [fecha]" ni prometas despacho o recojo el mismo día de la fecha de preventa.
                         - Para recojo en tienda con disponibilidad inmediata, comunica aproximadamente 2 días después
@@ -211,14 +211,15 @@ public class AgentConversationOrchestrator {
                           preventa, aplica la misma regla desde la fecha indicada. Nunca prometas recojo el mismo día ni
                           antes de la preventa.
                         - Cuando NO existe orderDeliveryGuidance, se trata de una consulta previa a la compra: para
-                          disponibilidad inmediata, Kiments entrega el pedido a Shalom normalmente al día siguiente y,
-                          solo con mucho volumen, en 2 días; para preventa, aplica la misma regla desde el inicio verificado.
+                          disponibilidad inmediata, Kiments entrega el pedido a Shalom al día siguiente de atención;
+                          domingos y feriados pasan al siguiente día laborable; para preventa, aplica la misma regla desde el inicio verificado.
                           Nunca presentes esos plazos como tiempo de traslado o llegada: después del despacho, la
                           llegada depende de Shalom y no tiene un día exacto garantizado.
                         - Si existe orderDeliveryGuidance, redacta una respuesta breve y natural siguiendo solo su
-                          policy. READY_STOCK comunica entrega a Shalom normalmente al día siguiente y, solo con mucho
-                          volumen, en 2 días. PREORDER aplica esa misma regla desde la fecha indicada en la preventa,
-                          sin prometer una fecha de llegada. En ambos casos indica que una asesora del área de
+                          policy. READY_STOCK comunica entrega a Shalom al día siguiente de atención; domingos y feriados
+                          pasan al siguiente día laborable. PREORDER aplica esa misma regla desde la fecha indicada en la preventa,
+                          sin prometer una fecha de llegada. MIXED explica que la clienta puede coordinar primero lo disponible
+                          o esperar y juntar todo con la preventa. En todos los casos indica que una asesora del área de
                           envíos se comunicará para coordinar. NOT_LINKED_TO_AGENT no informa plazos ni promete
                           contacto: explica que no encontraste una venta registrada por este chat y comparte 936310946.
                         - Si la clienta solicita todos los productos de un grupo, incluye todos los productos presentes
@@ -588,10 +589,11 @@ public class AgentConversationOrchestrator {
                     + "de envios; comparte el 936310946 para que una asesora revise el pedido.";
         }
         if (evidence.contains("READY_STOCK")) {
-            if (response.contains("dia siguiente") && response.contains("2 dias")
+            if (response.contains("dia siguiente") && response.contains("domingo")
+                    && response.contains("feriado")
                     && containsShippingContact(response)) return "";
             return "La venta fue registrada por la asistente y es de disponibilidad inmediata. Comunica que Kiments "
-                    + "entrega el pedido a Shalom normalmente al dia siguiente y, solo con mucho volumen, en 2 dias, e indica que una asesora del area de envios "
+                    + "entrega el pedido a Shalom al dia siguiente de atencion; domingos y feriados pasan al siguiente dia laborable. Indica que una asesora del area de envios "
                     + "contactara a la clienta para coordinar. Redacta naturalmente, sin copiar una plantilla fija.";
         }
         if (evidence.contains("PREORDER")) {
@@ -599,11 +601,21 @@ public class AgentConversationOrchestrator {
                     + "septiembre|octubre|noviembre|diciembre)\\b.*")
                     || response.matches(".*\\b\\d{1,2}[/\\-]\\d{1,2}([/\\-]\\d{2,4})?\\b.*");
             if (response.contains("fecha indicada") && response.contains("dia siguiente")
-                    && response.contains("2 dias") && containsShippingContact(response) && !exactDate) return "";
+                    && response.contains("domingo") && response.contains("feriado")
+                    && containsShippingContact(response) && !exactDate) return "";
             return "La venta registrada incluye preventa. Explica que primero se espera la fecha indicada y, desde "
-                    + "ella, Kiments entrega el pedido a Shalom normalmente al dia siguiente o, solo con mucho volumen, "
-                    + "en 2 dias. Indica tambien que una asesora del area de envios contactara a la clienta para "
+                    + "ella, Kiments entrega el pedido a Shalom al dia siguiente de atencion; domingos y feriados pasan "
+                    + "al siguiente dia laborable. Indica tambien que una asesora del area de envios contactara a la clienta para "
                     + "coordinar. No escribas una fecha exacta de llegada. Redacta naturalmente.";
+        }
+        if (evidence.contains("MIXED")) {
+            if (response.contains("dia siguiente") && response.contains("domingo")
+                    && response.contains("feriado") && response.contains("disponible")
+                    && response.contains("preventa") && containsShippingContact(response)) return "";
+            return "La venta registrada combina disponibilidad inmediata y preventa. Explica que la clienta puede "
+                    + "coordinar primero lo disponible o esperar y juntar todo con la preventa. La entrega a Shalom es "
+                    + "al dia siguiente de atencion; domingos y feriados pasan al siguiente dia laborable. Indica que "
+                    + "una asesora del area de envios la contactara para coordinar. No prometas una fecha de llegada.";
         }
         return "";
     }

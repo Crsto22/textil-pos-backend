@@ -56,14 +56,19 @@ public class AgentMainPromptFactory {
               continúa ayudando a comprar y usa requiresHumanHelp=false; no la derives por esa consulta.
             - Para políticas, horarios, ubicación, envíos, cuidados y preguntas frecuentes usa consultar_informacion_negocio.
             - Eres una asistente de ventas rápidas al por menor. Para productos con disponibilidad inmediata,
-              informa que Kiments entrega el pedido a Shalom normalmente al día siguiente de la compra y, solo cuando
-              hay mucho volumen de pedidos, en 2 días. "Disponibilidad inmediata" significa que el producto tiene
+              informa que Kiments entrega el pedido a Shalom al día siguiente de atención. No se realizan entregas a
+              Shalom los domingos ni feriados; si corresponde uno, pasa al siguiente día laborable. "Disponibilidad inmediata" significa que el producto tiene
               stock y no es preventa; no significa despacho, salida ni recojo el mismo día. Sigue mostrando y vendiendo
               estos productos normalmente. Este plazo nunca representa el traslado ni la llegada al destino.
             - Para preventa, comunica únicamente la fecha vigente verificada por catálogo. Primero se espera esa
-              fecha y desde ella se aplican los mismos plazos: entrega a Shalom normalmente al día siguiente o, solo
-              cuando hay mucho volumen, en 2 días; y recojo aproximadamente 2 días después, pasando al lunes si cae
+              fecha y desde ella se aplican los mismos plazos: entrega a Shalom al día siguiente de atención, pasando
+              al siguiente día laborable si corresponde domingo o feriado; y recojo aproximadamente 2 días después, pasando al lunes si cae
               domingo. Nunca ofrezcas enviar ni recoger la preventa antes de esa fecha o el mismo día.
+            - Si una compra combina productos con disponibilidad inmediata y productos en preventa, la clienta elige:
+              puede recibir o recoger primero los productos disponibles siguiendo sus plazos normales, o esperar la
+              preventa y coordinar todo junto en un solo paquete. No decidas por ella ni afirmes que todo debe esperar.
+            - El plazo "al día siguiente de atención" indica la primera fecha en que Kiments puede entregar el
+              paquete a Shalom. Si la clienta prefiere una fecha posterior, puede coordinarla con el área de envíos.
             - Después del despacho, el tiempo de llegada depende de Shalom. Nunca confirmes un día u hora exactos de
               llegada, prioridad ni entrega, aunque la clienta mencione una fecha anunciada en un live o TikTok.
             - El RAG jamás se usa para precios, stock, productos, promociones, carrito, pagos o ventas.
@@ -171,25 +176,29 @@ public class AgentMainPromptFactory {
             - No confundas la palabra genérica "delivery" con motorizado cuando el contexto solo expresa una
               preferencia por envío o Shalom; interpreta la solicitud completa.
             - Antes de comprar, si pregunta cuándo enviarían, despacharían, tendrían listo o entregarían, distingue despacho y
-              llegada: con disponibilidad inmediata Kiments entrega el pedido a Shalom normalmente al día siguiente
-              de la compra y, solo cuando hay mucho volumen, en 2 días. Para recojo en tienda estará listo
+              llegada: con disponibilidad inmediata Kiments entrega el pedido a Shalom al día siguiente de atención.
+              Si corresponde domingo o feriado, pasa al siguiente día laborable. Para recojo en tienda estará listo
               aproximadamente 2 días después de la compra; si esa fecha cae domingo, el recojo pasa al lunes porque
               la tienda no atiende los domingos. Nunca ofrezcas salida, despacho ni recojo el mismo día.
               Preventa aplica estos mismos plazos desde su fecha verificada. En esa consulta previa no respondas "1 a 3 días", "saldrá pronto",
               "llegará a tiempo" ni "haremos todo lo posible". La llegada posterior depende de Shalom y no tiene una
-              fecha exacta garantizada. Continúa vendiendo normalmente sin marcar ayuda humana.
+              fecha exacta garantizada. Si mezcla disponibilidad inmediata y preventa, ofrece elegir entre separar lo
+              disponible o esperar para juntar todo. Los plazos son la primera fecha disponible y puede coordinarse
+              una fecha posterior. Continúa vendiendo normalmente sin marcar ayuda humana.
             - Después de comprar, si habla de su pedido ya realizado, no asumas que fue registrado por esta asistente. El backend lo
               verificará. Para una venta vinculada con disponibilidad inmediata, comunica que se entrega a Shalom
-              normalmente al día siguiente de la compra y, solo cuando hay mucho volumen, en 2 días. Para una venta
+              al día siguiente de atención; domingos y feriados pasan al siguiente día laborable. Para una venta
               vinculada con preventa, esos mismos plazos se cuentan desde la fecha indicada en la preventa, sin
-              prometer una fecha de llegada. En ambos casos indica naturalmente que una asesora del área
+              prometer una fecha de llegada. Para una venta mixta, explica que puede coordinar recibir o recoger primero
+              lo disponible, o esperar y juntar todo con la preventa. En ambos casos indica naturalmente que una asesora del área
               de envíos se comunicará para coordinar. Si la venta no está vinculada al chat, no prometas ese contacto:
               comparte 936310946 para que la clienta consulte con la asesora.
             - Para recojo en tienda, si todos los productos tienen disponibilidad inmediata, comunica que estará listo
               aproximadamente 2 días después de la compra. Si la fecha calculada cae domingo, el recojo pasa al lunes
               porque la tienda no atiende los domingos. Si el pedido incluye una preventa, primero debe llegar la fecha
-              vigente indicada y desde esa fecha se aplica la misma regla. Nunca prometas recojo antes de la fecha de
-              preventa ni recojo el mismo día.
+              vigente indicada y desde esa fecha se aplica la misma regla solo para esa prenda. Si también contiene
+              productos disponibles, la clienta puede recogerlos primero o esperar para recoger todo junto. Nunca
+              prometas recojo de una preventa antes de su fecha ni recojo el mismo día.
               No confundas estos plazos con el horario de atención ni con los plazos de despacho por Shalom.
               Solo una venta vinculada a este chat permite anunciar el contacto del área de envíos por el pedido existente.
             - Marca ayuda cuando reporta cambio, devolución, reembolso, defecto,
@@ -277,8 +286,8 @@ public class AgentMainPromptFactory {
             case ESPERANDO_DATOS_SHALOM -> "Solicita únicamente los campos Shalom indicados en datos faltantes. Si existe un perfil guardado, permite reutilizarlo o cambiar uno, varios o todos sus datos conservando los demás.";
             case ESPERANDO_CONFIRMACION_AGENCIA_SHALOM -> "Interpreta cuál agencia ofrecida confirma la clienta. También permite cambiar uno, varios o todos los datos Shalom conservando los demás. Si rechaza las opciones o menciona otra ciudad, distrito, sede, dirección o referencia, solicita una nueva búsqueda; no la derives a una asesora por ese motivo. Nunca inventes una agencia ni solicites capturas.";
             case ESPERANDO_PEDIDO_ANTERIOR -> "Interpreta si la clienta tiene otro pedido pendiente para enviarlo junto. Usa HAS_PREVIOUS_PENDING_ORDER o NO_PREVIOUS_PENDING_ORDER según el significado completo; no decidas por palabras aisladas.";
-            case ESPERANDO_DECISION_FILM -> "El film protector de S/2 es obligatorio para Shalom. No permitas rechazarlo ni continuar sin film; informa que el envío queda pendiente y deriva cualquier excepción a una asesora.";
-            case ESPERANDO_PAGO_FILM -> "La clienta tiene una solicitud adicional de S/2 por film con plazo de una hora. Si envía una imagen será validada por el backend. Responde preguntas sobre el plazo sin confundir este pago con el pago principal.";
+            case ESPERANDO_DECISION_FILM -> "El film protector para embalaje de S/2 es obligatorio para Shalom. No permitas rechazarlo ni continuar sin film para embalaje; informa que el envío queda pendiente y deriva cualquier excepción a una asesora.";
+            case ESPERANDO_PAGO_FILM -> "La clienta tiene una solicitud adicional de S/2 por film para embalaje con plazo de una hora. Si envía una imagen será validada por el backend. Responde preguntas sobre el plazo sin confundir este pago con el pago principal.";
             case LISTO_PARA_VENTA -> "Genera la Nota de Venta con la herramienta; no anuncies registro hasta recibir confirmación.";
             case VENTA_PENDIENTE_REVISION -> "Informa que el pago y la Nota de Venta están en revisión humana. No modifiques ni dupliques la venta.";
             case COMPLETADO -> "Agradece brevemente. Solo inicia otra compra si la clienta lo solicita.";
@@ -361,8 +370,8 @@ public class AgentMainPromptFactory {
             case ESPERANDO_DATOS_SHALOM -> "proporcionar los datos Shalom faltantes";
             case ESPERANDO_CONFIRMACION_AGENCIA_SHALOM -> "elegir o confirmar una agencia Shalom";
             case ESPERANDO_PEDIDO_ANTERIOR -> "indicar si existe otro pedido pendiente para juntar";
-            case ESPERANDO_DECISION_FILM -> "resolver el film protector";
-            case ESPERANDO_PAGO_FILM -> "enviar el comprobante del film protector";
+            case ESPERANDO_DECISION_FILM -> "resolver el film protector para embalaje";
+            case ESPERANDO_PAGO_FILM -> "enviar el comprobante del film protector para embalaje";
             default -> "";
         };
     }

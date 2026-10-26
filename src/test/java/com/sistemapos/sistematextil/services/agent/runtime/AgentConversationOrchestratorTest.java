@@ -732,7 +732,7 @@ class AgentConversationOrchestratorTest {
 
         assertEquals("", AgentConversationOrchestrator.deliveryTimingCorrectionInstruction(
                 grounding,
-                "Kiments entrega tu pedido a Shalom normalmente al día siguiente y, con mucho volumen, en 2 días. El área de envíos se comunicará contigo."));
+                "Kiments entrega tu pedido a Shalom al día siguiente de atención. Los domingos y feriados pasa al siguiente día laborable. El área de envíos se comunicará contigo."));
         assertFalse(AgentConversationOrchestrator.deliveryTimingCorrectionInstruction(
                 grounding, "Mañana saldrá tu pedido.").isBlank());
     }
@@ -743,7 +743,7 @@ class AgentConversationOrchestratorTest {
 
         assertEquals("", AgentConversationOrchestrator.deliveryTimingCorrectionInstruction(
                 grounding,
-                "Primero se espera la fecha indicada en la preventa. Desde ella, Kiments entrega el pedido a Shalom normalmente al día siguiente o, con mucho volumen, en 2 días. El área de envíos se comunicará contigo."));
+                "Primero se espera la fecha indicada en la preventa. Desde ella, Kiments entrega el pedido a Shalom al día siguiente de atención. Los domingos y feriados pasa al siguiente día laborable. El área de envíos se comunicará contigo."));
         assertFalse(AgentConversationOrchestrator.deliveryTimingCorrectionInstruction(
                 grounding,
                 "Tu pedido saldrá el 21 de octubre y el área de envíos se comunicará contigo.").isBlank());

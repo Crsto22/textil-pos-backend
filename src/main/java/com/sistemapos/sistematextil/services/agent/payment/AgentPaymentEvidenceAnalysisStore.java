@@ -404,7 +404,7 @@ public class AgentPaymentEvidenceAnalysisStore {
                 : clean(request.getMetodoPago().getNombre());
         return "✅ Pago confirmado correctamente, hermosa 💛\n"
                 + "🧾 Pago de prendas: S/" + moneyText(request.getExpectedAmount()) + "\n"
-                + "📦 Film protector: S/2.00 — Pagado\n"
+                + "📦 Film protector para embalaje: S/2.00 — Pagado\n"
                 + "💳 Metodo: " + method + "\n"
                 + "🚌 Tipo de entrega: Envio por Shalom";
     }

@@ -315,8 +315,10 @@ public class AgentVerifiedGroundingService {
                     "saleId", guidance.saleId() == null ? "" : guidance.saleId(),
                     "policy", guidance.policy().name(),
                     "products", guidance.products(),
-                    "readyStockDispatch", "normalmente al día siguiente de la compra; solo con mucho volumen, en 2 días",
+                    "readyStockDispatch", "al día siguiente de atención; domingos y feriados pasan al siguiente día laborable",
                     "preorderDispatch", "la misma regla desde la fecha indicada en la preventa",
+                    "mixedOrderChoice", "la clienta elige recibir o recoger primero lo disponible, o esperar y juntar todo con la preventa",
+                    "laterDateCoordination", "los plazos son la primera fecha disponible y la clienta puede coordinar una fecha posterior",
                     "advisorPhone", "936310946",
                     "shippingAreaWillContact", guidance.agentSaleFound()));
             return null;
@@ -333,16 +335,19 @@ public class AgentVerifiedGroundingService {
         if (product == null) return generic;
         if (!product.preorder() || product.preorderShippingDate() == null) {
             return "Hermosa, el conjunto " + product.name() + " tiene disponibilidad inmediata. Kiments entrega el "
-                    + "pedido a Shalom normalmente al día siguiente de la compra y, solo cuando hay mucho volumen, "
-                    + "en 2 días. No realizamos despachos el mismo día. Después del "
+                    + "pedido a Shalom al día siguiente de atención. No realizamos entregas a Shalom los domingos ni "
+                    + "feriados; en esos casos pasa al siguiente día laborable. Esa es la primera fecha disponible; si prefieres una fecha posterior, puedes coordinarla "
+                    + "con el área de envíos. No realizamos despachos el mismo día. Después del "
                     + "despacho, el tiempo de llegada depende de Shalom, por eso no podemos confirmar un día exacto "
                     + "de entrega. 💛";
         }
 
         return "Hermosa, el conjunto " + product.name() + " está en preventa. Desde el "
                 + DELIVERY_DATE.format(product.preorderShippingDate()) + ", Kiments entrega el pedido a Shalom "
-                + "normalmente al día siguiente y, solo cuando hay mucho volumen, en 2 días. No es posible enviarlo "
-                + "antes de la fecha indicada ni el mismo día. Después del despacho, el tiempo de llegada depende "
+                + "al día siguiente de atención. No realizamos entregas a Shalom los domingos ni feriados; en esos "
+                + "casos pasa al siguiente día laborable. No es posible enviarlo "
+                + "antes de la fecha indicada ni el mismo día. Esa es la primera fecha disponible; si prefieres una "
+                + "fecha posterior, puedes coordinarla con el área de envíos. Después del despacho, el tiempo de llegada depende "
                 + "de Shalom, por eso no podemos confirmar un día exacto de entrega. 💛";
     }
 
@@ -352,12 +357,16 @@ public class AgentVerifiedGroundingService {
                 : "a " + destination.trim() + " por Shalom";
         return "Sí realizamos envíos " + place + ", hermosa 💛\n"
                 + "La fecha de despacho depende del producto:\n"
-                + "• Disponibilidad inmediata: Kiments entrega el pedido a Shalom normalmente al día siguiente de la "
-                + "compra y, solo cuando hay mucho volumen, en 2 días.\n"
+                + "• Disponibilidad inmediata: Kiments entrega el pedido a Shalom al día siguiente de atención.\n"
                 + "• Preventa: se espera la fecha indicada y desde ella se aplica la misma regla.\n\n"
-                + "No realizamos despachos el mismo día. Para recojo en tienda, el pedido está listo aproximadamente "
+                + "No realizamos entregas a Shalom los domingos ni feriados; en esos casos pasa al siguiente día "
+                + "laborable. Tampoco realizamos despachos el mismo día. Para recojo en tienda, el pedido está listo aproximadamente "
                 + "2 días después de la compra; si la fecha cae domingo, el recojo pasa al lunes porque la tienda no "
-                + "atiende los domingos. En preventa, este plazo se cuenta desde la fecha indicada.\n\n"
+                + "atiende los domingos. En preventa, este plazo se cuenta desde la fecha indicada.\n"
+                + "• Pedido mixto: si combina disponibilidad inmediata y preventa, tú eliges entre recibir o recoger "
+                + "primero lo disponible, o esperar y coordinar todo junto en un solo paquete.\n\n"
+                + "Estos plazos son la primera fecha disponible. Si prefieres una fecha posterior, puedes coordinarla "
+                + "con el área de envíos.\n\n"
                 + "Después del despacho, el tiempo de llegada depende de Shalom, por eso no podemos confirmar un día "
                 + "exacto de entrega.";
     }
@@ -588,8 +597,14 @@ public class AgentVerifiedGroundingService {
                     + "de la misma talla. No es posible combinar tallas diferentes. Indícame una sola talla "
                     + "para todo el conjunto. 💛");
         }
-        if (commerce != null) commerce.prepareCartMutation(sessionId);
         AgentCartAction action = decision.cartAction() == null ? AgentCartAction.NONE : decision.cartAction();
+        if (action == AgentCartAction.CLARIFY_CART_SCOPE) {
+            evidence.put("cartOperation", Map.of("executed", false,
+                    "reason", "La selección es semánticamente ambigua: falta aclarar si se agrega al carrito actual o lo reemplaza",
+                    "requiredClarification", "Pregunta naturalmente si desea agregar la selección o dejar únicamente esos productos"));
+            return new CartMutation(false, null);
+        }
+        if (commerce != null) commerce.prepareCartMutation(sessionId);
         if (action == AgentCartAction.ADD_PROMOTION) {
             return groundPromotionAdd(sessionId, jobId, decision, conversation, ordinal, evidence);
         }

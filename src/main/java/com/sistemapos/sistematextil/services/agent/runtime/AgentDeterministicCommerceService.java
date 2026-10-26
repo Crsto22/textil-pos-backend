@@ -72,6 +72,12 @@ public class AgentDeterministicCommerceService {
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
 
     public Outcome execute(Long sessionId, Long jobId, AgentConversationDecision decision) {
+        if (fulfillment != null && fulfillment.isPendingAdvisorDelivery(sessionId)
+                && isPendingDeliveryFollowup(decision)) {
+            return Outcome.message("Gracias por la información 💛 Tu pedido ya fue registrado correctamente. "
+                    + "Una asesora del área de envíos se comunicará contigo para completar y confirmar "
+                    + "todos los datos de entrega.");
+        }
         AgentConversationDecision effectiveDecision = normalizeShalomAgencyRefinement(sessionId, decision);
         AgentCommercialAction action = effectiveCommercialAction(effectiveDecision);
         if (carts != null && action != AgentCommercialAction.CANCEL_PENDING_CART) {
@@ -92,8 +98,8 @@ public class AgentDeterministicCommerceService {
         boolean earlyDeliveryPreference = rememberEarlyDeliveryPreference(sessionId, effectiveDecision);
         if (action == AgentCommercialAction.SELECT_PICKUP
                 && requireSession(sessionId).getState() != CrmWhatsappAgentState.ESPERANDO_METODO_ENTREGA) {
-            return Outcome.message("Contamos con recojo en tienda, disponible aproximadamente 2 días después de la compra; si cae domingo pasa al lunes, y sin costo adicional. También contamos con envío por Shalom con "
-                    + "film protector obligatorio de S/2. Primero terminaremos de confirmar tu pedido y el pago; "
+            return Outcome.message("Contamos con recojo en tienda, disponible aproximadamente 2 días después de la compra; si cae domingo pasa al lunes, y sin costo adicional. Esa es la primera fecha disponible y puedes coordinar una posterior. También contamos con envío por Shalom con "
+                    + "film protector para embalaje obligatorio de S/2. Primero terminaremos de confirmar tu pedido y el pago; "
                     + "después podrás elegir una modalidad de entrega.");
         }
         if (earlyDeliveryPreference && action == AgentCommercialAction.SELECT_SHALOM) {
@@ -115,6 +121,17 @@ public class AgentDeterministicCommerceService {
         } catch (Exception error) {
             throw new IllegalStateException("No se pudo recuperar el resultado determinístico", error);
         }
+    }
+
+    private boolean isPendingDeliveryFollowup(AgentConversationDecision decision) {
+        AgentCommercialAction action = decision == null || decision.commercialAction() == null
+                ? AgentCommercialAction.NONE : decision.commercialAction();
+        return switch (action) {
+            case NONE, SELECT_PICKUP, SELECT_SHALOM, PROVIDE_SHALOM_DATA, EDIT_SHALOM_DATA,
+                    SHOW_PENDING_SHALOM_AGENCIES, CONFIRM_SHALOM_AGENCY, REUSE_SHALOM_PROFILE,
+                    HAS_PREVIOUS_PENDING_ORDER, NO_PREVIOUS_PENDING_ORDER, ACCEPT_FILM, DECLINE_FILM -> true;
+            default -> false;
+        };
     }
 
     /** Persists semantic delivery intent without advancing the commercial state. */
@@ -146,7 +163,7 @@ public class AgentDeterministicCommerceService {
     public String earlyDeliveryPreferenceMessage() {
         return "Sí realizamos envíos 💛\n"
                 + "🏬 Recojo en tienda: disponible aproximadamente 2 días después de la compra; si cae domingo, pasa al lunes porque no atendemos los domingos. Sin costo adicional.\n"
-                + "🚌 Envío por Shalom: normalmente se entrega a Shalom al día siguiente; solo con mucho volumen, en 2 días. Requiere film protector obligatorio de S/2.\n"
+                + "🚌 Envío por Shalom: se entrega a Shalom al día siguiente de atención. No realizamos entregas a Shalom los domingos ni feriados; en esos casos pasa al siguiente día laborable. Esa es la primera fecha disponible y puedes coordinar una posterior. Requiere film protector para embalaje obligatorio de S/2.\n"
                 + "He guardado tu preferencia por envío. Primero terminaremos de confirmar tu pedido y el pago; "
                 + "después te solicitaré los datos de Shalom.";
     }
@@ -154,7 +171,7 @@ public class AgentDeterministicCommerceService {
     public String appendEarlyDeliveryPreference(String message) {
         if (blank(message)) return earlyDeliveryPreferenceMessage();
         return message.trim() + "\n\nTambién registré que prefieres envío. Trabajamos con Shalom y el envío "
-                + "requiere film protector obligatorio de S/2. Primero confirma que el pedido está correcto "
+                + "requiere film protector para embalaje obligatorio de S/2. Primero confirma que el pedido está correcto "
                 + "para continuar con el pago.";
     }
 
@@ -382,17 +399,22 @@ public class AgentDeterministicCommerceService {
         }
         text.append("*Total: ").append(money(cart.total())).append("*\n\n")
                 .append("📦 *Modalidades de entrega disponibles*\n");
-        if (preorder) {
+        if (preorder && regular) {
+            text.append("🏬 Recojo en tienda:\n")
+                    .append("• Producto disponible: aproximadamente 2 días después de la compra; si cae domingo, pasa al lunes.\n")
+                    .append("• Producto en preventa: aproximadamente 2 días después de la fecha indicada; si cae domingo, pasa al lunes.\n");
+        } else if (preorder) {
             text.append("🏬 Recojo en tienda: disponible aproximadamente 2 días después de la fecha indicada de la preventa; si cae domingo, pasa al lunes. Sin costo adicional.\n");
         } else {
             text.append("🏬 Recojo en tienda: disponible aproximadamente 2 días después de la compra; si cae domingo, pasa al lunes. Sin costo adicional.\n");
         }
-        text.append("🚌 Envío por Shalom: normalmente se entrega a Shalom al día siguiente; solo con mucho volumen, en 2 días. Requiere S/2 adicionales por el film protector para embalaje.\n\n");
+        text.append("🚌 Envío por Shalom: se entrega a Shalom al día siguiente de atención. No realizamos entregas a Shalom los domingos ni feriados; en esos casos pasa al siguiente día laborable. Requiere S/2 adicionales por el film protector para embalaje.\n\n");
         if (preorder && regular) {
-            text.append("📅 Primero se espera la fecha indicada de la preventa. Desde esa fecha se aplican los plazos de recojo o entrega a Shalom informados arriba.\n\n");
+            text.append("📅 Como tu pedido combina disponibilidad inmediata y preventa, tú eliges: puedes recibir o recoger primero el producto disponible siguiendo su plazo normal, o esperar la preventa y coordinar todo junto en un solo paquete.\n\n");
         } else if (preorder) {
             text.append("📅 Primero se espera la fecha indicada de la preventa. Desde esa fecha se aplican los plazos de recojo o entrega a Shalom informados arriba.\n\n");
         }
+        text.append("🗓️ Los plazos indicados son la primera fecha disponible. Si prefieres una fecha posterior, podrás coordinarla con el área de envíos.\n\n");
         if (requestConfirmation) {
             text.append("⚠️ Revisa bien el modelo, color y talla. Los cambios tienen una penalidad de S/10 y pueden demorar.\n\n")
                     .append("Si todo está correcto, confirma tu pedido para continuar con el pago.");
@@ -627,7 +649,7 @@ public class AgentDeterministicCommerceService {
                 + "🧾 Número de pedido: " + saleId + "\n"
                 + "🏬 Tipo de entrega: Recojo en tienda\n"
                 + "📍 Dirección: Jr. Huánuco 1705-1707, piso 7, interior 701, Gamarra, La Victoria, Lima, Perú.\n\n"
-                + "Tu pedido estará disponible para recojo aproximadamente 2 días después de la compra; si la fecha cae domingo, pasa al lunes porque no atendemos los domingos. Si incluye preventa, el plazo se cuenta desde la fecha indicada.\n"
+                + "Tu pedido estará disponible para recojo aproximadamente 2 días después de la compra; si la fecha cae domingo, pasa al lunes porque no atendemos los domingos. Si incluye preventa, ese plazo se cuenta desde la fecha indicada para la prenda en preventa. Si también incluye productos disponibles, puedes coordinar recogerlos primero o esperar para recoger todo junto. La fecha informada es la primera disponible y puedes coordinar una posterior.\n"
                 + "Una asesora del área de envíos se comunicará contigo para corroborar tus datos.\n\n"
                 + "¡Gracias por confiar en Kiments! 💛";
     }
@@ -658,6 +680,12 @@ public class AgentDeterministicCommerceService {
                 decision.customerName(),decision.documentNumber(),decision.customerPhone(),agency);
         AgentFulfillmentService.FulfillmentResult result=progress.fulfillment();
         ensureCombinedCustomerLinked(sessionId,result,operation+":customer");
+        if(progress.agencyNotFound()&&progress.validationErrors().isEmpty()
+                &&progress.missingFields().equals(List.of("agencia de Shalom"))){
+            fulfillment.handoffMissingShalomAgency(sessionId,agency);
+            var sale=sales.createSalesNote(sessionId,operation+":sale:agency-not-found");
+            return Outcome.executed(missingShalomAgencyConfirmation(sale.saleId()));
+        }
         if(progress.missingFields().isEmpty()&&!result.agencyCandidates().isEmpty()
                 &&CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM.name().equals(result.agentState())
                 &&payments!=null&&payments.hasCombinedFilmPayment(sessionId))
@@ -674,6 +702,18 @@ public class AgentDeterministicCommerceService {
             message.append("Envíame únicamente: *")
                     .append(String.join(", ",progress.missingFields())).append("*.");
         return Outcome.executed(message.toString().trim());
+    }
+
+    private String missingShalomAgencyConfirmation(Integer saleId) {
+        return "Entendido 💛\n\n"
+                + "✅ Tu pedido fue registrado correctamente.\n"
+                + "🧾 Número de pedido: " + saleId + "\n"
+                + "🚌 Tipo de entrega: Envío por Shalom\n"
+                + "📍 Agencia: Pendiente de localizar y confirmar\n\n"
+                + "No encontramos automáticamente una agencia de Shalom para la ubicación indicada. "
+                + "Una asesora del área de envíos se comunicará contigo para ayudarte a encontrar la agencia "
+                + "adecuada y completar la coordinación del envío.\n\n"
+                + "¡Gracias por confiar en Kiments! 💛";
     }
 
     private Outcome editShalomData(Long sessionId, AgentConversationDecision decision, String operation) {
@@ -774,7 +814,7 @@ public class AgentDeterministicCommerceService {
         var film = films.confirmNoPreviousOrder(sessionId);
         if (film.accountNumber() == null) return Outcome.executed(finalShalomMessage(film, true));
         String holder = blank(film.accountHolder()) ? "" : " — " + film.accountHolder();
-        return Outcome.executed("Entendido 💛\n\n📦 Corresponde el pago de S/2.00 por el film protector.\n"
+        return Outcome.executed("Entendido 💛\n\n📦 Corresponde el pago de S/2.00 por el film protector para embalaje.\n"
                 + "💳 Yape: " + film.accountNumber() + holder
                 + "\nTienes 1 hora para enviar el comprobante por este chat.");
     }
@@ -788,7 +828,7 @@ public class AgentDeterministicCommerceService {
 
     private String finalShalomMessage(AgentFilmService.FilmResult film, boolean reviewPreviousOrders) {
         String review = reviewPreviousOrders
-                ? "Una asesora del área de envíos se comunicará contigo para corroborar tus datos, revisar tus pedidos anteriores y verificar el film protector pendiente."
+                ? "Una asesora del área de envíos se comunicará contigo para corroborar tus datos, revisar tus pedidos anteriores y verificar el film protector para embalaje pendiente."
                 : "Una asesora del área de envíos se comunicará contigo para corroborar tus datos.";
         return "Entendido 💛\n\n"
                 + "🧾 Número de pedido: " + film.saleId() + "\n"
@@ -802,7 +842,7 @@ public class AgentDeterministicCommerceService {
                 + "🧾 Número de pedido: " + film.saleId() + "\n"
                 + "🚌 Tipo de entrega: Envío por Shalom\n"
                 + "📍 Agencia: " + film.shalomAgency() + "\n"
-                + "📦 Film protector: Pagado\n\n"
+                + "📦 Film protector para embalaje: Pagado\n\n"
                 + "Una asesora del área de envíos se comunicará contigo para corroborar tus datos.\n\n"
                 + "¡Gracias por confiar en Kiments! 💛";
     }
@@ -812,17 +852,17 @@ public class AgentDeterministicCommerceService {
         if (result.continueWithoutFilm()) {
             var addon = result.addonId();
             return Outcome.executed(filmFinalizer.finalizeSale(addon, false,
-                    "No contamos con una cuenta Yape activa para el film, por lo que continuamos tu pedido sin este adicional.").message());
+                    "No contamos con una cuenta Yape activa para el film para embalaje, por lo que continuamos tu pedido sin este adicional.").message());
         }
         String holder = blank(result.accountHolder()) ? "" : "\n👤 Titular: " + result.accountHolder();
-        return Outcome.executed("📦 *Film protector para tu envío por Shalom*\n\n"
+        return Outcome.executed("📦 *Film protector para embalaje de tu envío por Shalom*\n\n"
                 + "💰 Monto exacto: *S/2.00*\n📱 Yape: *" + result.accountNumber() + "*" + holder
                 + "\n\n⏱️ Tienes *1 hora* para enviar el comprobante por este chat. "
                 + "Este pago no modifica el total de tu Nota de Venta.");
     }
 
     private Outcome declineFilm(Long sessionId) {
-        return Outcome.executed("El film protector de S/2 es obligatorio para los envíos por Shalom. "
+        return Outcome.executed("El film protector para embalaje de S/2 es obligatorio para los envíos por Shalom. "
                 + "Si necesitas ayuda con el pago, comunícate con nuestra asesora al 936310946.");
     }
 
@@ -846,11 +886,16 @@ public class AgentDeterministicCommerceService {
     private Outcome deliveryTimingContact() {
         return Outcome.message("Sí realizamos envíos por Shalom, hermosa 💛\n"
                 + "La fecha de despacho depende del producto:\n"
-                + "• Disponibilidad inmediata: Kiments entrega el pedido a Shalom normalmente al día siguiente de la compra y, solo cuando hay mucho volumen, en 2 días.\n"
+                + "• Disponibilidad inmediata: Kiments entrega el pedido a Shalom al día siguiente de atención.\n"
                 + "• Preventa: se espera la fecha indicada y desde ella se aplica la misma regla.\n\n"
                 + "No realizamos despachos el mismo día. Para recojo en tienda, el pedido está listo aproximadamente "
                 + "2 días después de la compra; si la fecha cae domingo, pasa al lunes porque no atendemos los domingos. "
-                + "En preventa, este plazo se cuenta desde la fecha indicada.\n\n"
+                + "No realizamos entregas a Shalom los domingos ni feriados; en esos casos pasa al siguiente día laborable. "
+                + "En preventa, este plazo se cuenta desde la fecha indicada. Si el pedido combina un producto disponible "
+                + "y uno en preventa, tú eliges entre recibir o recoger primero el disponible, o esperar y coordinar todo "
+                + "junto en un solo paquete.\n\n"
+                + "Los plazos mencionados son la primera fecha disponible; si prefieres una fecha posterior, podrás "
+                + "coordinarla con el área de envíos.\n\n"
                 + "Después del despacho, el tiempo de llegada depende de Shalom, por eso no podemos confirmar un día "
                 + "exacto de entrega.");
     }
@@ -888,19 +933,19 @@ public class AgentDeterministicCommerceService {
         String registered = "✅ Tu pedido fue registrado correctamente.\n"
                 + "🧾 Número de pedido: " + saleId + "\n"
                 + "📍 Agencia: " + result.shalomAgency() + "\n"
-                + "Para completar la preparación del envío, queda pendiente el pago obligatorio de S/2 por el film protector.";
+                + "Para completar la preparación del envío, queda pendiente el pago obligatorio de S/2 por el film protector para embalaje.";
         if (film.accountNumber() == null) {
             return registered + "\n\nNo hay una cuenta Yape activa. Tu venta se conserva. Para recibir ayuda, "
                     + "comunícate con nuestra asesora al 936310946.";
         }
         String holder = blank(film.accountHolder()) ? "" : "\nTitular: " + film.accountHolder();
-        return registered + "\n\n📦 Pago obligatorio del film protector\nMonto exacto: S/2.00\nYape: "
+        return registered + "\n\n📦 Pago obligatorio del film protector para embalaje\nMonto exacto: S/2.00\nYape: "
                 + film.accountNumber() + holder + "\nTienes hasta 1 hora para enviar el comprobante por este chat.";
     }
 
     private String filmOffer() {
-        return "📦 ¿Deseas agregar *film protector* a tu paquete de Shalom por *S/2.00*?\n\n"
-                + "Este adicional protege mejor el paquete durante el traslado. Puedes aceptarlo o continuar sin film.";
+        return "📦 ¿Deseas agregar *film protector para embalaje* a tu paquete de Shalom por *S/2.00*?\n\n"
+                + "Este adicional protege mejor el paquete durante el traslado. Puedes aceptarlo o continuar sin film para embalaje.";
     }
 
     private String shalomConfirmation(AgentFulfillmentService.FulfillmentResult result, Integer saleId) {
@@ -933,7 +978,7 @@ public class AgentDeterministicCommerceService {
         if (!blank(request.accountHolder())) text.append("👤 Titular: ").append(request.accountHolder()).append("\n");
         text.append("\nSi deseas envío por Shalom, puedes realizar un solo pago de *")
                 .append(money(request.expectedAmount().add(AgentFilmService.PRICE)))
-                .append("*, que incluye S/2 por el film protector.\n");
+                .append("*, que incluye S/2 por el film protector para embalaje.\n");
         long minutes = Math.max(1, (request.expiresInSeconds() + 59) / 60);
         text.append("\n✅ Tus productos quedaron reservados durante *").append(minutes)
                 .append(minutes == 1 ? " minuto" : " minutos")
@@ -943,11 +988,11 @@ public class AgentDeterministicCommerceService {
 
     private String deliveryQuestion(Long sessionId) {
         if (requireSession(sessionId).getPreferredFulfillmentMethod() == CrmWhatsappFulfillmentMethod.SHALOM) {
-            return "Me indicaste que prefieres envío por Shalom. Este método requiere film protector obligatorio "
+            return "Me indicaste que prefieres envío por Shalom. Este método requiere film protector para embalaje obligatorio "
                     + "de S/2. ¿Confirmas que deseas recibirlo por Shalom?";
         }
         return "¿Cómo deseas recibir tu pedido?\n🏬 Recojo en tienda: disponible aproximadamente 2 días después de la compra; si cae domingo, pasa al lunes. Sin costo adicional.\n"
-                + "🚌 Envío por Shalom: normalmente se entrega a Shalom al día siguiente; solo con mucho volumen, en 2 días. Requiere film protector obligatorio de S/2.\n¿Cuál opción deseas?";
+                + "🚌 Envío por Shalom: se entrega a Shalom al día siguiente de atención. No realizamos entregas a Shalom los domingos ni feriados; en esos casos pasa al siguiente día laborable. Requiere film protector para embalaje obligatorio de S/2.\n¿Cuál opción deseas?";
     }
 
     private String shalomDataRequest() {
@@ -957,8 +1002,8 @@ public class AgentDeterministicCommerceService {
     }
 
     private String combinedFilmShalomDataRequest() {
-        return "✅ El pago de las prendas y el film protector fue confirmado.\n"
-                + "📦 Film protector: S/2.00 — Pagado\n"
+        return "✅ El pago de las prendas y el film protector para embalaje fue confirmado.\n"
+                + "📦 Film protector para embalaje: S/2.00 — Pagado\n"
                 + "🚌 Tipo de entrega: Envío por Shalom\n\n"
                 + shalomDataRequest();
     }

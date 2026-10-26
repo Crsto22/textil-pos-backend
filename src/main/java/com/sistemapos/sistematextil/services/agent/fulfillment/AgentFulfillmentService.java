@@ -91,6 +91,13 @@ public class AgentFulfillmentService {
         return new PickupBranchList(result,result.isEmpty()?"No hay sucursales habilitadas para recojo":"Sucursales habilitadas para recojo");
     }
 
+    @Transactional(readOnly = true)
+    public boolean isPendingAdvisorDelivery(Long sessionId) {
+        return sessionId != null && fulfillments
+                .existsByAgentSession_IdAgentSessionAndStatusAndVentaIsNotNull(
+                        sessionId, CrmWhatsappFulfillmentStatus.PENDING_ADVISOR);
+    }
+
     @Transactional
     public FulfillmentResult selectPickup(Long sessionId,Integer branchId,String recipientName,String phone,String operationId){
         if(branchId==null)throw new IllegalArgumentException("La sucursal de recojo es obligatoria");
@@ -149,7 +156,7 @@ public class AgentFulfillmentService {
                 throw new IllegalStateException("La sesion no esta esperando los datos de Shalom");
             CrmWhatsappPaymentRequest payment=requireApprovedPayment(session);
             if(payment.getIncludedFilmAmount()==null||payment.getIncludedFilmAmount().signum()<=0)
-                throw new IllegalStateException("El pago aprobado no incluye el film protector");
+                throw new IllegalStateException("El pago aprobado no incluye el film protector para embalaje");
             Scope scope=new Scope(session,payment);
             CrmWhatsappFulfillment f=getOrCreate(scope,operationId);
             f.setMethod(CrmWhatsappFulfillmentMethod.SHALOM);
@@ -260,13 +267,46 @@ public class AgentFulfillmentService {
     }
 
     @Transactional
+    public FulfillmentResult handoffMissingShalomAgency(Long sessionId,String searchedLocation){
+        CrmWhatsappAgentSession session=requireSession(sessionId,true);
+        if(session.getState()!=CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM)
+            throw new IllegalStateException("La sesion no esta esperando los datos de Shalom");
+        requireApprovedPayment(session);
+        if(session.getCliente()==null)
+            throw new IllegalStateException("Los datos del cliente aun no estan registrados");
+        CrmWhatsappFulfillment f=requireShalom(sessionId);
+        boolean personalComplete=!clean(f.getRecipientName()).isBlank()
+                &&clean(f.getDocumentNumber()).matches("\\d{8}")
+                &&!CrmWhatsappPhoneUtils.normalizePeruvianMobile(f.getPhone()).isBlank();
+        if(!personalComplete)
+            throw new IllegalStateException("Los datos personales de Shalom aun estan incompletos");
+        if(!existingCandidateViews(f).isEmpty())
+            throw new IllegalStateException("Existen agencias de Shalom pendientes de confirmar");
+
+        String location=clean(searchedLocation);
+        f.setShalomAgencyReference(null);
+        f.setShalomAgency(null);
+        f.setShalomAgencyAddress(null);
+        f.setShalomCandidateIds(null);
+        f.setShalomDestination(location.isBlank()?null:location);
+        f.setStatus(CrmWhatsappFulfillmentStatus.PENDING_ADVISOR);
+        f.setNotes(location.isBlank()
+                ?"No se encontro una agencia Shalom; pendiente de localizar y confirmar por asesora"
+                :"No se encontro una agencia Shalom para: "+location+"; pendiente de localizar y confirmar por asesora");
+        f.setConfirmedAt(null);
+        f=fulfillments.save(f);
+        apply(session,CrmWhatsappAgentEvent.ENTREGA_DERIVADA_A_ASESORA);
+        return result(f,session,List.of());
+    }
+
+    @Transactional
     public FulfillmentResult completeCombinedShalomData(Long sessionId){
         CrmWhatsappAgentSession session=requireSession(sessionId,true);
         if(session.getState()!=CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM)
             throw new IllegalStateException("La sesion no esta esperando los datos de Shalom");
         CrmWhatsappPaymentRequest payment=requireApprovedPayment(session);
         if(payment.getIncludedFilmAmount()==null||payment.getIncludedFilmAmount().signum()<=0)
-            throw new IllegalStateException("El pago aprobado no incluye el film protector");
+            throw new IllegalStateException("El pago aprobado no incluye el film protector para embalaje");
         if(session.getCliente()==null||payment.getCliente()==null)
             throw new IllegalStateException("Los datos del cliente aun no estan vinculados al pago");
         CrmWhatsappFulfillment f=requireShalom(sessionId);

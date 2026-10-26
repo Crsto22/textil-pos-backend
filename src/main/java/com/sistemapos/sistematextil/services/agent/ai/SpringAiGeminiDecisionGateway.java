@@ -83,6 +83,12 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
               Haz lo mismo cuando la clienta solicite directamente dos o más productos en un solo mensaje. Conserva
               la asociación individual expresada por ella: cada color, talla y cantidad pertenece únicamente al
               producto que acompaña, sin reutilizar esos atributos para otro modelo.
+              Si ya existe un carrito y el último mensaje presenta una selección de productos pero su significado no
+              permite saber si desea sumarla al pedido actual o convertirla en el contenido final, usa
+              CLARIFY_CART_SCOPE y conserva todas las líneas en promotionSelections. Interpreta la intención completa,
+              el historial y el estado actual; no clasifiques por palabras aisladas. Usa ADD_PRODUCT únicamente cuando
+              sea inequívoco que desea conservar lo anterior y añadir la nueva selección. Usa REPLACE_CART únicamente
+              cuando sea inequívoco que la selección expresada representa el contenido final completo del pedido.
               Si el estado activo es IDLE, EXPLORANDO_PRODUCTOS o ARMANDO_CARRITO, expresiones como agregar,
               adicionar, quiero otro o también deseo significan una compra minorista nueva o una adición al carrito
               actual. Una venta histórica no convierte esa solicitud en cambio postventa. Solo deriva como cambio
@@ -164,9 +170,9 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
               confirma que tiene otra compra o pedido pendiente para enviarlo junto. Interpreta expresiones naturales
               como "compre ayer", "tengo otro del live" o "quiero juntarlo"; no decidas por una palabra aislada.
             - NO_PREVIOUS_PENDING_ORDER: solamente cuando ESTADO_ACTUAL sea ESPERANDO_PEDIDO_ANTERIOR,
-              confirma que no tiene otro pedido pendiente y corresponde solicitar el film de esta compra.
+              confirma que no tiene otro pedido pendiente y corresponde solicitar el film para embalaje de esta compra.
               Interpreta expresiones naturales como "es el unico", "no tengo otro" o "solo este pedido".
-            - ACCEPT_FILM y DECLINE_FILM son acciones históricas: no las uses. El film de Shalom se resuelve después de preguntar si existe otro pedido pendiente.
+            - ACCEPT_FILM y DECLINE_FILM son acciones históricas: no las uses. El film para embalaje de Shalom se resuelve después de preguntar si existe otro pedido pendiente.
             - SHARE_ADVISOR_CONTACT: pide hablar, comunicarse o contactar a una asesora. Esta accion solo comparte
               el numero de contacto y no pausa la atencion automatica: establece requiresHumanHelp=false. Si luego
               consulta, pide informacion o quiere comprar, interpreta normalmente la nueva intencion y continua.
@@ -185,10 +191,12 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
               llegaria para un evento. Usa intent=DELIVERY_METHOD, requiresHumanHelp=false y conserva en
               productReference el modelo mencionado para que Java consulte su preventa. Conserva una ciudad o
               destino mencionado en shalomDestination. Java comunicara que los productos con disponibilidad
-              inmediata se entregan a Shalom normalmente al dia siguiente de la compra y, solo cuando hay mucho
-              volumen de pedidos, en 2 dias; nunca el mismo dia. Si es preventa, aplica la misma regla desde la fecha
+              inmediata se entregan a Shalom al dia siguiente de atencion; nunca el mismo dia. No hay entregas a
+              Shalom los domingos ni feriados: pasa al siguiente dia laborable. Si es preventa, aplica la misma regla desde la fecha
               verificada de inicio de despacho. Ese plazo corresponde al despacho desde Kiments, nunca al tiempo
-              de traslado o llegada. No prometas un dia exacto de llegada, prioridad ni entrega: despues del despacho
+              de traslado o llegada. Si el pedido mezcla disponibilidad inmediata y preventa, la clienta puede elegir
+              recibir o recoger primero lo disponible, o esperar y juntar todo con la preventa. Los plazos indican la
+              primera fecha disponible; una fecha posterior puede coordinarse con el area de envios. No prometas un dia exacto de llegada, prioridad ni entrega: despues del despacho
               el tiempo depende de Shalom. Una fecha mencionada por la clienta, un live o TikTok no se confirma.
             - REFER_EXISTING_ORDER_DELIVERY: la clienta habla de su compra o pedido ya realizado y pregunta cuando
               lo enviaran, despacharan o entregaran, o solicita conocer su estado logistico. Usa
@@ -231,11 +239,11 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
             Devuelve ALL cuando la clienta no establezca esa condicion. No deduzcas este campo mediante coincidencia
             literal: interpreta el significado completo de su mensaje.
             cartAction debe ser NONE salvo que la clienta quiera modificar el carrito. Cuando cartAction sea
-            CHANGE_QUANTITY, KEEP_ONLY_PRODUCT, CHANGE_VARIANT, REPLACE_CART, REMOVE_PRODUCT o CLEAR_CART usa tambien
+            CHANGE_QUANTITY, KEEP_ONLY_PRODUCT, CHANGE_VARIANT, REPLACE_CART, CLARIFY_CART_SCOPE, REMOVE_PRODUCT o CLEAR_CART usa tambien
             commercialAction CHANGE_CART.
             Para aceptar una prenda ya elegida con producto, color y talla usa ADD_PRODUCT; si no menciona
             cantidad devuelve 0 y Java agregara una unidad por defecto.
-            Usa CHANGE_QUANTITY, KEEP_ONLY_PRODUCT, CHANGE_VARIANT, REPLACE_CART, REMOVE_PRODUCT, CLEAR_CART, CONFIRM_CART o ADD_PROMOTION
+            Usa CHANGE_QUANTITY, KEEP_ONLY_PRODUCT, CHANGE_VARIANT, REPLACE_CART, CLARIFY_CART_SCOPE, REMOVE_PRODUCT, CLEAR_CART, CONFIRM_CART o ADD_PROMOTION
             solo cuando esa accion se entienda claramente por el contexto.
             Para comprar un combo o promocion usa commercialAction=CHANGE_CART y cartAction=ADD_PROMOTION.
             Conserva en promotionReference el nombre o numero exacto del combo elegido, incluso cuando los mensajes

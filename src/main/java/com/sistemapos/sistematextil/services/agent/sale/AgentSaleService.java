@@ -233,7 +233,8 @@ public class AgentSaleService {
                 || evidence.getProcessingStatus() != CrmWhatsappPaymentProcessingStatus.COMPLETED) {
             throw new IllegalStateException("El comprobante aun no fue aprobado inicialmente");
         }
-        if (fulfillment.getStatus() != CrmWhatsappFulfillmentStatus.READY
+        if ((fulfillment.getStatus() != CrmWhatsappFulfillmentStatus.READY
+                && fulfillment.getStatus() != CrmWhatsappFulfillmentStatus.PENDING_ADVISOR)
                 || fulfillment.getPaymentRequest() == null
                 || !Objects.equals(fulfillment.getPaymentRequest().getIdPaymentRequest(), payment.getIdPaymentRequest())) {
             throw new IllegalStateException("La modalidad de entrega aun no esta completa");

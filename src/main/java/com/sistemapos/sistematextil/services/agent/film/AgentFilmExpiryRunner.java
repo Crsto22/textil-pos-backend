@@ -36,5 +36,5 @@ public class AgentFilmExpiryRunner {
         addon.getFulfillment().setStatus(CrmWhatsappFulfillmentStatus.FILM_PAYMENT_OVERDUE);addons.save(addon);
         CrmWhatsappAgentSession s=sessions.findForUpdate(addon.getAgentSession().getIdAgentSession()).orElseThrow();
         if(s.getState()==CrmWhatsappAgentState.ESPERANDO_PAGO_FILM){s.setState(stateMachine.transition(s.getState(),CrmWhatsappAgentEvent.PAGO_FILM_EXPIRADO));s.setLastEvent(CrmWhatsappAgentEvent.PAGO_FILM_EXPIRADO);s.setStateChangedAt(LocalDateTime.now());sessions.save(s);}
-        escalation.escalate(s.getIdAgentSession(),id,"Venció el plazo de 1 hora para pagar el film obligatorio");}
+        escalation.escalate(s.getIdAgentSession(),id,"Venció el plazo de 1 hora para pagar el film para embalaje obligatorio");}
 }

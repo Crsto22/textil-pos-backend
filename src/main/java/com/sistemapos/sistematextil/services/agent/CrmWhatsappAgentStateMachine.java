@@ -124,6 +124,7 @@ public class CrmWhatsappAgentStateMachine {
         register(result, CrmWhatsappAgentState.ESPERANDO_METODO_ENTREGA,
                 entry(CrmWhatsappAgentEvent.RECOJO_TIENDA_SELECCIONADO, CrmWhatsappAgentState.LISTO_PARA_VENTA),
                 entry(CrmWhatsappAgentEvent.ENVIO_SHALOM_SELECCIONADO, CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM),
+                entry(CrmWhatsappAgentEvent.ENTREGA_DERIVADA_A_ASESORA, CrmWhatsappAgentState.LISTO_PARA_VENTA),
                 entry(CrmWhatsappAgentEvent.CANCELACION_SOLICITADA, CrmWhatsappAgentState.REQUIERE_AYUDA),
                 entry(CrmWhatsappAgentEvent.AYUDA_REQUERIDA, CrmWhatsappAgentState.REQUIERE_AYUDA));
 
@@ -133,6 +134,7 @@ public class CrmWhatsappAgentStateMachine {
                 entry(CrmWhatsappAgentEvent.PERFIL_SHALOM_REUTILIZADO,
                         CrmWhatsappAgentState.LISTO_PARA_VENTA),
                 entry(CrmWhatsappAgentEvent.RECOJO_TIENDA_SELECCIONADO, CrmWhatsappAgentState.LISTO_PARA_VENTA),
+                entry(CrmWhatsappAgentEvent.ENTREGA_DERIVADA_A_ASESORA, CrmWhatsappAgentState.LISTO_PARA_VENTA),
                 entry(CrmWhatsappAgentEvent.CAMBIO_METODO_ENTREGA_SOLICITADO,
                         CrmWhatsappAgentState.ESPERANDO_METODO_ENTREGA),
                 entry(CrmWhatsappAgentEvent.CANCELACION_SOLICITADA, CrmWhatsappAgentState.REQUIERE_AYUDA),
@@ -146,6 +148,7 @@ public class CrmWhatsappAgentStateMachine {
                 entry(CrmWhatsappAgentEvent.CORRECCION_DATOS_SHALOM_SOLICITADA,
                         CrmWhatsappAgentState.ESPERANDO_DATOS_SHALOM),
                 entry(CrmWhatsappAgentEvent.RECOJO_TIENDA_SELECCIONADO, CrmWhatsappAgentState.LISTO_PARA_VENTA),
+                entry(CrmWhatsappAgentEvent.ENTREGA_DERIVADA_A_ASESORA, CrmWhatsappAgentState.LISTO_PARA_VENTA),
                 entry(CrmWhatsappAgentEvent.CAMBIO_METODO_ENTREGA_SOLICITADO,
                         CrmWhatsappAgentState.ESPERANDO_METODO_ENTREGA),
                 entry(CrmWhatsappAgentEvent.CANCELACION_SOLICITADA, CrmWhatsappAgentState.REQUIERE_AYUDA),
@@ -163,6 +166,8 @@ public class CrmWhatsappAgentStateMachine {
                         CrmWhatsappAgentState.VENTA_PENDIENTE_REVISION),
                 entry(CrmWhatsappAgentEvent.SIN_PEDIDO_ANTERIOR_CONFIRMADO,
                         CrmWhatsappAgentState.ESPERANDO_PAGO_FILM),
+                entry(CrmWhatsappAgentEvent.ENTREGA_DERIVADA_A_ASESORA,
+                        CrmWhatsappAgentState.VENTA_PENDIENTE_REVISION),
                 entry(CrmWhatsappAgentEvent.PAGO_RECHAZADO_Y_VENTA_ANULADA,
                         CrmWhatsappAgentState.CANCELADO),
                 entry(CrmWhatsappAgentEvent.AYUDA_REQUERIDA, CrmWhatsappAgentState.REQUIERE_AYUDA));

@@ -67,10 +67,10 @@ public class VentaPosEntregaService {
                 .filter(ShalomAgency::isActive)
                 .filter(ShalomAgency::isDestinationEnabled)
                 .orElseThrow(() -> new IllegalArgumentException("La agencia de Shalom ya no esta disponible"));
-        String filmStatus = required(request.estadoFilm(), "Selecciona el estado del film protector", 20)
+        String filmStatus = required(request.estadoFilm(), "Selecciona el estado del film protector para embalaje", 20)
                 .toUpperCase(Locale.ROOT);
         if (!filmStatus.equals("PAID") && !filmStatus.equals("PENDING")) {
-            throw new IllegalArgumentException("El estado del film protector no es valido");
+            throw new IllegalArgumentException("El estado del film protector para embalaje no es valido");
         }
         return new PreparedDelivery(CrmWhatsappFulfillmentMethod.SHALOM, null, agency,
                 recipient, document, phone, filmStatus);

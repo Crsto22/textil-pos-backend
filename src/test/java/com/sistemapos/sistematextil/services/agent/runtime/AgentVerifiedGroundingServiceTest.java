@@ -683,19 +683,22 @@ class AgentVerifiedGroundingServiceTest {
         var grounded = service.ground(4L, 9L, 30L, "Pueden enviarlo mañana?");
 
         assertTrue(grounded.customerMessage().contains("envíos a Arequipa por Shalom"));
-        assertTrue(grounded.customerMessage().contains("normalmente al día siguiente"));
-        assertTrue(grounded.customerMessage().contains("mucho volumen"));
-        assertTrue(grounded.customerMessage().contains("en 2 días"));
-        assertTrue(grounded.customerMessage().contains("No realizamos despachos el mismo día"));
+        assertTrue(grounded.customerMessage().contains("al día siguiente de atención"));
+        assertTrue(grounded.customerMessage().contains("domingos ni feriados"));
+        assertTrue(grounded.customerMessage().contains("siguiente día laborable"));
+        assertFalse(grounded.customerMessage().contains("mucho volumen"));
+        assertTrue(grounded.customerMessage().contains("realizamos despachos el mismo día"));
         assertTrue(grounded.customerMessage().contains("Preventa"));
         assertTrue(grounded.customerMessage().contains("tiempo de llegada depende de Shalom"));
         assertTrue(grounded.customerMessage().contains("no podemos confirmar un día exacto"));
         assertFalse(grounded.customerMessage().contains("1 a 3"));
-        assertFalse(grounded.customerMessage().contains("área de envíos"));
+        assertTrue(grounded.customerMessage().contains("área de envíos"));
+        assertTrue(grounded.customerMessage().contains("primera fecha disponible"));
+        assertTrue(grounded.customerMessage().contains("Pedido mixto"));
     }
 
     @Test
-    void deliveryTimingForReadyStockUsesTheOneToFourDayDispatchWindow() {
+    void deliveryTimingForReadyStockUsesTheNextWorkingDayPolicy() {
         AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
         AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
         AgentConversationDecision decision = new AgentConversationDecision(
@@ -716,8 +719,10 @@ class AgentVerifiedGroundingServiceTest {
         var grounded = service.ground(4L, 9L, 30L, "¿Cuándo envían Emma a Arequipa?");
 
         assertTrue(grounded.customerMessage().contains("EMMA tiene disponibilidad inmediata"));
-        assertTrue(grounded.customerMessage().contains("normalmente al día siguiente"));
-        assertTrue(grounded.customerMessage().contains("en 2 días"));
+        assertTrue(grounded.customerMessage().contains("al día siguiente de atención"));
+        assertTrue(grounded.customerMessage().contains("domingos ni feriados"));
+        assertTrue(grounded.customerMessage().contains("siguiente día laborable"));
+        assertFalse(grounded.customerMessage().contains("mucho volumen"));
         assertTrue(grounded.customerMessage().contains("tiempo de llegada depende de Shalom"));
         assertFalse(grounded.customerMessage().contains("1 a 3"));
     }
@@ -1067,6 +1072,36 @@ class AgentVerifiedGroundingServiceTest {
                 List.of(new ComboSelection(1880, 1), new ComboSelection(1864, 1)),
                 150, "agent-job-30:verified-replace-cart");
         verify(cart, org.mockito.Mockito.never()).addProduct(anyLong(), anyInt(), anyInt(), anyString());
+    }
+
+    @Test
+    void asksWhetherABareProductListShouldBeAddedOrReplaceTheExistingCart() {
+        AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        AgentCartService cart = mock(AgentCartService.class);
+        String conversation = "• 1 MELINA — Negro, L\n• 1 ALESSIA ENTERO — Negro, L";
+        List<PromotionSelection> lines = List.of(
+                new PromotionSelection("MELINA", "NEGRO", "L", 1),
+                new PromotionSelection("ALESSIA ENTERO", "NEGRO", "L", 1));
+        AgentConversationDecision ambiguousSelection = new AgentConversationDecision(
+                AgentDecisionIntent.CART_CHANGE, "definir alcance de la selección", "", "", "", 0,
+                "", lines, AgentCartAction.CLARIFY_CART_SCOPE, AgentCommercialAction.CHANGE_CART,
+                "", "", "", "", "", "", "", "",
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL, 95, false);
+        when(decisions.interpret(4L, conversation)).thenReturn(
+                new AgentInterpretationResult("GEMINI", "model", "DB", 10, 0, ambiguousSelection));
+
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class), cart,
+                passThroughAudit());
+        var grounded = service.ground(4L, 9L, 30L, conversation,
+                CrmWhatsappAgentState.ARMANDO_CARRITO);
+
+        assertFalse(grounded.mutationExecuted());
+        assertEquals(AgentCartAction.CLARIFY_CART_SCOPE, grounded.decision().cartAction());
+        assertNull(grounded.customerMessage());
+        assertTrue(grounded.evidenceJson().contains("requiredClarification"));
+        verifyNoInteractions(cart);
     }
 
     @Test

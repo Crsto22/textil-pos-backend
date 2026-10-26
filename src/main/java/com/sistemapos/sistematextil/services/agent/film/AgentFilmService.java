@@ -74,7 +74,7 @@ public class AgentFilmService {
             addon.setStatus(CrmWhatsappFilmStatus.PAYMENT_CONFIGURATION_REQUIRED);
             addon.setResolvedAt(now);
             addon=addons.save(addon);
-            escalation.escalate(sessionId,addon.getIdFilmAddon(),"No existe una cuenta Yape activa para cobrar el film obligatorio");
+            escalation.escalate(sessionId,addon.getIdFilmAddon(),"No existe una cuenta Yape activa para cobrar el film para embalaje obligatorio");
             return result(addon, false);
         }
         addon.setPaymentAccount(account); addon.setStatus(CrmWhatsappFilmStatus.AWAITING_PAYMENT);
@@ -138,7 +138,7 @@ public class AgentFilmService {
             addon.setResolvedAt(now); addons.save(addon);
             transition(session, CrmWhatsappAgentEvent.PAGO_FILM_NO_DISPONIBLE);
             escalation.escalate(sessionId, addon.getIdFilmAddon(),
-                    "No existe una cuenta Yape activa para cobrar el film obligatorio");
+                    "No existe una cuenta Yape activa para cobrar el film para embalaje obligatorio");
             return result(addon, false);
         }
         addon.setPaymentAccount(account); addon.setStatus(CrmWhatsappFilmStatus.AWAITING_PAYMENT);
@@ -218,7 +218,7 @@ public class AgentFilmService {
 
     @Transactional
     public FilmResult decline(Long sessionId) {
-        throw new IllegalStateException("El film protector es obligatorio para los envios por Shalom");
+        throw new IllegalStateException("El film protector para embalaje es obligatorio para los envios por Shalom");
     }
 
     @Transactional
@@ -226,7 +226,7 @@ public class AgentFilmService {
         CrmWhatsappFilmAddon addon=addons.findForUpdate(addonId).orElseThrow();
         if(addon.getStatus()!=CrmWhatsappFilmStatus.PAYMENT_OVERDUE
                 && addon.getStatus()!=CrmWhatsappFilmStatus.PAYMENT_CONFIGURATION_REQUIRED)
-            throw new IllegalStateException("El cobro del film no se puede reactivar en su estado actual");
+            throw new IllegalStateException("El cobro del film para embalaje no se puede reactivar en su estado actual");
         MetodoPagoCuenta account=findYapeAccount(addon.getAgentSession());
         if(account==null)throw new IllegalStateException("No existe una cuenta Yape activa");
         LocalDateTime now=LocalDateTime.now();addon.setPaymentAccount(account);
@@ -244,7 +244,7 @@ public class AgentFilmService {
     @Transactional
     public FilmResult confirmManually(Long addonId, Usuario actor, Integer coveredBySaleId) {
         CrmWhatsappFilmAddon addon=addons.findForUpdate(addonId).orElseThrow();
-        if(addon.getVenta()==null)throw new IllegalStateException("El film no está vinculado a una venta");
+        if(addon.getVenta()==null)throw new IllegalStateException("El film para embalaje no está vinculado a una venta");
         if (addon.getStatus() == CrmWhatsappFilmStatus.CONFIRMED
                 || addon.getStatus() == CrmWhatsappFilmStatus.COVERED_BY_PREVIOUS_ORDER) return result(addon, false);
         if (addon.getStatus() == CrmWhatsappFilmStatus.ORDER_CANCELLED)
@@ -255,7 +255,7 @@ public class AgentFilmService {
                     .filter(value -> value.getStatus() == CrmWhatsappFilmStatus.CONFIRMED
                             || value.getStatus() == CrmWhatsappFilmStatus.COVERED_BY_PREVIOUS_ORDER)
                     .orElseThrow(() -> new IllegalArgumentException(
-                            "El pedido anterior no tiene un film pagado confirmado"));
+                            "El pedido anterior no tiene un film para embalaje pagado confirmado"));
             if (previous.getVenta().getIdVenta().equals(addon.getVenta().getIdVenta()))
                 throw new IllegalArgumentException("Selecciona un pedido anterior distinto");
             if (previous.getVenta().getCliente() == null || addon.getVenta().getCliente() == null
@@ -316,7 +316,7 @@ public class AgentFilmService {
     private void ensureWaitingForFilmPayment(CrmWhatsappAgentSession session) {
         if (session.getState() == CrmWhatsappAgentState.ESPERANDO_PAGO_FILM) return;
         if (session.getState() != CrmWhatsappAgentState.VENTA_PENDIENTE_REVISION)
-            throw new IllegalStateException("La venta no esta lista para esperar el pago del film");
+            throw new IllegalStateException("La venta no esta lista para esperar el pago del film para embalaje");
         transition(session, CrmWhatsappAgentEvent.FILM_ACEPTADO);
     }
     private FilmResult result(CrmWhatsappFilmAddon a, boolean continueWithoutFilm) {

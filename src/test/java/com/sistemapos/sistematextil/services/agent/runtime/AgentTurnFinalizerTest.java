@@ -434,13 +434,13 @@ class AgentTurnFinalizerTest {
         org.mockito.InOrder order = inOrder(outbox);
         order.verify(outbox).enqueueImage(8L, 41L, 99L, 0,
                 "/productos/melina-global.webp", "melina-global.webp", "image/webp",
-                "MELINA\nPreventa: desde el 26 de octubre de 2026, entrega a Shalom normalmente al día siguiente; solo con mucho volumen, en 2 días.");
+                "MELINA\nPreventa: desde el 26 de octubre de 2026, entrega a Shalom al día siguiente de atención; domingos y feriados pasan al siguiente día laborable. Esa es la primera fecha disponible y puede coordinarse una posterior.");
         order.verify(outbox).enqueueImage(8L, 41L, 99L, 1,
                 "/productos/annie-global.webp", "annie-global.webp", "image/webp",
-                "ANNIE\nDisponible: entrega a Shalom normalmente al día siguiente; solo con mucho volumen, en 2 días.");
+                "ANNIE\nDisponible: entrega a Shalom al día siguiente de atención; domingos y feriados pasan al siguiente día laborable. Esa es la primera fecha disponible y puede coordinarse una posterior.");
         order.verify(outbox).enqueueImage(8L, 41L, 99L, 2,
                 "/productos/lyana-global.webp", "lyana-global.webp", "image/webp",
-                "LYANA\nDisponible: entrega a Shalom normalmente al día siguiente; solo con mucho volumen, en 2 días.");
+                "LYANA\nDisponible: entrega a Shalom al día siguiente de atención; domingos y feriados pasan al siguiente día laborable. Esa es la primera fecha disponible y puede coordinarse una posterior.");
         order.verify(outbox).enqueueText(8L, 41L, 99L, 3, "Aquí tienes el catálogo");
         org.junit.jupiter.api.Assertions.assertNotNull(session.getCatalogPreviewSentAt());
     }

@@ -34,6 +34,9 @@ public interface CrmWhatsappFulfillmentRepository extends JpaRepository<CrmWhats
 
     Optional<CrmWhatsappFulfillment> findByVenta_IdVenta(Integer saleId);
 
+    boolean existsByAgentSession_IdAgentSessionAndStatusAndVentaIsNotNull(
+            Long sessionId, com.sistemapos.sistematextil.model.CrmWhatsappFulfillmentStatus status);
+
     List<CrmWhatsappFulfillment> findByVenta_IdVentaIn(Collection<Integer> saleIds);
 
     @Query("""

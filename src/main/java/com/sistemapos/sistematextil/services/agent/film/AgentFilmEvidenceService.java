@@ -93,7 +93,7 @@ public class AgentFilmEvidenceService {
             completion=tx.execute(status->complete(evidenceId,result.extraction(),result.provider()));
         } catch(RuntimeException ex) { tx.executeWithoutResult(status->fail(evidenceId,ex)); return; }
         if(completion!=null&&completion.approved()) {
-            finalizer.finalizeSale(completion.addonId(), true, "✅ Pago del film protector confirmado.");
+            finalizer.finalizeSale(completion.addonId(), true, "✅ Pago del film protector para embalaje confirmado.");
         }
     }
 
@@ -117,7 +117,7 @@ public class AgentFilmEvidenceService {
         if(!errors.isEmpty()) {
             e.setValidationStatus(CrmWhatsappPaymentEvidenceStatus.OBSERVADO); evidence.save(e);
             outbox.enqueueOperationalText(addon.getAgentSession().getIdAgentSession(),null,e.getMessage().getIdMessage(),
-                    100_000+Math.toIntExact(id%500_000),"❌ No pude validar el pago del film: "
+                    100_000+Math.toIntExact(id%500_000),"❌ No pude validar el pago del film para embalaje: "
                             +errors.getFirst()+". Puedes enviar otro comprobante mientras quede tiempo.");
             return new Completion(addon.getIdFilmAddon(),false);
         }

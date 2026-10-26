@@ -7,6 +7,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 
@@ -351,7 +352,7 @@ class AgentTurnFinalizerTest {
     }
 
     @Test
-    void doesNotSendCatalogPreviewImagesMoreThanOncePerConversation() {
+    void resendsCatalogPreviewImagesWhenTheCustomerRequestsTheCatalogAgain() {
         AgentOutboxService outbox = mock(AgentOutboxService.class);
         AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
         CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
@@ -368,6 +369,21 @@ class AgentTurnFinalizerTest {
         session.setLastCustomerMessage(anchor);
         when(sessions.findForUpdate(8L)).thenReturn(java.util.Optional.of(session));
         when(jdbc.queryForObject(anyString(), eq(Long.class), eq(20L), anyString(), eq(20L), anyString())).thenReturn(1L);
+        when(catalog.getProductImage(8L, 78, "")).thenReturn(new ProductImageResult(
+                78, "MELINA", "", "/productos/melina-global.webp", null, List.of()));
+        when(catalog.getProductImage(8L, 79, "")).thenReturn(new ProductImageResult(
+                79, "ANNIE", "", "/productos/annie-global.webp", null, List.of()));
+        when(catalog.getProductImage(8L, 80, "")).thenReturn(new ProductImageResult(
+                80, "LYANA", "", "/productos/lyana-global.webp", null, List.of()));
+        when(catalog.getProduct(8L, 78)).thenReturn(new ProductDetail(
+                78, "MELINA", "", "CONJUNTO", false, null,
+                null, null, List.of(), List.of(), 1, 80D, 1));
+        when(catalog.getProduct(8L, 79)).thenReturn(new ProductDetail(
+                79, "ANNIE", "", "CONJUNTO", false, null,
+                null, null, List.of(), List.of(), 1, 75D, 1));
+        when(catalog.getProduct(8L, 80)).thenReturn(new ProductDetail(
+                80, "LYANA", "", "CONJUNTO", false, null,
+                null, null, List.of(), List.of(), 1, 70D, 1));
         AgentTurnFinalizer finalizer = new AgentTurnFinalizer(outbox, catalog, sessions,
                 mock(CrmWhatsappAgentStateMachine.class), mock(AgentRuntimeConfigService.class), jdbc);
         JobLease lease = new JobLease(41L, 8L, 99L, 1, "worker:lease", LocalDateTime.now());
@@ -380,10 +396,9 @@ class AgentTurnFinalizerTest {
 
         finalizer.finalizeTurn(lease, turn);
 
-        verify(outbox, times(0)).enqueueImage(eq(8L), eq(41L), eq(99L), eq(0),
+        verify(outbox, times(3)).enqueueImage(eq(8L), eq(41L), eq(99L), anyInt(),
                 anyString(), anyString(), anyString(), anyString());
-        verify(outbox).enqueueText(8L, 41L, 99L, 0, "Aquí tienes el catálogo");
-        org.mockito.Mockito.verifyNoInteractions(catalog);
+        verify(outbox).enqueueText(8L, 41L, 99L, 3, "Aquí tienes el catálogo");
     }
 
     @Test

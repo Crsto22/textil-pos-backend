@@ -99,11 +99,9 @@ public class AgentTurnFinalizer {
     private int enqueueValidatedMedia(CrmWhatsappAgentSession session, JobLease lease, GeneratedTurn turn, int ordinal) {
         if (turn.media() == null) return ordinal;
         Set<String> queuedSources = new HashSet<>();
-        boolean catalogPreviewAlreadySent = session.getCatalogPreviewSentAt() != null;
         boolean catalogPreviewQueued = false;
         for (AgentMediaRequest request : turn.media()) {
             if (request == null || request.type() == null || request.productId() == null) continue;
-            if (request.catalogPreview() && catalogPreviewAlreadySent) continue;
             String source;
             String caption = null;
             if (request.type() == AgentMediaRequest.MediaType.SIZE_GUIDE) {

@@ -591,11 +591,17 @@ class AgentVerifiedGroundingServiceTest {
                 new VariantSummary(6008, "LY-NEG-S", "NEGRO", "S", 70D, 70D, 0, false))));
         when(catalog.getVariants(9L, 59, "", "S")).thenReturn(new VariantResult(
                 59, "EMMA", "", "S", List.of(
-                availableVariant(5901, "AZUL", "S", 67D, 10),
-                availableVariant(5902, "BEIGE CLARO", "S", 67D, 2),
-                availableVariant(5903, "CAMEL CLARO", "S", 67D, 9),
-                availableVariant(5904, "CHOCOLATE", "S", 67D, 11),
-                availableVariant(5905, "GRIS OSCURO", "S", 67D, 3))));
+                        availableVariant(5901, "AZUL", "S", 67D, 10),
+                        availableVariant(5902, "BEIGE CLARO", "S", 67D, 2),
+                        availableVariant(5903, "CAMEL CLARO", "S", 67D, 9),
+                        availableVariant(5904, "CHOCOLATE", "S", 67D, 11),
+                        availableVariant(5905, "GRIS OSCURO", "S", 67D, 3))));
+        when(catalog.getProductImage(9L, 46, "")).thenReturn(new ProductImageResult(
+                46, "ALICE LISO", "", "/productos/alice-liso.webp", null, List.of()));
+        when(catalog.getProductImage(9L, 60, "")).thenReturn(new ProductImageResult(
+                60, "LYANA", "", "/productos/lyana.webp", null, List.of()));
+        when(catalog.getProductImage(9L, 59, "")).thenReturn(new ProductImageResult(
+                59, "EMMA", "", "/productos/emma.webp", null, List.of()));
 
         AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
                 mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
@@ -605,9 +611,12 @@ class AgentVerifiedGroundingServiceTest {
 
         assertEquals(AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY,
                 result.decision().commercialAction());
-        assertEquals(9, result.verifiedToolCalls());
+        assertEquals(12, result.verifiedToolCalls());
         assertEquals(List.of(46), result.media().stream()
                 .filter(item -> item.type() == MediaType.SIZE_GUIDE)
+                .map(item -> item.productId()).toList());
+        assertEquals(List.of(46, 60, 59), result.media().stream()
+                .filter(item -> item.type() == MediaType.PRODUCT_IMAGE)
                 .map(item -> item.productId()).toList());
         assertNull(result.customerMessage());
         assertTrue(result.evidenceJson().contains("requestedVariantAvailability"));
@@ -690,6 +699,12 @@ class AgentVerifiedGroundingServiceTest {
                 .thenReturn(new ProductSearchResult("", 1,
                         com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL,
                         List.of(aliceRayas, annieEntero, wrongPair), false));
+        when(catalog.getProductImage(9L, 58, "PERLA")).thenReturn(new ProductImageResult(
+                58, "ALICE RAYAS", "PERLA", "/productos/alice-rayas.webp", null,
+                List.of(new ProductImage("PERLA", "/productos/alice-rayas-perla.webp", null, true))));
+        when(catalog.getProductImage(9L, 64, "PERLA")).thenReturn(new ProductImageResult(
+                64, "ANNIE ENTERO", "PERLA", "/productos/annie-entero.webp", null,
+                List.of(new ProductImage("PERLA", "/productos/annie-entero-perla.webp", null, true))));
 
         AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
                 mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
@@ -697,7 +712,12 @@ class AgentVerifiedGroundingServiceTest {
 
         var result = service.ground(4L, 9L, 30L, conversation);
 
-        assertEquals(1, result.verifiedToolCalls());
+        assertEquals(3, result.verifiedToolCalls());
+        assertEquals(List.of(58, 64), result.media().stream()
+                .map(item -> item.productId()).toList());
+        assertTrue(result.media().stream().allMatch(item -> "PERLA".equals(item.color())));
+        assertTrue(result.media().stream().noneMatch(
+                com.sistemapos.sistematextil.services.agent.ai.AgentMediaRequest::suppressIfRecentlySent));
         assertTrue(result.evidenceJson().contains("catalogAttributeAvailability"));
         assertTrue(result.evidenceJson().contains("ALICE RAYAS"));
         assertTrue(result.evidenceJson().contains("ANNIE ENTERO"));
@@ -736,6 +756,10 @@ class AgentVerifiedGroundingServiceTest {
                 .thenReturn(new ProductSearchResult("", 1,
                         com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.READY_STOCK_ONLY,
                         List.of(melina, alessia, wrongSize), false));
+        when(catalog.getProductImage(9L, 70, "")).thenReturn(new ProductImageResult(
+                70, "MELINA", "", "/productos/melina.webp", null, List.of()));
+        when(catalog.getProductImage(9L, 71, "")).thenReturn(new ProductImageResult(
+                71, "ALESSIA ENTERO", "", "/productos/alessia-entero.webp", null, List.of()));
 
         AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
                 mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
@@ -747,7 +771,9 @@ class AgentVerifiedGroundingServiceTest {
                 result.decision().commercialAction());
         assertEquals(com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.READY_STOCK_ONLY,
                 result.decision().catalogAvailability());
-        assertEquals(1, result.verifiedToolCalls());
+        assertEquals(3, result.verifiedToolCalls());
+        assertEquals(List.of(70, 71), result.media().stream()
+                .map(item -> item.productId()).toList());
         assertTrue(result.evidenceJson().contains("catalogAttributeAvailability"));
         assertTrue(result.evidenceJson().contains("availabilityDeliveryTiming"));
         assertTrue(result.evidenceJson().contains("MELINA"));

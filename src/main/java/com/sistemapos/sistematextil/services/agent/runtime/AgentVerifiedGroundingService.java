@@ -451,7 +451,7 @@ public class AgentVerifiedGroundingService {
             return null;
         }
         if (references.isEmpty()) {
-            groundCatalogAttributes(sessionId, jobId, decision, ordinal, evidence);
+            groundCatalogAttributes(sessionId, jobId, decision, ordinal, evidence, media);
             if (forRequestedDelivery) addAvailabilityDeliveryEvidence(evidence);
             return null;
         }
@@ -512,6 +512,8 @@ public class AgentVerifiedGroundingService {
             availability.add(new ProductAvailabilityView(
                     product.productId(), product.name(), price, product.productPageUrl(),
                     availableVariants, availableAlternatives));
+            queueRequestedModelImage(sessionId, jobId, product, decision.colorReference(),
+                    ordinal, evidence, media);
         }
         evidence.put("requestedVariantAvailability", Map.of(
                 "requestedSize", clean(decision.sizeReference()),
@@ -1210,7 +1212,7 @@ public class AgentVerifiedGroundingService {
             String conversation, AtomicInteger ordinal, Map<String, Object> evidence,
             List<AgentMediaRequest> media) {
         if (hasCatalogAttributesWithoutProduct(decision)) {
-            groundCatalogAttributes(sessionId, jobId, decision, ordinal, evidence);
+            groundCatalogAttributes(sessionId, jobId, decision, ordinal, evidence, media);
             return null;
         }
         boolean browsingCatalog = decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCTS;
@@ -1323,7 +1325,7 @@ public class AgentVerifiedGroundingService {
             boolean hasSizeGuide = detail != null && detail.sizeGuideUrl() != null
                     && !detail.sizeGuideUrl().isBlank();
             if (hasImage) {
-                media.add(new AgentMediaRequest(MediaType.PRODUCT_IMAGE, productId, "", true));
+                media.add(new AgentMediaRequest(MediaType.PRODUCT_IMAGE, productId, ""));
             }
             if (hasSizeGuide) {
                 media.add(new AgentMediaRequest(MediaType.SIZE_GUIDE, productId, null, true));
@@ -1350,7 +1352,7 @@ public class AgentVerifiedGroundingService {
      * different variants.
      */
     private void groundCatalogAttributes(Long sessionId, Long jobId, AgentConversationDecision decision,
-            AtomicInteger ordinal, Map<String, Object> evidence) {
+            AtomicInteger ordinal, Map<String, Object> evidence, List<AgentMediaRequest> media) {
         String requestedColor = clean(decision.colorReference());
         String requestedSize = clean(decision.sizeReference());
         ProductSearchResult catalogResult = verified(sessionId, jobId, ordinal,
@@ -1377,6 +1379,51 @@ public class AgentVerifiedGroundingService {
                 "readyProducts", ready,
                 "preorderProducts", preorder,
                 "hasMoreCatalogProducts", catalogResult.hasMore()));
+        matches.stream().limit(MAX_INITIAL_CATALOG_IMAGES).forEach(product ->
+                queueRequestedModelImage(sessionId, jobId, product, requestedColor,
+                        ordinal, evidence, media));
+    }
+
+    private void queueRequestedModelImage(Long sessionId, Long jobId,
+            AgentCatalogQueryService.ProductSummary product, String requestedColor,
+            AtomicInteger ordinal, Map<String, Object> evidence, List<AgentMediaRequest> media) {
+        if (product == null || product.productId() == null) return;
+        boolean duplicateInTurn = media.stream()
+                .anyMatch(item -> item.type() == MediaType.PRODUCT_IMAGE
+                        && product.productId().equals(item.productId()));
+        if (duplicateInTurn) return;
+
+        String color = clean(requestedColor);
+        String imageColor = color.isBlank() ? "" : matchingAvailableColor(product.colors(), color);
+        if (!color.isBlank() && imageColor.isBlank()) {
+            evidence.put("requestedProductImage" + product.productId(), Map.of(
+                    "productId", product.productId(),
+                    "productName", product.name(),
+                    "requestedColor", color,
+                    "included", false,
+                    "reason", "REQUESTED_COLOR_NOT_AVAILABLE"));
+            return;
+        }
+
+        ProductImageResult images = verified(sessionId, jobId, ordinal,
+                "obtener_imagen_producto",
+                nullableMap("productoId", product.productId(), "color", imageColor),
+                ProductImageResult.class,
+                () -> catalog.getProductImage(sessionId, product.productId(), imageColor));
+        boolean imageAvailable = imageColor.isBlank()
+                ? images != null && images.globalImageUrl() != null
+                        && !images.globalImageUrl().isBlank()
+                : images != null && images.colorImages() != null
+                        && !images.colorImages().isEmpty();
+        evidence.put("requestedProductImage" + product.productId(), Map.of(
+                "productId", product.productId(),
+                "productName", product.name(),
+                "requestedColor", imageColor,
+                "included", imageAvailable));
+        if (imageAvailable) {
+            // Do not suppress across turns: if the customer asks again, send it again.
+            media.add(new AgentMediaRequest(MediaType.PRODUCT_IMAGE, product.productId(), imageColor));
+        }
     }
 
     private boolean hasCatalogAttributesWithoutProduct(AgentConversationDecision decision) {

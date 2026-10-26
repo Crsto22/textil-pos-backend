@@ -97,6 +97,48 @@ class AgentVerifiedGroundingServiceTest {
     }
 
     @Test
+    void explicitProductInALiveHasPriorityOverTheGenericProductsPage() {
+        AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.PRODUCT_DETAILS, "consultar Barbara Rayas", "BARBARA RAYAS",
+                List.of("BARBARA RAYAS"), "", "", 0, "", List.of(), AgentCartAction.NONE,
+                AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY, "", "", "", "", "", "", "", "",
+                List.of(), com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL,
+                "", List.of(), "", 99, false);
+        String conversation = "LOTE_ACTUAL_AGRUPADO:\nBuenas, estoy en el live de Tik Tok, el modelo "
+                + "Barbara que se esta probando la senorita lo tiene en rayas?";
+        when(decisions.interpret(4L, conversation)).thenReturn(
+                new AgentInterpretationResult("GEMINI", "model", "DB", 10, 0, decision));
+        ProductSummary barbaraRayas = new ProductSummary(92, "BARBARA RAYAS", "", "CONJUNTO",
+                true, LocalDate.of(2026, 11, 4), 85D, 20,
+                List.of("NEGRO", "PLATA"), List.of("S", "M"));
+        when(catalog.searchProducts(9L, "BARBARA RAYAS", 20,
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL))
+                .thenReturn(new ProductSearchResult("BARBARA RAYAS", 1, List.of(barbaraRayas), false));
+        when(catalog.getVariants(9L, 92, "", "")).thenReturn(new VariantResult(
+                92, "BARBARA RAYAS", "", "", List.of(
+                        availableVariant(9201, "NEGRO", "S", 85D, 2),
+                        availableVariant(9202, "PLATA", "M", 85D, 1))));
+
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
+                mock(AgentCartService.class), passThroughAudit());
+
+        var result = service.ground(4L, 9L, 30L, conversation);
+
+        assertEquals(AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY,
+                result.decision().commercialAction());
+        assertEquals("BARBARA RAYAS", result.decision().productReference());
+        assertNull(result.customerMessage());
+        assertTrue(result.evidenceJson().contains("BARBARA RAYAS"));
+        assertTrue(result.evidenceJson().contains("requestedVariantAvailability"));
+        assertFalse(result.evidenceJson().contains("genericLiveProductLookup"));
+        verify(catalog).searchProducts(9L, "BARBARA RAYAS", 20,
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL);
+    }
+
+    @Test
     void ordinaryCommercialQuestionsNeverRequireHumanHandoff() {
         AgentConversationDecision mistaken = new AgentConversationDecision(
                 AgentDecisionIntent.BUSINESS_INFORMATION, "precio de chaqueta por separado", "", "", "", 0, "",
@@ -665,6 +707,53 @@ class AgentVerifiedGroundingServiceTest {
         assertFalse(result.evidenceJson().toLowerCase().contains("stock"));
         verify(catalog).searchProducts(9L, "", 20,
                 com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL);
+    }
+
+    @Test
+    void listsReadyStockInTheRequestedSizeBeforeExplainingNextDayDelivery() {
+        AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        AgentConversationDecision legacyDeliveryDecision = new AgentConversationDecision(
+                AgentDecisionIntent.DELIVERY_METHOD,
+                "modelos talla M que puedan enviarse manana", "", List.of(), "", "M", 0, "",
+                List.of(), AgentCartAction.NONE, AgentCommercialAction.SHARE_DELIVERY_TIMING_CONTACT,
+                "", "", "", "", "", "", "", "", List.of(),
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL,
+                "", List.of(), "", 99, false);
+        String conversation = "LOTE_ACTUAL_AGRUPADO:\n"
+                + "Que modelos tiene en M que me envie el dia de manana";
+        when(decisions.interpret(4L, conversation)).thenReturn(
+                new AgentInterpretationResult("GEMINI", "model", "DB", 10, 0, legacyDeliveryDecision));
+
+        ProductSummary melina = productWithAvailability(70, "MELINA", false,
+                List.of(new ColorAvailability("NEGRO", List.of("M"), 3)));
+        ProductSummary alessia = productWithAvailability(71, "ALESSIA ENTERO", false,
+                List.of(new ColorAvailability("AZUL", List.of("S", "M"), 2)));
+        ProductSummary wrongSize = productWithAvailability(72, "EMMA", false,
+                List.of(new ColorAvailability("VINO", List.of("S"), 4)));
+        when(catalog.searchProducts(9L, "", 20,
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.READY_STOCK_ONLY))
+                .thenReturn(new ProductSearchResult("", 1,
+                        com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.READY_STOCK_ONLY,
+                        List.of(melina, alessia, wrongSize), false));
+
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
+                mock(AgentCartService.class), passThroughAudit());
+
+        var result = service.ground(4L, 9L, 30L, conversation);
+
+        assertEquals(AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY_FOR_DELIVERY,
+                result.decision().commercialAction());
+        assertEquals(com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.READY_STOCK_ONLY,
+                result.decision().catalogAvailability());
+        assertEquals(1, result.verifiedToolCalls());
+        assertTrue(result.evidenceJson().contains("catalogAttributeAvailability"));
+        assertTrue(result.evidenceJson().contains("availabilityDeliveryTiming"));
+        assertTrue(result.evidenceJson().contains("MELINA"));
+        assertTrue(result.evidenceJson().contains("ALESSIA ENTERO"));
+        assertFalse(result.evidenceJson().contains("EMMA"));
+        assertNull(result.customerMessage());
     }
 
     @Test

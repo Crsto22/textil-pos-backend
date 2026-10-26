@@ -53,6 +53,18 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
               disponibilidad de uno o varios modelos. Conserva todos los modelos en productReferences, el primero
               en productReference y cualquier color o talla mencionados. No calcules la disponibilidad: Java
               consultara cada producto y variante por separado y construira la respuesta completa.
+              Si la clienta menciona un modelo base y pregunta si existe en un acabado o version concreta, conserva
+              semanticamente el nombre compuesto de esa version en productReference; por ejemplo, una consulta por
+              Barbara en rayas se refiere a BARBARA RAYAS, no a la familia Barbara completa. Aplica la misma regla a
+              cualquier modelo y acabado real, sin depender de nombres o frases fijas. Mencionar que lo vio en un
+              live, TikTok u otro canal nunca reemplaza ni elimina el producto identificado.
+            - SHOW_PRODUCT_AVAILABILITY_FOR_DELIVERY: combina una busqueda de modelos, stock, color o talla con la
+              necesidad de que el pedido pueda quedar listo o entregarse a Shalom en una fecha cercana indicada por
+              la clienta. La consulta de catalogo es la accion principal: conserva las tallas, colores y modelos
+              solicitados, y usa catalogAvailability=READY_STOCK_ONLY cuando la fecha requiere mercaderia lista sin
+              esperar preventa. Java listara primero todas las opciones verificadas y despues explicara el plazo de
+              despacho. No elijas SHARE_DELIVERY_TIMING_CONTACT si tambien esta preguntando que modelos u opciones
+              cumplen esas condiciones. Interpreta el significado completo; no dependas de palabras exactas.
             - SHOW_PRODUCT_IMAGES: pide fotos generales de uno o varios modelos, sin solicitar la gama completa.
               Conserva todos los nombres o familias solicitados en productReferences y el primero en
               productReference. Si tambien solicita un color, conservalo en colorReference; Java decidira si
@@ -84,6 +96,8 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
               Mencionar solamente un live, TikTok o una transmision no significa que solicite promociones. Frases como
               "quiero el conjunto del en vivo" o "que conjunto estan transmitiendo" buscan identificar un producto,
               no una promocion. Si no indica el nombre del modelo, no lo inventes ni elijas uno arbitrariamente.
+              Si si indica un modelo o una version identificable, esa referencia tiene prioridad y debes continuar
+              con la accion comercial correspondiente en lugar de tratarlo como una busqueda generica del live.
             - ADD_PRODUCT: ya eligio producto, color, talla y cantidad o acepta la cantidad propuesta. Si el último
               mensaje confirma varios productos ofrecidos por el asistente, reúne todos en promotionSelections
               aunque no pertenezcan a una promoción; cada selección debe conservar producto, color, talla y cantidad.
@@ -205,6 +219,8 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
               recibir o recoger primero lo disponible, o esperar y juntar todo con la preventa. Los plazos indican la
               primera fecha disponible; una fecha posterior puede coordinarse con el area de envios. No prometas un dia exacto de llegada, prioridad ni entrega: despues del despacho
               el tiempo depende de Shalom. Una fecha mencionada por la clienta, un live o TikTok no se confirma.
+              Usa esta accion solamente cuando consulta el plazo sin pedir a la vez una lista de modelos, colores,
+              tallas u opciones disponibles que puedan cumplir la fecha solicitada.
             - REFER_EXISTING_ORDER_DELIVERY: la clienta habla de su compra o pedido ya realizado y pregunta cuando
               lo enviaran, despacharan o entregaran, o solicita conocer su estado logistico. Usa
               intent=DELIVERY_METHOD y requiresHumanHelp=false. Java comprobara si la venta fue registrada por esta

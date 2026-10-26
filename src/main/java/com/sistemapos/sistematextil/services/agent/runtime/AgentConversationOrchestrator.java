@@ -170,6 +170,12 @@ public class AgentConversationOrchestrator {
                           products, con su precio, y separa naturalmente entrega inmediata de preventa usando el
                           campo preorder. Si products esta vacio, informa que no existe esa combinacion. No conviertas
                           la regla en una plantilla ni reveles cantidades internas.
+                        - Cuando exista availabilityDeliveryTiming, la consulta combina disponibilidad comercial con
+                          una fecha de despacho. Primero responde con la lista COMPLETA de productos verificados que
+                          cumplen color y talla, incluyendo precios; no sustituyas esa lista por una explicacion
+                          general de envios. Despues comunica que Kiments los entrega a Shalom al dia siguiente de
+                          atencion, que domingos y feriados pasan al siguiente dia laborable, y que la llegada depende
+                          de Shalom. No prometas que el paquete llegara a la clienta en la fecha mencionada.
                         - Cuando exista requestedVariantAvailability, redacta la respuesta de forma natural usando
                           exclusivamente sus productos, precios y variantes verificadas. No uses una plantilla fija.
                           Cada nombre de unresolvedReferences no esta disponible para la venta actualmente; indicalo
@@ -518,6 +524,8 @@ public class AgentConversationOrchestrator {
         boolean requiresVerifiedRead = requiresVerifiedRead(intent)
                 || grounding.decision().commercialAction() == AgentCommercialAction.SHOW_PROMOTIONS
                 || grounding.decision().commercialAction() == AgentCommercialAction.SHOW_PRODUCT_IMAGES
+                || grounding.decision().commercialAction()
+                        == AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY_FOR_DELIVERY
                 || grounding.decision().commercialAction() == AgentCommercialAction.SHOW_PRODUCT_COLOR_GALLERY;
         if (requiresVerifiedRead && grounding.verifiedToolCalls() < 1) {
             throw new IllegalStateException("La respuesta comercial no tiene evidencia verificada del backend");
@@ -639,7 +647,9 @@ public class AgentConversationOrchestrator {
             JsonNode root = evidenceMapper.readTree(grounding.evidenceJson());
             JsonNode catalogAttributes = root.path("catalogAttributeAvailability");
             if (!catalogAttributes.isMissingNode()) {
-                return catalogAttributeCorrectionInstruction(catalogAttributes, customerMessage);
+                return mergeCorrectionInstructions(
+                        catalogAttributeCorrectionInstruction(catalogAttributes, customerMessage),
+                        availabilityDeliveryTimingCorrectionInstruction(root, customerMessage));
             }
             JsonNode availability = root.path("requestedVariantAvailability");
             if (availability.isMissingNode()) return "";
@@ -721,10 +731,32 @@ public class AgentConversationOrchestrator {
                 corrections.add("Presentaste varios productos: incluye una sola vez " + catalogUrl
                         + " como galeria completa.");
             }
-            return String.join(" ", corrections);
+            corrections.add(availabilityDeliveryTimingCorrectionInstruction(root, customerMessage));
+            return corrections.stream().filter(value -> value != null && !value.isBlank())
+                    .collect(java.util.stream.Collectors.joining(" "));
         } catch (Exception ignored) {
             return "";
         }
+    }
+
+    private String availabilityDeliveryTimingCorrectionInstruction(JsonNode root, String customerMessage) {
+        if (root == null || root.path("availabilityDeliveryTiming").isMissingNode()) return "";
+        String response = normalizeText(customerMessage);
+        boolean complete = response.contains("shalom")
+                && response.contains("dia siguiente")
+                && response.contains("domingo")
+                && response.contains("feriado")
+                && response.contains("depende de shalom");
+        if (complete) return "";
+        return "Despues de listar todos los modelos verificados, explica que Kiments los entrega a Shalom al dia "
+                + "siguiente de atencion; domingos y feriados pasan al siguiente dia laborable. Aclara que el "
+                + "tiempo de llegada depende de Shalom y no prometas que llegara en la fecha solicitada.";
+    }
+
+    private String mergeCorrectionInstructions(String... instructions) {
+        return java.util.Arrays.stream(instructions)
+                .filter(value -> value != null && !value.isBlank())
+                .collect(java.util.stream.Collectors.joining(" "));
     }
 
     private boolean containsNormalizedToken(String normalizedText, String token) {

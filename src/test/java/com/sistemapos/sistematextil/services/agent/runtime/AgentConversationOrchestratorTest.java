@@ -623,6 +623,50 @@ class AgentConversationOrchestratorTest {
     }
 
     @Test
+    void requiresCatalogResultsAndDeliveryTimingForACombinedRequest() {
+        Fixture fixture = new Fixture();
+        fixture.current(true, true, true);
+        when(fixture.grounding.ground(eq(7L), eq(8L), eq(41L), any())).thenReturn(
+                new AgentVerifiedGroundingService.Grounding(
+                        new AgentConversationDecision(AgentDecisionIntent.DELIVERY_METHOD,
+                                "modelos talla M para enviar manana", "", "", "M", 0, "",
+                                com.sistemapos.sistematextil.services.agent.ai.AgentCartAction.NONE,
+                                AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY_FOR_DELIVERY,
+                                "", "", "", "", "", "", "", "",
+                                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.READY_STOCK_ONLY,
+                                100, false),
+                        "{\"catalogAttributeAvailability\":{\"requestedColor\":\"\","
+                                + "\"requestedSize\":\"M\",\"products\":["
+                                + "{\"name\":\"MELINA\",\"priceFrom\":80.0,\"preorder\":false},"
+                                + "{\"name\":\"ALESSIA ENTERO\",\"priceFrom\":70.0,\"preorder\":false}]},"
+                                + "\"availabilityDeliveryTiming\":{\"catalogFilter\":\"READY_STOCK_ONLY\"}}",
+                        java.util.List.of(), 1, false));
+        when(fixture.gateway.respond(eq(7L), any(), eq(12)))
+                .thenReturn(new AgentResponseResult("GEMINI", "gemini", 100, 1,
+                        new AgentTurnResponse(
+                                "En talla M tenemos Melina a S/80.00 y Alessia Entero a S/70.00.",
+                                "Disponibilidad", false, java.util.List.of())))
+                .thenReturn(new AgentResponseResult("GEMINI", "gemini", 80, 0,
+                        new AgentTurnResponse(
+                                "En talla M tenemos Melina a S/80.00 y Alessia Entero a S/70.00. "
+                                        + "Kiments los entrega a Shalom al dia siguiente de atencion; domingos y "
+                                        + "feriados pasan al siguiente dia laborable. El tiempo de llegada depende "
+                                        + "de Shalom.",
+                                "Disponibilidad y despacho", false, java.util.List.of())));
+
+        assertEquals(AgentConversationOrchestrator.Outcome.COMPLETED,
+                fixture.orchestrator.process(fixture.lease));
+
+        verify(fixture.gateway, times(2)).respond(eq(7L), any(), eq(12));
+        ArgumentCaptor<GeneratedTurn> turn = ArgumentCaptor.forClass(GeneratedTurn.class);
+        verify(fixture.jobs).saveGeneratedTurn(eq(41L), eq("worker:lease"), turn.capture(), any());
+        assertTrue(turn.getValue().customerMessage().contains("Melina"));
+        assertTrue(turn.getValue().customerMessage().contains("Alessia Entero"));
+        assertTrue(turn.getValue().customerMessage().contains("Shalom"));
+        assertTrue(turn.getValue().customerMessage().contains("dia siguiente"));
+    }
+
+    @Test
     void addsIndividualGalleryLinkForAGeneralSingleProductAnswer() {
         Fixture fixture = new Fixture();
         fixture.current(true, true, true);

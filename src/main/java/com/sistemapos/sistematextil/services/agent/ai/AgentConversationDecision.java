@@ -78,6 +78,17 @@ public record AgentConversationDecision(
                 sizeGuideComponent, bodyMeasurements, fitPreference, confidence, requiresHumanHelp);
     }
 
+    public AgentConversationDecision withCommercialActionAndCatalogAvailability(
+            AgentCommercialAction action, AgentCatalogAvailability availability) {
+        return new AgentConversationDecision(intent, customerGoal, productReference, productReferences, colorReference,
+                sizeReference, quantity, promotionReference, promotionSelections, cartAction,
+                action == null ? AgentCommercialAction.NONE : action, paymentMethodReference,
+                paymentAccountReference, customerName, customerPhone, deliveryMethod, documentNumber,
+                shalomAgency, shalomDestination, shalomFieldsToChange,
+                availability == null ? AgentCatalogAvailability.ALL : availability,
+                sizeGuideComponent, bodyMeasurements, fitPreference, confidence, requiresHumanHelp);
+    }
+
     public AgentConversationDecision withIntentAndCommercialAction(
             AgentDecisionIntent newIntent, AgentCommercialAction newAction) {
         return new AgentConversationDecision(

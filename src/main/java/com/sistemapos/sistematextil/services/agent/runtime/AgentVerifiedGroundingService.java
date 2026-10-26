@@ -140,7 +140,7 @@ public class AgentVerifiedGroundingService {
         }
         decision = enforceHumanHandoffRules(decision);
         decision = normalizeFreshRetailPurchase(decision, conversation, state);
-        boolean genericLiveProductLookup = isGenericLiveProductLookup(conversation);
+        boolean genericLiveProductLookup = isGenericLiveProductLookup(conversation, decision);
         if (genericLiveProductLookup) {
             decision = decision.withIntentAndCommercialAction(
                     AgentDecisionIntent.OTHER, AgentCommercialAction.NONE)
@@ -155,6 +155,7 @@ public class AgentVerifiedGroundingService {
         decision = reconcileExplicitCatalogReferences(
                 sessionId, jobId, decision, conversation, ordinal, evidence);
         decision = normalizeIncompleteProductSelection(decision);
+        decision = normalizeCombinedAvailabilityForDelivery(decision);
         decision = normalizeAvailabilitySelection(decision);
         boolean earlyDeliveryPreference = commerce != null
                 && commerce.rememberEarlyDeliveryPreference(sessionId, decision);
@@ -216,7 +217,9 @@ public class AgentVerifiedGroundingService {
             customerMessage = groundCatalog(
                     sessionId, jobId, decision, conversation, ordinal, evidence, media);
         } else if (!commercial.handled()
-                && decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY) {
+                && (decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY
+                || decision.commercialAction()
+                        == AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY_FOR_DELIVERY)) {
             customerMessage = groundProductAvailability(
                     sessionId, jobId, decision, ordinal, evidence, media);
         } else if (!commercial.handled()) switch (decision.intent()) {
@@ -268,6 +271,8 @@ public class AgentVerifiedGroundingService {
         if ((ordinaryCommercialQuestion
                 || decision.commercialAction() == AgentCommercialAction.REQUEST_WHOLESALE_SUPPORT
                 || decision.commercialAction() == AgentCommercialAction.SHARE_DELIVERY_TIMING_CONTACT
+                || decision.commercialAction()
+                        == AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY_FOR_DELIVERY
                 || decision.commercialAction() == AgentCommercialAction.REFER_EXISTING_ORDER_DELIVERY)
                 && decision.requiresHumanHelp()) {
             return decision.withRequiresHumanHelp(false);
@@ -399,7 +404,26 @@ public class AgentVerifiedGroundingService {
         return decision;
     }
 
+    AgentConversationDecision normalizeCombinedAvailabilityForDelivery(AgentConversationDecision decision) {
+        boolean explicitCatalogConstraint = decision.intent() == AgentDecisionIntent.PRODUCT_SEARCH
+                || decision.intent() == AgentDecisionIntent.PRODUCT_DETAILS
+                || decision.colorReference() != null && !decision.colorReference().isBlank()
+                || decision.sizeReference() != null && !decision.sizeReference().isBlank();
+        boolean combinedAction = decision.commercialAction()
+                == AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY_FOR_DELIVERY;
+        boolean legacyDeliveryClassification = decision.commercialAction()
+                == AgentCommercialAction.SHARE_DELIVERY_TIMING_CONTACT && explicitCatalogConstraint;
+        if (!combinedAction && !legacyDeliveryClassification) return decision;
+        return decision.withCommercialActionAndCatalogAvailability(
+                AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY_FOR_DELIVERY,
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.READY_STOCK_ONLY);
+    }
+
     boolean isGenericLiveProductLookup(String conversation) {
+        return isGenericLiveProductLookup(conversation, null);
+    }
+
+    boolean isGenericLiveProductLookup(String conversation, AgentConversationDecision decision) {
         String input = normalize(currentGroupedInput(conversation));
         boolean mentionsLiveChannel = input.matches(".*\\b(live|tiktok|transmision|transmitiendo)\\b.*")
                 || input.contains("en vivo");
@@ -408,11 +432,15 @@ public class AgentVerifiedGroundingService {
         boolean refersToAProduct = input.matches(
                 ".*\\b(conjunto|producto|modelo|prenda|ropa)\\b.*")
                 || input.matches(".*\\blo\\s+(?:del|de la)\\s+(?:live|transmision)\\b.*");
-        return mentionsLiveChannel && refersToAProduct && !explicitlyRequestsPromotion;
+        boolean hasSemanticProductReference = decision != null && (!productReferences(decision).isEmpty());
+        return mentionsLiveChannel && refersToAProduct && !explicitlyRequestsPromotion
+                && !hasSemanticProductReference;
     }
 
     private String groundProductAvailability(Long sessionId, Long jobId, AgentConversationDecision decision,
             AtomicInteger ordinal, Map<String, Object> evidence, List<AgentMediaRequest> media) {
+        boolean forRequestedDelivery = decision.commercialAction()
+                == AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY_FOR_DELIVERY;
         List<String> references = decision.productReferences() == null
                 ? new ArrayList<>() : new ArrayList<>(decision.productReferences());
         if (references.isEmpty() && decision.productReference() != null
@@ -424,6 +452,7 @@ public class AgentVerifiedGroundingService {
         }
         if (references.isEmpty()) {
             groundCatalogAttributes(sessionId, jobId, decision, ordinal, evidence);
+            if (forRequestedDelivery) addAvailabilityDeliveryEvidence(evidence);
             return null;
         }
 
@@ -489,11 +518,22 @@ public class AgentVerifiedGroundingService {
                 "requestedColor", clean(decision.colorReference()),
                 "products", availability,
                 "unresolvedReferences", unresolved));
+        if (forRequestedDelivery) addAvailabilityDeliveryEvidence(evidence);
         if (products.isEmpty() && !unresolved.isEmpty()) {
             return unavailableProductMessage(unresolved);
         }
         // La evidencia verificada queda estructurada; Gemini redacta la respuesta final.
         return null;
+    }
+
+    private void addAvailabilityDeliveryEvidence(Map<String, Object> evidence) {
+        evidence.put("availabilityDeliveryTiming", Map.of(
+                "catalogFilter", "READY_STOCK_ONLY",
+                "handoffToShalom", "al dia siguiente de atencion",
+                "sameDayDispatch", false,
+                "sundaysAndHolidays", "pasa al siguiente dia laborable",
+                "arrivalTiming", "depende de Shalom y no tiene un dia exacto garantizado",
+                "responseOrder", "primero lista completa de modelos verificados; despues plazo de despacho"));
     }
 
     private String groundSizeRecommendation(Long sessionId, Long jobId, AgentConversationDecision decision,
@@ -1498,7 +1538,8 @@ public class AgentVerifiedGroundingService {
             return decision;
         }
         boolean allReflectedInCurrentMessage = !interpreted.isEmpty() && interpreted.stream()
-                .allMatch(reference -> containsPhrase(normalize(currentInput), normalize(reference)));
+                .allMatch(reference -> containsPhrase(normalize(currentInput), normalize(reference))
+                        || allReferenceTokensMentioned(currentInput, reference));
         if (allReflectedInCurrentMessage) return decision;
 
         ProductSearchResult search = verified(sessionId, jobId, ordinal,
@@ -1523,6 +1564,13 @@ public class AgentVerifiedGroundingService {
         return decision.withProductReferences(exactReferences.getFirst(), exactReferences);
     }
 
+    private boolean allReferenceTokensMentioned(String currentInput, String reference) {
+        List<String> tokens = List.of(normalize(reference).split("\\s+")).stream()
+                .filter(token -> !token.isBlank())
+                .toList();
+        return tokens.size() > 1 && tokens.stream().allMatch(token -> containsWord(currentInput, token));
+    }
+
     private boolean containsImageMarker(String value) {
         return value != null && normalize(value).contains("imagen adjunta");
     }
@@ -1536,6 +1584,8 @@ public class AgentVerifiedGroundingService {
                 || decision.intent() == AgentDecisionIntent.CART_CHANGE
                 || decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT
                 || decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY
+                || decision.commercialAction()
+                        == AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY_FOR_DELIVERY
                 || decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT_IMAGES
                 || decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT_COLOR_GALLERY
                 || decision.commercialAction() == AgentCommercialAction.SHOW_SIZE_GUIDE

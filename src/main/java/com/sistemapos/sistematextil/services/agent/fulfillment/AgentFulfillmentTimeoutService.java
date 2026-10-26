@@ -5,9 +5,11 @@ import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.HexFormat;
 import java.util.List;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -52,7 +54,20 @@ public class AgentFulfillmentTimeoutService {
     private final Clock clock;
     private final Duration timeout;
 
+    @Autowired
     public AgentFulfillmentTimeoutService(
+            CrmWhatsappAgentSessionRepository sessions,
+            CrmWhatsappFulfillmentRepository fulfillments,
+            CrmWhatsappPaymentRequestRepository payments,
+            CrmWhatsappAgentStateMachine stateMachine,
+            AgentSaleService sales,
+            AgentOutboxService outbox,
+            @Value("${crm.whatsapp.agent.fulfillment-timeout-minutes:30}") long timeoutMinutes) {
+        this(sessions, fulfillments, payments, stateMachine, sales, outbox,
+                Clock.system(ZoneId.of("America/Lima")), timeoutMinutes);
+    }
+
+    AgentFulfillmentTimeoutService(
             CrmWhatsappAgentSessionRepository sessions,
             CrmWhatsappFulfillmentRepository fulfillments,
             CrmWhatsappPaymentRequestRepository payments,

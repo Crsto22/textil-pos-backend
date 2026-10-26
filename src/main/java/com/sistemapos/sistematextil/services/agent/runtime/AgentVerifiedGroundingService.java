@@ -198,7 +198,8 @@ public class AgentVerifiedGroundingService {
             customerMessage = mutation.message();
         } else if (!commercial.handled()
                 && decision.commercialAction() == AgentCommercialAction.RECOMMEND_SIZE) {
-            groundSizeRecommendation(sessionId, jobId, decision, conversation, ordinal, evidence);
+            customerMessage = groundSizeRecommendation(
+                    sessionId, jobId, decision, conversation, ordinal, evidence);
         } else if (!commercial.handled()
                 && decision.commercialAction() == AgentCommercialAction.SHOW_SIZE_GUIDE) {
             customerMessage = groundSizeGuide(
@@ -210,13 +211,16 @@ public class AgentVerifiedGroundingService {
         } else if (!commercial.handled()
                 && (decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCTS
                 || decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT
-                || decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT_IMAGES)) {
-            groundCatalog(sessionId, jobId, decision, conversation, ordinal, evidence, media);
+                || decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT_IMAGES
+                || decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT_COLOR_GALLERY)) {
+            customerMessage = groundCatalog(
+                    sessionId, jobId, decision, conversation, ordinal, evidence, media);
         } else if (!commercial.handled()
                 && decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY) {
-            groundProductAvailability(sessionId, jobId, decision, ordinal, evidence, media);
+            customerMessage = groundProductAvailability(
+                    sessionId, jobId, decision, ordinal, evidence, media);
         } else if (!commercial.handled()) switch (decision.intent()) {
-            case PRODUCT_SEARCH, PRODUCT_DETAILS -> groundCatalog(
+            case PRODUCT_SEARCH, PRODUCT_DETAILS -> customerMessage = groundCatalog(
                     sessionId, jobId, decision, conversation, ordinal, evidence, media);
             case PROMOTION_SEARCH -> groundPromotions(
                     sessionId, jobId, decision, conversation, ordinal, evidence);
@@ -244,8 +248,8 @@ public class AgentVerifiedGroundingService {
                 && !evidence.containsKey("unresolvedImageProductReference")) {
             // Una consulta comercial nunca debe llegar a redaccion sin datos reales,
             // incluso cuando la decision semantica venga parcialmente incoherente.
-            groundCatalog(sessionId, jobId, decision, conversation, ordinal, evidence, media);
-            customerMessage = null;
+            customerMessage = groundCatalog(
+                    sessionId, jobId, decision, conversation, ordinal, evidence, media);
         }
         if (earlyDeliveryPreference && mutationExecuted && customerMessage != null) {
             customerMessage = commerce.appendEarlyDeliveryPreference(customerMessage);
@@ -332,7 +336,10 @@ public class AgentVerifiedGroundingService {
                 () -> catalog.searchProducts(sessionId, reference, 10));
         evidence.put("deliveryTimingCatalog", search);
         AgentCatalogQueryService.ProductSummary product = unambiguousProduct(search, reference);
-        if (product == null) return generic;
+        if (product == null) {
+            return search.products().isEmpty()
+                    ? unavailableProductMessage(List.of(reference)) : generic;
+        }
         if (!product.preorder() || product.preorderShippingDate() == null) {
             return "Hermosa, el conjunto " + product.name() + " tiene disponibilidad inmediata. Kiments entrega el "
                     + "pedido a Shalom al día siguiente de atención. No realizamos entregas a Shalom los domingos ni "
@@ -404,7 +411,7 @@ public class AgentVerifiedGroundingService {
         return mentionsLiveChannel && refersToAProduct && !explicitlyRequestsPromotion;
     }
 
-    private void groundProductAvailability(Long sessionId, Long jobId, AgentConversationDecision decision,
+    private String groundProductAvailability(Long sessionId, Long jobId, AgentConversationDecision decision,
             AtomicInteger ordinal, Map<String, Object> evidence, List<AgentMediaRequest> media) {
         List<String> references = decision.productReferences() == null
                 ? new ArrayList<>() : new ArrayList<>(decision.productReferences());
@@ -413,11 +420,11 @@ public class AgentVerifiedGroundingService {
             references.add(decision.productReference().trim());
         }
         if (references.isEmpty() && evidence.containsKey("unresolvedImageProductReference")) {
-            return;
+            return null;
         }
         if (references.isEmpty()) {
             groundCatalogAttributes(sessionId, jobId, decision, ordinal, evidence);
-            return;
+            return null;
         }
 
         Map<Integer, AgentCatalogQueryService.ProductSummary> products = new LinkedHashMap<>();
@@ -482,19 +489,26 @@ public class AgentVerifiedGroundingService {
                 "requestedColor", clean(decision.colorReference()),
                 "products", availability,
                 "unresolvedReferences", unresolved));
+        if (products.isEmpty() && !unresolved.isEmpty()) {
+            return unavailableProductMessage(unresolved);
+        }
         // La evidencia verificada queda estructurada; Gemini redacta la respuesta final.
+        return null;
     }
 
-    private void groundSizeRecommendation(Long sessionId, Long jobId, AgentConversationDecision decision,
+    private String groundSizeRecommendation(Long sessionId, Long jobId, AgentConversationDecision decision,
             String conversation, AtomicInteger ordinal, Map<String, Object> evidence) {
-        if (sizeGuides == null) return;
+        if (sizeGuides == null) return null;
         String query = firstPresent(decision.productReference(), decision.customerGoal(), conversation);
         ProductSearchResult search = verified(sessionId, jobId, ordinal,
                 "buscar_productos", Map.of("consulta", query, "limite", 10), ProductSearchResult.class,
                 () -> catalog.searchProducts(sessionId, query, 10));
         evidence.put("productSearch", search);
         var selected = unambiguousProduct(search, decision.productReference());
-        if (selected == null) return;
+        if (selected == null) {
+            return search.products().isEmpty()
+                    ? unavailableProductMessage(productReferences(decision)) : null;
+        }
         List<BodyMeasurement> measurements = decision.bodyMeasurements().stream()
                 .map(item -> new BodyMeasurement(item.name(), item.value(), item.unit())).toList();
         if (measurements.isEmpty()) {
@@ -504,7 +518,7 @@ public class AgentVerifiedGroundingService {
             evidence.put("sizeGuide", guide);
             evidence.put("sizeRecommendationMissingInput",
                     "Solicita una medida corporal concreta disponible en la guia; no recomiendes una talla aun");
-            return;
+            return null;
         }
         SizeRecommendation recommendation = verified(sessionId, jobId, ordinal,
                 "recomendar_talla", nullableMap("productoId", selected.productId(), "componente",
@@ -525,6 +539,7 @@ public class AgentVerifiedGroundingService {
             }
             evidence.put("sizeRecommendationBusinessRule", sizingRule);
         }
+        return null;
     }
 
     private String groundSizeGuide(Long sessionId, Long jobId, AgentConversationDecision decision,
@@ -544,7 +559,10 @@ public class AgentVerifiedGroundingService {
             var single = unambiguousProduct(search, decision.productReference());
             if (single != null) selected = List.of(single);
         }
-        if (selected.isEmpty()) return null;
+        if (selected.isEmpty()) {
+            return search.products().isEmpty()
+                    ? unavailableProductMessage(productReferences(decision)) : null;
+        }
 
         List<String> sent = new ArrayList<>();
         List<String> missing = new ArrayList<>();
@@ -645,7 +663,8 @@ public class AgentVerifiedGroundingService {
         if (selected == null) {
             evidence.put("cartOperation", Map.of("executed", false,
                     "reason", "No existe un unico producto validado"));
-            return new CartMutation(false, null);
+            return new CartMutation(false, search.products().isEmpty()
+                    ? unavailableProductMessage(productReferences(decision)) : null);
         }
         VariantResult variants = verified(sessionId, jobId, ordinal,
                 "consultar_variantes", nullableMap("productoId", selected.productId(), "color",
@@ -692,7 +711,8 @@ public class AgentVerifiedGroundingService {
                     Map.of("consulta",selection.productReference(),"limite",10),ProductSearchResult.class,
                     ()->catalog.searchProducts(sessionId,selection.productReference(),10));
             var product=unambiguousProduct(search,selection.productReference());
-            if(product==null)return new CartMutation(false,null);
+            if(product==null)return new CartMutation(false,search.products().isEmpty()
+                    ?unavailableProductMessage(List.of(clean(selection.productReference()))):null);
             VariantResult variants=verified(sessionId,jobId,ordinal,"consultar_variantes",
                     nullableMap("productoId",product.productId(),"color",selection.colorReference(),"talla",selection.sizeReference()),
                     VariantResult.class,()->catalog.getVariants(sessionId,product.productId(),selection.colorReference(),selection.sizeReference()));
@@ -913,9 +933,12 @@ public class AgentVerifiedGroundingService {
             var product = unambiguousProduct(search, selection.productReference());
             if (product == null) {
                 evidence.put("cartOperation", Map.of("executed", false,
-                        "reason", "Un producto del pedido final es ambiguo",
+                        "reason", search.products().isEmpty()
+                                ? "Un producto del pedido final no esta disponible para la venta"
+                                : "Un producto del pedido final es ambiguo",
                         "productReference", selection.productReference()));
-                return new CartMutation(false, null);
+                return new CartMutation(false, search.products().isEmpty()
+                        ? unavailableProductMessage(List.of(clean(selection.productReference()))) : null);
             }
             VariantResult variants = verified(sessionId, jobId, ordinal,
                     "consultar_variantes", nullableMap("productoId", product.productId(),
@@ -983,7 +1006,7 @@ public class AgentVerifiedGroundingService {
                 () -> cart.recalculate(sessionId, "agent-job-" + jobId + ":read-cart"));
         CartItemView selected = action == AgentCartAction.REPLACE_PRODUCT
                 ? selectCartItemForReplacement(current, decision)
-                : selectCartItem(current, decision.productReference());
+                : selectCartItem(current, decision, action);
         if (selected == null) {
             evidence.put("cartOperation", Map.of("executed", false,
                     "reason", "No se pudo identificar un unico producto del carrito"));
@@ -1003,6 +1026,18 @@ public class AgentVerifiedGroundingService {
                     nullableMap("varianteId", selected.variantId(), "cantidad", decision.quantity()),
                     CartResult.class,
                     () -> cart.keepOnlyProduct(sessionId, selected.variantId(), decision.quantity(), operation));
+            boolean exactResult = result != null && result.items() != null && result.items().size() == 1
+                    && Objects.equals(result.items().getFirst().variantId(), selected.variantId())
+                    && (decision.quantity() == null || decision.quantity() < 1
+                            || result.items().getFirst().quantity() == decision.quantity());
+            if (!exactResult) {
+                evidence.put("cartOperation", Map.of(
+                        "executed", false,
+                        "reason", "El carrito resultante no coincide con la variante que debia conservarse",
+                        "result", result == null ? Map.of() : result));
+                return new CartMutation(false, currentCartClarification(sessionId, result,
+                        "No pude verificar el cambio solicitado. Revisa el resumen antes de continuar."));
+            }
         } else if (action == AgentCartAction.CHANGE_QUANTITY) {
             if (decision.quantity() == null || decision.quantity() < 1) {
                 evidence.put("cartOperation", Map.of("executed", false,
@@ -1028,6 +1063,13 @@ public class AgentVerifiedGroundingService {
                         () -> catalog.searchProducts(sessionId, decision.productReference(), 10));
                 evidence.put("replacementProductSearch", search);
                 var replacement = unambiguousProduct(search, decision.productReference());
+                if (replacement == null && search.products().isEmpty()) {
+                    evidence.put("cartOperation", Map.of("executed", false,
+                            "reason", "El nuevo modelo no esta disponible para la venta",
+                            "productReference", clean(decision.productReference())));
+                    return new CartMutation(false,
+                            unavailableProductMessage(productReferences(decision)));
+                }
                 if (replacement == null || Objects.equals(replacement.productId(), currentStock.productId())) {
                     evidence.put("cartOperation", Map.of("executed", false,
                             "reason", "Falta validar un modelo nuevo diferente", "item", selected));
@@ -1087,16 +1129,29 @@ public class AgentVerifiedGroundingService {
         return summary + "\n\n" + clarification;
     }
 
-    private CartItemView selectCartItem(CartResult cartResult, String productReference) {
+    private CartItemView selectCartItem(CartResult cartResult, AgentConversationDecision decision,
+            AgentCartAction action) {
         if (cartResult == null || cartResult.items() == null || cartResult.items().isEmpty()) return null;
-        String reference = normalize(productReference);
+        String reference = normalize(decision.productReference());
         if (reference.isBlank()) return cartResult.items().size() == 1 ? cartResult.items().getFirst() : null;
-        List<CartItemView> matches = cartResult.items().stream()
+        List<CartItemView> productMatches = cartResult.items().stream()
                 .filter(item -> normalize(item.product()).equals(reference)
                         || normalize(item.product()).contains(reference)
                         || reference.contains(normalize(item.product())))
                 .toList();
-        return matches.size() == 1 ? matches.getFirst() : null;
+        if (productMatches.size() <= 1) return productMatches.isEmpty() ? null : productMatches.getFirst();
+
+        boolean variantIdentifiesExistingLine = action == AgentCartAction.KEEP_ONLY_PRODUCT
+                || action == AgentCartAction.REMOVE_PRODUCT
+                || action == AgentCartAction.CHANGE_QUANTITY;
+        if (!variantIdentifiesExistingLine) return null;
+        String requestedColor = normalize(decision.colorReference());
+        String requestedSize = normalize(decision.sizeReference());
+        List<CartItemView> exactMatches = productMatches.stream()
+                .filter(item -> requestedColor.isBlank() || sameColor(item.color(), requestedColor))
+                .filter(item -> requestedSize.isBlank() || normalize(item.size()).equals(requestedSize))
+                .toList();
+        return exactMatches.size() == 1 ? exactMatches.getFirst() : null;
     }
 
     private CartItemView selectCartItemForReplacement(CartResult cartResult,
@@ -1111,15 +1166,17 @@ public class AgentVerifiedGroundingService {
         return matches.size() == 1 ? matches.getFirst() : null;
     }
 
-    private void groundCatalog(Long sessionId, Long jobId, AgentConversationDecision decision,
+    private String groundCatalog(Long sessionId, Long jobId, AgentConversationDecision decision,
             String conversation, AtomicInteger ordinal, Map<String, Object> evidence,
             List<AgentMediaRequest> media) {
         if (hasCatalogAttributesWithoutProduct(decision)) {
             groundCatalogAttributes(sessionId, jobId, decision, ordinal, evidence);
-            return;
+            return null;
         }
         boolean browsingCatalog = decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCTS;
         boolean imagesRequested = decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT_IMAGES;
+        boolean colorGalleryRequested = decision.commercialAction()
+                == AgentCommercialAction.SHOW_PRODUCT_COLOR_GALLERY;
         String multipleReferences = decision.productReferences() == null
                 ? "" : String.join(" ", decision.productReferences());
         String query = browsingCatalog ? firstPresent(decision.productReference())
@@ -1138,21 +1195,26 @@ public class AgentVerifiedGroundingService {
                     ProductSearchResult.class,
                     () -> catalog.searchProducts(sessionId, "", 20, decision.catalogAvailability()));
             evidence.put("availableProductsWhenNoMatch", available);
-            return;
+            List<String> references = productReferences(decision);
+            return references.isEmpty() ? null : unavailableProductMessage(references);
         }
 
         var selected = unambiguousProduct(search, decision.productReference());
         if (selected == null) {
             boolean requestedSpecificColor = decision.colorReference() != null
                     && !decision.colorReference().isBlank();
-            if (!requestedSpecificColor && search.products().size() > 1 && !browsingCatalog) {
+            if (colorGalleryRequested && !requestedSpecificColor) {
+                queueRequestedProductColorGalleries(
+                        sessionId, jobId, decision, currentGroupedInput(conversation), search,
+                        ordinal, evidence, media);
+            } else if (!requestedSpecificColor && search.products().size() > 1 && !browsingCatalog) {
                 queueAmbiguousProductOptions(sessionId, jobId, search, ordinal, evidence, media);
             } else if (browsingCatalog) {
                 queueInitialCatalogImages(sessionId, jobId, search, ordinal, evidence, media);
             } else if (imagesRequested) {
                 evidence.put("productSelectionRequiredBeforeColorImage", true);
             }
-            return;
+            return null;
         }
 
         Integer productId = selected.productId();
@@ -1171,7 +1233,7 @@ public class AgentVerifiedGroundingService {
                 () -> catalog.getProductImage(sessionId, productId, imageColor));
         evidence.put("selectedProduct", detail);
         evidence.put("selectedProductImages", images);
-        if (detail.sizeGuideUrl() != null && !detail.sizeGuideUrl().isBlank()) {
+        if (!colorGalleryRequested && detail.sizeGuideUrl() != null && !detail.sizeGuideUrl().isBlank()) {
             media.add(new AgentMediaRequest(MediaType.SIZE_GUIDE, productId, null, true));
             evidence.put("automaticSizeGuide", Map.of(
                     "productId", productId,
@@ -1179,9 +1241,10 @@ public class AgentVerifiedGroundingService {
                     "suppressIfAlreadySent", true));
         }
 
-        if (imagesRequested && !requestedSpecificColor) {
-            queueAvailableColorGallery(productId, detail, images, evidence, media);
-            return;
+        if (colorGalleryRequested && !requestedSpecificColor) {
+            evidence.put("productColorGallery",
+                    queueAvailableColorGallery(productId, detail, images, media));
+            return null;
         }
 
         boolean hasRequestedColorImage = images.colorImages() != null && !images.colorImages().isEmpty();
@@ -1198,6 +1261,7 @@ public class AgentVerifiedGroundingService {
                 && (hasRequestedColorImage || (!requestedSpecificColor && hasGlobalImage))) {
             media.add(new AgentMediaRequest(MediaType.PRODUCT_IMAGE, productId, imageColor));
         }
+        return null;
     }
 
     private void queueAmbiguousProductOptions(Long sessionId, Long jobId, ProductSearchResult search,
@@ -1311,8 +1375,8 @@ public class AgentVerifiedGroundingService {
                 .anyMatch(normalizedRequested::equals);
     }
 
-    private void queueAvailableColorGallery(Integer productId, ProductDetail detail, ProductImageResult images,
-            Map<String, Object> evidence, List<AgentMediaRequest> media) {
+    private Map<String, Object> queueAvailableColorGallery(Integer productId, ProductDetail detail,
+            ProductImageResult images, List<AgentMediaRequest> media) {
         List<String> availableColors = detail.colors() == null ? List.of() : detail.colors().stream()
                 .filter(Objects::nonNull)
                 .map(String::trim)
@@ -1332,19 +1396,49 @@ public class AgentVerifiedGroundingService {
                 colorsWithoutImage.add(availableColor);
                 continue;
             }
-            if (displayedColors.size() >= MAX_PRODUCT_COLOR_GALLERY_IMAGES) continue;
             displayedColors.add(availableColor);
             media.add(new AgentMediaRequest(MediaType.PRODUCT_IMAGE, productId, availableColor));
         }
 
-        evidence.put("productColorGallery", Map.of(
+        int batchCount = displayedColors.isEmpty() ? 0
+                : (displayedColors.size() + MAX_PRODUCT_COLOR_GALLERY_IMAGES - 1)
+                        / MAX_PRODUCT_COLOR_GALLERY_IMAGES;
+        return Map.of(
                 "productId", productId,
                 "productName", detail.name(),
                 "availableColors", availableColors,
                 "displayedColors", displayedColors,
                 "colorsWithoutImage", colorsWithoutImage,
                 "imageLimit", MAX_PRODUCT_COLOR_GALLERY_IMAGES,
-                "hasMoreColors", availableColors.size() > displayedColors.size()));
+                "imageBatchSize", MAX_PRODUCT_COLOR_GALLERY_IMAGES,
+                "imageBatchCount", batchCount,
+                "hasMoreColors", false);
+    }
+
+    private void queueRequestedProductColorGalleries(Long sessionId, Long jobId,
+            AgentConversationDecision decision, String currentInput, ProductSearchResult search,
+            AtomicInteger ordinal, Map<String, Object> evidence, List<AgentMediaRequest> media) {
+        List<AgentCatalogQueryService.ProductSummary> requested = requestedProducts(
+                search, requestedProductReferences(decision, currentInput));
+        if (requested.isEmpty()) {
+            evidence.put("productSelectionRequiredBeforeColorGallery", true);
+            return;
+        }
+
+        List<Map<String, Object>> galleries = new ArrayList<>();
+        for (var product : requested) {
+            Integer productId = product.productId();
+            ProductDetail detail = verified(sessionId, jobId, ordinal,
+                    "obtener_producto", Map.of("productoId", productId), ProductDetail.class,
+                    () -> catalog.getProduct(sessionId, productId));
+            ProductImageResult images = verified(sessionId, jobId, ordinal,
+                    "obtener_imagen_producto", nullableMap("productoId", productId, "color", ""),
+                    ProductImageResult.class, () -> catalog.getProductImage(sessionId, productId, ""));
+            galleries.add(queueAvailableColorGallery(productId, detail, images, media));
+        }
+        evidence.put("productColorGalleries", galleries);
+        evidence.put("sendColorGalleriesInChat", true);
+        evidence.put("colorGalleryBatchSize", MAX_PRODUCT_COLOR_GALLERY_IMAGES);
     }
 
     private String matchingAvailableColor(List<String> availableColors, String requestedColor) {
@@ -1443,6 +1537,7 @@ public class AgentVerifiedGroundingService {
                 || decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT
                 || decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY
                 || decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT_IMAGES
+                || decision.commercialAction() == AgentCommercialAction.SHOW_PRODUCT_COLOR_GALLERY
                 || decision.commercialAction() == AgentCommercialAction.SHOW_SIZE_GUIDE
                 || decision.commercialAction() == AgentCommercialAction.RECOMMEND_SIZE
                 || decision.commercialAction() == AgentCommercialAction.ADD_PRODUCT
@@ -1491,16 +1586,51 @@ public class AgentVerifiedGroundingService {
     private List<String> requestedProductReferences(
             AgentConversationDecision decision, String currentInput) {
         Map<String, String> unique = new LinkedHashMap<>();
-        for (String reference : decision.productReferences()) {
+        for (String reference : decision.productReferences() == null ? List.<String>of()
+                : decision.productReferences()) {
             if (reference != null && !reference.isBlank()) unique.putIfAbsent(normalize(reference), reference.trim());
         }
         if (decision.productReference() != null && !decision.productReference().isBlank()) {
             unique.putIfAbsent(normalize(decision.productReference()), decision.productReference().trim());
         }
-        if (currentInput != null && !currentInput.isBlank()) {
+        // The customer's complete sentence is a fallback, never an additional
+        // product name. Mixing "LYANA" with "quiero su guia de tallas" makes
+        // an unpublished product indistinguishable from a malformed search.
+        if (unique.isEmpty() && currentInput != null && !currentInput.isBlank()) {
             unique.putIfAbsent(normalize(currentInput), currentInput.trim());
         }
         return unique.values().stream().toList();
+    }
+
+    private List<String> productReferences(AgentConversationDecision decision) {
+        Map<String, String> unique = new LinkedHashMap<>();
+        if (decision.productReferences() != null) {
+            for (String reference : decision.productReferences()) {
+                if (reference != null && !reference.isBlank()) {
+                    unique.putIfAbsent(normalize(reference), reference.trim());
+                }
+            }
+        }
+        if (decision.productReference() != null && !decision.productReference().isBlank()) {
+            unique.putIfAbsent(normalize(decision.productReference()), decision.productReference().trim());
+        }
+        return unique.values().stream().toList();
+    }
+
+    private String unavailableProductMessage(List<String> references) {
+        List<String> names = references == null ? List.of() : references.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(reference -> !reference.isBlank())
+                .distinct()
+                .toList();
+        boolean plural = names.size() > 1;
+        String subject = names.isEmpty() ? "el producto solicitado"
+                : names.size() == 1 ? "el modelo " + names.getFirst()
+                : "los modelos " + String.join(", ", names);
+        return "Hermosa, " + subject + (plural ? " no se encuentran" : " no se encuentra")
+                + (plural ? " disponibles" : " disponible") + " para la venta actualmente. "
+                + "Si deseas, puedo mostrarte otros modelos disponibles. \uD83D\uDC9B";
     }
 
     private List<AgentCatalogQueryService.ProductSummary> requestedProducts(

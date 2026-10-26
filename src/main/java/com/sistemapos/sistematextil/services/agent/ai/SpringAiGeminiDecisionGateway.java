@@ -53,9 +53,16 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
               disponibilidad de uno o varios modelos. Conserva todos los modelos en productReferences, el primero
               en productReference y cualquier color o talla mencionados. No calcules la disponibilidad: Java
               consultara cada producto y variante por separado y construira la respuesta completa.
-            - SHOW_PRODUCT_IMAGES: pide expresamente fotos o imagenes de uno o varios modelos. Conserva todos los
-              nombres o familias solicitados en productReferences y el primero en productReference. Si tambien
-              solicita un color, conservalo en colorReference; Java decidira si primero debe precisar el modelo.
+            - SHOW_PRODUCT_IMAGES: pide fotos generales de uno o varios modelos, sin solicitar la gama completa.
+              Conserva todos los nombres o familias solicitados en productReferences y el primero en
+              productReference. Si tambien solicita un color, conservalo en colorReference; Java decidira si
+              primero debe precisar el modelo.
+            - SHOW_PRODUCT_COLOR_GALLERY: pide ver la gama completa, una foto de cada color disponible, todos los
+              colores en imagenes, o insiste semanticamente en recibir por este chat las fotos de colores que antes
+              no se le enviaron. No depende de una palabra o frase exacta: interpreta el significado del ultimo
+              mensaje junto con el historial. Conserva en productReferences todos los modelos o la familia pedida.
+              Si solicita expresamente todos los acabados de una familia ambigua, conserva la familia sin elegir uno;
+              Java enviara por separado la gama completa de cada modelo coincidente.
               En el contexto peruano de colores de prendas, "morocho" significa NEGRO. Aplica esta equivalencia
               solo cuando la palabra describe el color solicitado; si el uso es ambiguo, pide una aclaracion.
             - SHOW_SIZE_GUIDE: pide una tabla, guia o medidas del producto, incluso con frases naturales como

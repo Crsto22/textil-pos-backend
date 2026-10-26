@@ -351,6 +351,66 @@ class AgentVerifiedGroundingServiceTest {
     }
 
     @Test
+    void unavailableSizeGuideUsesTheSemanticProductNameAndDoesNotOfferAnOldGuide() {
+        AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.PRODUCT_DETAILS, "ver guia", "LYANA", List.of("LYANA"),
+                "", "", 0, "", List.of(), AgentCartAction.NONE, AgentCommercialAction.SHOW_SIZE_GUIDE,
+                "", "", "", "", "", "", "", "", List.of(),
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL,
+                "", List.of(), "", 99, false);
+        String conversation = "LOTE_ACTUAL_AGRUPADO:\nMedidas del conjunto Lyana";
+        when(decisions.interpret(4L, conversation)).thenReturn(
+                new AgentInterpretationResult("GEMINI", "model", "DB", 10, 0, decision));
+        when(catalog.searchProducts(9L, "LYANA", 10)).thenReturn(
+                new ProductSearchResult("LYANA", 1, List.of(), false));
+
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
+                mock(AgentCartService.class), passThroughAudit());
+
+        var result = service.ground(4L, 9L, 30L, conversation);
+
+        assertEquals("Hermosa, el modelo LYANA no se encuentra disponible para la venta actualmente. "
+                + "Si deseas, puedo mostrarte otros modelos disponibles. \uD83D\uDC9B", result.customerMessage());
+        assertTrue(result.media().isEmpty());
+        assertFalse(result.evidenceJson().contains("sizeGuideDelivery"));
+        verify(catalog).searchProducts(9L, "LYANA", 10);
+    }
+
+    @Test
+    void unavailableCatalogProductGetsADeterministicCommercialResponse() {
+        AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.PRODUCT_DETAILS, "consultar Lyana", "LYANA", List.of("LYANA"),
+                "", "", 0, "", List.of(), AgentCartAction.NONE, AgentCommercialAction.SHOW_PRODUCT,
+                "", "", "", "", "", "", "", "", List.of(),
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL,
+                "", List.of(), "", 99, false);
+        String conversation = "LOTE_ACTUAL_AGRUPADO:\nQuiero ver el conjunto Lyana";
+        when(decisions.interpret(4L, conversation)).thenReturn(
+                new AgentInterpretationResult("GEMINI", "model", "DB", 10, 0, decision));
+        when(catalog.searchProducts(9L, "LYANA", 20,
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL)).thenReturn(
+                new ProductSearchResult("LYANA", 1, List.of(), false));
+        when(catalog.searchProducts(9L, "", 20,
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL)).thenReturn(
+                new ProductSearchResult("", 1, List.of(), false));
+
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
+                mock(AgentCartService.class), passThroughAudit());
+
+        var result = service.ground(4L, 9L, 30L, conversation);
+
+        assertTrue(result.customerMessage().contains("LYANA no se encuentra disponible para la venta"));
+        assertTrue(result.media().isEmpty());
+        assertTrue(result.evidenceJson().contains("availableProductsWhenNoMatch"));
+    }
+
+    @Test
     void queuesEveryRequestedSizeGuideForMultipleProductFamilies() {
         AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
         AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
@@ -1165,12 +1225,12 @@ class AgentVerifiedGroundingServiceTest {
     }
 
     @Test
-    void sendsUpToEightAvailableColorImagesAndKeepsEveryAvailableColorInEvidence() {
+    void sendsEveryAvailableColorImageInBatchesOfEight() {
         AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
         AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
         AgentConversationDecision decision = new AgentConversationDecision(
                 AgentDecisionIntent.PRODUCT_DETAILS, "mostrar colores de Melina en imagenes", "Melina", "", "",
-                0, "", AgentCartAction.NONE, AgentCommercialAction.SHOW_PRODUCT_IMAGES,
+                0, "", AgentCartAction.NONE, AgentCommercialAction.SHOW_PRODUCT_COLOR_GALLERY,
                 "", "", "", "", "", "", "", "",
                 com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL, 99, false);
         when(decisions.interpret(4L, "Muestrame los colores de Melina en imagenes")).thenReturn(
@@ -1202,13 +1262,93 @@ class AgentVerifiedGroundingServiceTest {
         var result = service.ground(4L, 9L, 30L, "Muestrame los colores de Melina en imagenes");
 
         assertEquals(3, result.verifiedToolCalls());
-        assertEquals(8, result.media().size());
-        assertEquals(List.of("NEGRO", "TOPO", "PLATA", "ROSADO", "VINO", "CAMEL", "CHOCOLATE", "AZUL"),
+        assertEquals(9, result.media().size());
+        assertEquals(List.of("NEGRO", "TOPO", "PLATA", "ROSADO", "VINO", "CAMEL", "CHOCOLATE", "AZUL", "PERLA"),
                 result.media().stream().map(media -> media.color()).toList());
         assertTrue(result.evidenceJson().contains("productColorGallery"));
         assertTrue(result.evidenceJson().contains("CHOCOLATE"));
         assertTrue(result.evidenceJson().contains("colorsWithoutImage"));
-        assertTrue(result.evidenceJson().contains("\"hasMoreColors\":true"));
+        assertTrue(result.evidenceJson().contains("\"imageBatchCount\":2"));
+        assertTrue(result.evidenceJson().contains("\"hasMoreColors\":false"));
+    }
+
+    @Test
+    void keepsAGeneralPhotoRequestToOneRepresentativeImage() {
+        AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.PRODUCT_DETAILS, "ver una foto de Melina", "Melina", "", "",
+                0, "", AgentCartAction.NONE, AgentCommercialAction.SHOW_PRODUCT_IMAGES,
+                "", "", "", "", "", "", "", "",
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL, 99, false);
+        when(decisions.interpret(4L, "Muestrame una foto de Melina")).thenReturn(
+                new AgentInterpretationResult("GEMINI", "model", "DB", 10, 0, decision));
+        ProductSummary summary = new ProductSummary(88, "MELINA", "ARUBA", "CONJUNTO",
+                false, null, 79D, 50, List.of("NEGRO", "AZUL", "VINO"), List.of("S", "M"));
+        when(catalog.searchProducts(9L, "Melina", 20,
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL)).thenReturn(
+                new ProductSearchResult("Melina", 1, List.of(summary), false));
+        when(catalog.getProduct(9L, 88)).thenReturn(new ProductDetail(88, "MELINA", "ARUBA", "CONJUNTO",
+                false, null, null, null, List.of("NEGRO", "AZUL", "VINO"), List.of("S", "M"), 50, 79D, 6));
+        when(catalog.getProductImage(9L, 88, "")).thenReturn(new ProductImageResult(
+                88, "MELINA", "", "/productos/melina.webp", null, List.of(
+                new ProductImage("NEGRO", "/productos/melina-negro.webp", null, true),
+                new ProductImage("AZUL", "/productos/melina-azul.webp", null, true),
+                new ProductImage("VINO", "/productos/melina-vino.webp", null, true))));
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
+                mock(AgentCartService.class), passThroughAudit());
+
+        var grounded = service.ground(4L, 9L, 30L, "Muestrame una foto de Melina");
+
+        assertEquals(1, grounded.media().size());
+        assertEquals("", grounded.media().getFirst().color());
+        assertFalse(grounded.evidenceJson().contains("productColorGallery"));
+    }
+
+    @Test
+    void sendsCompleteColorGalleriesForEveryRequestedFamilyModel() {
+        AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.PRODUCT_DETAILS, "enviar las gamas de Annie por el chat", "Annie", "", "",
+                0, "", AgentCartAction.NONE, AgentCommercialAction.SHOW_PRODUCT_COLOR_GALLERY,
+                "", "", "", "", "", "", "", "",
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL, 99, false);
+        when(decisions.interpret(4L, "Mandame por aqui todos los colores de Annie")).thenReturn(
+                new AgentInterpretationResult("GEMINI", "model", "DB", 10, 0, decision));
+        ProductSummary entero = new ProductSummary(61, "ANNIE ENTERO", "ARUBA", "CONJUNTO",
+                false, null, 70D, 20, List.of("NEGRO", "AZUL"), List.of("S", "M"));
+        ProductSummary rayas = new ProductSummary(66, "ANNIE RAYAS", "ARUBA", "CONJUNTO",
+                false, null, 70D, 20, List.of("VINO", "PLATA"), List.of("S", "M"));
+        when(catalog.searchProducts(9L, "Annie", 20,
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL)).thenReturn(
+                new ProductSearchResult("Annie", 1, List.of(entero, rayas), false));
+        when(catalog.getProduct(9L, 61)).thenReturn(new ProductDetail(61, "ANNIE ENTERO", "ARUBA",
+                "CONJUNTO", false, null, null, null, List.of("NEGRO", "AZUL"),
+                List.of("S", "M"), 20, 70D, 4));
+        when(catalog.getProduct(9L, 66)).thenReturn(new ProductDetail(66, "ANNIE RAYAS", "ARUBA",
+                "CONJUNTO", false, null, null, null, List.of("VINO", "PLATA"),
+                List.of("S", "M"), 20, 70D, 4));
+        when(catalog.getProductImage(9L, 61, "")).thenReturn(new ProductImageResult(
+                61, "ANNIE ENTERO", "", "/annie-entero.webp", null, List.of(
+                new ProductImage("NEGRO", "/annie-entero-negro.webp", null, true),
+                new ProductImage("AZUL", "/annie-entero-azul.webp", null, true))));
+        when(catalog.getProductImage(9L, 66, "")).thenReturn(new ProductImageResult(
+                66, "ANNIE RAYAS", "", "/annie-rayas.webp", null, List.of(
+                new ProductImage("VINO", "/annie-rayas-vino.webp", null, true),
+                new ProductImage("PLATA", "/annie-rayas-plata.webp", null, true))));
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
+                mock(AgentCartService.class), passThroughAudit());
+
+        var grounded = service.ground(4L, 9L, 30L, "Mandame por aqui todos los colores de Annie");
+
+        assertEquals(5, grounded.verifiedToolCalls());
+        assertEquals(List.of("NEGRO", "AZUL", "VINO", "PLATA"),
+                grounded.media().stream().map(media -> media.color()).toList());
+        assertTrue(grounded.evidenceJson().contains("productColorGalleries"));
+        assertTrue(grounded.evidenceJson().contains("sendColorGalleriesInChat"));
     }
 
     @Test
@@ -1561,6 +1701,41 @@ class AgentVerifiedGroundingServiceTest {
 
         assertTrue(grounded.mutationExecuted());
         verify(cart).keepOnlyProduct(9L, 4501, 1, "agent-job-30:keep_only_product");
+    }
+
+    @Test
+    void keepsOnlyTheExactColorAndSizeWhenTheCartHasTwoVariantsOfTheSameProduct() {
+        AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        AgentCartService cart = mock(AgentCartService.class);
+        AgentConversationDecision decision = new AgentConversationDecision(
+                AgentDecisionIntent.CART_CHANGE, "dejar solo Alessia Entero negro L",
+                "ALESSIA ENTERO", "NEGRO", "L", 1, "",
+                AgentCartAction.KEEP_ONLY_PRODUCT, AgentCommercialAction.CHANGE_CART,
+                "", "", "", "", "", "", "", "",
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL, 99, false);
+        when(decisions.interpret(4L, "Quiero solo Alessia Entero negro L")).thenReturn(
+                new AgentInterpretationResult("GEMINI", "model", "DB", 10, 0, decision));
+        CartItemView blue = new CartItemView(1083L, 1764, "ALESSIA ENTERO", "AZUL", "L", 1,
+                BigDecimal.valueOf(70), BigDecimal.ZERO, BigDecimal.valueOf(70));
+        CartItemView black = new CartItemView(1115L, 1728, "ALESSIA ENTERO", "Negro", "L", 1,
+                BigDecimal.valueOf(70), BigDecimal.ZERO, BigDecimal.valueOf(70));
+        CartResult current = new CartResult(198L, "DRAFT", "PEN", BigDecimal.valueOf(140),
+                BigDecimal.ZERO, BigDecimal.valueOf(140), List.of(blue, black), List.of());
+        CartResult corrected = new CartResult(198L, "DRAFT", "PEN", BigDecimal.valueOf(70),
+                BigDecimal.ZERO, BigDecimal.valueOf(70), List.of(black), List.of());
+        when(cart.recalculate(9L, "agent-job-30:read-cart")).thenReturn(current);
+        when(cart.keepOnlyProduct(9L, 1728, 1, "agent-job-30:keep_only_product"))
+                .thenReturn(corrected);
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(decisions, catalog,
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class), cart,
+                passThroughAudit());
+
+        var grounded = service.ground(4L, 9L, 30L, "Quiero solo Alessia Entero negro L");
+
+        assertTrue(grounded.mutationExecuted());
+        verify(cart).keepOnlyProduct(9L, 1728, 1, "agent-job-30:keep_only_product");
+        assertTrue(grounded.evidenceJson().contains("\"variantId\":1728"));
     }
 
     @Test

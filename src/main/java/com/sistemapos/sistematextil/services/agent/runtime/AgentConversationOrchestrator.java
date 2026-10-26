@@ -129,8 +129,7 @@ public class AgentConversationOrchestrator {
         String conversation = base.userMessage() + "\n\nLOTE_ACTUAL_AGRUPADO:\n" + batch.combinedInput();
         var grounding = groundingService.ground(context.connectionId(), lease.sessionId(), lease.jobId(), conversation);
         boolean pendingReminderRequired = pendingReminderRequired(context, grounding);
-        if (grounding.customerMessage() != null && !grounding.customerMessage().isBlank()
-                && !pendingReminderRequired) {
+        if (grounding.customerMessage() != null && !grounding.customerMessage().isBlank()) {
             GeneratedTurn deterministic = new GeneratedTurn(
                     grounding.customerMessage(), context.previousSummary(),
                     advisorEnabled && grounding.decision().requiresHumanHelp(),
@@ -157,6 +156,9 @@ public class AgentConversationOrchestrator {
                           responde solo la parte textual verificable y pide el nombre del modelo cuando sea necesario.
                         - No digas que estas buscando, revisando o verificando: la consulta ya fue ejecutada.
                         - No escribas marcadores como [lista], datos pendientes ni productos no presentes en la evidencia.
+                        - Un producto ausente del catalogo comercial verificado no esta disponible para la venta,
+                          aunque aparezca en el historial, conserve una guia antigua o exista como registro interno.
+                          No ofrezcas su guia, colores, precio ni compra, y no inventes la causa de su ausencia.
                         - Solo afirma que adjuntas, compartes, envias o muestras fotos cuando verifiedMediaCount es
                           mayor que cero. Si vale cero, no prometas ni anuncies imagenes que no seran enviadas.
                         - Cuando exista selectedProduct, responde ahora con sus datos reales.
@@ -170,6 +172,8 @@ public class AgentConversationOrchestrator {
                           la regla en una plantilla ni reveles cantidades internas.
                         - Cuando exista requestedVariantAvailability, redacta la respuesta de forma natural usando
                           exclusivamente sus productos, precios y variantes verificadas. No uses una plantilla fija.
+                          Cada nombre de unresolvedReferences no esta disponible para la venta actualmente; indicalo
+                          expresamente sin recuperar informacion antigua del historial.
                           Si variants esta vacio, informa que la combinacion solicitada no tiene stock y NUNCA
                           preguntes si desea agregarla, comprarla o separarla. Si availableAlternatives contiene
                           opciones, muestra SIEMPRE la lista completa agrupada por color con todas sus tallas
@@ -191,11 +195,18 @@ public class AgentConversationOrchestrator {
                           sin pedir primero que elija un acabado. Indica que se adjuntaron solo las fotos y guias cuyo
                           valor incluido sea true; luego pregunta cual modelo, color y talla desea. No reveles stock
                           numerico. Las guias automaticas repetidas ya son suprimidas por el backend.
-                        - Cuando exista productColorGallery, menciona por texto TODOS los availableColors, aunque solo
-                          se adjunten hasta imageLimit imagenes. Indica naturalmente cuales se mostraron y, si
-                          hasMoreColors=true, invita a la clienta a pedir cualquier otro color para ver su foto.
-                          Si colorsWithoutImage contiene valores, no afirmes que adjuntaste esos colores; explica
-                          brevemente que estan disponibles pero no tienen una foto configurada.
+                        - Cuando exista productColorGallery, menciona por texto TODOS los availableColors y explica
+                          que se adjunta una imagen por cada color incluido en displayedColors. Las imagenes se
+                          procesan en lotes internos de imageBatchSize hasta completar la gama; no afirmes que se
+                          omitieron colores por el limite del lote y no reemplaces la entrega con un enlace web.
+                          Si colorsWithoutImage contiene valores, no
+                          afirmes que adjuntaste esos colores; explica brevemente que estan disponibles pero no
+                          tienen una foto configurada.
+                        - Cuando exista productColorGalleries, presenta por nombre cada modelo y su gama verificada.
+                          Indica que las fotos se envian por este chat, agrupadas por modelo y en lotes, sin derivar a
+                          la pagina web. No pidas elegir primero un acabado porque la solicitud semantica ya autorizo
+                          enviar las gamas de todos los modelos incluidos. Para cada galeria aplica la misma regla de
+                          displayedColors y colorsWithoutImage.
                         - Cuando requestedColorAvailability.available sea false, no afirmes que mostraste ni que esta
                           disponible el color solicitado. Ofrece unicamente los availableColors verificados.
                         - Respeta el filtro availability y no mezcles preventas con productos listos.
@@ -506,7 +517,8 @@ public class AgentConversationOrchestrator {
         AgentDecisionIntent intent = grounding.decision().intent();
         boolean requiresVerifiedRead = requiresVerifiedRead(intent)
                 || grounding.decision().commercialAction() == AgentCommercialAction.SHOW_PROMOTIONS
-                || grounding.decision().commercialAction() == AgentCommercialAction.SHOW_PRODUCT_IMAGES;
+                || grounding.decision().commercialAction() == AgentCommercialAction.SHOW_PRODUCT_IMAGES
+                || grounding.decision().commercialAction() == AgentCommercialAction.SHOW_PRODUCT_COLOR_GALLERY;
         if (requiresVerifiedRead && grounding.verifiedToolCalls() < 1) {
             throw new IllegalStateException("La respuesta comercial no tiene evidencia verificada del backend");
         }

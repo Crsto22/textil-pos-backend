@@ -727,6 +727,32 @@ class AgentConversationOrchestratorTest {
     }
 
     @Test
+    void keepsDeterministicCartFailureInsteadOfLettingTheModelClaimSuccess() {
+        Fixture fixture = new Fixture();
+        fixture.pending(CrmWhatsappAgentState.ESPERANDO_METODO_PAGO,
+                AgentMissingData.PAYMENT_METHOD);
+        fixture.current(true, true, true);
+        AgentConversationDecision keepOnly = new AgentConversationDecision(
+                AgentDecisionIntent.CART_CHANGE, "dejar solo Alessia negro L", "ALESSIA ENTERO",
+                "NEGRO", "L", 1, "", com.sistemapos.sistematextil.services.agent.ai.AgentCartAction.KEEP_ONLY_PRODUCT,
+                AgentCommercialAction.CHANGE_CART, "", "", "", "", "", "", "", "",
+                com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL, 99, false);
+        String deterministicFailure = "El carrito no fue modificado. Indica exactamente la variante.";
+        when(fixture.grounding.ground(eq(7L), eq(8L), eq(41L), any())).thenReturn(
+                new AgentVerifiedGroundingService.Grounding(
+                        keepOnly, "{\"cartOperation\":{\"executed\":false}}", List.of(), 1, false,
+                        deterministicFailure));
+
+        assertEquals(AgentConversationOrchestrator.Outcome.COMPLETED,
+                fixture.orchestrator.process(fixture.lease));
+
+        verify(fixture.gateway, never()).respond(any(), any(), any(Integer.class));
+        ArgumentCaptor<GeneratedTurn> turn = ArgumentCaptor.forClass(GeneratedTurn.class);
+        verify(fixture.jobs).saveGeneratedTurn(eq(41L), eq("worker:lease"), turn.capture(), any());
+        assertEquals(deterministicFailure, turn.getValue().customerMessage());
+    }
+
+    @Test
     void validatesReadyStockDeliveryGuidanceForAnAgentSale() {
         var grounding = deliveryGrounding("READY_STOCK");
 

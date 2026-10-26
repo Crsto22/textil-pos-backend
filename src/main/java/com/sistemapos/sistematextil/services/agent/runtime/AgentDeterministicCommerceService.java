@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import com.sistemapos.sistematextil.model.CrmWhatsappAgentEvent;
 import com.sistemapos.sistematextil.model.CrmWhatsappAgentState;
 import com.sistemapos.sistematextil.model.CrmWhatsappAgentSession;
 import com.sistemapos.sistematextil.model.CrmWhatsappConversation;
@@ -80,13 +81,15 @@ public class AgentDeterministicCommerceService {
         }
         AgentConversationDecision effectiveDecision = normalizeShalomAgencyRefinement(sessionId, decision);
         AgentCommercialAction action = effectiveCommercialAction(effectiveDecision);
+        resetExpiredPaymentForFreshShopping(sessionId, action);
         if (carts != null && action != AgentCommercialAction.CANCEL_PENDING_CART) {
             ExpiredCartRefresh expired = carts.refreshExpiredConfirmedCart(sessionId);
             boolean concreteCartMutation = (action == AgentCommercialAction.CHANGE_CART
                     || action == AgentCommercialAction.ADD_PRODUCT)
                     && effectiveDecision.cartAction() != null
                     && effectiveDecision.cartAction() != AgentCartAction.NONE;
-            if (expired != null && expired.refreshed() && !concreteCartMutation) {
+            if (expired != null && expired.refreshed() && !concreteCartMutation
+                    && isPaymentContinuation(action)) {
                 return Outcome.executed(expiredCartMessage(sessionId, expired));
             }
         }
@@ -323,11 +326,11 @@ public class AgentDeterministicCommerceService {
     private String expiredCartMessage(Long sessionId, ExpiredCartRefresh refresh) {
         CartResult cart = refresh.cart();
         if (cart == null || cart.items() == null || cart.items().isEmpty()) {
-            return "Han pasado más de 3 horas desde que confirmaste el pedido. Al revisar nuevamente la "
-                    + "disponibilidad, los productos ya no están disponibles y el carrito pendiente quedó vacío. "
-                    + "Indícame qué producto deseas para ayudarte a preparar un pedido nuevo. 💛";
+            return "Pasó más de 1 hora desde que confirmaste el pedido sin completar el pago, por eso el "
+                    + "carrito pendiente fue eliminado. Indícame qué producto deseas para ayudarte a preparar "
+                    + "un pedido nuevo. 💛";
         }
-        StringBuilder text = new StringBuilder("Han pasado más de 3 horas desde que confirmaste el pedido, hermosa 💛 "
+        StringBuilder text = new StringBuilder("Pasó más de 1 hora desde que confirmaste el pedido, hermosa 💛 "
                 + "Volví a verificar el stock, los precios y las promociones antes de permitir el pago.");
         if (refresh.removedItems() != null && !refresh.removedItems().isEmpty()) {
             text.append("\n\nEstas opciones ya no están disponibles y fueron retiradas del carrito:");
@@ -335,6 +338,34 @@ public class AgentDeterministicCommerceService {
                     .append(" — ").append(item.color()).append(", ").append(item.size()));
         }
         return text.append("\n\n").append(cartTemplate(sessionId, cart, true)).toString();
+    }
+
+    private void resetExpiredPaymentForFreshShopping(Long sessionId, AgentCommercialAction action) {
+        if (payments == null || sessions == null || !isFreshShoppingAction(action)) return;
+        CrmWhatsappAgentSession session = requireSession(sessionId);
+        if (session.getState() == CrmWhatsappAgentState.CANCELADO
+                && session.getLastEvent() == CrmWhatsappAgentEvent.SOLICITUD_PAGO_EXPIRADA) {
+            payments.beginNewPurchase(sessionId);
+        }
+    }
+
+    private boolean isFreshShoppingAction(AgentCommercialAction action) {
+        return switch (action) {
+            case SHOW_PRODUCTS, SHOW_PRODUCT, SHOW_PRODUCT_AVAILABILITY,
+                    SHOW_PRODUCT_AVAILABILITY_FOR_DELIVERY, SHOW_PRODUCT_IMAGES,
+                    SHOW_PRODUCT_COLOR_GALLERY, SHOW_SIZE_GUIDE, RECOMMEND_SIZE,
+                    SHOW_PROMOTIONS, ADD_PRODUCT, CHANGE_CART -> true;
+            default -> false;
+        };
+    }
+
+    private boolean isPaymentContinuation(AgentCommercialAction action) {
+        return switch (action) {
+            case CONFIRM_CART, SHOW_PAYMENT_METHODS, SELECT_PAYMENT_METHOD,
+                    PAYMENT_TIME_REMAINING, RETRY_PAYMENT,
+                    EXPLAIN_IMMEDIATE_PAYMENT_POLICY -> true;
+            default -> false;
+        };
     }
 
     /** Reabre el carrito confirmado antes de ejecutar una mutación concreta. */
@@ -547,10 +578,10 @@ public class AgentDeterministicCommerceService {
     private Outcome expiredCartReconfirmation(Long sessionId, String operation) {
         CartResult refreshed = carts.recalculate(sessionId, operation + ":expired-cart-review");
         if (refreshed.items().isEmpty()) {
-            return Outcome.executed("El carrito que superó las 3 horas ya no tiene productos disponibles. "
+            return Outcome.executed("El carrito que superó 1 hora ya no tiene productos disponibles. "
                     + "Indícame qué producto deseas para preparar un pedido nuevo. 💛");
         }
-        return Outcome.executed("Tu carrito superó las 3 horas y fue actualizado con la disponibilidad, los precios "
+        return Outcome.executed("Tu carrito superó 1 hora y fue actualizado con la disponibilidad, los precios "
                 + "y las promociones vigentes. Antes de elegir el método de pago, confirma nuevamente este resumen:\n\n"
                 + cartTemplate(sessionId, refreshed, true));
     }

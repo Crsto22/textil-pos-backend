@@ -2,6 +2,7 @@ package com.sistemapos.sistematextil.services.agent.runtime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -223,7 +224,7 @@ class AgentDeterministicCommerceServiceTest {
     }
 
     @Test
-    void blocksPaymentAndExplainsRevalidationWhenTheThreeHourCartWindowExpired() {
+    void blocksPaymentAndExplainsCleanupWhenTheOneHourCartWindowExpired() {
         CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
         AgentCartService carts = mock(AgentCartService.class);
         AgentPaymentService payments = mock(AgentPaymentService.class);
@@ -233,16 +234,62 @@ class AgentDeterministicCommerceServiceTest {
         CartResult empty = new CartResult(5L, "DRAFT", "PEN", BigDecimal.ZERO, BigDecimal.ZERO,
                 BigDecimal.ZERO, List.of(), List.of());
         when(carts.refreshExpiredConfirmedCart(41L)).thenReturn(new ExpiredCartRefresh(
-                true, empty, List.of(), LocalDateTime.now().minusHours(3), LocalDateTime.now()));
+                true, empty, List.of(), LocalDateTime.now().minusHours(1), LocalDateTime.now()));
         AgentDeterministicCommerceService service = new AgentDeterministicCommerceService(
                 sessions, null, carts, null, payments, null, null, null, null, null,
                 new AgentToolCallAuditService(null));
 
         var result = service.execute(41L, null, decision(AgentCommercialAction.SELECT_PAYMENT_METHOD, "YAPE"));
 
-        assertTrue(result.customerMessage().contains("más de 3 horas"));
-        assertTrue(result.customerMessage().contains("carrito pendiente quedó vacío"));
+        assertTrue(result.customerMessage().contains("más de 1 hora"));
+        assertTrue(result.customerMessage().contains("carrito pendiente fue eliminado"));
         verify(payments, never()).createRequest(any(), anyString());
+    }
+
+    @Test
+    void silentlyClearsAnExpiredCartAndLetsANewAvailabilityQuestionContinue() {
+        CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        AgentCartService carts = mock(AgentCartService.class);
+        AgentPaymentService payments = mock(AgentPaymentService.class);
+        CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
+        session.setState(CrmWhatsappAgentState.ESPERANDO_METODO_PAGO);
+        when(sessions.findById(41L)).thenReturn(Optional.of(session));
+        CartResult empty = new CartResult(5L, "DRAFT", "PEN", BigDecimal.ZERO, BigDecimal.ZERO,
+                BigDecimal.ZERO, List.of(), List.of());
+        when(carts.refreshExpiredConfirmedCart(41L)).thenReturn(new ExpiredCartRefresh(
+                true, empty, List.of(), LocalDateTime.now().minusHours(1), LocalDateTime.now()));
+        AgentDeterministicCommerceService service = new AgentDeterministicCommerceService(
+                sessions, null, carts, null, payments, null, null, null, null, null,
+                new AgentToolCallAuditService(null));
+
+        var result = service.execute(41L, null,
+                decision(AgentCommercialAction.SHOW_PRODUCT_AVAILABILITY, "ALESSIA PERLA L"));
+
+        assertFalse(result.handled());
+        assertNull(result.customerMessage());
+        verify(carts).refreshExpiredConfirmedCart(41L);
+        verify(payments, never()).createRequest(any(), anyString());
+    }
+
+    @Test
+    void resetsAnExpiredPaymentBeforeANewCatalogQuestion() {
+        CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        AgentCartService carts = mock(AgentCartService.class);
+        AgentPaymentService payments = mock(AgentPaymentService.class);
+        CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
+        session.setState(CrmWhatsappAgentState.CANCELADO);
+        session.setLastEvent(com.sistemapos.sistematextil.model.CrmWhatsappAgentEvent.SOLICITUD_PAGO_EXPIRADA);
+        when(sessions.findById(41L)).thenReturn(Optional.of(session));
+        when(carts.refreshExpiredConfirmedCart(41L)).thenReturn(ExpiredCartRefresh.notRefreshed());
+        AgentDeterministicCommerceService service = new AgentDeterministicCommerceService(
+                sessions, null, carts, null, payments, null, null, null, null, null,
+                new AgentToolCallAuditService(null));
+
+        var result = service.execute(41L, null,
+                decision(AgentCommercialAction.SHOW_PRODUCTS, "modelos disponibles"));
+
+        assertFalse(result.handled());
+        verify(payments).beginNewPurchase(41L);
     }
 
     @Test
@@ -285,7 +332,7 @@ class AgentDeterministicCommerceServiceTest {
 
         var result = service.execute(41L, null, decision(AgentCommercialAction.SELECT_PAYMENT_METHOD, "YAPE"));
 
-        assertTrue(result.customerMessage().contains("superó las 3 horas"));
+        assertTrue(result.customerMessage().contains("superó 1 hora"));
         verify(payments, never()).selectMethod(any(), any(), any(), anyString());
         verify(payments, never()).createRequest(any(), anyString());
     }

@@ -110,28 +110,33 @@ class AgentCartServiceTest {
     }
 
     @Test
-    void refreshesStockPricesAndPromotionsAfterExactlyThreeHours() {
+    void clearsAnUnpaidConfirmedCartAfterOneHour() {
         session.setState(CrmWhatsappAgentState.ESPERANDO_METODO_PAGO);
         cart = new CartRow(5L, 41L, "CONFIRMED", "PEN", new BigDecimal("120.00"), zero(),
-                new BigDecimal("120.00"), 1L, LocalDateTime.now().minusHours(3).minusSeconds(1));
+                new BigDecimal("120.00"), 1L, LocalDateTime.now().minusHours(1).minusSeconds(1));
         when(store.lockActiveCart(41L)).thenReturn(Optional.of(cart));
-        when(store.findItems(5L)).thenReturn(List.of(persistedItem), List.of(persistedItem), List.of(persistedItem));
+        when(store.findItems(5L)).thenReturn(List.of(persistedItem));
 
         AgentCartService.ExpiredCartRefresh result = service.refreshExpiredConfirmedCart(41L);
 
         assertTrue(result.refreshed());
-        assertEquals(CrmWhatsappAgentState.ARMANDO_CARRITO, session.getState());
-        assertEquals(new BigDecimal("120.00"), result.cart().total());
+        assertEquals(CrmWhatsappAgentState.EXPLORANDO_PRODUCTOS, session.getState());
+        assertTrue(result.cart().items().isEmpty());
+        assertEquals(BigDecimal.ZERO.setScale(2), result.cart().total());
+        assertEquals(List.of("EMMA"), result.removedItems().stream()
+                .map(item -> item.product()).toList());
         verify(store).reopen(org.mockito.Mockito.eq(5L), any());
-        verify(priceService).resolverPrecioVigente(stock.getProductoVariante(), 7);
-        verify(promotionRepository).listarActivas(any());
+        verify(store).clearCart(5L);
+        verify(store).deletePendingPromotion(41L);
+        verify(priceService, never()).resolverPrecioVigente(any(), any());
+        verify(promotionRepository, never()).listarActivas(any());
     }
 
     @Test
-    void keepsAConfirmedCartPayableBeforeThreeHours() {
+    void keepsAConfirmedCartPayableBeforeOneHour() {
         session.setState(CrmWhatsappAgentState.ESPERANDO_METODO_PAGO);
         cart = new CartRow(5L, 41L, "CONFIRMED", "PEN", new BigDecimal("120.00"), zero(),
-                new BigDecimal("120.00"), 1L, LocalDateTime.now().minusHours(2));
+                new BigDecimal("120.00"), 1L, LocalDateTime.now().minusMinutes(59));
         when(store.lockActiveCart(41L)).thenReturn(Optional.of(cart));
 
         AgentCartService.ExpiredCartRefresh result = service.refreshExpiredConfirmedCart(41L);

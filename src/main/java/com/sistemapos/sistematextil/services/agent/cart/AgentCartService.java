@@ -48,7 +48,7 @@ import com.sistemapos.sistematextil.services.agent.cart.AgentCartStore.Promotion
 @Service
 public class AgentCartService {
     private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
-    public static final Duration CONFIRMED_CART_WINDOW = Duration.ofHours(3);
+    public static final Duration CONFIRMED_CART_WINDOW = Duration.ofHours(1);
 
     private final CrmWhatsappAgentSessionRepository sessionRepository;
     private final CrmWhatsappAgentStateMachine stateMachine;
@@ -477,9 +477,9 @@ public class AgentCartService {
     }
 
     /**
-     * Reopens and recalculates a confirmed cart once its three-hour review window
-     * expires. No stock is reserved at this stage; current catalog stock, prices
-     * and promotions become authoritative before the customer can confirm again.
+     * Clears a confirmed but unpaid cart after one hour. A later customer message
+     * must start from a clean shopping context instead of inheriting an abandoned
+     * order.
      */
     @Transactional
     public ExpiredCartRefresh refreshExpiredConfirmedCart(Long sessionId) {
@@ -497,17 +497,18 @@ public class AgentCartService {
         if (now.isBefore(cart.confirmedAt().plus(CONFIRMED_CART_WINDOW))) {
             return ExpiredCartRefresh.notRefreshed();
         }
-        Integer branchId = requireBranchId(session);
         List<CartItemRow> previous = List.copyOf(store.findItems(cart.id()));
         applyEvent(session, CrmWhatsappAgentEvent.CARRITO_REVALIDADO_POR_VENCIMIENTO, now);
         store.reopen(cart.id(), now);
-        CartResult refreshed = recalculateLocked(new LockedSession(session, branchId), cart, "DRAFT");
-        List<CartItemView> removed = previous.stream()
-                .filter(old -> refreshed.items().stream().noneMatch(current -> current.variantId().equals(old.variantId())))
-                .map(this::cartItemView)
-                .toList();
-        if (refreshed.items().isEmpty()) markCartEmpty(session);
-        return new ExpiredCartRefresh(true, refreshed, removed, cart.confirmedAt(), now);
+        store.clearCart(cart.id());
+        store.replacePromotions(cart.id(), List.of(), now);
+        store.deletePendingPromotion(sessionId);
+        store.updateTotals(cart.id(), ZERO, ZERO, ZERO, now);
+        markCartEmpty(session);
+        CartResult cleared = new CartResult(cart.id(), "DRAFT", cart.currency(), ZERO, ZERO, ZERO,
+                List.of(), List.of());
+        return new ExpiredCartRefresh(true, cleared,
+                previous.stream().map(this::cartItemView).toList(), cart.confirmedAt(), now);
     }
 
     /** Cancels an unpaid draft/confirmed cart. There is no stock reservation to release. */

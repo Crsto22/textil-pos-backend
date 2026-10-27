@@ -32,6 +32,7 @@ import com.sistemapos.sistematextil.services.agent.cart.AgentCartService;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.CartItemView;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.CartPromotionView;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.CartResult;
+import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.CartTotals;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.ExpiredCartRefresh;
 import com.sistemapos.sistematextil.services.agent.catalog.AgentCatalogQueryService;
 import com.sistemapos.sistematextil.services.agent.customer.AgentCustomerService;
@@ -265,6 +266,7 @@ public class AgentDeterministicCommerceService {
         String operation = "agent-job-" + jobId + ":" + action.name().toLowerCase(Locale.ROOT);
         return switch (action) {
             case CONFIRM_CART -> confirmCart(sessionId, operation);
+            case SHOW_CURRENT_TOTAL -> showCurrentTotal(sessionId);
             case SHOW_PAYMENT_METHODS -> showPaymentMethods(sessionId, operation);
             case SELECT_PAYMENT_METHOD -> selectPaymentMethod(sessionId, decision, operation);
             case PAYMENT_TIME_REMAINING -> paymentTimeRemaining(sessionId);
@@ -297,7 +299,8 @@ public class AgentDeterministicCommerceService {
 
     private boolean handledByJava(AgentCommercialAction action) {
         return switch (action) {
-            case CHANGE_CART, CANCEL_PENDING_CART, CONFIRM_CART, SHOW_PAYMENT_METHODS, SELECT_PAYMENT_METHOD, PAYMENT_TIME_REMAINING,
+            case CHANGE_CART, CANCEL_PENDING_CART, CONFIRM_CART, SHOW_CURRENT_TOTAL,
+                    SHOW_PAYMENT_METHODS, SELECT_PAYMENT_METHOD, PAYMENT_TIME_REMAINING,
                     RETRY_PAYMENT, EXPLAIN_IMMEDIATE_PAYMENT_POLICY,
                     PROVIDE_CUSTOMER_DATA, CONFIRM_EXISTING_CUSTOMER, SELECT_PICKUP, SELECT_SHALOM,
                     PROVIDE_SHALOM_DATA, EDIT_SHALOM_DATA, SHOW_PENDING_SHALOM_AGENCIES,
@@ -309,6 +312,29 @@ public class AgentDeterministicCommerceService {
                     REQUEST_WHOLESALE_SUPPORT -> true;
             default -> false;
         };
+    }
+
+    private Outcome showCurrentTotal(Long sessionId) {
+        CartTotals cart = carts.currentTotals(sessionId);
+        if (cart.empty()) {
+            return Outcome.message("Todavía no hay productos en tu pedido. Indícame qué producto deseas para calcular el total.");
+        }
+        CrmWhatsappAgentSession session = requireSession(sessionId);
+        BigDecimal total = cart.total();
+        BigDecimal shalomTotal = total.add(AgentFilmService.PRICE);
+        StringBuilder message = new StringBuilder("El total actual de tu pedido es *")
+                .append(money(total)).append("*.");
+        if (session.getPreferredFulfillmentMethod() == CrmWhatsappFulfillmentMethod.SHALOM) {
+            message.append("\n\nPara envío por Shalom, puedes pagar *")
+                    .append(money(shalomTotal))
+                    .append("*: ").append(money(total)).append(" del pedido + S/2.00 del film protector.");
+        } else {
+            message.append("\n\nSi eliges envío por Shalom, serían *")
+                    .append(money(shalomTotal))
+                    .append("*, incluyendo S/2.00 del film protector.");
+        }
+        message.append(" El costo del traslado no está incluido porque lo determina Shalom.");
+        return Outcome.message(message.toString());
     }
 
     private Outcome beginCartEdit(Long sessionId) {

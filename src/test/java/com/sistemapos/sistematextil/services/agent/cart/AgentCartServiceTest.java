@@ -99,6 +99,21 @@ class AgentCartServiceTest {
     }
 
     @Test
+    void readsCurrentTotalsWithoutLockingOrRecalculatingTheCart() {
+        CartRow confirmed = new CartRow(5L, 41L, "CONFIRMED", "PEN",
+                new BigDecimal("80.00"), new BigDecimal("5.00"), new BigDecimal("75.00"), 2L);
+        when(store.findActiveCart(41L)).thenReturn(Optional.of(confirmed));
+
+        var result = service.currentTotals(41L);
+
+        assertEquals("CONFIRMED", result.status());
+        assertEquals(new BigDecimal("75.00"), result.total());
+        verify(store).findActiveCart(41L);
+        verify(store, never()).lockActiveCart(41L);
+        verify(store, never()).updateTotals(any(), any(), any(), any(), any());
+    }
+
+    @Test
     void confirmationRevalidatesAndAdvancesState() {
         when(store.findItems(5L)).thenReturn(List.of(persistedItem), List.of(persistedItem));
 

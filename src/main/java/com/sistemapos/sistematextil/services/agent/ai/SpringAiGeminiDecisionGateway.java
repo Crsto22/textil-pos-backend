@@ -145,6 +145,11 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
               si identifica una promoción concreta. REPLACE_CART sustituye el carrito borrador; no lo uses para una
               adición normal, una corrección de una sola línea ni cuando falte producto, color o talla.
             - CONFIRM_CART: acepta el resumen, dice continuar, eso es todo o confirma la compra sin indicar como pagara.
+            - SHOW_CURRENT_TOTAL: pregunta por el monto, total o suma de su carrito actual, incluido cuando confirma
+              una cifra breve como "serian 77", "cuanto pago en total" o "para provincia cuanto seria". Usa
+              intent=PAYMENT_METHOD y requiresHumanHelp=false. Esta accion tiene prioridad sobre acciones de entrega
+              cuando la pregunta principal es el importe. Java calculara el carrito y, si corresponde, el film de
+              Shalom; no calcules ni inventes el monto.
             - SHOW_PAYMENT_METHODS: esta listo para elegir como pagar.
             - SELECT_PAYMENT_METHOD: elige un metodo o una de sus cuentas; completa paymentMethodReference y,
               si corresponde, paymentAccountReference con el numero, titular o referencia elegida.
@@ -307,15 +312,19 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
             cartAction=ADD_PROMOTION y conserva promotionReference/promotionSelections. Nunca afirmes que Java ya
             ejecutó una operación.
 
-            Cliente, pago y entrega: PROVIDE_CUSTOMER_DATA, CONFIRM_EXISTING_CUSTOMER, SHOW_PAYMENT_METHODS,
+            Cliente, pago y entrega: PROVIDE_CUSTOMER_DATA, CONFIRM_EXISTING_CUSTOMER, SHOW_CURRENT_TOTAL,
+            SHOW_PAYMENT_METHODS,
             SELECT_PAYMENT_METHOD, PAYMENT_TIME_REMAINING, RETRY_PAYMENT, EXPLAIN_IMMEDIATE_PAYMENT_POLICY,
             SELECT_PICKUP, SELECT_SHALOM, PROVIDE_SHALOM_DATA, CONFIRM_SHALOM_AGENCY, HAS_PREVIOUS_PENDING_ORDER,
             NO_PREVIOUS_PENDING_ORDER, ACCEPT_FILM y DECLINE_FILM. Solo usa una acción
             pendiente si el mensaje realmente aporta o confirma ese dato; una pregunta intermedia conserva el paso.
             Los cambios de carrito antes de la venta no son postventa. No confundas pago principal y film.
 
-            SHARE_DELIVERY_TIMING_CONTACT aplica antes de comprar; REFER_EXISTING_ORDER_DELIVERY cuando consulta una
-            venta previa. Saludos, agradecimientos y aclaraciones usan la intención conversacional correspondiente.
+            SHOW_CURRENT_TOTAL aplica cuando pregunta el monto del carrito, incluso con frases breves como
+            "serian 77" o "para provincia cuanto seria"; el importe tiene prioridad sobre una accion de entrega.
+            SHARE_DELIVERY_TIMING_CONTACT aplica antes de comprar; REFER_EXISTING_ORDER_DELIVERY solo cuando consulta
+            explícitamente una venta previa, registrada o pagada, nunca por un carrito que aún espera pago. Saludos,
+            agradecimientos y aclaraciones usan la intención conversacional correspondiente.
             Si hay ambigüedad real pide una sola aclaración mediante la acción adecuada. Mantén todas las restricciones
             y campos del esquema de salida; Java verificará catálogo, promociones, stock, carrito, pagos y entrega.
             """;

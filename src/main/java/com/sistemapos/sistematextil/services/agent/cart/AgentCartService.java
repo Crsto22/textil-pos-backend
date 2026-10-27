@@ -456,6 +456,14 @@ public class AgentCartService {
         });
     }
 
+    @Transactional(readOnly = true)
+    public CartTotals currentTotals(Long sessionId) {
+        return store.findActiveCart(sessionId)
+                .map(cart -> new CartTotals(cart.status(), cart.currency(), cart.subtotal(),
+                        cart.discountTotal(), cart.total()))
+                .orElseGet(CartTotals::emptyTotals);
+    }
+
     @Transactional
     public CartResult confirm(Long sessionId, String operationId) {
         return execute(sessionId, operationId, "confirmar_carrito", "confirm", () -> {
@@ -815,6 +823,17 @@ public class AgentCartService {
     public record CartResult(Long cartId, String status, String currency, BigDecimal subtotal,
             BigDecimal discountTotal, BigDecimal total, List<CartItemView> items,
             List<CartPromotionView> promotions) {
+    }
+
+    public record CartTotals(String status, String currency, BigDecimal subtotal,
+            BigDecimal discountTotal, BigDecimal total) {
+        static CartTotals emptyTotals() {
+            return new CartTotals("EMPTY", "PEN", ZERO, ZERO, ZERO);
+        }
+
+        public boolean empty() {
+            return total == null || total.signum() <= 0;
+        }
     }
 
     public record CartItemView(Long cartItemId, Integer variantId, String product, String color, String size,

@@ -40,6 +40,7 @@ import com.sistemapos.sistematextil.services.agent.fulfillment.AgentFulfillmentS
 import com.sistemapos.sistematextil.services.agent.sale.AgentSaleService;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.CartPromotionView;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.CartResult;
+import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.CartTotals;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.CartItemView;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService.ExpiredCartRefresh;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartService;
@@ -197,6 +198,29 @@ class AgentDeterministicCommerceServiceTest {
         assertTrue(result.customerMessage().contains("• YAPE"));
         assertFalse(result.customerMessage().contains("6 minutos"));
         assertFalse(result.customerMessage().contains("sin que otra persona los compre"));
+    }
+
+    @Test
+    void answersTheCurrentTotalWithFilmWithoutCallingGemini() {
+        CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
+        AgentCartService carts = mock(AgentCartService.class);
+        CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
+        session.setState(CrmWhatsappAgentState.ESPERANDO_METODO_PAGO);
+        session.setPreferredFulfillmentMethod(CrmWhatsappFulfillmentMethod.SHALOM);
+        when(sessions.findById(41L)).thenReturn(Optional.of(session));
+        when(carts.currentTotals(41L)).thenReturn(new CartTotals(
+                "CONFIRMED", "PEN", BigDecimal.valueOf(75), BigDecimal.ZERO, BigDecimal.valueOf(75)));
+        AgentDeterministicCommerceService service = new AgentDeterministicCommerceService(
+                sessions, null, carts, null, null, null, null, null, null, null,
+                new AgentToolCallAuditService(null));
+
+        var result = service.execute(41L, null, decision(AgentCommercialAction.SHOW_CURRENT_TOTAL, ""));
+
+        assertTrue(result.customerMessage().contains("total actual de tu pedido es *S/75.00*"));
+        assertTrue(result.customerMessage().contains("puedes pagar *S/77.00*"));
+        assertTrue(result.customerMessage().contains("S/2.00 del film protector"));
+        assertTrue(result.customerMessage().contains("costo del traslado no está incluido"));
+        assertFalse(result.customerMessage().contains("No encontré una venta"));
     }
 
     @Test

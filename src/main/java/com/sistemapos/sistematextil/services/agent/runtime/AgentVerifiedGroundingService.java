@@ -140,6 +140,7 @@ public class AgentVerifiedGroundingService {
         }
         decision = enforceHumanHandoffRules(decision);
         decision = normalizeFreshRetailPurchase(decision, conversation, state);
+        decision = normalizePreSaleDeliveryDecision(decision, conversation, state);
         boolean genericLiveProductLookup = isGenericLiveProductLookup(conversation, decision);
         if (genericLiveProductLookup) {
             decision = decision.withIntentAndCommercialAction(
@@ -298,6 +299,46 @@ public class AgentVerifiedGroundingService {
             return decision.asNewRetailPurchase();
         }
         return decision;
+    }
+
+    AgentConversationDecision normalizePreSaleDeliveryDecision(AgentConversationDecision decision,
+            String conversation, CrmWhatsappAgentState state) {
+        if (decision == null
+                || decision.commercialAction() != AgentCommercialAction.REFER_EXISTING_ORDER_DELIVERY
+                || !isPreSaleWorkflow(state)) return decision;
+        String input = normalize(currentGroupedInput(conversation));
+        if (explicitlyReferencesPriorSale(input)) return decision;
+        AgentCommercialAction action = asksForCurrentAmount(input)
+                ? AgentCommercialAction.SHOW_CURRENT_TOTAL
+                : AgentCommercialAction.SHARE_DELIVERY_TIMING_CONTACT;
+        AgentDecisionIntent intent = action == AgentCommercialAction.SHOW_CURRENT_TOTAL
+                ? AgentDecisionIntent.PAYMENT_METHOD
+                : AgentDecisionIntent.DELIVERY_METHOD;
+        return decision.withIntentAndCommercialAction(intent, action).withRequiresHumanHelp(false);
+    }
+
+    private boolean isPreSaleWorkflow(CrmWhatsappAgentState state) {
+        if (state == null) return false;
+        return switch (state) {
+            case ARMANDO_CARRITO, ESPERANDO_METODO_PAGO,
+                    ESPERANDO_COMPROBANTE, VALIDANDO_COMPROBANTE, ESPERANDO_DATOS_CLIENTE,
+                    ESPERANDO_METODO_ENTREGA, ESPERANDO_DATOS_SHALOM,
+                    ESPERANDO_CONFIRMACION_AGENCIA_SHALOM, LISTO_PARA_VENTA -> true;
+            default -> false;
+        };
+    }
+
+    private boolean explicitlyReferencesPriorSale(String input) {
+        return input.matches(".*\\b(pedido|venta|compra)\\s*(numero|nro|n|#)?\\s*\\d{3,}\\b.*")
+                || input.matches(".*\\b(pedido|venta|compra)\\s+(anterior|registrad[oa]|pagad[oa])\\b.*")
+                || input.matches(".*\\b(de|en)\\s+mi\\s+(pedido|venta|compra)\\s+(anterior|registrad[oa]|pagad[oa])\\b.*");
+    }
+
+    private boolean asksForCurrentAmount(String input) {
+        return input.matches(".*\\b(total|monto|importe)\\b.*")
+                || input.matches(".*\\b(cuanto|cuantos)\\s+(pago|pagaria|seria|serian|sale|saldra)\\b.*")
+                || input.matches(".*\\bseria(n)?\\s+(s/?\\s*)?\\d+([.,]\\d+)?\\b.*")
+                || input.matches(".*\\b(incluye|sumando|con)\\b.*\\bfilm\\b.*");
     }
 
     private CrmWhatsappAgentState stateFromConversation(String conversation) {

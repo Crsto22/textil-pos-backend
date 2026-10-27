@@ -250,6 +250,83 @@ class AgentVerifiedGroundingServiceTest {
     }
 
     @Test
+    void convertsAMisclassifiedDeliveryActionIntoCurrentTotalDuringPayment() {
+        AgentConversationDecision mistaken = deliveryDecision(AgentCommercialAction.REFER_EXISTING_ORDER_DELIVERY);
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(
+                mock(AgentDecisionGateway.class), mock(AgentCatalogQueryService.class),
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
+                mock(AgentCartService.class), passThroughAudit());
+
+        AgentConversationDecision normalized = service.normalizePreSaleDeliveryDecision(mistaken,
+                "LOTE_ACTUAL_AGRUPADO:\nPara provincia, ¿serían 77 cierto?",
+                CrmWhatsappAgentState.ESPERANDO_METODO_PAGO);
+
+        assertEquals(AgentCommercialAction.SHOW_CURRENT_TOTAL, normalized.commercialAction());
+        assertEquals(AgentDecisionIntent.PAYMENT_METHOD, normalized.intent());
+        assertFalse(normalized.requiresHumanHelp());
+    }
+
+    @Test
+    void convertsAMisclassifiedCurrentCartDeliveryQuestionIntoPreSaleTiming() {
+        AgentConversationDecision mistaken = deliveryDecision(AgentCommercialAction.REFER_EXISTING_ORDER_DELIVERY);
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(
+                mock(AgentDecisionGateway.class), mock(AgentCatalogQueryService.class),
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
+                mock(AgentCartService.class), passThroughAudit());
+
+        AgentConversationDecision normalized = service.normalizePreSaleDeliveryDecision(mistaken,
+                "LOTE_ACTUAL_AGRUPADO:\n¿Cuándo enviarían este pedido por Shalom?",
+                CrmWhatsappAgentState.ESPERANDO_METODO_PAGO);
+
+        assertEquals(AgentCommercialAction.SHARE_DELIVERY_TIMING_CONTACT, normalized.commercialAction());
+        assertEquals(AgentDecisionIntent.DELIVERY_METHOD, normalized.intent());
+    }
+
+    @Test
+    void doesNotTreatAConfirmedUnpaidCartAsARegisteredSale() {
+        AgentConversationDecision mistaken = deliveryDecision(AgentCommercialAction.REFER_EXISTING_ORDER_DELIVERY);
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(
+                mock(AgentDecisionGateway.class), mock(AgentCatalogQueryService.class),
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
+                mock(AgentCartService.class), passThroughAudit());
+
+        AgentConversationDecision normalized = service.normalizePreSaleDeliveryDecision(mistaken,
+                "LOTE_ACTUAL_AGRUPADO:\n¿Cuándo enviarían mi pedido confirmado?",
+                CrmWhatsappAgentState.ESPERANDO_METODO_PAGO);
+
+        assertEquals(AgentCommercialAction.SHARE_DELIVERY_TIMING_CONTACT, normalized.commercialAction());
+    }
+
+    @Test
+    void preservesDeliveryLookupForAnExplicitPreviousOrder() {
+        AgentConversationDecision decision = deliveryDecision(AgentCommercialAction.REFER_EXISTING_ORDER_DELIVERY);
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(
+                mock(AgentDecisionGateway.class), mock(AgentCatalogQueryService.class),
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
+                mock(AgentCartService.class), passThroughAudit());
+
+        AgentConversationDecision normalized = service.normalizePreSaleDeliveryDecision(decision,
+                "LOTE_ACTUAL_AGRUPADO:\n¿Cuándo enviarán mi pedido anterior pagado?",
+                CrmWhatsappAgentState.ESPERANDO_METODO_PAGO);
+
+        assertEquals(AgentCommercialAction.REFER_EXISTING_ORDER_DELIVERY, normalized.commercialAction());
+    }
+
+    @Test
+    void preservesDeliveryLookupWhenThereIsNoPurchaseInProgress() {
+        AgentConversationDecision decision = deliveryDecision(AgentCommercialAction.REFER_EXISTING_ORDER_DELIVERY);
+        AgentVerifiedGroundingService service = new AgentVerifiedGroundingService(
+                mock(AgentDecisionGateway.class), mock(AgentCatalogQueryService.class),
+                mock(AgentPromotionQueryService.class), mock(AgentKnowledgeRetriever.class),
+                mock(AgentCartService.class), passThroughAudit());
+
+        AgentConversationDecision normalized = service.normalizePreSaleDeliveryDecision(decision,
+                "LOTE_ACTUAL_AGRUPADO:\n¿Dónde está mi pedido?", CrmWhatsappAgentState.IDLE);
+
+        assertEquals(AgentCommercialAction.REFER_EXISTING_ORDER_DELIVERY, normalized.commercialAction());
+    }
+
+    @Test
     void rejectsDifferentSizesForPiecesOfTheSameSetWithoutChangingTheCart() {
         AgentDecisionGateway decisions = mock(AgentDecisionGateway.class);
         AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
@@ -1916,6 +1993,14 @@ class AgentVerifiedGroundingServiceTest {
     private VariantSummary availableVariant(
             Integer id, String color, String size, Double price, int stock) {
         return new VariantSummary(id, "SKU-" + id, color, size, price, price, stock, stock > 0);
+    }
+
+    private AgentConversationDecision deliveryDecision(AgentCommercialAction action) {
+        return new AgentConversationDecision(
+                AgentDecisionIntent.DELIVERY_METHOD, "consultar entrega", "", List.of(), "", "", 0,
+                "", List.of(), AgentCartAction.NONE, action, "", "", "", "", "SHALOM", "", "", "",
+                List.of(), com.sistemapos.sistematextil.services.agent.ai.AgentCatalogAvailability.ALL,
+                "", List.of(), "", 95, false);
     }
 
     private AgentToolCallAuditService passThroughAudit() {

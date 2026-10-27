@@ -31,6 +31,17 @@ public class JdbcAgentCartStore implements AgentCartStore {
     }
 
     @Override
+    public Optional<CartRow> findActiveCart(Long sessionId) {
+        return queryCart("""
+                SELECT id_agent_cart, id_agent_session, status, currency, subtotal, discount_total, total, lock_version,
+                       confirmed_at
+                FROM crm_whatsapp_agent_cart
+                WHERE id_agent_session = ? AND active_slot = 1
+                LIMIT 1
+                """, sessionId);
+    }
+
+    @Override
     public Optional<CartRow> findLatestCart(Long sessionId) {
         return queryCart("""
                 SELECT id_agent_cart, id_agent_session, status, currency, subtotal, discount_total, total, lock_version,

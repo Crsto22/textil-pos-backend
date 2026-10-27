@@ -8,6 +8,8 @@ import java.util.Optional;
 public interface AgentCartStore {
     Optional<CartRow> lockActiveCart(Long sessionId);
 
+    Optional<CartRow> findActiveCart(Long sessionId);
+
     Optional<CartRow> findLatestCart(Long sessionId);
 
     CartRow createCart(Long sessionId, String idempotencyKey, LocalDateTime now);

@@ -204,6 +204,7 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
                     AND c.assignedUser IS NULL
                     AND (c.attentionQueue IS NULL
                          OR c.attentionQueue <> com.sistemapos.sistematextil.model.CrmWhatsappAttentionQueue.AGENT_ACTIVE)))
+              AND (:unreadOnly = false OR COALESCE(c.unreadCount, 0) > 0)
               AND (:term IS NULL
                    OR LOWER(COALESCE(c.contactName, '')) LIKE LOWER(CONCAT('%', :term, '%'))
                    OR LOWER(COALESCE(c.whatsappUsername, '')) LIKE LOWER(CONCAT('%', :term, '%'))
@@ -254,6 +255,7 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
                     AND c.assignedUser IS NULL
                     AND (c.attentionQueue IS NULL
                          OR c.attentionQueue <> com.sistemapos.sistematextil.model.CrmWhatsappAttentionQueue.AGENT_ACTIVE)))
+              AND (:unreadOnly = false OR COALESCE(c.unreadCount, 0) > 0)
               AND (:term IS NULL
                    OR LOWER(COALESCE(c.contactName, '')) LIKE LOWER(CONCAT('%', :term, '%'))
                    OR LOWER(COALESCE(c.whatsappUsername, '')) LIKE LOWER(CONCAT('%', :term, '%'))
@@ -277,6 +279,7 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
             @Param("waitingOnly") boolean waitingOnly,
             @Param("term") String term,
             @Param("tagId") Long tagId,
+            @Param("unreadOnly") boolean unreadOnly,
             Pageable pageable);
 
     @Query("""
@@ -349,6 +352,7 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
               AND (:isAdmin = true
                    OR (c.assignedUser IS NOT NULL AND c.assignedUser.idUsuario = :idUsuario)
                    OR (c.status <> 'RESUELTO' AND c.assignedUser IS NULL))
+              AND (:unreadOnly = false OR COALESCE(c.unreadCount, 0) > 0)
               AND (:term IS NULL
                    OR LOWER(COALESCE(c.contactName, '')) LIKE LOWER(CONCAT('%', :term, '%'))
                    OR LOWER(COALESCE(c.whatsappUsername, '')) LIKE LOWER(CONCAT('%', :term, '%'))
@@ -366,7 +370,8 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
             @Param("idUsuario") Integer idUsuario,
             @Param("isAdmin") boolean isAdmin,
             @Param("term") String term,
-            @Param("tagId") Long tagId);
+            @Param("tagId") Long tagId,
+            @Param("unreadOnly") boolean unreadOnly);
 
     @Query(value = """
             SELECT c

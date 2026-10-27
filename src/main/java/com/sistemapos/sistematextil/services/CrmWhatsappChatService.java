@@ -225,6 +225,7 @@ public class CrmWhatsappChatService {
             String view,
             String q,
             Long tagId,
+            boolean unreadOnly,
             int page,
             int size,
             Usuario usuarioSesion) {
@@ -256,6 +257,7 @@ public class CrmWhatsappChatService {
                 waitingOnly,
                 term.isBlank() ? null : term,
                 tagId,
+                unreadOnly,
                 PageRequest.of(pageNumber, pageSize));
 
         List<Long> conversationIds = conversationPage.getContent().stream()
@@ -288,7 +290,8 @@ public class CrmWhatsappChatService {
                 actor.getIdUsuario(),
                 admin,
                 term.isBlank() ? null : term,
-                tagId);
+                tagId,
+                unreadOnly);
         Object[] queueCounts = countRows.isEmpty() ? new Object[0] : countRows.getFirst();
         long attended = numericCount(queueCounts, 0);
         long agent = numericCount(queueCounts, 1);

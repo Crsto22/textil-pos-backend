@@ -346,15 +346,17 @@ public class CrmWhatsappController {
             @RequestParam(name = "view", required = false) String view,
             @RequestParam(name = "q", required = false) String q,
             @RequestParam(name = "tagId", required = false) Long tagId,
+            @RequestParam(name = "unreadOnly", defaultValue = "false") boolean unreadOnly,
             @RequestParam(name = "page", required = false) Integer page,
             @RequestParam(name = "size", required = false) Integer size,
             Authentication authentication) {
-        if (q != null || tagId != null || page != null || size != null || view != null) {
+        if (q != null || tagId != null || unreadOnly || page != null || size != null || view != null) {
             return ResponseEntity.ok(crmWhatsappChatService.listarConversacionesPaginadas(
                     status,
                     view,
                     q,
                     tagId,
+                    unreadOnly,
                     page == null ? 0 : page,
                     size == null ? 10 : size,
                     currentUser(authentication)));

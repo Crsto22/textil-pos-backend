@@ -60,6 +60,7 @@ import com.sistemapos.sistematextil.services.CrmWhatsappChatService.CrmTagReques
 import com.sistemapos.sistematextil.services.CrmWhatsappChatService.LinkClienteRequest;
 import com.sistemapos.sistematextil.services.CrmWhatsappChatService.SendMessageRequest;
 import com.sistemapos.sistematextil.services.CrmWhatsappChatService.ReceiptRequest;
+import com.sistemapos.sistematextil.services.CrmWhatsappChatService.ReadStateRequest;
 import com.sistemapos.sistematextil.services.CrmWhatsappChatService.TransferRequest;
 import com.sistemapos.sistematextil.services.CrmWhatsappChatService.VisitRequest;
 import com.sistemapos.sistematextil.services.CrmWhatsappChatService.WebhookRequest;
@@ -376,6 +377,17 @@ public class CrmWhatsappController {
                 beforeId,
                 afterId,
                 limit,
+                currentUser(authentication)));
+    }
+
+    @PostMapping("/conversations/{id}/read-state")
+    public ResponseEntity<?> actualizarEstadoLectura(
+            @PathVariable("id") Long id,
+            @RequestBody ReadStateRequest request,
+            Authentication authentication) {
+        return ResponseEntity.ok(crmWhatsappChatService.actualizarEstadoLectura(
+                id,
+                request,
                 currentUser(authentication)));
     }
 

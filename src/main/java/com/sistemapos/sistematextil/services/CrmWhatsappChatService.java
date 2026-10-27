@@ -364,6 +364,31 @@ public class CrmWhatsappChatService {
     }
 
     @Transactional
+    public ConversationResponse actualizarEstadoLectura(
+            Long conversationId,
+            ReadStateRequest request,
+            Usuario usuarioSesion) {
+        Usuario actor = requireCrmUser(usuarioSesion);
+        if (request == null || request.unread() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "unread es requerido");
+        }
+        CrmWhatsappConversation conversation = conversationRepository.findForUpdateById(conversationId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Conversacion no encontrada"));
+        requireCanReadMessages(conversation, actor);
+
+        int currentUnreadCount = conversation.getUnreadCount() == null
+                ? 0
+                : Math.max(0, conversation.getUnreadCount());
+        int nextUnreadCount = request.unread() ? Math.max(1, currentUnreadCount) : 0;
+        if (currentUnreadCount != nextUnreadCount) {
+            conversation.setUnreadCount(nextUnreadCount);
+            conversation = conversationRepository.save(conversation);
+            publishRealtimeEvent("conversation.updated", conversation, null);
+        }
+        return toConversationResponse(conversation, false);
+    }
+
+    @Transactional
     public MessageResponse registrarIngreso(Long conversationId, VisitRequest request, Usuario usuarioSesion) {
         Usuario actor = requireCrmUser(usuarioSesion);
         CrmWhatsappConversation conversation = requireConversation(conversationId);
@@ -3496,6 +3521,9 @@ public class CrmWhatsappChatService {
     }
 
     public record VisitRequest(String sessionId) {
+    }
+
+    public record ReadStateRequest(Boolean unread) {
     }
 
     public record ReceiptRequest(String format) {

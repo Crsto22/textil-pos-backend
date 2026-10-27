@@ -20,6 +20,7 @@ import com.sistemapos.sistematextil.model.CustomUser;
 import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.services.CrmShippingChatService;
 import com.sistemapos.sistematextil.services.CrmShippingChatService.MessageRequest;
+import com.sistemapos.sistematextil.services.CrmShippingChatService.ReadStateRequest;
 import com.sistemapos.sistematextil.services.CrmShippingChatService.TagRequest;
 
 import lombok.RequiredArgsConstructor;
@@ -33,10 +34,12 @@ public class CrmShippingChatController {
     @GetMapping("/conversations")
     public ResponseEntity<?> conversations(@RequestParam(defaultValue = "") String q,
             @RequestParam(required = false) Long tagId,
+            @RequestParam(defaultValue = "false") boolean unreadOnly,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size,
             Authentication authentication) {
-        return ResponseEntity.ok(service.conversations(currentUser(authentication), q, tagId, page, size));
+        return ResponseEntity.ok(service.conversations(
+                currentUser(authentication), q, tagId, unreadOnly, page, size));
     }
 
     @GetMapping("/tags")
@@ -52,6 +55,12 @@ public class CrmShippingChatController {
     @GetMapping("/conversations/{id}")
     public ResponseEntity<?> conversation(@PathVariable Long id, Authentication authentication) {
         return ResponseEntity.ok(service.conversation(id, currentUser(authentication)));
+    }
+
+    @PostMapping("/conversations/{id}/read-state")
+    public ResponseEntity<?> updateReadState(@PathVariable Long id, @RequestBody ReadStateRequest request,
+            Authentication authentication) {
+        return ResponseEntity.ok(service.updateReadState(id, request, currentUser(authentication)));
     }
 
     @GetMapping("/conversations/{id}/tags")

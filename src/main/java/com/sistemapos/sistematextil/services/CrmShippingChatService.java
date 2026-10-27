@@ -52,13 +52,19 @@ public class CrmShippingChatService {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Transactional(readOnly = true)
-    public ConversationPage conversations(Usuario actor, String query, Long tagId, int page, int size) {
+    public ConversationPage conversations(
+            Usuario actor,
+            String query,
+            Long tagId,
+            boolean unreadOnly,
+            int page,
+            int size) {
         requireShippingAccess(actor);
         Integer actorCompanyId = companyId(actor);
         if (tagId != null) requireTag(tagId, actorCompanyId);
         String term = clean(query);
         var result = conversationRepository.findShippingChatConversations(
-                actorCompanyId, term.isBlank() ? null : term, tagId,
+                actorCompanyId, term.isBlank() ? null : term, tagId, unreadOnly,
                 PageRequest.of(Math.max(0, page), Math.min(50, Math.max(1, size))));
         Map<Long, List<ConversationTagDto>> tagsByConversation = tagsByConversation(result.getContent());
         return new ConversationPage(result.getContent().stream()
@@ -71,6 +77,27 @@ public class CrmShippingChatService {
     @Transactional(readOnly = true)
     public ConversationDto conversation(Long conversationId, Usuario actor) {
         CrmWhatsappConversation conversation = requireConversation(conversationId, actor);
+        return conversation(conversation, conversationTagsInternal(conversationId));
+    }
+
+    @Transactional
+    public ConversationDto updateReadState(Long conversationId, ReadStateRequest request, Usuario actor) {
+        requireShippingAccess(actor);
+        if (request == null || request.unread() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "unread es requerido");
+        }
+        CrmWhatsappConversation conversation = conversationRepository.findForUpdateById(conversationId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Conversacion no encontrada"));
+        requireShippingCompany(conversation, actor);
+        int currentUnreadCount = conversation.getUnreadCount() == null
+                ? 0
+                : Math.max(0, conversation.getUnreadCount());
+        int nextUnreadCount = request.unread() ? Math.max(1, currentUnreadCount) : 0;
+        if (currentUnreadCount != nextUnreadCount) {
+            conversation.setUnreadCount(nextUnreadCount);
+            conversation = conversationRepository.save(conversation);
+            publishReadState(conversationId);
+        }
         return conversation(conversation, conversationTagsInternal(conversationId));
     }
 
@@ -145,16 +172,11 @@ public class CrmShippingChatService {
         return conversationTagsInternal(conversationId);
     }
 
-    @Transactional
+    @Transactional(readOnly = true)
     public MessagePage messages(Long conversationId, Long beforeId, Long afterId, int requestedLimit, Usuario actor) {
         CrmWhatsappConversation conversation = requireConversation(conversationId, actor);
-        MessagePage page = messagePage(conversation, beforeId, afterId, requestedLimit,
+        return messagePage(conversation, beforeId, afterId, requestedLimit,
                 "/api/crm/whatsapp/shipping/messages/");
-        if (conversation.getUnreadCount() != null && conversation.getUnreadCount() > 0) {
-            conversation.setUnreadCount(0);
-            conversationRepository.save(conversation);
-        }
-        return page;
     }
 
     @Transactional(readOnly = true)
@@ -447,6 +469,11 @@ public class CrmShippingChatService {
                 "type", "warehouse.tag.updated", "conversationId", conversationId));
     }
 
+    private void publishReadState(Long conversationId) {
+        warehouseEventService.publishAfterCommit(java.util.Map.of(
+                "type", "warehouse.conversation.updated", "conversationId", conversationId));
+    }
+
     private void requireBridgeSuccess(ResponseEntity<String> response) {
         if (response == null || !response.getStatusCode().is2xxSuccessful()) {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "No se pudo enviar el mensaje por WhatsApp");
@@ -483,6 +510,7 @@ public class CrmShippingChatService {
     public record TagDto(Long id, String nombre, String color, long uso) {}
     public record ConversationTagDto(Long id, String label, String color) {}
     public record TagRequest(String nombre, String color) {}
+    public record ReadStateRequest(Boolean unread) {}
     public record MessagePage(List<MessageDto> content, Long oldestId, Long newestId, boolean hasMoreBefore) {}
     public record SalesMessagePage(List<MessageDto> content, Long oldestId, Long newestId,
             boolean hasMoreBefore, boolean available) {}

@@ -46,6 +46,7 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
             LEFT JOIN c.cliente cl
             WHERE c.connection.area = com.sistemapos.sistematextil.model.CrmWhatsappArea.SHIPPING
               AND c.connection.empresa.idEmpresa = :companyId
+              AND (:unreadOnly = false OR COALESCE(c.unreadCount, 0) > 0)
               AND EXISTS (
                    SELECT 1 FROM CrmWhatsappMessage visibleMessage
                    WHERE visibleMessage.conversation = c
@@ -73,6 +74,7 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
             LEFT JOIN c.cliente cl
             WHERE c.connection.area = com.sistemapos.sistematextil.model.CrmWhatsappArea.SHIPPING
               AND c.connection.empresa.idEmpresa = :companyId
+              AND (:unreadOnly = false OR COALESCE(c.unreadCount, 0) > 0)
               AND EXISTS (
                    SELECT 1 FROM CrmWhatsappMessage visibleMessage
                    WHERE visibleMessage.conversation = c
@@ -97,6 +99,7 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
             @Param("companyId") Integer companyId,
             @Param("term") String term,
             @Param("tagId") Long tagId,
+            @Param("unreadOnly") boolean unreadOnly,
             Pageable pageable);
 
     @Query("""

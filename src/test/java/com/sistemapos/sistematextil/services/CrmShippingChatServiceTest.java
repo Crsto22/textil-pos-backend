@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -64,7 +65,7 @@ class CrmShippingChatServiceTest {
         actor.setRol(Rol.VENTAS);
 
         ResponseStatusException error = assertThrows(ResponseStatusException.class,
-                () -> service.conversations(actor, "", null, 0, 10));
+                () -> service.conversations(actor, "", null, false, 0, 10));
 
         assertEquals(HttpStatus.FORBIDDEN, error.getStatusCode());
     }
@@ -89,25 +90,25 @@ class CrmShippingChatServiceTest {
     @Test
     void shippingConversationPageIsLimitedToFiftyItems() {
         Usuario actor = administrator(7);
-        when(conversationRepository.findShippingChatConversations(eq(7), eq(null), eq(null), any(Pageable.class)))
+        when(conversationRepository.findShippingChatConversations(eq(7), eq(null), eq(null), eq(false), any(Pageable.class)))
                 .thenReturn(Page.empty());
 
-        service.conversations(actor, "", null, 0, 50);
+        service.conversations(actor, "", null, false, 0, 50);
 
         ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
-        verify(conversationRepository).findShippingChatConversations(eq(7), eq(null), eq(null), pageable.capture());
+        verify(conversationRepository).findShippingChatConversations(eq(7), eq(null), eq(null), eq(false), pageable.capture());
         assertEquals(50, pageable.getValue().getPageSize());
     }
 
     @Test
     void warehouseRoleListsShippingConversationsWithMessagesFromItsCompany() {
         Usuario actor = warehouse(7, 12);
-        when(conversationRepository.findShippingChatConversations(eq(7), eq(null), eq(null), any(Pageable.class)))
+        when(conversationRepository.findShippingChatConversations(eq(7), eq(null), eq(null), eq(false), any(Pageable.class)))
                 .thenReturn(Page.empty());
 
-        service.conversations(actor, "", null, 0, 10);
+        service.conversations(actor, "", null, false, 0, 10);
 
-        verify(conversationRepository).findShippingChatConversations(eq(7), eq(null), eq(null), any(Pageable.class));
+        verify(conversationRepository).findShippingChatConversations(eq(7), eq(null), eq(null), eq(false), any(Pageable.class));
     }
 
     @Test
@@ -288,12 +289,105 @@ class CrmShippingChatServiceTest {
         CrmWhatsappTag tag = new CrmWhatsappTag();
         tag.setIdTag(5L);
         when(tagRepository.findByIdTagAndEmpresa_IdEmpresaAndDeletedAtIsNull(5L, 7)).thenReturn(Optional.of(tag));
-        when(conversationRepository.findShippingChatConversations(eq(7), eq(null), eq(5L), any(Pageable.class)))
+        when(conversationRepository.findShippingChatConversations(eq(7), eq(null), eq(5L), eq(false), any(Pageable.class)))
                 .thenReturn(Page.empty());
 
-        service.conversations(actor, "", 5L, 0, 10);
+        service.conversations(actor, "", 5L, false, 0, 10);
 
-        verify(conversationRepository).findShippingChatConversations(eq(7), eq(null), eq(5L), any(Pageable.class));
+        verify(conversationRepository).findShippingChatConversations(eq(7), eq(null), eq(5L), eq(false), any(Pageable.class));
+    }
+
+    @Test
+    void shippingUnreadFilterIsForwardedToThePagedQuery() {
+        Usuario actor = warehouse(7, 12);
+        when(conversationRepository.findShippingChatConversations(
+                eq(7), eq(null), eq(null), eq(true), any(Pageable.class)))
+                .thenReturn(Page.empty());
+
+        service.conversations(actor, "", null, true, 0, 10);
+
+        verify(conversationRepository).findShippingChatConversations(
+                eq(7), eq(null), eq(null), eq(true), any(Pageable.class));
+    }
+
+    @Test
+    void openingMessagesDoesNotClearAManualUnreadReminder() {
+        Usuario actor = warehouse(7, 12);
+        CrmWhatsappConversation conversation = shippingConversation(22L, actor.getSucursal().getEmpresa());
+        conversation.setUnreadCount(3);
+        when(conversationRepository.findById(22L)).thenReturn(Optional.of(conversation));
+        when(messageRepository.findMessageHistory(eq(22L), eq(null), any(Pageable.class))).thenReturn(List.of());
+
+        service.messages(22L, null, null, 10, actor);
+
+        assertEquals(3, conversation.getUnreadCount());
+        verify(conversationRepository, never()).save(conversation);
+    }
+
+    @Test
+    void readStateMarksShippingConversationAsReadAndPublishesTheChange() {
+        Usuario actor = warehouse(7, 12);
+        CrmWhatsappConversation conversation = shippingConversation(22L, actor.getSucursal().getEmpresa());
+        conversation.setUnreadCount(3);
+        when(conversationRepository.findForUpdateById(22L)).thenReturn(Optional.of(conversation));
+        when(conversationRepository.save(conversation)).thenReturn(conversation);
+        when(conversationTagRepository.findActiveByConversationId(22L)).thenReturn(List.of());
+
+        var result = service.updateReadState(
+                22L, new CrmShippingChatService.ReadStateRequest(false), actor);
+
+        assertEquals(0, result.unreadCount());
+        verify(warehouseEventService).publishAfterCommit(any());
+    }
+
+    @Test
+    void readStatePreservesAnUnreadCounterGreaterThanOne() {
+        Usuario actor = warehouse(7, 12);
+        CrmWhatsappConversation conversation = shippingConversation(22L, actor.getSucursal().getEmpresa());
+        conversation.setUnreadCount(4);
+        when(conversationRepository.findForUpdateById(22L)).thenReturn(Optional.of(conversation));
+        when(conversationTagRepository.findActiveByConversationId(22L)).thenReturn(List.of());
+
+        var result = service.updateReadState(
+                22L, new CrmShippingChatService.ReadStateRequest(true), actor);
+
+        assertEquals(4, result.unreadCount());
+        verify(conversationRepository, never()).save(conversation);
+    }
+
+    @Test
+    void readStateMarksAReadShippingConversationWithOneUnreadReminder() {
+        Usuario actor = warehouse(7, 12);
+        CrmWhatsappConversation conversation = shippingConversation(22L, actor.getSucursal().getEmpresa());
+        conversation.setUnreadCount(0);
+        when(conversationRepository.findForUpdateById(22L)).thenReturn(Optional.of(conversation));
+        when(conversationRepository.save(conversation)).thenReturn(conversation);
+        when(conversationTagRepository.findActiveByConversationId(22L)).thenReturn(List.of());
+
+        var result = service.updateReadState(
+                22L, new CrmShippingChatService.ReadStateRequest(true), actor);
+
+        assertEquals(1, result.unreadCount());
+        verify(warehouseEventService).publishAfterCommit(any());
+    }
+
+    @Test
+    void readStateRejectsASalesConversationThroughTheShippingApi() {
+        Usuario actor = warehouse(7, 12);
+        CrmWhatsappConnection connection = new CrmWhatsappConnection();
+        connection.setArea(CrmWhatsappArea.SALES);
+        connection.setEmpresa(actor.getSucursal().getEmpresa());
+        CrmWhatsappConversation conversation = new CrmWhatsappConversation();
+        conversation.setIdConversation(22L);
+        conversation.setConnection(connection);
+        when(conversationRepository.findForUpdateById(22L)).thenReturn(Optional.of(conversation));
+
+        ResponseStatusException error = assertThrows(ResponseStatusException.class,
+                () -> service.updateReadState(
+                        22L, new CrmShippingChatService.ReadStateRequest(true), actor));
+
+        assertEquals(HttpStatus.NOT_FOUND, error.getStatusCode());
+        verify(conversationRepository, never()).save(conversation);
     }
 
     private CrmWhatsappConversation shippingConversation(long id, Empresa company) {

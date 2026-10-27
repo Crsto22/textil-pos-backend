@@ -161,20 +161,12 @@ public class CrmShippingChatService {
     public SalesMessagePage salesMessages(Long conversationId, Long beforeId, Long afterId,
             int requestedLimit, Usuario actor) {
         CrmWhatsappConversation shippingConversation = requireConversation(conversationId, actor);
-        String phone = clean(shippingConversation.getPhone());
-        String phoneNumber = clean(shippingConversation.getPhoneNumber());
-        if (phoneNumber.isBlank()) phoneNumber = clean(shippingConversation.getWhatsappUsername());
-        if (phoneNumber.isBlank()) phoneNumber = phone.replaceFirst("@.+$", "");
-        Integer clientId = shippingConversation.getCliente() == null
-                ? null : shippingConversation.getCliente().getIdCliente();
-        CrmWhatsappConversation salesConversation = conversationRepository.findSalesConversationForShippingContact(
-                companyId(actor), clientId, phone, phoneNumber, PageRequest.of(0, 1)).stream()
-                .findFirst().orElse(null);
+        CrmWhatsappConversation salesConversation = findSalesConversation(shippingConversation, actor);
         if (salesConversation == null) {
             return new SalesMessagePage(List.of(), null, null, false, false);
         }
         MessagePage page = messagePage(salesConversation, beforeId, afterId, requestedLimit,
-                "/api/crm/whatsapp/messages/");
+                "/api/crm/whatsapp/shipping/conversations/" + conversationId + "/sales-messages/");
         return new SalesMessagePage(page.content(), page.oldestId(), page.newestId(), page.hasMoreBefore(), true);
     }
 
@@ -272,6 +264,38 @@ public class CrmShippingChatService {
         return new MediaDownload(storageService.readBytes(message.getMediaStoragePath()),
                 clean(message.getMediaMimeType()).isBlank() ? "application/octet-stream" : message.getMediaMimeType(),
                 safeFileName(message.getMediaFileName()));
+    }
+
+    @Transactional(readOnly = true)
+    public MediaDownload salesMedia(Long shippingConversationId, Long messageId, Usuario actor) {
+        CrmWhatsappConversation shippingConversation = requireConversation(shippingConversationId, actor);
+        CrmWhatsappConversation salesConversation = findSalesConversation(shippingConversation, actor);
+        if (salesConversation == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Conversacion de ventas no encontrada");
+        }
+        CrmWhatsappMessage message = messageRepository.findById(messageId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Mensaje no encontrado"));
+        if (message.getConversation() == null
+                || !salesConversation.getIdConversation().equals(message.getConversation().getIdConversation())
+                || message.getDeletedAt() != null
+                || clean(message.getMediaStoragePath()).isBlank()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "El mensaje no tiene archivo disponible");
+        }
+        return new MediaDownload(storageService.readBytes(message.getMediaStoragePath()),
+                clean(message.getMediaMimeType()).isBlank() ? "application/octet-stream" : message.getMediaMimeType(),
+                safeFileName(message.getMediaFileName()));
+    }
+
+    private CrmWhatsappConversation findSalesConversation(CrmWhatsappConversation shippingConversation, Usuario actor) {
+        String phone = clean(shippingConversation.getPhone());
+        String phoneNumber = clean(shippingConversation.getPhoneNumber());
+        if (phoneNumber.isBlank()) phoneNumber = clean(shippingConversation.getWhatsappUsername());
+        if (phoneNumber.isBlank()) phoneNumber = phone.replaceFirst("@.+$", "");
+        Integer clientId = shippingConversation.getCliente() == null
+                ? null : shippingConversation.getCliente().getIdCliente();
+        return conversationRepository.findSalesConversationForShippingContact(
+                companyId(actor), clientId, phone, phoneNumber, PageRequest.of(0, 1)).stream()
+                .findFirst().orElse(null);
     }
 
     private CrmWhatsappConversation requireConversation(Long id, Usuario actor) {

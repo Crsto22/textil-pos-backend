@@ -110,6 +110,17 @@ public class CrmShippingChatController {
                 .body(media.bytes());
     }
 
+    @GetMapping(value = "/conversations/{conversationId}/sales-messages/{messageId}/media",
+            produces = MediaType.ALL_VALUE)
+    public ResponseEntity<byte[]> salesMedia(@PathVariable Long conversationId, @PathVariable Long messageId,
+            Authentication authentication) {
+        var media = service.salesMedia(conversationId, messageId, currentUser(authentication));
+        return ResponseEntity.ok().contentType(MediaType.parseMediaType(media.contentType()))
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "inline; filename=\"" + media.fileName().replace("\"", "") + "\"")
+                .body(media.bytes());
+    }
+
     private Usuario currentUser(Authentication authentication) {
         if (authentication == null || !(authentication.getPrincipal() instanceof CustomUser customUser)) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "No autorizado");

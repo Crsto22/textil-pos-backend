@@ -1,6 +1,7 @@
 package com.sistemapos.sistematextil.services;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -29,6 +30,7 @@ import com.sistemapos.sistematextil.model.CrmWhatsappArea;
 import com.sistemapos.sistematextil.model.CrmWhatsappConnection;
 import com.sistemapos.sistematextil.model.CrmWhatsappConversation;
 import com.sistemapos.sistematextil.model.CrmWhatsappConversationTag;
+import com.sistemapos.sistematextil.model.CrmWhatsappMessage;
 import com.sistemapos.sistematextil.model.CrmWhatsappTag;
 import com.sistemapos.sistematextil.model.Empresa;
 import com.sistemapos.sistematextil.model.Sucursal;
@@ -136,18 +138,79 @@ class CrmShippingChatServiceTest {
         shipping.setPhoneNumber("51932889985");
         CrmWhatsappConversation sales = new CrmWhatsappConversation();
         sales.setIdConversation(11L);
+        CrmWhatsappMessage message = new CrmWhatsappMessage();
+        message.setIdMessage(33L);
+        message.setConversation(sales);
+        message.setMediaStoragePath("crm/whatsapp/sales/receipt.jpg");
 
         when(conversationRepository.findById(22L)).thenReturn(Optional.of(shipping));
         when(conversationRepository.findSalesConversationForShippingContact(
                 eq(7), eq(null), eq("51932889985@s.whatsapp.net"), eq("51932889985"), any(Pageable.class)))
                 .thenReturn(List.of(sales));
         when(messageRepository.findMessageHistory(eq(11L), eq(null), any(Pageable.class)))
-                .thenReturn(List.of());
+                .thenReturn(List.of(message));
 
         var result = service.salesMessages(22L, null, null, 10, actor);
 
         assertTrue(result.available());
-        assertTrue(result.content().isEmpty());
+        assertEquals("/api/crm/whatsapp/shipping/conversations/22/sales-messages/33/media",
+                result.content().getFirst().mediaUrl());
+    }
+
+    @Test
+    void warehouseRoleCanReadMediaFromMatchingSalesConversation() {
+        Usuario actor = warehouse(7, 12);
+        CrmWhatsappConversation shipping = shippingConversation(22L, actor.getSucursal().getEmpresa());
+        shipping.setPhone("51932889985@s.whatsapp.net");
+        shipping.setPhoneNumber("51932889985");
+        CrmWhatsappConversation sales = new CrmWhatsappConversation();
+        sales.setIdConversation(11L);
+        CrmWhatsappMessage message = new CrmWhatsappMessage();
+        message.setIdMessage(33L);
+        message.setConversation(sales);
+        message.setMediaStoragePath("crm/whatsapp/sales/receipt.jpg");
+        message.setMediaMimeType("image/jpeg");
+        message.setMediaFileName("receipt.jpg");
+
+        when(conversationRepository.findById(22L)).thenReturn(Optional.of(shipping));
+        when(conversationRepository.findSalesConversationForShippingContact(
+                eq(7), eq(null), eq("51932889985@s.whatsapp.net"), eq("51932889985"), any(Pageable.class)))
+                .thenReturn(List.of(sales));
+        when(messageRepository.findById(33L)).thenReturn(Optional.of(message));
+        when(storageService.readBytes("crm/whatsapp/sales/receipt.jpg")).thenReturn(new byte[] { 1, 2, 3 });
+
+        var result = service.salesMedia(22L, 33L, actor);
+
+        assertArrayEquals(new byte[] { 1, 2, 3 }, result.bytes());
+        assertEquals("image/jpeg", result.contentType());
+        assertEquals("receipt.jpg", result.fileName());
+    }
+
+    @Test
+    void warehouseRoleCannotReadMediaFromAnotherSalesConversation() {
+        Usuario actor = warehouse(7, 12);
+        CrmWhatsappConversation shipping = shippingConversation(22L, actor.getSucursal().getEmpresa());
+        shipping.setPhone("51932889985@s.whatsapp.net");
+        shipping.setPhoneNumber("51932889985");
+        CrmWhatsappConversation matchingSales = new CrmWhatsappConversation();
+        matchingSales.setIdConversation(11L);
+        CrmWhatsappConversation otherSales = new CrmWhatsappConversation();
+        otherSales.setIdConversation(12L);
+        CrmWhatsappMessage message = new CrmWhatsappMessage();
+        message.setIdMessage(33L);
+        message.setConversation(otherSales);
+        message.setMediaStoragePath("crm/whatsapp/sales/private.jpg");
+
+        when(conversationRepository.findById(22L)).thenReturn(Optional.of(shipping));
+        when(conversationRepository.findSalesConversationForShippingContact(
+                eq(7), eq(null), eq("51932889985@s.whatsapp.net"), eq("51932889985"), any(Pageable.class)))
+                .thenReturn(List.of(matchingSales));
+        when(messageRepository.findById(33L)).thenReturn(Optional.of(message));
+
+        ResponseStatusException error = assertThrows(ResponseStatusException.class,
+                () -> service.salesMedia(22L, 33L, actor));
+
+        assertEquals(HttpStatus.NOT_FOUND, error.getStatusCode());
     }
 
     @Test

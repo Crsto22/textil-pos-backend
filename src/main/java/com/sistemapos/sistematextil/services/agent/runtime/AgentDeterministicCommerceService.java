@@ -381,7 +381,7 @@ public class AgentDeterministicCommerceService {
     }
 
     public String cartTemplate(Long sessionId, CartResult cart, boolean requestConfirmation) {
-        StringBuilder text = new StringBuilder("*Resumen de tu pedido*\n\n");
+        StringBuilder text = new StringBuilder("🛍️ *Tu pedido*\n\n");
         boolean preorder = false;
         boolean regular = false;
         boolean hasPromotions = cart.promotions() != null && !cart.promotions().isEmpty();
@@ -394,11 +394,11 @@ public class AgentDeterministicCommerceService {
             var product = catalog.getProduct(sessionId, stock.productId());
             if (product.preorder()) {
                 preorder = true;
-                text.append("  Preventa: fecha indicada");
+                text.append("  📅 Preventa");
                 if (product.preorderShippingDate() != null) {
                     text.append(": ").append(product.preorderShippingDate().format(DATE));
                 } else {
-                    text.append(" por el catálogo");
+                    text.append(": fecha indicada en el catálogo");
                 }
                 text.append("\n");
             } else {
@@ -428,27 +428,25 @@ public class AgentDeterministicCommerceService {
         if (cart.discountTotal() != null && cart.discountTotal().signum() > 0) {
             text.append("Descuento: ").append(money(cart.discountTotal())).append("\n");
         }
-        text.append("*Total: ").append(money(cart.total())).append("*\n\n")
-                .append("📦 *Modalidades de entrega disponibles*\n");
+        text.append("*Total: ").append(money(cart.total())).append("*\n\n");
         if (preorder && regular) {
-            text.append("🏬 Recojo en tienda:\n")
-                    .append("• Producto disponible: aproximadamente 2 días después de la compra; si cae domingo, pasa al lunes.\n")
-                    .append("• Producto en preventa: aproximadamente 2 días después de la fecha indicada; si cae domingo, pasa al lunes.\n");
+            text.append("📦 *Entrega*\n")
+                    .append("🏬 Recojo: lo disponible, aproximadamente 2 días después de la compra; la preventa, 2 días después de su fecha. Si cae domingo, pasa al lunes. Sin costo.\n")
+                    .append("🚌 Shalom: entregamos lo disponible al siguiente día de atención y la preventa desde su fecha. Domingos y feriados pasan al siguiente día laborable. Film obligatorio: S/2.\n\n")
+                    .append("Puedes recibir primero lo disponible o esperar la preventa y coordinar todo junto.\n\n");
         } else if (preorder) {
-            text.append("🏬 Recojo en tienda: disponible aproximadamente 2 días después de la fecha indicada de la preventa; si cae domingo, pasa al lunes. Sin costo adicional.\n");
+            text.append("📦 *Entrega desde la fecha de preventa*\n")
+                    .append("🏬 Recojo: aproximadamente 2 días después. Si cae domingo, pasa al lunes. Sin costo.\n")
+                    .append("🚌 Shalom: entregamos al siguiente día de atención. Domingos y feriados pasan al siguiente día laborable. Film obligatorio: S/2.\n\n");
         } else {
-            text.append("🏬 Recojo en tienda: disponible aproximadamente 2 días después de la compra; si cae domingo, pasa al lunes. Sin costo adicional.\n");
+            text.append("📦 *Entrega*\n")
+                    .append("🏬 Recojo: aproximadamente 2 días después de la compra. Si cae domingo, pasa al lunes. Sin costo.\n")
+                    .append("🚌 Shalom: entregamos al siguiente día de atención. Domingos y feriados pasan al siguiente día laborable. Film obligatorio: S/2.\n\n");
         }
-        text.append("🚌 Envío por Shalom: se entrega a Shalom al día siguiente de atención. No realizamos entregas a Shalom los domingos ni feriados; en esos casos pasa al siguiente día laborable. Requiere S/2 adicionales por el film protector para embalaje.\n\n");
-        if (preorder && regular) {
-            text.append("📅 Como tu pedido combina disponibilidad inmediata y preventa, tú eliges: puedes recibir o recoger primero el producto disponible siguiendo su plazo normal, o esperar la preventa y coordinar todo junto en un solo paquete.\n\n");
-        } else if (preorder) {
-            text.append("📅 Primero se espera la fecha indicada de la preventa. Desde esa fecha se aplican los plazos de recojo o entrega a Shalom informados arriba.\n\n");
-        }
-        text.append("🗓️ Los plazos indicados son la primera fecha disponible. Si prefieres una fecha posterior, podrás coordinarla con el área de envíos.\n\n");
+        text.append("Puedes coordinar una fecha posterior con el área de envíos.\n\n");
         if (requestConfirmation) {
-            text.append("⚠️ Revisa bien el modelo, color y talla. Los cambios tienen una penalidad de S/10 y pueden demorar.\n\n")
-                    .append("Si todo está correcto, confirma tu pedido para continuar con el pago.");
+            text.append("⚠️ Revisa modelo, color y talla. Los cambios tienen una penalidad de S/10 por prenda.\n\n")
+                    .append("¿Confirmas tu pedido?");
         }
         return text.toString().trim();
     }
@@ -988,11 +986,9 @@ public class AgentDeterministicCommerceService {
     }
 
     private String paymentMethodsTemplate(PaymentMethodList list) {
-        StringBuilder text = new StringBuilder("💳 *Métodos de pago disponibles*\n");
+        StringBuilder text = new StringBuilder("✅ Pedido confirmado.\n\nElige tu método de pago:\n");
         list.methods().forEach(method -> text.append("• ").append(method.name()).append("\n"));
-        return text.append("\nAl elegir tu método de pago y la cuenta, si aparece más de una, reservaremos tus "
-                + "productos durante *6 minutos* para que puedas enviar el comprobante sin que otra persona los compre.\n\n"
-                + "¿Cuál deseas utilizar?").toString();
+        return text.toString().trim();
     }
 
     private String ambiguousPaymentMethodsTemplate(List<PaymentMethodView> matches) {

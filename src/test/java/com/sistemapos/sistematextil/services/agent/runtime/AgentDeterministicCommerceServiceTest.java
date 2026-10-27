@@ -168,16 +168,17 @@ class AgentDeterministicCommerceServiceTest {
         assertFalse(message.contains("tiempo de entrega"));
         assertFalse(message.contains("logística de Shalom"));
         assertTrue(message.contains("penalidad de S/10"));
-        assertTrue(message.contains("📦 *Modalidades de entrega disponibles*"));
-        assertTrue(message.contains("Recojo en tienda: disponible aproximadamente 2 días después de la compra"));
-        assertTrue(message.contains("si cae domingo, pasa al lunes"));
-        assertTrue(message.contains("Envío por Shalom: se entrega a Shalom al día siguiente de atención"));
-        assertTrue(message.contains("domingos ni feriados"));
-        assertFalse(message.contains("🛍️"));
+        assertTrue(message.contains("📦 *Entrega*"));
+        assertTrue(message.contains("Recojo: aproximadamente 2 días después de la compra"));
+        assertTrue(message.contains("Si cae domingo, pasa al lunes"));
+        assertTrue(message.contains("Shalom: entregamos al siguiente día de atención"));
+        assertTrue(message.contains("Domingos y feriados"));
+        assertTrue(message.contains("🛍️ *Tu pedido*"));
+        assertFalse(message.contains("Modalidades de entrega disponibles"));
     }
 
     @Test
-    void explainsTheSixMinuteReservationBeforeSelectingPayment() {
+    void asksForThePaymentMethodWithoutRepeatingReservationDetails() {
         CrmWhatsappAgentSessionRepository sessions = mock(CrmWhatsappAgentSessionRepository.class);
         AgentPaymentService payments = mock(AgentPaymentService.class);
         CrmWhatsappAgentSession session = new CrmWhatsappAgentSession();
@@ -191,9 +192,11 @@ class AgentDeterministicCommerceServiceTest {
 
         var result = service.execute(41L, null, decision(AgentCommercialAction.SHOW_PAYMENT_METHODS, ""));
 
-        assertTrue(result.customerMessage().contains("*6 minutos*"));
-        assertTrue(result.customerMessage().contains("sin que otra persona los compre"));
-        assertTrue(result.customerMessage().contains("¿Cuál deseas utilizar?"));
+        assertTrue(result.customerMessage().contains("✅ Pedido confirmado."));
+        assertTrue(result.customerMessage().contains("Elige tu método de pago:"));
+        assertTrue(result.customerMessage().contains("• YAPE"));
+        assertFalse(result.customerMessage().contains("6 minutos"));
+        assertFalse(result.customerMessage().contains("sin que otra persona los compre"));
     }
 
     @Test
@@ -362,16 +365,43 @@ class AgentDeterministicCommerceServiceTest {
 
         String message = service.cartTemplate(41L, cart, true);
 
-        assertTrue(message.contains("Preventa: fecha indicada: 16 de octubre de 2026"));
-        assertTrue(message.contains("Producto disponible: aproximadamente 2 días después de la compra"));
-        assertTrue(message.contains("Producto en preventa: aproximadamente 2 días después de la fecha indicada"));
-        assertTrue(message.contains("tú eliges: puedes recibir o recoger primero el producto disponible"));
-        assertTrue(message.contains("esperar la preventa y coordinar todo junto en un solo paquete"));
-        assertTrue(message.contains("son la primera fecha disponible"));
-        assertTrue(message.contains("coordinarla con el área de envíos"));
+        assertTrue(message.contains("📅 Preventa: 16 de octubre de 2026"));
+        assertTrue(message.contains("lo disponible, aproximadamente 2 días después de la compra"));
+        assertTrue(message.contains("la preventa, 2 días después de su fecha"));
+        assertTrue(message.contains("Puedes recibir primero lo disponible"));
+        assertTrue(message.contains("esperar la preventa y coordinar todo junto"));
+        assertTrue(message.contains("Puedes coordinar una fecha posterior con el área de envíos"));
         assertFalse(message.contains("Primero se espera la fecha indicada de la preventa"));
+        assertFalse(message.contains("Los plazos indicados son la primera fecha disponible"));
         assertFalse(message.contains("envío anticipado"));
         assertFalse(message.contains("serán despachados desde"));
+    }
+
+    @Test
+    void keepsPreorderDeliveryRulesInTheCompactCartMessage() {
+        AgentCatalogQueryService catalog = mock(AgentCatalogQueryService.class);
+        AgentDeterministicCommerceService service = new AgentDeterministicCommerceService(
+                null, null, null, catalog, null, null, null, null, null, null, null);
+        LocalDate preorderDate = LocalDate.of(2026, 11, 4);
+        when(catalog.getStock(41L, 201, 1)).thenReturn(
+                new StockResult(201, 20, "PRODUCTO", "NEGRO", "M", 7, 1, true, 1, true));
+        when(catalog.getProduct(41L, 20)).thenReturn(new ProductDetail(
+                20, "PRODUCTO", "", "CONJUNTOS", true, preorderDate, null, null,
+                List.of("NEGRO"), List.of("M"), 1, 79.0, 1));
+        CartResult cart = new CartResult(1L, "ACTIVE", "PEN", BigDecimal.valueOf(79),
+                BigDecimal.ZERO, BigDecimal.valueOf(79), List.of(
+                        new CartItemView(2L, 201, "PRODUCTO", "NEGRO", "M", 1,
+                                BigDecimal.valueOf(79), BigDecimal.ZERO, BigDecimal.valueOf(79))), List.of());
+
+        String message = service.cartTemplate(41L, cart, true);
+
+        assertTrue(message.contains("📦 *Entrega desde la fecha de preventa*"));
+        assertTrue(message.contains("Recojo: aproximadamente 2 días después"));
+        assertTrue(message.contains("Shalom: entregamos al siguiente día de atención"));
+        assertTrue(message.contains("Film obligatorio: S/2"));
+        assertTrue(message.contains("¿Confirmas tu pedido?"));
+        assertFalse(message.contains("Modalidades de entrega disponibles"));
+        assertTrue(message.length() < 800);
     }
 
     @Test

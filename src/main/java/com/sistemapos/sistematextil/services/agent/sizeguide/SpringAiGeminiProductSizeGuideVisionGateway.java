@@ -9,6 +9,7 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.google.genai.GoogleGenAiChatModel;
 import org.springframework.ai.google.genai.GoogleGenAiChatOptions;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.stereotype.Service;
 import org.springframework.util.MimeType;
@@ -19,6 +20,9 @@ import com.google.genai.types.HttpOptions;
 import com.sistemapos.sistematextil.services.CrmWhatsappAiCredentialService;
 import com.sistemapos.sistematextil.services.CrmWhatsappAiCredentialService.CredentialMaterial;
 import com.sistemapos.sistematextil.services.ai.AiProviderException;
+import com.sistemapos.sistematextil.services.agent.ai.AiInvocationAuditService;
+import com.sistemapos.sistematextil.services.agent.ai.AiInvocationPhase;
+import com.sistemapos.sistematextil.services.agent.ai.AiTokenUsage;
 import com.sistemapos.sistematextil.services.agent.sizeguide.ProductSizeGuideVisionGateway.Component;
 import com.sistemapos.sistematextil.services.agent.sizeguide.ProductSizeGuideVisionGateway.Extraction;
 import com.sistemapos.sistematextil.services.agent.sizeguide.ProductSizeGuideVisionGateway.Measurement;
@@ -47,13 +51,22 @@ public class SpringAiGeminiProductSizeGuideVisionGateway implements ProductSizeG
     private final CrmWhatsappAiCredentialService credentials;
     private final int timeoutMs;
     private final int maxOutputTokens;
+    private final AiInvocationAuditService invocationAudit;
 
     public SpringAiGeminiProductSizeGuideVisionGateway(CrmWhatsappAiCredentialService credentials,
+            int timeoutMs, int maxOutputTokens) {
+        this(credentials, timeoutMs, maxOutputTokens, null);
+    }
+
+    @Autowired
+    public SpringAiGeminiProductSizeGuideVisionGateway(CrmWhatsappAiCredentialService credentials,
             @Value("${crm.whatsapp.ai.gemini.timeout-ms:60000}") int timeoutMs,
-            @Value("${crm.whatsapp.agent.size-guide.max-output-tokens:5000}") int maxOutputTokens) {
+            @Value("${crm.whatsapp.agent.size-guide.max-output-tokens:5000}") int maxOutputTokens,
+            AiInvocationAuditService invocationAudit) {
         this.credentials = credentials;
         this.timeoutMs = Math.max(10000, timeoutMs);
         this.maxOutputTokens = Math.max(1500, maxOutputTokens);
+        this.invocationAudit = invocationAudit;
     }
 
     @Override
@@ -71,16 +84,30 @@ public class SpringAiGeminiProductSizeGuideVisionGateway implements ProductSizeG
             GoogleGenAiChatOptions options = GoogleGenAiChatOptions.builder().model(credential.model())
                     .temperature(0.0).maxOutputTokens(maxOutputTokens).build();
             var model = GoogleGenAiChatModel.builder().genAiClient(client).options(options).build();
-            RawExtraction raw = ChatClient.create(model).prompt().system(SYSTEM_PROMPT)
+            var entity = ChatClient.create(model).prompt().system(SYSTEM_PROMPT)
                     .user(user -> user.text("Extrae completamente la guia de tallas adjunta.").media(mediaType, image))
-                    .call().entity(RawExtraction.class);
+                    .call().responseEntity(RawExtraction.class);
+            RawExtraction raw = entity.entity();
             Extraction extraction = normalize(raw);
-            return new VisionResult("GEMINI", credential.model(), credential.source(),
-                    Duration.ofNanos(System.nanoTime() - started).toMillis(), extraction);
+            long latency = Duration.ofNanos(System.nanoTime() - started).toMillis();
+            audit(connectionId, credential, latency,
+                    AiTokenUsage.from(entity.response().getMetadata().getUsage()), null);
+            return new VisionResult("GEMINI", credential.model(), credential.source(), latency, extraction);
         } catch (RuntimeException error) {
+            audit(connectionId, credential, Duration.ofNanos(System.nanoTime() - started).toMillis(), null,
+                    error.getClass().getSimpleName());
             throw error instanceof AiProviderException ai ? ai
                     : new AiProviderException("No se pudo analizar la guia de tallas: " + safe(error), true, error);
         }
+    }
+
+    private void audit(Long connectionId, CredentialMaterial credential, long latency, AiTokenUsage usage,
+            String errorCode) {
+        if (invocationAudit == null) return;
+        var invocation = new AiInvocationAuditService.Invocation(connectionId, null, null, null,
+                AiInvocationPhase.SIZE_GUIDE, "GEMINI", credential.model(), credential.apiKey(), latency, 0);
+        if (errorCode == null) invocationAudit.success(invocation, usage);
+        else invocationAudit.failure(invocation, errorCode);
     }
 
     Extraction normalize(RawExtraction value) {

@@ -829,6 +829,22 @@ class AgentConversationOrchestratorTest {
                 grounding, "El área de envíos se comunicará contigo en 1 a 3 días.").isBlank());
     }
 
+    @Test
+    void disablesResponseToolsOnlyForVerifiedReadOnlyCommercialEvidence() {
+        AgentConversationDecision decision = mock(AgentConversationDecision.class);
+        when(decision.commercialAction()).thenReturn(AgentCommercialAction.SHOW_PROMOTIONS);
+        var safe = new AgentVerifiedGroundingService.Grounding(
+                decision, "{\"promotions\":[{\"name\":\"Combo\"}]}", List.of(), 1, false);
+        var mutation = new AgentVerifiedGroundingService.Grounding(
+                decision, "{\"promotions\":[]}", List.of(), 1, true);
+
+        assertTrue(AgentConversationOrchestrator.canRespondWithoutTools(safe));
+        assertFalse(AgentConversationOrchestrator.canRespondWithoutTools(mutation));
+
+        when(decision.commercialAction()).thenReturn(AgentCommercialAction.ADD_PRODUCT);
+        assertFalse(AgentConversationOrchestrator.canRespondWithoutTools(safe));
+    }
+
     private AgentVerifiedGroundingService.Grounding deliveryGrounding(String policy) {
         AgentConversationDecision decision = new AgentConversationDecision(
                 AgentDecisionIntent.DELIVERY_METHOD, "consultar pedido", "", "", "", 0, "",

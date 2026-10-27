@@ -51,6 +51,13 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
                    WHERE visibleMessage.conversation = c
                      AND visibleMessage.direction IN ('INCOMING', 'OUTGOING')
               )
+              AND (:tagId IS NULL OR EXISTS (
+                   SELECT 1 FROM CrmWhatsappConversationTag conversationTag
+                   WHERE conversationTag.conversation = c
+                     AND conversationTag.tag.idTag = :tagId
+                     AND conversationTag.deletedAt IS NULL
+                     AND conversationTag.tag.deletedAt IS NULL
+              ))
               AND (:term IS NULL
                    OR LOWER(COALESCE(c.contactName, '')) LIKE LOWER(CONCAT('%', :term, '%'))
                    OR LOWER(COALESCE(c.whatsappUsername, '')) LIKE LOWER(CONCAT('%', :term, '%'))
@@ -71,6 +78,13 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
                    WHERE visibleMessage.conversation = c
                      AND visibleMessage.direction IN ('INCOMING', 'OUTGOING')
               )
+              AND (:tagId IS NULL OR EXISTS (
+                   SELECT 1 FROM CrmWhatsappConversationTag conversationTag
+                   WHERE conversationTag.conversation = c
+                     AND conversationTag.tag.idTag = :tagId
+                     AND conversationTag.deletedAt IS NULL
+                     AND conversationTag.tag.deletedAt IS NULL
+              ))
               AND (:term IS NULL
                    OR LOWER(COALESCE(c.contactName, '')) LIKE LOWER(CONCAT('%', :term, '%'))
                    OR LOWER(COALESCE(c.whatsappUsername, '')) LIKE LOWER(CONCAT('%', :term, '%'))
@@ -82,6 +96,7 @@ public interface CrmWhatsappConversationRepository extends JpaRepository<CrmWhat
     Page<CrmWhatsappConversation> findShippingChatConversations(
             @Param("companyId") Integer companyId,
             @Param("term") String term,
+            @Param("tagId") Long tagId,
             Pageable pageable);
 
     @Query("""

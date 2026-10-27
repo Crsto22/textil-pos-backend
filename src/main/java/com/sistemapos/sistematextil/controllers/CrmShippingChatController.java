@@ -5,6 +5,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -19,6 +20,7 @@ import com.sistemapos.sistematextil.model.CustomUser;
 import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.services.CrmShippingChatService;
 import com.sistemapos.sistematextil.services.CrmShippingChatService.MessageRequest;
+import com.sistemapos.sistematextil.services.CrmShippingChatService.TagRequest;
 
 import lombok.RequiredArgsConstructor;
 
@@ -30,15 +32,43 @@ public class CrmShippingChatController {
 
     @GetMapping("/conversations")
     public ResponseEntity<?> conversations(@RequestParam(defaultValue = "") String q,
+            @RequestParam(required = false) Long tagId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size,
             Authentication authentication) {
-        return ResponseEntity.ok(service.conversations(currentUser(authentication), q, page, size));
+        return ResponseEntity.ok(service.conversations(currentUser(authentication), q, tagId, page, size));
+    }
+
+    @GetMapping("/tags")
+    public ResponseEntity<?> tags(Authentication authentication) {
+        return ResponseEntity.ok(service.tags(currentUser(authentication)));
+    }
+
+    @PostMapping("/tags")
+    public ResponseEntity<?> createTag(@RequestBody TagRequest request, Authentication authentication) {
+        return ResponseEntity.ok(service.createTag(request, currentUser(authentication)));
     }
 
     @GetMapping("/conversations/{id}")
     public ResponseEntity<?> conversation(@PathVariable Long id, Authentication authentication) {
         return ResponseEntity.ok(service.conversation(id, currentUser(authentication)));
+    }
+
+    @GetMapping("/conversations/{id}/tags")
+    public ResponseEntity<?> conversationTags(@PathVariable Long id, Authentication authentication) {
+        return ResponseEntity.ok(service.conversationTags(id, currentUser(authentication)));
+    }
+
+    @PostMapping("/conversations/{id}/tags/{tagId}")
+    public ResponseEntity<?> assignTag(@PathVariable Long id, @PathVariable Long tagId,
+            Authentication authentication) {
+        return ResponseEntity.ok(service.assignTag(id, tagId, currentUser(authentication)));
+    }
+
+    @DeleteMapping("/conversations/{id}/tags/{tagId}")
+    public ResponseEntity<?> removeTag(@PathVariable Long id, @PathVariable Long tagId,
+            Authentication authentication) {
+        return ResponseEntity.ok(service.removeTag(id, tagId, currentUser(authentication)));
     }
 
     @GetMapping("/conversations/{id}/messages")

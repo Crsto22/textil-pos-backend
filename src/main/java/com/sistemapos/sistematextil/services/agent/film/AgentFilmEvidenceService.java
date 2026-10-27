@@ -1,159 +1,219 @@
 package com.sistemapos.sistematextil.services.agent.film;
 
-import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.time.*;
-import java.time.format.DateTimeFormatter;
+import java.time.LocalDateTime;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sistemapos.sistematextil.model.*;
-import com.sistemapos.sistematextil.repositories.*;
+import com.sistemapos.sistematextil.model.CrmWhatsappFilmAddon;
+import com.sistemapos.sistematextil.model.CrmWhatsappFilmEvidence;
+import com.sistemapos.sistematextil.model.CrmWhatsappFilmStatus;
+import com.sistemapos.sistematextil.model.CrmWhatsappFulfillmentStatus;
+import com.sistemapos.sistematextil.model.CrmWhatsappMessage;
+import com.sistemapos.sistematextil.model.CrmWhatsappPaymentEvidenceStatus;
+import com.sistemapos.sistematextil.model.CrmWhatsappPaymentProcessingStatus;
+import com.sistemapos.sistematextil.repositories.CrmWhatsappAgentSessionRepository;
+import com.sistemapos.sistematextil.repositories.CrmWhatsappFilmAddonRepository;
+import com.sistemapos.sistematextil.repositories.CrmWhatsappFilmEvidenceRepository;
+import com.sistemapos.sistematextil.repositories.CrmWhatsappMessageRepository;
+import com.sistemapos.sistematextil.services.CrmWhatsappChatService;
 import com.sistemapos.sistematextil.services.S3StorageService;
-import com.sistemapos.sistematextil.services.agent.CrmWhatsappAgentStateMachine;
-import com.sistemapos.sistematextil.services.agent.config.AgentRuntimeConfigService;
-import com.sistemapos.sistematextil.services.agent.outbox.AgentOutboxService;
-import com.sistemapos.sistematextil.services.agent.payment.AgentPaymentReceiptExtraction;
-import com.sistemapos.sistematextil.services.agent.payment.AgentPaymentReceiptVisionGateway;
 
 @Service
 public class AgentFilmEvidenceService {
     private static final int MAX_BYTES = 10 * 1024 * 1024;
+    private static final Set<CrmWhatsappFilmStatus> REVIEWABLE_STATUSES = Set.of(
+            CrmWhatsappFilmStatus.AWAITING_PAYMENT,
+            CrmWhatsappFilmStatus.PAYMENT_OVERDUE,
+            CrmWhatsappFilmStatus.PAID_PENDING_REVIEW);
+    static final String MANUAL_REVIEW_MESSAGE = "✅ Recibimos tu comprobante del pago de S/2 por el film "
+            + "protector para embalaje. No te preocupes: el área de envíos se encargará de revisarlo "
+            + "y continuará con la coordinación de tu pedido.";
+
     private final CrmWhatsappFilmAddonRepository addons;
     private final CrmWhatsappFilmEvidenceRepository evidence;
-    private final CrmWhatsappPaymentEvidenceRepository mainEvidence;
     private final CrmWhatsappMessageRepository messages;
     private final CrmWhatsappAgentSessionRepository sessions;
-    private final CrmWhatsappFulfillmentRepository fulfillments;
     private final S3StorageService storage;
-    private final AgentPaymentReceiptVisionGateway vision;
-    private final AgentRuntimeConfigService config;
-    private final CrmWhatsappAgentStateMachine stateMachine;
-    private final AgentFilmFinalizationService finalizer;
-    private final AgentOutboxService outbox;
-    private final TransactionTemplate tx;
-    private final ObjectMapper json = new ObjectMapper().findAndRegisterModules();
-    private final JdbcTemplate jdbc;
+    private final AgentFilmEscalationService escalation;
+    private final ObjectProvider<CrmWhatsappChatService> chatServiceProvider;
+    private final TransactionTemplate transactions;
 
-    public AgentFilmEvidenceService(CrmWhatsappFilmAddonRepository addons,
-            CrmWhatsappFilmEvidenceRepository evidence, CrmWhatsappPaymentEvidenceRepository mainEvidence,
-            CrmWhatsappMessageRepository messages, CrmWhatsappAgentSessionRepository sessions,
-            CrmWhatsappFulfillmentRepository fulfillments,
-            S3StorageService storage, AgentPaymentReceiptVisionGateway vision,
-            AgentRuntimeConfigService config, CrmWhatsappAgentStateMachine stateMachine,
-            AgentFilmFinalizationService finalizer, AgentOutboxService outbox,
-            JdbcTemplate jdbc,
+    public AgentFilmEvidenceService(
+            CrmWhatsappFilmAddonRepository addons,
+            CrmWhatsappFilmEvidenceRepository evidence,
+            CrmWhatsappMessageRepository messages,
+            CrmWhatsappAgentSessionRepository sessions,
+            S3StorageService storage,
+            AgentFilmEscalationService escalation,
+            ObjectProvider<CrmWhatsappChatService> chatServiceProvider,
             org.springframework.transaction.PlatformTransactionManager manager) {
-        this.addons=addons; this.evidence=evidence; this.mainEvidence=mainEvidence; this.messages=messages;
-        this.sessions=sessions; this.fulfillments=fulfillments; this.storage=storage; this.vision=vision; this.config=config;
-        this.stateMachine=stateMachine; this.finalizer=finalizer; this.outbox=outbox; this.jdbc=jdbc;
-        this.tx=new TransactionTemplate(manager);
+        this.addons = addons;
+        this.evidence = evidence;
+        this.messages = messages;
+        this.sessions = sessions;
+        this.storage = storage;
+        this.escalation = escalation;
+        this.chatServiceProvider = chatServiceProvider;
+        this.transactions = new TransactionTemplate(manager);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean registerIncomingMedia(Long messageId) {
-        if (messageId == null || evidence.findByMessage_IdMessage(messageId).isPresent()) return false;
+        if (messageId == null) return false;
+        if (evidence.findByMessage_IdMessage(messageId).isPresent()) return true;
         CrmWhatsappMessage message = messages.findForUpdate(messageId).orElse(null);
-        if (message == null || !"INCOMING".equals(message.getDirection()) || message.getDeletedAt()!=null
-                || !supported(message)) return false;
-        CrmWhatsappFilmAddon addon = addons.findByAgentSession_IdAgentSession(
-                activeSessionId(message.getConversation().getIdConversation())).orElse(null);
-        if (addon == null || addon.getStatus()!=CrmWhatsappFilmStatus.AWAITING_PAYMENT) return false;
-        byte[] bytes=storage.readBytes(message.getMediaStoragePath());
-        if(bytes.length==0||bytes.length>MAX_BYTES) return false;
-        String stored=storage.upload(bytes,"crm/film-evidence/"+message.getConversation().getIdConversation()+"/"+UUID.randomUUID()+extension(message.getMediaMimeType()),message.getMediaMimeType());
-        CrmWhatsappFilmEvidence e=new CrmWhatsappFilmEvidence(); e.setFilmAddon(addon); e.setMessage(message);
-        e.setStoragePath(stored); e.setMimeType(message.getMediaMimeType());
-        e.setFileName(message.getMediaFileName()); e.setSha256(hash(bytes));
-        try { evidence.save(e); return true; }
-        catch (RuntimeException error) { storage.deleteByKey(stored); throw error; }
-    }
-
-    @Transactional(readOnly=true)
-    public List<Long> readyIds(int limit) { return evidence.findReadyIds(CrmWhatsappPaymentProcessingStatus.QUEUED,
-            LocalDateTime.now(), PageRequest.of(0, limit)); }
-
-    public void process(Long evidenceId) {
-        Claimed claimed=tx.execute(status->claim(evidenceId)); if(claimed==null)return;
-        Completion completion;
+        if (message == null || !"INCOMING".equals(message.getDirection()) || message.getDeletedAt() != null
+                || !supported(message) || message.getConversation() == null) return false;
+        Long conversationId = message.getConversation().getIdConversation();
+        CrmWhatsappFilmAddon addon = findReviewableAddon(conversationId);
+        if (addon == null) return false;
+        byte[] bytes = storage.readBytes(message.getMediaStoragePath());
+        if (bytes.length == 0 || bytes.length > MAX_BYTES) return false;
+        String stored = storage.upload(bytes,
+                "crm/film-evidence/" + conversationId + "/" + UUID.randomUUID()
+                        + extension(message.getMediaMimeType()),
+                message.getMediaMimeType());
+        CrmWhatsappFilmEvidence item = new CrmWhatsappFilmEvidence();
+        item.setFilmAddon(addon);
+        item.setMessage(message);
+        item.setStoragePath(stored);
+        item.setMimeType(message.getMediaMimeType());
+        item.setFileName(message.getMediaFileName());
+        item.setSha256(hash(bytes));
+        item.setValidationStatus(CrmWhatsappPaymentEvidenceStatus.ACEPTABLE);
+        item.setProcessingStatus(CrmWhatsappPaymentProcessingStatus.COMPLETED);
+        item.setWarningsJson("[\"Pendiente de revisión manual por el área de envíos\"]");
         try {
-            byte[] bytes=storage.readBytes(claimed.path());
-            if(bytes.length==0||bytes.length>MAX_BYTES)throw new IllegalArgumentException("Archivo vacío o mayor a 10 MB");
-            var result=vision.extract(claimed.connectionId(),bytes,claimed.mime());
-            completion=tx.execute(status->complete(evidenceId,result.extraction(),result.provider()));
-        } catch(RuntimeException ex) { tx.executeWithoutResult(status->fail(evidenceId,ex)); return; }
-        if(completion!=null&&completion.approved()) {
-            finalizer.finalizeSale(completion.addonId(), true, "✅ Pago del film protector para embalaje confirmado.");
+            evidence.save(item);
+            markForManualReview(addon, conversationId);
+            return true;
+        } catch (RuntimeException error) {
+            storage.deleteByKey(stored);
+            throw error;
         }
     }
 
-    private Claimed claim(Long id) {
-        CrmWhatsappFilmEvidence e=evidence.findForUpdate(id).orElse(null); if(e==null)return null;
-        if(e.getProcessingStatus()!=CrmWhatsappPaymentProcessingStatus.QUEUED)return null;
-        if(e.getAttempts()>=3){e.setProcessingStatus(CrmWhatsappPaymentProcessingStatus.FAILED);e.setLastError("Máximo de intentos alcanzado");evidence.save(e);return null;}
-        e.setProcessingStatus(CrmWhatsappPaymentProcessingStatus.PROCESSING);e.setAttempts(e.getAttempts()+1);evidence.save(e);
-        return new Claimed(id,e.getFilmAddon().getAgentSession().getConnection().getIdConnection(),e.getStoragePath(),e.getMimeType());
+    @Transactional(readOnly = true)
+    public List<Long> readyIds(int limit) {
+        return evidence.findReadyIds(CrmWhatsappPaymentProcessingStatus.QUEUED,
+                LocalDateTime.now(), PageRequest.of(0, limit));
     }
 
-    private Completion complete(Long id, AgentPaymentReceiptExtraction x, String provider) {
-        CrmWhatsappFilmEvidence e=evidence.findForUpdate(id).orElseThrow(); CrmWhatsappFilmAddon addon=addons
-                .findForUpdate(e.getFilmAddon().getIdFilmAddon()).orElseThrow();
-        e.setDetectedProvider(provider); e.setDetectedAmount(amount(x.amount())); e.setDetectedCurrency(x.currency());
-        String operationCode=clean(x.operationNumber());
-        e.setOperationCode(operationCode.isBlank()?null:operationCode); e.setOperationAt(operationAt(x)); e.setRecipient(clean(x.recipient()));
-        e.setConfidence(x.confidence()); e.setExtractedText(x.visibleText()); e.setExtractionJson(write(x));
-        List<String> errors=validateFilmAmount(e); e.setWarningsJson(write(errors));
-        e.setProcessingStatus(CrmWhatsappPaymentProcessingStatus.COMPLETED); e.setLastError(null);
-        if(!errors.isEmpty()) {
-            e.setValidationStatus(CrmWhatsappPaymentEvidenceStatus.OBSERVADO); evidence.save(e);
-            outbox.enqueueOperationalText(addon.getAgentSession().getIdAgentSession(),null,e.getMessage().getIdMessage(),
-                    100_000+Math.toIntExact(id%500_000),"❌ No pude validar el pago del film para embalaje: "
-                            +errors.getFirst()+". Puedes enviar otro comprobante mientras quede tiempo.");
-            return new Completion(addon.getIdFilmAddon(),false);
+    /**
+     * Compatibilidad con evidencias que quedaron en cola antes del despliegue:
+     * también pasan a revisión humana y nunca se envían a Gemini Vision.
+     */
+    public void process(Long evidenceId) {
+        transactions.executeWithoutResult(status -> moveQueuedEvidenceToManualReview(evidenceId));
+    }
+
+    private CrmWhatsappFilmAddon findReviewableAddon(Long conversationId) {
+        Long sessionId = activeSessionId(conversationId);
+        CrmWhatsappFilmAddon active = addons.findByAgentSession_IdAgentSession(sessionId)
+                .filter(value -> REVIEWABLE_STATUSES.contains(value.getStatus()))
+                .orElse(null);
+        CrmWhatsappFilmAddon candidate = active != null ? active
+                : addons.findPendingForConversation(conversationId, REVIEWABLE_STATUSES, PageRequest.of(0, 1))
+                        .stream().findFirst().orElse(null);
+        if (candidate == null) return null;
+        return addons.findForUpdate(candidate.getIdFilmAddon())
+                .filter(value -> REVIEWABLE_STATUSES.contains(value.getStatus()))
+                .orElse(null);
+    }
+
+    private void markForManualReview(CrmWhatsappFilmAddon addon, Long conversationId) {
+        addon.setStatus(CrmWhatsappFilmStatus.PAID_PENDING_REVIEW);
+        addon.setExpiresAt(null);
+        addon.setResolvedAt(null);
+        addon.setResolutionSource(null);
+        addon.getFulfillment().setStatus(CrmWhatsappFulfillmentStatus.FILM_PAYMENT_PENDING);
+        addons.save(addon);
+        escalation.escalate(addon.getAgentSession().getIdAgentSession(), addon.getIdFilmAddon(),
+                "Comprobante del pago de S/2 por film para embalaje pendiente de revisión del área de envíos");
+        notifyAfterCommit(conversationId, MANUAL_REVIEW_MESSAGE);
+    }
+
+    private void moveQueuedEvidenceToManualReview(Long evidenceId) {
+        CrmWhatsappFilmEvidence queued = evidence.findForUpdate(evidenceId).orElse(null);
+        if (queued == null || queued.getProcessingStatus() != CrmWhatsappPaymentProcessingStatus.QUEUED) return;
+        CrmWhatsappFilmAddon addon = addons.findForUpdate(queued.getFilmAddon().getIdFilmAddon()).orElse(null);
+        if (addon == null || !REVIEWABLE_STATUSES.contains(addon.getStatus())) return;
+        queued.setValidationStatus(CrmWhatsappPaymentEvidenceStatus.ACEPTABLE);
+        queued.setProcessingStatus(CrmWhatsappPaymentProcessingStatus.COMPLETED);
+        queued.setWarningsJson("[\"Pendiente de revisión manual por el área de envíos\"]");
+        queued.setLastError(null);
+        evidence.save(queued);
+        markForManualReview(addon, queued.getMessage().getConversation().getIdConversation());
+    }
+
+    private void notifyAfterCommit(Long conversationId, String text) {
+        Runnable notification = () -> {
+            try {
+                chatServiceProvider.getObject().enviarAvisoSistemaAutomatico(conversationId, text);
+            } catch (RuntimeException ignored) {
+                // La evidencia permanece visible para la asesora aunque WhatsApp no esté disponible.
+            }
+        };
+        if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+            notification.run();
+            return;
         }
-        e.setValidationStatus(CrmWhatsappPaymentEvidenceStatus.VALIDADO); evidence.save(e);
-        addon.setStatus(CrmWhatsappFilmStatus.CONFIRMED);addon.setPaidAt(LocalDateTime.now());addon.setResolvedAt(LocalDateTime.now());
-        addon.setResolutionSource("RECEIPT_AI");addons.save(addon);
-        jdbc.update("""
-                INSERT INTO crm_whatsapp_film_payment
-                  (id_film_addon,id_venta,id_film_evidence,amount,currency,provider,operation_code,paid_at)
-                VALUES (?,?,?,?,?,?,?,?)
-                ON DUPLICATE KEY UPDATE id_film_payment=id_film_payment
-                """,addon.getIdFilmAddon(),addon.getVenta().getIdVenta(),e.getIdFilmEvidence(),AgentFilmService.PRICE,
-                "PEN","YAPE",e.getOperationCode(),e.getOperationAt());
-        CrmWhatsappFulfillment fulfillment=fulfillments.findForUpdateBySessionId(addon.getAgentSession().getIdAgentSession()).orElseThrow();
-        fulfillment.setStatus(CrmWhatsappFulfillmentStatus.READY);fulfillments.save(fulfillment);
-        CrmWhatsappAgentSession session=sessions.findForUpdate(addon.getAgentSession().getIdAgentSession()).orElseThrow();
-        if(session.getState()==CrmWhatsappAgentState.ESPERANDO_PAGO_FILM){session.setState(stateMachine.transition(session.getState(),CrmWhatsappAgentEvent.PAGO_FILM_APROBADO));session.setLastEvent(CrmWhatsappAgentEvent.PAGO_FILM_APROBADO);session.setStateChangedAt(LocalDateTime.now());sessions.save(session);}
-        return new Completion(addon.getIdFilmAddon(),true);
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                notification.run();
+            }
+        });
     }
 
-    static List<String> validateFilmAmount(CrmWhatsappFilmEvidence e){
-        java.util.ArrayList<String> errors=new java.util.ArrayList<>();
-        // En el cobro separado del film, solo el monto exacto es obligatorio.
-        // Los demas campos extraidos se guardan para auditoria, pero son opcionales.
-        if(e.getDetectedAmount()==null||e.getDetectedAmount().compareTo(AgentFilmService.PRICE)!=0)errors.add("el monto debe ser exactamente S/2.00");
-        return errors.stream().distinct().toList();
+    static List<String> validateFilmAmount(CrmWhatsappFilmEvidence item) {
+        if (item.getDetectedAmount() != null
+                && item.getDetectedAmount().compareTo(AgentFilmService.PRICE) == 0) return List.of();
+        return List.of("el monto debe ser exactamente S/2.00");
     }
-    private void fail(Long id,RuntimeException ex){CrmWhatsappFilmEvidence e=evidence.findForUpdate(id).orElse(null);if(e==null)return;e.setLastError(ex.getMessage());if(e.getAttempts()<3){e.setProcessingStatus(CrmWhatsappPaymentProcessingStatus.QUEUED);e.setAvailableAt(LocalDateTime.now().plusSeconds((long)e.getAttempts()*5));}else{e.setProcessingStatus(CrmWhatsappPaymentProcessingStatus.FAILED);e.setValidationStatus(CrmWhatsappPaymentEvidenceStatus.OBSERVADO);}evidence.save(e);}
-    private Long activeSessionId(Long conversationId){return sessions.findByConversation_IdConversationAndActiveSlotTrue(conversationId).map(CrmWhatsappAgentSession::getIdAgentSession).orElse(-1L);}
-    private boolean supported(CrmWhatsappMessage m){String mime=clean(m.getMediaMimeType()).toLowerCase();return m.getMediaStoragePath()!=null&&(mime.equals("image/jpeg")||mime.equals("image/png")||mime.equals("image/webp")||mime.equals("application/pdf"));}
-    private String extension(String mime){return switch(clean(mime).toLowerCase()){case "image/png"->".png";case "image/webp"->".webp";case "application/pdf"->".pdf";default->".jpg";};}
-    private BigDecimal amount(String v){try{String n=clean(v).replaceAll("[^0-9,.-]","").replace(",",".");return n.isBlank()?null:new BigDecimal(n).setScale(2);}catch(Exception e){return null;}}
-    private LocalDateTime operationAt(AgentPaymentReceiptExtraction x){try{LocalDate d=LocalDate.parse(clean(x.operationDate()),DateTimeFormatter.ISO_LOCAL_DATE);LocalTime t=LocalTime.parse(clean(x.operationTime()),DateTimeFormatter.ISO_LOCAL_TIME);return LocalDateTime.of(d,t);}catch(Exception e){return null;}}
-    private String hash(byte[] b){try{return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(b));}catch(Exception e){throw new IllegalStateException(e);}}
-    private String write(Object o){try{return json.writeValueAsString(o);}catch(Exception e){return "[]";}}
-    private String clean(String v){return v==null?"":v.trim();}
-    private record Claimed(Long id,Long connectionId,String path,String mime){}
-    private record Completion(Long addonId,boolean approved){}
+
+    private Long activeSessionId(Long conversationId) {
+        return sessions.findByConversation_IdConversationAndActiveSlotTrue(conversationId)
+                .map(session -> session.getIdAgentSession()).orElse(-1L);
+    }
+
+    private boolean supported(CrmWhatsappMessage message) {
+        String mime = clean(message.getMediaMimeType()).toLowerCase();
+        return message.getMediaStoragePath() != null
+                && (mime.equals("image/jpeg") || mime.equals("image/png")
+                        || mime.equals("image/webp") || mime.equals("application/pdf"));
+    }
+
+    private String extension(String mime) {
+        return switch (clean(mime).toLowerCase()) {
+            case "image/png" -> ".png";
+            case "image/webp" -> ".webp";
+            case "application/pdf" -> ".pdf";
+            default -> ".jpg";
+        };
+    }
+
+    private String hash(byte[] bytes) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+        } catch (Exception error) {
+            throw new IllegalStateException(error);
+        }
+    }
+
+    private String clean(String value) {
+        return value == null ? "" : value.trim();
+    }
 }

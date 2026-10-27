@@ -11,6 +11,13 @@ import com.sistemapos.sistematextil.model.CrmWhatsappFilmEvidence;
 class AgentFilmEvidenceServiceTest {
 
     @Test
+    void tellsCustomerThatShippingTeamWillReviewWithoutClaimingApproval() {
+        assertThat(AgentFilmEvidenceService.MANUAL_REVIEW_MESSAGE)
+                .contains("S/2", "film protector para embalaje", "área de envíos", "se encargará de revisarlo")
+                .doesNotContain("confirmado", "aprobado");
+    }
+
+    @Test
     void acceptsExactTwoSolesWithoutRequiringOtherReceiptFields() {
         CrmWhatsappFilmEvidence evidence = new CrmWhatsappFilmEvidence();
         evidence.setDetectedAmount(new BigDecimal("2.00"));

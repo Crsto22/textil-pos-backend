@@ -53,6 +53,7 @@ public class CrmWhatsappAgentSchemaMigration implements ApplicationRunner {
                 adaptSessionPaymentSelection(connection, statement);
                 createCartTables(statement);
                 createRuntimeTables(statement);
+                createAiUsageTable(statement);
                 adaptAgentToolCallTable(connection, statement);
                 adaptAgentJobTable(connection, statement);
                 adaptAgentOutboxTable(connection, statement);
@@ -493,6 +494,44 @@ public class CrmWhatsappAgentSchemaMigration implements ApplicationRunner {
                     FOREIGN KEY (reply_to_message_id) REFERENCES crm_whatsapp_message (id_message) ON DELETE SET NULL,
                   CONSTRAINT fk_crm_agent_outbox_message
                     FOREIGN KEY (id_message) REFERENCES crm_whatsapp_message (id_message) ON DELETE SET NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """);
+    }
+
+    private void createAiUsageTable(Statement statement) throws SQLException {
+        statement.execute("""
+                CREATE TABLE IF NOT EXISTS crm_whatsapp_agent_ai_usage (
+                  id_ai_usage BIGINT NOT NULL AUTO_INCREMENT,
+                  id_connection BIGINT NOT NULL,
+                  id_agent_session BIGINT NULL,
+                  id_agent_job BIGINT NULL,
+                  id_conversation BIGINT NULL,
+                  phase VARCHAR(30) NOT NULL,
+                  provider VARCHAR(30) NOT NULL,
+                  model VARCHAR(120) NULL,
+                  credential_fingerprint VARCHAR(64) NULL,
+                  input_tokens INT NULL,
+                  output_tokens INT NULL,
+                  cached_tokens BIGINT NULL,
+                  total_tokens INT NULL,
+                  latency_ms BIGINT NOT NULL,
+                  tool_calls INT NOT NULL DEFAULT 0,
+                  status VARCHAR(20) NOT NULL,
+                  error_code VARCHAR(80) NULL,
+                  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                  PRIMARY KEY (id_ai_usage),
+                  KEY idx_crm_ai_usage_connection_date (id_connection, created_at),
+                  KEY idx_crm_ai_usage_session (id_agent_session, created_at),
+                  KEY idx_crm_ai_usage_job (id_agent_job, created_at),
+                  KEY idx_crm_ai_usage_phase (phase, created_at),
+                  CONSTRAINT fk_crm_ai_usage_connection FOREIGN KEY (id_connection)
+                    REFERENCES crm_whatsapp_connection(id_connection) ON DELETE CASCADE,
+                  CONSTRAINT fk_crm_ai_usage_session FOREIGN KEY (id_agent_session)
+                    REFERENCES crm_whatsapp_agent_session(id_agent_session) ON DELETE SET NULL,
+                  CONSTRAINT fk_crm_ai_usage_job FOREIGN KEY (id_agent_job)
+                    REFERENCES crm_whatsapp_agent_job(id_agent_job) ON DELETE SET NULL,
+                  CONSTRAINT fk_crm_ai_usage_conversation FOREIGN KEY (id_conversation)
+                    REFERENCES crm_whatsapp_conversation(id_conversation) ON DELETE SET NULL
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
                 """);
     }

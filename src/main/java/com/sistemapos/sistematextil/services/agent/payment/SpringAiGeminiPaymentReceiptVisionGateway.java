@@ -7,6 +7,7 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.google.genai.GoogleGenAiChatModel;
 import org.springframework.ai.google.genai.GoogleGenAiChatOptions;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.stereotype.Service;
 import org.springframework.util.MimeType;
@@ -19,6 +20,9 @@ import com.google.genai.types.HttpOptions;
 import com.sistemapos.sistematextil.services.CrmWhatsappAiCredentialService;
 import com.sistemapos.sistematextil.services.CrmWhatsappAiCredentialService.CredentialMaterial;
 import com.sistemapos.sistematextil.services.ai.AiProviderException;
+import com.sistemapos.sistematextil.services.agent.ai.AiInvocationAuditService;
+import com.sistemapos.sistematextil.services.agent.ai.AiInvocationPhase;
+import com.sistemapos.sistematextil.services.agent.ai.AiTokenUsage;
 
 @Service
 public class SpringAiGeminiPaymentReceiptVisionGateway implements AgentPaymentReceiptVisionGateway {
@@ -47,14 +51,24 @@ public class SpringAiGeminiPaymentReceiptVisionGateway implements AgentPaymentRe
     private final CrmWhatsappAiCredentialService credentialService;
     private final int timeoutMs;
     private final int maxOutputTokens;
+    private final AiInvocationAuditService invocationAudit;
 
     public SpringAiGeminiPaymentReceiptVisionGateway(
             CrmWhatsappAiCredentialService credentialService,
+            int timeoutMs, int maxOutputTokens) {
+        this(credentialService, timeoutMs, maxOutputTokens, null);
+    }
+
+    @Autowired
+    public SpringAiGeminiPaymentReceiptVisionGateway(
+            CrmWhatsappAiCredentialService credentialService,
             @Value("${crm.whatsapp.ai.gemini.timeout-ms:60000}") int timeoutMs,
-            @Value("${crm.whatsapp.agent.payment-vision.max-output-tokens:1200}") int maxOutputTokens) {
+            @Value("${crm.whatsapp.agent.payment-vision.max-output-tokens:1200}") int maxOutputTokens,
+            AiInvocationAuditService invocationAudit) {
         this.credentialService = credentialService;
         this.timeoutMs = Math.max(10000, timeoutMs);
         this.maxOutputTokens = Math.max(512, maxOutputTokens);
+        this.invocationAudit = invocationAudit;
     }
 
     @Override
@@ -84,7 +98,7 @@ public class SpringAiGeminiPaymentReceiptVisionGateway implements AgentPaymentRe
                     .genAiClient(client)
                     .options(options)
                     .build();
-            AgentPaymentReceiptExtraction extraction = ChatClient.create(model).prompt()
+            var entity = ChatClient.create(model).prompt()
                     .system(SYSTEM_PROMPT)
                     .user(user -> user
                             .text("Extrae todos los datos visibles del comprobante adjunto.")
@@ -93,16 +107,32 @@ public class SpringAiGeminiPaymentReceiptVisionGateway implements AgentPaymentRe
                     // Los campos OCR de texto son opcionales. No se usa la validacion
                     // estricta del schema porque Gemini puede representar un dato no
                     // visible como null; Java lo normaliza y valida de forma segura.
-                    .entity(AgentPaymentReceiptExtraction.class);
+                    .responseEntity(AgentPaymentReceiptExtraction.class);
+            AgentPaymentReceiptExtraction extraction = entity.entity();
             extraction = normalize(extraction);
             validate(extraction);
-            return new VisionResult("GEMINI", credentials.model(), credentials.source(),
-                    Duration.ofNanos(System.nanoTime() - started).toMillis(), extraction);
+            long latency = Duration.ofNanos(System.nanoTime() - started).toMillis();
+            audit(connectionId, credentials, latency,
+                    AiTokenUsage.from(entity.response().getMetadata().getUsage()), null);
+            return new VisionResult("GEMINI", credentials.model(), credentials.source(), latency, extraction);
         } catch (AiProviderException error) {
+            audit(connectionId, credentials, Duration.ofNanos(System.nanoTime() - started).toMillis(), null,
+                    error.getClass().getSimpleName());
             throw error;
         } catch (RuntimeException error) {
+            audit(connectionId, credentials, Duration.ofNanos(System.nanoTime() - started).toMillis(), null,
+                    error.getClass().getSimpleName());
             throw mapProviderError(error);
         }
+    }
+
+    private void audit(Long connectionId, CredentialMaterial credential, long latency, AiTokenUsage usage,
+            String errorCode) {
+        if (invocationAudit == null) return;
+        var invocation = new AiInvocationAuditService.Invocation(connectionId, null, null, null,
+                AiInvocationPhase.PAYMENT_VISION, "GEMINI", credential.model(), credential.apiKey(), latency, 0);
+        if (errorCode == null) invocationAudit.success(invocation, usage);
+        else invocationAudit.failure(invocation, errorCode);
     }
 
     private CredentialMaterial resolveCredentials(Long connectionId) {

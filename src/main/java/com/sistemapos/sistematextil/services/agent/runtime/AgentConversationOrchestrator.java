@@ -9,11 +9,13 @@ import java.util.Locale;
 import java.util.Map;
 
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import com.sistemapos.sistematextil.services.agent.ai.AgentResponseGateway;
+import com.sistemapos.sistematextil.services.agent.ai.SpringAiGeminiAgentGateway;
 import com.sistemapos.sistematextil.services.agent.ai.AgentCommercialAction;
 import com.sistemapos.sistematextil.services.agent.ai.AgentDecisionIntent;
 import com.sistemapos.sistematextil.services.agent.ai.AgentMediaRequest;
@@ -26,6 +28,7 @@ import com.sistemapos.sistematextil.services.agent.batch.AgentMessageBatch;
 import com.sistemapos.sistematextil.services.agent.batch.AgentMessageBatchFactory;
 import com.sistemapos.sistematextil.services.agent.cart.AgentCartTools;
 import com.sistemapos.sistematextil.services.agent.config.AgentRuntimeConfigService;
+import com.sistemapos.sistematextil.services.agent.config.AgentOptimizationSafetyService;
 import com.sistemapos.sistematextil.services.agent.context.AgentContext;
 import com.sistemapos.sistematextil.services.agent.context.AgentContextFactory;
 import com.sistemapos.sistematextil.services.agent.context.AgentMissingData;
@@ -69,6 +72,15 @@ public class AgentConversationOrchestrator {
     private final AgentResponseGateway gateway;
     private final AgentRuntimeConfigService runtimeConfig;
     private final AgentTurnFinalizer finalizer;
+
+    @Value("${crm.whatsapp.agent.optimization.compact-context-enabled:false}")
+    private boolean compactContextEnabled;
+
+    @Value("${crm.whatsapp.agent.optimization.no-tools-response-enabled:false}")
+    private boolean noToolsResponseEnabled;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private AgentOptimizationSafetyService optimizationSafety;
 
     public Outcome process(JobLease lease) {
         if (lease == null || !coordinator.isCurrent(lease)) return Outcome.STALE;
@@ -125,9 +137,15 @@ public class AgentConversationOrchestrator {
                     context.fingerprint(), List.of());
             return persistGeneratedTurn(lease, deterministic);
         }
-        AgentMainPrompt base = promptFactory.create(context);
-        String conversation = base.userMessage() + "\n\nLOTE_ACTUAL_AGRUPADO:\n" + batch.combinedInput();
-        var grounding = groundingService.ground(context.connectionId(), lease.sessionId(), lease.jobId(), conversation);
+        boolean optimizationsAllowed = optimizationSafety == null || optimizationSafety.allows(context.connectionId());
+        boolean compactTurn = compactContextEnabled && optimizationsAllowed;
+        AgentMainPrompt base = compactTurn
+                ? promptFactory.createCompact(withoutCurrentBatch(context, batch))
+                : compactContextEnabled ? promptFactory.createLegacy(context) : promptFactory.create(context);
+        String responseConversation = base.userMessage() + "\n\nLOTE_ACTUAL_AGRUPADO:\n" + batch.combinedInput();
+        String decisionConversation = compactTurn
+                ? compactDecisionConversation(context, batch) : responseConversation;
+        var grounding = groundingService.ground(context.connectionId(), lease.sessionId(), lease.jobId(), decisionConversation);
         boolean pendingReminderRequired = pendingReminderRequired(context, grounding);
         if (grounding.customerMessage() != null && !grounding.customerMessage().isBlank()) {
             GeneratedTurn deterministic = new GeneratedTurn(
@@ -139,9 +157,13 @@ public class AgentConversationOrchestrator {
         }
         Map<String, Object> toolContext = new LinkedHashMap<>(base.toolContext());
         toolContext.put(AgentExecutionContext.JOB_ID, lease.jobId());
+        toolContext.put(AgentExecutionContext.CONVERSATION_ID, context.conversationId());
+        toolContext.put(AgentExecutionContext.AI_PHASE, "RESPONSE");
+        toolContext.put(SpringAiGeminiAgentGateway.TOOLS_ENABLED_CONTEXT_KEY,
+                !(noToolsResponseEnabled && optimizationsAllowed && canRespondWithoutTools(grounding)));
         toolContext.put(AgentCartTools.OPERATION_ID_CONTEXT_KEY, "agent-job-" + lease.jobId());
         AgentMainPrompt prompt = new AgentMainPrompt(base.version(), base.systemInstruction(),
-                conversation + """
+                responseConversation + """
 
                         EVIDENCIA_VERIFICADA_DEL_BACKEND:
                         %s
@@ -491,6 +513,8 @@ public class AgentConversationOrchestrator {
 
     private AgentMainPrompt groundingCorrectionPrompt(AgentMainPrompt original, String rejectedResponse,
             String correctionInstruction) {
+        Map<String, Object> correctionContext = new LinkedHashMap<>(original.toolContext());
+        correctionContext.put(AgentExecutionContext.AI_PHASE, "CORRECTION");
         return new AgentMainPrompt(original.version(), original.systemInstruction(),
                 original.userMessage() + """
 
@@ -507,7 +531,59 @@ public class AgentConversationOrchestrator {
                         EVIDENCIA_VERIFICADA_DEL_BACKEND. Si hay promociones, presenta las promociones reales con
                         su nombre, productos incluidos y precio. Incluye junto a cada producto mostrado su precio
                         real y no menciones esta revision a la clienta. No uses una plantilla fija.
-                        """.formatted(rejectedResponse, correctionInstruction), original.toolContext());
+                        """.formatted(rejectedResponse, correctionInstruction), Map.copyOf(correctionContext));
+    }
+
+    private String compactDecisionConversation(com.sistemapos.sistematextil.services.agent.context.AgentContext context,
+            AgentMessageBatch batch) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("state", context.state());
+        payload.put("resumeState", context.resumeState());
+        payload.put("summary", context.previousSummary());
+        payload.put("customer", context.customer());
+        payload.put("cart", context.cart());
+        payload.put("payment", context.payment());
+        payload.put("fulfillment", context.fulfillment());
+        payload.put("missingData", context.missingData());
+        java.util.Set<Long> currentIds = batch.messages() == null ? java.util.Set.of()
+                : batch.messages().stream().map(AgentMessageBatch.Item::messageId)
+                        .filter(java.util.Objects::nonNull).collect(java.util.stream.Collectors.toSet());
+        List<?> messages = context.recentMessages() == null ? List.of() : context.recentMessages().stream()
+                .filter(message -> !currentIds.contains(message.id())).toList();
+        int from = Math.max(0, messages.size() - 10);
+        payload.put("previousMessages", messages.subList(from, messages.size()));
+        payload.put("currentBatch", batch.combinedInput() == null ? "" : batch.combinedInput());
+        try {
+            return "CONTEXTO_COMPACTO_CLASIFICACION:\n" + evidenceMapper.writeValueAsString(payload);
+        } catch (Exception error) {
+            throw new IllegalStateException("No se pudo construir el contexto compacto de clasificacion", error);
+        }
+    }
+
+    private com.sistemapos.sistematextil.services.agent.context.AgentContext withoutCurrentBatch(
+            com.sistemapos.sistematextil.services.agent.context.AgentContext context, AgentMessageBatch batch) {
+        java.util.Set<Long> currentIds = batch.messages() == null ? java.util.Set.of()
+                : batch.messages().stream().map(AgentMessageBatch.Item::messageId)
+                        .filter(java.util.Objects::nonNull).collect(java.util.stream.Collectors.toSet());
+        var previous = context.recentMessages() == null ? List.<com.sistemapos.sistematextil.services.agent.context.AgentContext.Message>of()
+                : context.recentMessages().stream().filter(message -> !currentIds.contains(message.id())).toList();
+        return new com.sistemapos.sistematextil.services.agent.context.AgentContext(
+                context.sessionId(), context.sessionKey(), context.conversationId(), context.connectionId(),
+                context.branchId(), context.anchorMessageId(), context.state(), context.resumeState(),
+                context.lastEvent(), context.previousSummary(), context.customer(), previous, context.cart(),
+                context.missingData(), context.payment(), context.fulfillment(), context.toolResults(),
+                context.fingerprint());
+    }
+
+    static boolean canRespondWithoutTools(AgentVerifiedGroundingService.Grounding grounding) {
+        if (grounding == null || grounding.mutationExecuted() || grounding.verifiedToolCalls() <= 0
+                || grounding.evidenceJson() == null || "{}".equals(grounding.evidenceJson().trim())) return false;
+        return switch (grounding.decision().commercialAction()) {
+            case SHOW_PRODUCTS, SHOW_PRODUCT, SHOW_PRODUCT_AVAILABILITY,
+                    SHOW_PRODUCT_AVAILABILITY_FOR_DELIVERY, SHOW_PRODUCT_IMAGES,
+                    SHOW_PRODUCT_COLOR_GALLERY, SHOW_SIZE_GUIDE, RECOMMEND_SIZE, SHOW_PROMOTIONS -> true;
+            default -> false;
+        };
     }
 
     private GeneratedTurn persistGeneratedTurn(JobLease lease, GeneratedTurn turn) {

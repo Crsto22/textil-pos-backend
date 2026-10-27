@@ -4,7 +4,9 @@ import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.springframework.data.domain.PageRequest;
@@ -19,10 +21,16 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sistemapos.sistematextil.model.CrmWhatsappArea;
 import com.sistemapos.sistematextil.model.CrmWhatsappConversation;
+import com.sistemapos.sistematextil.model.CrmWhatsappConversationTag;
 import com.sistemapos.sistematextil.model.CrmWhatsappMessage;
+import com.sistemapos.sistematextil.model.CrmWhatsappTag;
+import com.sistemapos.sistematextil.model.Empresa;
 import com.sistemapos.sistematextil.model.Usuario;
+import com.sistemapos.sistematextil.repositories.CrmWhatsappConversationTagRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappConversationRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappMessageRepository;
+import com.sistemapos.sistematextil.repositories.CrmWhatsappTagRepository;
+import com.sistemapos.sistematextil.repositories.EmpresaRepository;
 import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.util.usuario.Rol;
 
@@ -32,7 +40,10 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class CrmShippingChatService {
     private final CrmWhatsappConversationRepository conversationRepository;
+    private final CrmWhatsappConversationTagRepository conversationTagRepository;
     private final CrmWhatsappMessageRepository messageRepository;
+    private final CrmWhatsappTagRepository tagRepository;
+    private final EmpresaRepository empresaRepository;
     private final SucursalRepository sucursalRepository;
     private final CrmWhatsappBridgeService bridgeService;
     private final CrmWhatsappNumberChangeNoticeService numberChangeNoticeService;
@@ -41,20 +52,97 @@ public class CrmShippingChatService {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Transactional(readOnly = true)
-    public ConversationPage conversations(Usuario actor, String query, int page, int size) {
+    public ConversationPage conversations(Usuario actor, String query, Long tagId, int page, int size) {
         requireShippingAccess(actor);
+        Integer actorCompanyId = companyId(actor);
+        if (tagId != null) requireTag(tagId, actorCompanyId);
         String term = clean(query);
         var result = conversationRepository.findShippingChatConversations(
-                companyId(actor), term.isBlank() ? null : term,
+                actorCompanyId, term.isBlank() ? null : term, tagId,
                 PageRequest.of(Math.max(0, page), Math.min(50, Math.max(1, size))));
-        return new ConversationPage(result.getContent().stream().map(this::conversation).toList(),
+        Map<Long, List<ConversationTagDto>> tagsByConversation = tagsByConversation(result.getContent());
+        return new ConversationPage(result.getContent().stream()
+                .map(value -> conversation(value, tagsByConversation.getOrDefault(value.getIdConversation(), List.of())))
+                .toList(),
                 result.getNumber(), result.getSize(), result.getTotalPages(), result.getTotalElements(),
                 result.isLast());
     }
 
     @Transactional(readOnly = true)
     public ConversationDto conversation(Long conversationId, Usuario actor) {
-        return conversation(requireConversation(conversationId, actor));
+        CrmWhatsappConversation conversation = requireConversation(conversationId, actor);
+        return conversation(conversation, conversationTagsInternal(conversationId));
+    }
+
+    @Transactional(readOnly = true)
+    public List<TagDto> tags(Usuario actor) {
+        requireShippingAccess(actor);
+        List<CrmWhatsappTag> tags = tagRepository
+                .findByEmpresa_IdEmpresaAndDeletedAtIsNullOrderByNombreAsc(companyId(actor));
+        Map<Long, Long> usageByTag = new LinkedHashMap<>();
+        if (!tags.isEmpty()) {
+            for (Object[] row : conversationTagRepository
+                    .countActiveByTagIds(tags.stream().map(CrmWhatsappTag::getIdTag).toList())) {
+                usageByTag.put((Long) row[0], (Long) row[1]);
+            }
+        }
+        return tags.stream().map(tag -> new TagDto(tag.getIdTag(), tag.getNombre(), tag.getColor(),
+                usageByTag.getOrDefault(tag.getIdTag(), 0L))).toList();
+    }
+
+    @Transactional
+    public TagDto createTag(TagRequest request, Usuario actor) {
+        requireShippingAccess(actor);
+        Integer actorCompanyId = companyId(actor);
+        String name = validateTagName(request == null ? null : request.nombre());
+        String color = validateTagColor(request == null ? null : request.color());
+        tagRepository.findFirstByEmpresa_IdEmpresaAndNombreIgnoreCaseAndDeletedAtIsNull(actorCompanyId, name)
+                .ifPresent(tag -> {
+                    throw new ResponseStatusException(HttpStatus.CONFLICT, "Ya existe una etiqueta con ese nombre");
+                });
+        Empresa company = empresaRepository.findById(actorCompanyId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Empresa no encontrada"));
+        CrmWhatsappTag tag = new CrmWhatsappTag();
+        tag.setEmpresa(company);
+        tag.setNombre(name);
+        tag.setColor(color);
+        CrmWhatsappTag saved = tagRepository.save(tag);
+        return new TagDto(saved.getIdTag(), saved.getNombre(), saved.getColor(), 0L);
+    }
+
+    @Transactional(readOnly = true)
+    public List<ConversationTagDto> conversationTags(Long conversationId, Usuario actor) {
+        requireConversation(conversationId, actor);
+        return conversationTagsInternal(conversationId);
+    }
+
+    @Transactional
+    public List<ConversationTagDto> assignTag(Long conversationId, Long tagId, Usuario actor) {
+        CrmWhatsappConversation conversation = requireConversation(conversationId, actor);
+        CrmWhatsappTag tag = requireTag(tagId, companyId(actor));
+        CrmWhatsappConversationTag relation = conversationTagRepository
+                .findFirstByConversation_IdConversationAndTag_IdTagOrderByIdConversationTagAsc(conversationId, tagId)
+                .orElseGet(CrmWhatsappConversationTag::new);
+        relation.setConversation(conversation);
+        relation.setTag(tag);
+        relation.setDeletedAt(null);
+        conversationTagRepository.save(relation);
+        publishTag(conversationId);
+        return conversationTagsInternal(conversationId);
+    }
+
+    @Transactional
+    public List<ConversationTagDto> removeTag(Long conversationId, Long tagId, Usuario actor) {
+        requireConversation(conversationId, actor);
+        requireTag(tagId, companyId(actor));
+        conversationTagRepository
+                .findFirstByConversation_IdConversationAndTag_IdTagAndDeletedAtIsNull(conversationId, tagId)
+                .ifPresent(relation -> {
+                    relation.setDeletedAt(LocalDateTime.now());
+                    conversationTagRepository.save(relation);
+                });
+        publishTag(conversationId);
+        return conversationTagsInternal(conversationId);
     }
 
     @Transactional
@@ -212,6 +300,9 @@ public class CrmShippingChatService {
                 && actor.getRol() != Rol.VENTAS_ALMACEN) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Acceso exclusivo para administradores y almacen");
         }
+        if (!"ACTIVO".equalsIgnoreCase(clean(actor.getEstado()))) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Usuario inactivo");
+        }
     }
 
     private Integer companyId(Usuario actor) {
@@ -224,12 +315,57 @@ public class CrmShippingChatService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN, "No hay empresa activa asignada"));
     }
 
-    private ConversationDto conversation(CrmWhatsappConversation value) {
+    private ConversationDto conversation(CrmWhatsappConversation value, List<ConversationTagDto> tags) {
         String name = clean(value.getContactName());
         if (name.isBlank() && value.getCliente() != null) name = clean(value.getCliente().getNombres());
         return new ConversationDto(value.getIdConversation(), value.getPhone(), value.getPhoneNumber(),
                 value.getWhatsappUsername(), name.isBlank() ? null : name, value.getLastMessage(),
-                value.getLastMessageType(), value.getLastMessageAt(), value.getUnreadCount() == null ? 0 : value.getUnreadCount());
+                value.getLastMessageType(), value.getLastMessageAt(), value.getUnreadCount() == null ? 0 : value.getUnreadCount(),
+                tags);
+    }
+
+    private Map<Long, List<ConversationTagDto>> tagsByConversation(List<CrmWhatsappConversation> conversations) {
+        Map<Long, List<ConversationTagDto>> result = new LinkedHashMap<>();
+        List<Long> ids = conversations.stream().map(CrmWhatsappConversation::getIdConversation).toList();
+        if (ids.isEmpty()) return result;
+        for (CrmWhatsappConversationTag relation : conversationTagRepository.findActiveByConversationIds(ids)) {
+            result.computeIfAbsent(relation.getConversation().getIdConversation(), ignored -> new ArrayList<>())
+                    .add(conversationTag(relation));
+        }
+        return result;
+    }
+
+    private List<ConversationTagDto> conversationTagsInternal(Long conversationId) {
+        return conversationTagRepository.findActiveByConversationId(conversationId).stream()
+                .map(this::conversationTag).toList();
+    }
+
+    private ConversationTagDto conversationTag(CrmWhatsappConversationTag relation) {
+        CrmWhatsappTag tag = relation.getTag();
+        return new ConversationTagDto(tag.getIdTag(), tag.getNombre(), tag.getColor());
+    }
+
+    private CrmWhatsappTag requireTag(Long tagId, Integer actorCompanyId) {
+        if (tagId == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Etiqueta requerida");
+        return tagRepository.findByIdTagAndEmpresa_IdEmpresaAndDeletedAtIsNull(tagId, actorCompanyId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Etiqueta no encontrada"));
+    }
+
+    private String validateTagName(String value) {
+        String name = clean(value);
+        if (name.length() < 2 || name.length() > 80) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El nombre debe tener entre 2 y 80 caracteres");
+        }
+        return name;
+    }
+
+    private String validateTagColor(String value) {
+        String color = clean(value);
+        if (color.isBlank()) return "#3b82f6";
+        if (!color.matches("^#[0-9a-fA-F]{6}$")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Color invalido");
+        }
+        return color.toLowerCase();
     }
 
     private MessageDto message(CrmWhatsappMessage value) {
@@ -282,6 +418,11 @@ public class CrmShippingChatService {
                 "type", "warehouse.message.updated", "conversationId", conversationId));
     }
 
+    private void publishTag(Long conversationId) {
+        warehouseEventService.publishAfterCommit(java.util.Map.of(
+                "type", "warehouse.tag.updated", "conversationId", conversationId));
+    }
+
     private void requireBridgeSuccess(ResponseEntity<String> response) {
         if (response == null || !response.getStatusCode().is2xxSuccessful()) {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "No se pudo enviar el mensaje por WhatsApp");
@@ -314,7 +455,10 @@ public class CrmShippingChatService {
             long totalElements, boolean last) {}
     public record ConversationDto(Long id, String phone, String phoneNumber, String whatsappUsername,
             String contactName, String lastMessage, String lastMessageType, LocalDateTime lastMessageAt,
-            int unreadCount) {}
+            int unreadCount, List<ConversationTagDto> tags) {}
+    public record TagDto(Long id, String nombre, String color, long uso) {}
+    public record ConversationTagDto(Long id, String label, String color) {}
+    public record TagRequest(String nombre, String color) {}
     public record MessagePage(List<MessageDto> content, Long oldestId, Long newestId, boolean hasMoreBefore) {}
     public record SalesMessagePage(List<MessageDto> content, Long oldestId, Long newestId,
             boolean hasMoreBefore, boolean available) {}

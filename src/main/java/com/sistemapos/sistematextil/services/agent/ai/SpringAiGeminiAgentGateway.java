@@ -39,11 +39,13 @@ import com.sistemapos.sistematextil.services.ai.AiProviderException;
 
 @Service
 public class SpringAiGeminiAgentGateway implements AgentResponseGateway {
+    public static final String TOOLS_ENABLED_CONTEXT_KEY = "agentToolsEnabled";
     private final CrmWhatsappAiCredentialService credentialService;
     private final AgentRuntimeConfigService runtimeConfig;
     private final List<Object> safeTools;
     private final AgentSaleTools saleTools;
     private final AgentToolCallAuditService toolAudit;
+    private final AiInvocationAuditService invocationAudit;
     private final int timeoutMs;
     private final int maxOutputTokens;
 
@@ -60,6 +62,7 @@ public class SpringAiGeminiAgentGateway implements AgentResponseGateway {
             ProductSizeGuideTools sizeGuideTools,
             AgentSaleTools saleTools,
             AgentToolCallAuditService toolAudit,
+            AiInvocationAuditService invocationAudit,
             @Value("${crm.whatsapp.ai.gemini.timeout-ms:60000}") int timeoutMs,
             @Value("${crm.whatsapp.agent.response.max-output-tokens:1400}") int maxOutputTokens) {
         this.credentialService = credentialService;
@@ -68,6 +71,7 @@ public class SpringAiGeminiAgentGateway implements AgentResponseGateway {
                 fulfillmentTools, knowledgeTools, sizeGuideTools);
         this.saleTools = saleTools;
         this.toolAudit = toolAudit;
+        this.invocationAudit = invocationAudit;
         this.timeoutMs = Math.max(10000, timeoutMs);
         this.maxOutputTokens = Math.max(512, maxOutputTokens);
     }
@@ -78,7 +82,8 @@ public class SpringAiGeminiAgentGateway implements AgentResponseGateway {
         CredentialMaterial credentials = resolveCredentials(connectionId);
         int maxToolCalls = Math.max(1, Math.min(requestedMaxToolCalls, 30));
         AtomicInteger toolCalls = new AtomicInteger();
-        ToolCallback[] callbacks = callbacks(connectionId, maxToolCalls, toolCalls);
+        boolean toolsEnabled = !Boolean.FALSE.equals(prompt.toolContext().get(TOOLS_ENABLED_CONTEXT_KEY));
+        ToolCallback[] callbacks = toolsEnabled ? callbacks(connectionId, maxToolCalls, toolCalls) : new ToolCallback[0];
         long started = System.nanoTime();
 
         try (Client client = Client.builder().apiKey(credentials.apiKey())
@@ -87,21 +92,42 @@ public class SpringAiGeminiAgentGateway implements AgentResponseGateway {
                     .model(credentials.model()).temperature(0.15).maxOutputTokens(maxOutputTokens).build();
             ChatClient chat = ChatClient.create(GoogleGenAiChatModel.builder()
                     .genAiClient(client).options(options).build());
-            AgentTurnResponse response = chat.prompt()
+            var request = chat.prompt()
                     .system(prompt.systemInstruction())
-                    .user(prompt.userMessage())
-                    .tools((Object[]) callbacks)
-                    .toolContext(prompt.toolContext())
-                    .call()
-                    .entity(AgentTurnResponse.class);
+                    .user(prompt.userMessage());
+            if (toolsEnabled) request = request.tools((Object[]) callbacks).toolContext(prompt.toolContext());
+            var entity = request.call().responseEntity(AgentTurnResponse.class);
+            AgentTurnResponse response = entity.entity();
             validate(response);
-            return new AgentResponseResult("GEMINI", credentials.model(),
-                    Duration.ofNanos(System.nanoTime() - started).toMillis(), toolCalls.get(), response);
+            long latency = Duration.ofNanos(System.nanoTime() - started).toMillis();
+            AiTokenUsage usage = AiTokenUsage.from(entity.response().getMetadata().getUsage());
+            audit(prompt, connectionId, credentials, latency, toolCalls.get(), usage, null);
+            return new AgentResponseResult("GEMINI", credentials.model(), latency, toolCalls.get(), response, usage);
         } catch (AiProviderException error) {
+            audit(prompt, connectionId, credentials,
+                    Duration.ofNanos(System.nanoTime() - started).toMillis(), toolCalls.get(), null,
+                    error.getClass().getSimpleName());
             throw error;
         } catch (RuntimeException error) {
+            audit(prompt, connectionId, credentials,
+                    Duration.ofNanos(System.nanoTime() - started).toMillis(), toolCalls.get(), null,
+                    error.getClass().getSimpleName());
             throw mapProviderError(error);
         }
+    }
+
+    private void audit(AgentMainPrompt prompt, Long connectionId, CredentialMaterial credentials, long latency,
+            int toolCalls, AiTokenUsage usage, String errorCode) {
+        Long sessionId = number(prompt.toolContext().get(AgentCatalogTools.SESSION_ID_CONTEXT_KEY));
+        Long jobId = number(prompt.toolContext().get(AgentExecutionContext.JOB_ID));
+        Long conversationId = number(prompt.toolContext().get(AgentExecutionContext.CONVERSATION_ID));
+        Object requestedPhase = prompt.toolContext().get(AgentExecutionContext.AI_PHASE);
+        AiInvocationPhase phase = "CORRECTION".equals(String.valueOf(requestedPhase))
+                ? AiInvocationPhase.CORRECTION : AiInvocationPhase.RESPONSE;
+        var invocation = new AiInvocationAuditService.Invocation(connectionId, sessionId, jobId, conversationId,
+                phase, "GEMINI", credentials.model(), credentials.apiKey(), latency, toolCalls);
+        if (errorCode == null) invocationAudit.success(invocation, usage);
+        else invocationAudit.failure(invocation, errorCode);
     }
 
     private ToolCallback[] callbacks(Long connectionId, int maxToolCalls, AtomicInteger counter) {

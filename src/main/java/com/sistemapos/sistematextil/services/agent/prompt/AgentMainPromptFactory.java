@@ -7,6 +7,7 @@ import java.util.Map;
 
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -228,17 +229,36 @@ public class AgentMainPromptFactory {
 
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
     private final AgentRuntimeConfigService runtimeConfigService;
+    private final boolean compactContextEnabled;
 
     public AgentMainPromptFactory() {
-        this.runtimeConfigService = null;
+        this(null, false);
+    }
+
+    public AgentMainPromptFactory(AgentRuntimeConfigService runtimeConfigService) {
+        this(runtimeConfigService, false);
     }
 
     @Autowired
-    public AgentMainPromptFactory(AgentRuntimeConfigService runtimeConfigService) {
+    public AgentMainPromptFactory(AgentRuntimeConfigService runtimeConfigService,
+            @Value("${crm.whatsapp.agent.optimization.compact-context-enabled:false}") boolean compactContextEnabled) {
         this.runtimeConfigService = runtimeConfigService;
+        this.compactContextEnabled = compactContextEnabled;
     }
 
     public AgentMainPrompt create(AgentContext context) {
+        return create(context, compactContextEnabled);
+    }
+
+    public AgentMainPrompt createCompact(AgentContext context) {
+        return create(context, true);
+    }
+
+    public AgentMainPrompt createLegacy(AgentContext context) {
+        return create(context, false);
+    }
+
+    private AgentMainPrompt create(AgentContext context, boolean compact) {
         if (context == null) throw new IllegalArgumentException("El contexto del agente es obligatorio");
         if (context.sessionId() == null) throw new IllegalArgumentException("La sesion del agente es obligatoria");
         if (context.state() == null) throw new IllegalArgumentException("El estado del agente es obligatorio");
@@ -269,7 +289,7 @@ public class AgentMainPromptFactory {
         return new AgentMainPrompt(
                 PROMPT_VERSION,
                 system,
-                buildUserMessage(context),
+                buildUserMessage(context, compact),
                 Map.of(AgentCatalogTools.SESSION_ID_CONTEXT_KEY, context.sessionId()));
     }
 
@@ -298,13 +318,15 @@ public class AgentMainPromptFactory {
         };
     }
 
-    private String buildUserMessage(AgentContext context) {
+    private String buildUserMessage(AgentContext context, boolean compact) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("contextVersion", PROMPT_VERSION);
         payload.put("contextFingerprint", context.fingerprint());
         payload.put("session", sessionData(context));
-        payload.put("latestCustomerMessage", latestMessage(context.recentMessages(), Role.CUSTOMER));
-        payload.put("latestAssistantMessage", latestMessage(context.recentMessages(), Role.ASSISTANT));
+        if (!compact) {
+            payload.put("latestCustomerMessage", latestMessage(context.recentMessages(), Role.CUSTOMER));
+            payload.put("latestAssistantMessage", latestMessage(context.recentMessages(), Role.ASSISTANT));
+        }
         payload.put("previousConversationSummary", truncate(context.previousSummary(), 3000));
         payload.put("trustedBusinessState", trustedState(context));
         payload.put("pendingStep", pendingStep(context));

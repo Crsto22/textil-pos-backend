@@ -28,20 +28,26 @@ import org.mockito.ArgumentCaptor;
 import com.sistemapos.sistematextil.model.CrmWhatsappArea;
 import com.sistemapos.sistematextil.model.CrmWhatsappConnection;
 import com.sistemapos.sistematextil.model.CrmWhatsappConversation;
+import com.sistemapos.sistematextil.model.CrmWhatsappConversationTag;
+import com.sistemapos.sistematextil.model.CrmWhatsappTag;
 import com.sistemapos.sistematextil.model.Empresa;
 import com.sistemapos.sistematextil.model.Sucursal;
 import com.sistemapos.sistematextil.model.Usuario;
+import com.sistemapos.sistematextil.repositories.CrmWhatsappConversationTagRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappConversationRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappMessageRepository;
-import com.sistemapos.sistematextil.repositories.CrmWarehouseOrderRepository;
+import com.sistemapos.sistematextil.repositories.CrmWhatsappTagRepository;
+import com.sistemapos.sistematextil.repositories.EmpresaRepository;
 import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.util.usuario.Rol;
 
 @ExtendWith(MockitoExtension.class)
 class CrmShippingChatServiceTest {
     @Mock CrmWhatsappConversationRepository conversationRepository;
+    @Mock CrmWhatsappConversationTagRepository conversationTagRepository;
     @Mock CrmWhatsappMessageRepository messageRepository;
-    @Mock CrmWarehouseOrderRepository warehouseOrderRepository;
+    @Mock CrmWhatsappTagRepository tagRepository;
+    @Mock EmpresaRepository empresaRepository;
     @Mock SucursalRepository sucursalRepository;
     @Mock CrmWhatsappBridgeService bridgeService;
     @Mock CrmWhatsappNumberChangeNoticeService numberChangeNoticeService;
@@ -56,7 +62,7 @@ class CrmShippingChatServiceTest {
         actor.setRol(Rol.VENTAS);
 
         ResponseStatusException error = assertThrows(ResponseStatusException.class,
-                () -> service.conversations(actor, "", 0, 10));
+                () -> service.conversations(actor, "", null, 0, 10));
 
         assertEquals(HttpStatus.FORBIDDEN, error.getStatusCode());
     }
@@ -81,25 +87,25 @@ class CrmShippingChatServiceTest {
     @Test
     void shippingConversationPageIsLimitedToFiftyItems() {
         Usuario actor = administrator(7);
-        when(conversationRepository.findShippingChatConversations(eq(7), eq(null), any(Pageable.class)))
+        when(conversationRepository.findShippingChatConversations(eq(7), eq(null), eq(null), any(Pageable.class)))
                 .thenReturn(Page.empty());
 
-        service.conversations(actor, "", 0, 50);
+        service.conversations(actor, "", null, 0, 50);
 
         ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
-        verify(conversationRepository).findShippingChatConversations(eq(7), eq(null), pageable.capture());
+        verify(conversationRepository).findShippingChatConversations(eq(7), eq(null), eq(null), pageable.capture());
         assertEquals(50, pageable.getValue().getPageSize());
     }
 
     @Test
     void warehouseRoleListsShippingConversationsWithMessagesFromItsCompany() {
         Usuario actor = warehouse(7, 12);
-        when(conversationRepository.findShippingChatConversations(eq(7), eq(null), any(Pageable.class)))
+        when(conversationRepository.findShippingChatConversations(eq(7), eq(null), eq(null), any(Pageable.class)))
                 .thenReturn(Page.empty());
 
-        service.conversations(actor, "", 0, 10);
+        service.conversations(actor, "", null, 0, 10);
 
-        verify(conversationRepository).findShippingChatConversations(eq(7), eq(null), any(Pageable.class));
+        verify(conversationRepository).findShippingChatConversations(eq(7), eq(null), eq(null), any(Pageable.class));
     }
 
     @Test
@@ -170,6 +176,73 @@ class CrmShippingChatServiceTest {
         assertEquals("Ana Envios", message.getValue().getActorName());
     }
 
+    @Test
+    void warehouseRoleAssignsCompanyTagToShippingConversationWithoutSalesAssignment() {
+        Usuario actor = warehouse(7, 12);
+        CrmWhatsappConversation conversation = shippingConversation(22L, actor.getSucursal().getEmpresa());
+        CrmWhatsappTag tag = new CrmWhatsappTag();
+        tag.setIdTag(5L);
+        tag.setNombre("Urgente");
+        tag.setColor("#ef4444");
+        tag.setEmpresa(actor.getSucursal().getEmpresa());
+        when(conversationRepository.findById(22L)).thenReturn(Optional.of(conversation));
+        when(tagRepository.findByIdTagAndEmpresa_IdEmpresaAndDeletedAtIsNull(5L, 7)).thenReturn(Optional.of(tag));
+        when(conversationTagRepository.findFirstByConversation_IdConversationAndTag_IdTagOrderByIdConversationTagAsc(22L, 5L))
+                .thenReturn(Optional.empty());
+        when(conversationTagRepository.findActiveByConversationId(22L)).thenAnswer(invocation -> {
+            CrmWhatsappConversationTag relation = new CrmWhatsappConversationTag();
+            relation.setConversation(conversation);
+            relation.setTag(tag);
+            return List.of(relation);
+        });
+
+        var result = service.assignTag(22L, 5L, actor);
+
+        assertEquals("Urgente", result.getFirst().label());
+        verify(conversationTagRepository).save(any(CrmWhatsappConversationTag.class));
+    }
+
+    @Test
+    void warehouseTagApiRejectsSalesConversation() {
+        Usuario actor = warehouse(7, 12);
+        CrmWhatsappConnection connection = new CrmWhatsappConnection();
+        connection.setArea(CrmWhatsappArea.SALES);
+        connection.setEmpresa(actor.getSucursal().getEmpresa());
+        CrmWhatsappConversation conversation = new CrmWhatsappConversation();
+        conversation.setIdConversation(22L);
+        conversation.setConnection(connection);
+        when(conversationRepository.findById(22L)).thenReturn(Optional.of(conversation));
+
+        ResponseStatusException error = assertThrows(ResponseStatusException.class,
+                () -> service.assignTag(22L, 5L, actor));
+
+        assertEquals(HttpStatus.NOT_FOUND, error.getStatusCode());
+    }
+
+    @Test
+    void shippingConversationFilterUsesAnActiveCompanyTag() {
+        Usuario actor = warehouse(7, 12);
+        CrmWhatsappTag tag = new CrmWhatsappTag();
+        tag.setIdTag(5L);
+        when(tagRepository.findByIdTagAndEmpresa_IdEmpresaAndDeletedAtIsNull(5L, 7)).thenReturn(Optional.of(tag));
+        when(conversationRepository.findShippingChatConversations(eq(7), eq(null), eq(5L), any(Pageable.class)))
+                .thenReturn(Page.empty());
+
+        service.conversations(actor, "", 5L, 0, 10);
+
+        verify(conversationRepository).findShippingChatConversations(eq(7), eq(null), eq(5L), any(Pageable.class));
+    }
+
+    private CrmWhatsappConversation shippingConversation(long id, Empresa company) {
+        CrmWhatsappConnection connection = new CrmWhatsappConnection();
+        connection.setArea(CrmWhatsappArea.SHIPPING);
+        connection.setEmpresa(company);
+        CrmWhatsappConversation conversation = new CrmWhatsappConversation();
+        conversation.setIdConversation(id);
+        conversation.setConnection(connection);
+        return conversation;
+    }
+
     private Usuario administrator(int companyId) {
         Empresa company = new Empresa();
         company.setIdEmpresa(companyId);
@@ -178,6 +251,7 @@ class CrmShippingChatServiceTest {
         Usuario actor = new Usuario();
         actor.setIdUsuario(1);
         actor.setRol(Rol.ADMINISTRADOR);
+        actor.setEstado("ACTIVO");
         actor.setSucursal(branch);
         return actor;
     }

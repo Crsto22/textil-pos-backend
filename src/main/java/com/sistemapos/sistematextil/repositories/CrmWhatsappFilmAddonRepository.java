@@ -28,6 +28,12 @@ public interface CrmWhatsappFilmAddonRepository extends JpaRepository<CrmWhatsap
     @Query("select f from CrmWhatsappFilmAddon f where f.venta.idVenta=:saleId and f.status in :statuses")
     Optional<CrmWhatsappFilmAddon> findPendingForSale(@Param("saleId") Integer saleId,
             @Param("statuses") Collection<CrmWhatsappFilmStatus> statuses);
+    @Query("select f from CrmWhatsappFilmAddon f where f.conversation.idConversation=:conversationId "
+            + "and f.status in :statuses order by f.createdAt desc")
+    List<CrmWhatsappFilmAddon> findPendingForConversation(
+            @Param("conversationId") Long conversationId,
+            @Param("statuses") Collection<CrmWhatsappFilmStatus> statuses,
+            Pageable pageable);
     @Query("select f.idFilmAddon from CrmWhatsappFilmAddon f where f.status in :statuses and (f.venta is null or f.finalMessageSentAt is null) order by f.updatedAt")
     List<Long> findPendingFinalizationIds(@Param("statuses") Collection<CrmWhatsappFilmStatus> statuses,
             Pageable pageable);

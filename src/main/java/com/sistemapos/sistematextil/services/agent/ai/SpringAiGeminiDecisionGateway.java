@@ -6,6 +6,7 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.google.genai.GoogleGenAiChatModel;
 import org.springframework.ai.google.genai.GoogleGenAiChatOptions;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import com.google.genai.Client;
@@ -15,6 +16,7 @@ import com.google.genai.types.HttpOptions;
 import com.sistemapos.sistematextil.services.CrmWhatsappAiCredentialService;
 import com.sistemapos.sistematextil.services.CrmWhatsappAiCredentialService.CredentialMaterial;
 import com.sistemapos.sistematextil.services.ai.AiProviderException;
+import com.sistemapos.sistematextil.services.agent.config.AgentOptimizationSafetyService;
 
 @Service
 public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
@@ -281,17 +283,70 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
             La confianza debe estar entre 0 y 100.
             """;
 
+    private static final String COMPACT_SYSTEM_PROMPT = """
+            Eres el clasificador aislado del agente de ventas Kiments. No respondas al cliente, no consultes
+            herramientas y no modifiques datos. Devuelve todos los campos del esquema estructurado: nunca null;
+            usa texto vacio, cantidad 0 y listas vacias cuando falten datos. La confianza va de 0 a 100.
+
+            Clasifica por significado del MENSAJE_ACTUAL_CLIENTE, ESTADO_ACTUAL, resumen, estado comercial y hasta
+            diez mensajes previos. El historial solo resuelve referencias. No inventes producto, variante, cantidad,
+            promocion, pago, entrega ni datos personales. Conserva literalmente todos los modelos en
+            productReferences y el primero en productReference. Conserva juntos producto, color, talla y cantidad.
+
+            Acciones de lectura: SHOW_PRODUCTS, SHOW_PRODUCT, SHOW_PRODUCT_AVAILABILITY,
+            SHOW_PRODUCT_AVAILABILITY_FOR_DELIVERY, SHOW_PRODUCT_IMAGES, SHOW_PRODUCT_COLOR_GALLERY,
+            SHOW_SIZE_GUIDE, RECOMMEND_SIZE, SHOW_PROMOTIONS y BUSINESS_INFORMATION. Stock, catálogo, precio,
+            promociones y variantes nunca son BUSINESS_INFORMATION. Usa READY_STOCK_ONLY cuando una fecha cercana
+            exige mercadería lista. Para talla reúne todas las medidas vigentes y no calcules una talla.
+
+            Acciones de carrito: ADD_PRODUCT, CHANGE_CART, CANCEL_PENDING_CART y CONFIRM_CART. Detalla la operación
+            en cartAction: ADD_PRODUCT, CHANGE_QUANTITY, KEEP_ONLY_PRODUCT, CHANGE_VARIANT, REPLACE_PRODUCT,
+            REPLACE_CART, CLARIFY_CART_SCOPE, REMOVE_PRODUCT, CLEAR_CART, CONFIRM_CART o ADD_PROMOTION.
+            ADD_PRODUCT solo si quiere conservar lo anterior; REPLACE_CART solo si la selección es el
+            pedido final completo; si no es claro usa CLARIFY_CART_SCOPE. Para promociones usa CHANGE_CART con
+            cartAction=ADD_PROMOTION y conserva promotionReference/promotionSelections. Nunca afirmes que Java ya
+            ejecutó una operación.
+
+            Cliente, pago y entrega: PROVIDE_CUSTOMER_DATA, CONFIRM_EXISTING_CUSTOMER, SHOW_PAYMENT_METHODS,
+            SELECT_PAYMENT_METHOD, PAYMENT_TIME_REMAINING, RETRY_PAYMENT, EXPLAIN_IMMEDIATE_PAYMENT_POLICY,
+            SELECT_PICKUP, SELECT_SHALOM, PROVIDE_SHALOM_DATA, CONFIRM_SHALOM_AGENCY, HAS_PREVIOUS_PENDING_ORDER,
+            NO_PREVIOUS_PENDING_ORDER, ACCEPT_FILM y DECLINE_FILM. Solo usa una acción
+            pendiente si el mensaje realmente aporta o confirma ese dato; una pregunta intermedia conserva el paso.
+            Los cambios de carrito antes de la venta no son postventa. No confundas pago principal y film.
+
+            SHARE_DELIVERY_TIMING_CONTACT aplica antes de comprar; REFER_EXISTING_ORDER_DELIVERY cuando consulta una
+            venta previa. Saludos, agradecimientos y aclaraciones usan la intención conversacional correspondiente.
+            Si hay ambigüedad real pide una sola aclaración mediante la acción adecuada. Mantén todas las restricciones
+            y campos del esquema de salida; Java verificará catálogo, promociones, stock, carrito, pagos y entrega.
+            """;
+
     private final CrmWhatsappAiCredentialService credentialService;
     private final int timeoutMs;
     private final int maxOutputTokens;
+    private final boolean compactPromptEnabled;
+    private final AiInvocationAuditService invocationAudit;
+    private final AgentOptimizationSafetyService optimizationSafety;
 
     public SpringAiGeminiDecisionGateway(
             CrmWhatsappAiCredentialService credentialService,
+            int timeoutMs, int maxOutputTokens) {
+        this(credentialService, timeoutMs, maxOutputTokens, false, null, null);
+    }
+
+    @Autowired
+    public SpringAiGeminiDecisionGateway(
+            CrmWhatsappAiCredentialService credentialService,
             @Value("${crm.whatsapp.ai.gemini.timeout-ms:60000}") int timeoutMs,
-            @Value("${crm.whatsapp.agent.bootstrap.max-output-tokens:700}") int maxOutputTokens) {
+            @Value("${crm.whatsapp.agent.bootstrap.max-output-tokens:450}") int maxOutputTokens,
+            @Value("${crm.whatsapp.agent.optimization.compact-classifier-enabled:false}") boolean compactPromptEnabled,
+            AiInvocationAuditService invocationAudit,
+            AgentOptimizationSafetyService optimizationSafety) {
         this.credentialService = credentialService;
         this.timeoutMs = Math.max(10000, timeoutMs);
         this.maxOutputTokens = Math.max(256, maxOutputTokens);
+        this.compactPromptEnabled = compactPromptEnabled;
+        this.invocationAudit = invocationAudit;
+        this.optimizationSafety = optimizationSafety;
     }
 
     @Override
@@ -317,25 +372,50 @@ public class SpringAiGeminiDecisionGateway implements AgentDecisionGateway {
                     .build();
             ChatClient chatClient = ChatClient.create(model);
 
-            AgentConversationDecision decision = chatClient.prompt()
-                    .system(SYSTEM_PROMPT)
+            var entity = chatClient.prompt()
+                    .system(compactPromptEnabled && optimizationSafety.allows(connectionId)
+                            ? compactSystemPrompt() : SYSTEM_PROMPT)
                     .user(conversation.trim())
                     .call()
-                    .entity(AgentConversationDecision.class);
+                    .responseEntity(AgentConversationDecision.class);
+            AgentConversationDecision decision = entity.entity();
 
             validateDecision(decision);
+            long latency = Duration.ofNanos(System.nanoTime() - started).toMillis();
+            AiTokenUsage usage = AiTokenUsage.from(entity.response().getMetadata().getUsage());
+            audit(connectionId, credentials, latency, usage, null);
             return new AgentInterpretationResult(
                     "GEMINI",
                     credentials.model(),
                     credentials.source(),
-                    Duration.ofNanos(System.nanoTime() - started).toMillis(),
+                    latency,
                     0,
-                    decision);
+                    decision,
+                    usage);
         } catch (AiProviderException error) {
+            audit(connectionId, credentials, Duration.ofNanos(System.nanoTime() - started).toMillis(), null,
+                    error.getClass().getSimpleName());
             throw error;
         } catch (RuntimeException error) {
+            audit(connectionId, credentials, Duration.ofNanos(System.nanoTime() - started).toMillis(), null,
+                    error.getClass().getSimpleName());
             throw mapProviderError(error);
         }
+    }
+
+    static String compactSystemPrompt() {
+        return COMPACT_SYSTEM_PROMPT
+                + "\nValores válidos de commercialAction: " + java.util.Arrays.toString(AgentCommercialAction.values())
+                + ".\nValores válidos de cartAction: " + java.util.Arrays.toString(AgentCartAction.values()) + ".";
+    }
+
+    private void audit(Long connectionId, CredentialMaterial credentials, long latency, AiTokenUsage usage,
+            String errorCode) {
+        if (invocationAudit == null) return;
+        var invocation = new AiInvocationAuditService.Invocation(connectionId, null, null, null,
+                AiInvocationPhase.DECISION, "GEMINI", credentials.model(), credentials.apiKey(), latency, 0);
+        if (errorCode == null) invocationAudit.success(invocation, usage);
+        else invocationAudit.failure(invocation, errorCode);
     }
 
     private CredentialMaterial resolveCredentials(Long connectionId) {

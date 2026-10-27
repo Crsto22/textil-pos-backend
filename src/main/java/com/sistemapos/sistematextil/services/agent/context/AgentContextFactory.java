@@ -33,8 +33,11 @@ public class AgentContextFactory {
     public AgentContextFactory(
             AgentContextDataSource dataSource,
             @Value("${crm.whatsapp.agent.context.recent-message-limit:30}") int recentMessageLimit,
-            @Value("${crm.whatsapp.agent.context.tool-result-limit:12}") int toolResultLimit) {
-        this(dataSource, new ObjectMapper().findAndRegisterModules(), recentMessageLimit, toolResultLimit);
+            @Value("${crm.whatsapp.agent.context.tool-result-limit:12}") int toolResultLimit,
+            @Value("${crm.whatsapp.agent.optimization.compact-context-enabled:false}") boolean compactContextEnabled) {
+        this(dataSource, new ObjectMapper().findAndRegisterModules(),
+                compactContextEnabled ? Math.min(recentMessageLimit, 12) : recentMessageLimit,
+                compactContextEnabled ? Math.min(toolResultLimit, 5) : toolResultLimit);
     }
 
     AgentContextFactory(

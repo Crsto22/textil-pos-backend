@@ -133,6 +133,21 @@ public interface CrmWhatsappMessageRepository extends JpaRepository<CrmWhatsappM
             @Param("afterId") Long afterId,
             Pageable pageable);
 
+    @Query("""
+            SELECT m
+            FROM CrmWhatsappMessage m
+            WHERE m.conversation.idConversation = :conversationId
+              AND m.deletedAt IS NULL
+              AND m.mediaStoragePath IS NOT NULL
+              AND m.mediaStoragePath <> ''
+              AND (:beforeId IS NULL OR m.idMessage < :beforeId)
+            ORDER BY m.idMessage DESC
+            """)
+    List<CrmWhatsappMessage> findGalleryPage(
+            @Param("conversationId") Long conversationId,
+            @Param("beforeId") Long beforeId,
+            Pageable pageable);
+
     @Query(value = """
             SELECT *
             FROM crm_whatsapp_message

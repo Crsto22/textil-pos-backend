@@ -381,6 +381,16 @@ public class CrmWhatsappController {
                 currentUser(authentication)));
     }
 
+    @GetMapping("/conversations/{id}/gallery")
+    public ResponseEntity<?> listarGaleria(
+            @PathVariable("id") Long id,
+            @RequestParam(name = "beforeId", required = false) Long beforeId,
+            @RequestParam(name = "limit", defaultValue = "24") int limit,
+            Authentication authentication) {
+        return ResponseEntity.ok(crmWhatsappChatService.listarGaleria(
+                id, beforeId, limit, currentUser(authentication)));
+    }
+
     @PostMapping("/conversations/{id}/read-state")
     public ResponseEntity<?> actualizarEstadoLectura(
             @PathVariable("id") Long id,

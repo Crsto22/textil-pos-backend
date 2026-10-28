@@ -363,6 +363,35 @@ public class CrmWhatsappChatService {
         return new MessagePageResponse(content, oldestId, newestId, hasMoreBefore);
     }
 
+    @Transactional(readOnly = true)
+    public GalleryPageResponse listarGaleria(
+            Long conversationId,
+            Long beforeId,
+            int limit,
+            Usuario usuarioSesion) {
+        Usuario actor = requireCrmUser(usuarioSesion);
+        CrmWhatsappConversation conversation = requireConversation(conversationId);
+        requireCanReadMessages(conversation, actor);
+        int pageSize = Math.max(1, Math.min(limit <= 0 ? 24 : limit, 50));
+        List<CrmWhatsappMessage> selected = messageRepository.findGalleryPage(
+                conversationId, beforeId, PageRequest.of(0, pageSize + 1));
+        boolean hasMoreBefore = selected.size() > pageSize;
+        if (hasMoreBefore) selected = new ArrayList<>(selected.subList(0, pageSize));
+        List<GalleryItemResponse> content = selected.stream()
+                .map(message -> new GalleryItemResponse(
+                        message.getIdMessage(),
+                        message.getMessageType(),
+                        message.getMediaMimeType(),
+                        message.getMediaFileName(),
+                        message.getBody(),
+                        message.getDirection(),
+                        message.getCreatedAt(),
+                        "/api/crm/whatsapp/messages/" + message.getIdMessage() + "/media"))
+                .toList();
+        Long oldestId = content.isEmpty() ? null : content.getLast().id();
+        return new GalleryPageResponse(content, oldestId, hasMoreBefore);
+    }
+
     @Transactional
     public ConversationResponse actualizarEstadoLectura(
             Long conversationId,
@@ -3500,6 +3529,23 @@ public class CrmWhatsappChatService {
             List<MessageResponse> content,
             Long oldestId,
             Long newestId,
+            boolean hasMoreBefore) {
+    }
+
+    public record GalleryItemResponse(
+            Long id,
+            String messageType,
+            String mimeType,
+            String fileName,
+            String description,
+            String direction,
+            LocalDateTime createdAt,
+            String mediaUrl) {
+    }
+
+    public record GalleryPageResponse(
+            List<GalleryItemResponse> content,
+            Long oldestId,
             boolean hasMoreBefore) {
     }
 

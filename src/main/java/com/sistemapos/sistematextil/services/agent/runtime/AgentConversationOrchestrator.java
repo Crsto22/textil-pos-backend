@@ -263,9 +263,11 @@ public class AgentConversationOrchestrator {
                           contacto: explica que no encontraste una venta registrada por este chat y comparte 936310946.
                         - Si la clienta solicita todos los productos de un grupo, incluye todos los productos presentes
                           en la evidencia; no agregues modelos, tipos de prenda ni variantes que no aparezcan alli.
-                        - Cuando commercialAction sea SHOW_PRODUCTS, incluye siempre https://kiments.com.pe/productos
-                          como galeria completa, ademas de responder con los productos reales de la evidencia. Redacta
-                          naturalmente y continua ayudando a elegir o comprar; no conviertas esta regla en una plantilla.
+                        - Cuando commercialAction sea SHOW_PRODUCTS, presenta primero todos los productos reales de la
+                          evidencia, separando naturalmente disponibilidad inmediata y preventa cuando corresponda.
+                          Solo despues agrega una vez https://kiments.com.pe/productos como referencia visual. El enlace
+                          nunca reemplaza la lista ni puede ser la respuesta principal. Redacta naturalmente y continua
+                          ayudando a elegir o comprar; no conviertas esta regla en una plantilla.
                         - Cuando exista promotions, responde la consulta usando esa lista real. Solo puedes afirmar que
                           no hay promociones cuando promotions este presente y su lista sea vacia. Conserva la lista
                           real de combos y agrega tambien https://kiments.com.pe/promociones para que la clienta pueda
@@ -649,14 +651,46 @@ public class AgentConversationOrchestrator {
                 + "explica brevemente la opcion disponible o solicita precisar el modelo.";
     }
 
-    static String catalogUrlCorrectionInstruction(AgentVerifiedGroundingService.Grounding grounding,
+    String catalogUrlCorrectionInstruction(AgentVerifiedGroundingService.Grounding grounding,
             String customerMessage) {
         if (grounding == null || grounding.decision() == null
                 || grounding.decision().commercialAction() != AgentCommercialAction.SHOW_PRODUCTS) return "";
-        if (customerMessage != null && customerMessage.contains("https://kiments.com.pe/productos")) return "";
-        return "La clienta solicito el catalogo o la lista general de productos. Conserva la lista real y agrega "
-                + "https://kiments.com.pe/productos como galeria completa. Redacta naturalmente y sigue ayudando "
-                + "con la compra; no uses una plantilla fija.";
+        String catalogUrl = "https://kiments.com.pe/productos";
+        List<String> verifiedProducts = new ArrayList<>();
+        try {
+            JsonNode products = evidenceMapper.readTree(grounding.evidenceJson())
+                    .path("productSearch").path("products");
+            if (products.isArray()) products.forEach(product -> {
+                String name = product.path("name").asText("").trim();
+                if (!name.isBlank()) verifiedProducts.add(name);
+            });
+        } catch (Exception ignored) {
+            // Other commercial validators handle malformed or absent evidence.
+        }
+        String normalizedResponse = normalizeText(customerMessage);
+        List<String> omitted = verifiedProducts.stream()
+                .filter(name -> !normalizedResponse.contains(normalizeText(name)))
+                .toList();
+        boolean hasUrl = customerMessage != null && customerMessage.contains(catalogUrl);
+        int lastProductIndex = verifiedProducts.stream()
+                .mapToInt(name -> normalizedResponse.indexOf(normalizeText(name)))
+                .filter(index -> index >= 0)
+                .max()
+                .orElse(-1);
+        boolean urlNotAfterProducts = hasUrl && lastProductIndex >= 0
+                && normalizedResponse.indexOf(catalogUrl) < lastProductIndex;
+        List<String> corrections = new ArrayList<>();
+        if (!omitted.isEmpty()) {
+            corrections.add("La respuesta debe mostrar todos los productos verificados antes de remitir a la web. "
+                    + "Incluye, sin omitir: " + String.join(", ", verifiedProducts) + ".");
+        }
+        if (!hasUrl) {
+            corrections.add("Agrega una sola vez " + catalogUrl + " al final como referencia visual.");
+        } else if (urlNotAfterProducts) {
+            corrections.add("Mueve " + catalogUrl + " al final, despues de presentar los productos; el enlace no "
+                    + "puede sustituir ni anteceder la respuesta del catalogo.");
+        }
+        return String.join(" ", corrections);
     }
 
     static String ensurePromotionsUrl(AgentVerifiedGroundingService.Grounding grounding, String customerMessage) {

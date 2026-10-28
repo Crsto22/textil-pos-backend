@@ -68,6 +68,23 @@ class AgentMessageBatchFactoryTest {
     }
 
     @Test
+    void keepsSemanticallyRelatedFragmentsBeyondTheQuietWindow() {
+        CrmWhatsappMessageRepository repository = mock(CrmWhatsappMessageRepository.class);
+        AgentMessageBatchFactory factory = new AgentMessageBatchFactory(repository, 5000, 30000, 15);
+        CrmWhatsappMessage third = message(3L, BASE.plusSeconds(13), "TEXT", "Lo envies");
+        CrmWhatsappMessage second = message(2L, BASE.plusSeconds(7), "TEXT", "Para mañana");
+        CrmWhatsappMessage first = message(1L, BASE, "TEXT", "Que modelos tienes en talla S");
+        when(repository.findActiveMessagesEndingAt(eq(20L), eq(3L), any(Pageable.class)))
+                .thenReturn(List.of(third, second, first));
+
+        AgentMessageBatch batch = factory.build(10L, 20L, 3L);
+
+        assertEquals(List.of(1L, 2L, 3L),
+                batch.messages().stream().map(AgentMessageBatch.Item::messageId).toList());
+        assertEquals("Que modelos tienes en talla S\nPara mañana\nLo envies", batch.combinedInput());
+    }
+
+    @Test
     void marksAudioWithoutTranscriptAndHonorsTheMaximumBatchSize() {
         CrmWhatsappMessageRepository repository = mock(CrmWhatsappMessageRepository.class);
         AgentMessageBatchFactory factory = new AgentMessageBatchFactory(repository, 5000, 2);

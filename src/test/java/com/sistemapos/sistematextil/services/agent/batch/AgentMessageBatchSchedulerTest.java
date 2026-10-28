@@ -69,7 +69,7 @@ class AgentMessageBatchSchedulerTest {
         assertEquals(3, jobs.jobs.stream().filter(job -> "OBSOLETE".equals(job.status())).count());
         JobReference current = jobs.jobs.getLast();
         assertEquals(4L, current.anchorMessageId());
-        assertEquals(LocalDateTime.of(2026, 10, 8, 18, 0, 8), current.availableAt());
+        assertEquals(LocalDateTime.of(2026, 10, 8, 18, 0, 13), current.availableAt());
         assertTrue(scheduler.isCurrentBeforeDelivery(current.jobId()));
         assertFalse(scheduler.isCurrentBeforeDelivery(jobs.jobs.getFirst().jobId()));
     }

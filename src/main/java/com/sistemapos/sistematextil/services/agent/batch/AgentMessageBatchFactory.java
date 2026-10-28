@@ -21,7 +21,7 @@ import com.sistemapos.sistematextil.services.agent.config.AgentRuntimeConfigServ
 @Service
 public class AgentMessageBatchFactory {
     private final CrmWhatsappMessageRepository messageRepository;
-    private final Duration window;
+    private final Duration contextWindow;
     private final int maxMessages;
     private final AgentRuntimeConfigService runtimeConfig;
 
@@ -30,16 +30,26 @@ public class AgentMessageBatchFactory {
             CrmWhatsappMessageRepository messageRepository,
             AgentRuntimeConfigService runtimeConfig,
             @Value("${crm.whatsapp.agent.batch.window-ms:5000}") long windowMs,
+            @Value("${crm.whatsapp.agent.batch.context-window-ms:30000}") long contextWindowMs,
             @Value("${crm.whatsapp.agent.batch.max-messages:15}") int maxMessages) {
         this.messageRepository = messageRepository;
-        this.window = Duration.ofMillis(Math.max(500, Math.min(windowMs, 60000)));
+        long normalizedWindowMs = Math.max(500, Math.min(windowMs, 60000));
+        this.contextWindow = Duration.ofMillis(
+                Math.max(normalizedWindowMs, Math.min(contextWindowMs, 120000)));
         this.maxMessages = Math.max(1, Math.min(maxMessages, 50));
         this.runtimeConfig = runtimeConfig;
     }
 
     AgentMessageBatchFactory(CrmWhatsappMessageRepository messageRepository, long windowMs, int maxMessages) {
+        this(messageRepository, windowMs, windowMs, maxMessages);
+    }
+
+    AgentMessageBatchFactory(CrmWhatsappMessageRepository messageRepository, long windowMs,
+            long contextWindowMs, int maxMessages) {
         this.messageRepository = messageRepository;
-        this.window = Duration.ofMillis(Math.max(500, Math.min(windowMs, 60000)));
+        long normalizedWindowMs = Math.max(500, Math.min(windowMs, 60000));
+        this.contextWindow = Duration.ofMillis(
+                Math.max(normalizedWindowMs, Math.min(contextWindowMs, 120000)));
         this.maxMessages = Math.max(1, Math.min(maxMessages, 50));
         this.runtimeConfig = null;
     }
@@ -50,7 +60,8 @@ public class AgentMessageBatchFactory {
             throw new IllegalArgumentException("Sesion, conversacion y mensaje ancla son obligatorios");
         }
         var config = runtimeConfig == null ? null : runtimeConfig.forSession(sessionId);
-        Duration effectiveWindow = config == null ? window : Duration.ofMillis(config.messageGroupingMs());
+        Duration effectiveWindow = config == null ? contextWindow
+                : max(contextWindow, Duration.ofMillis(config.messageGroupingMs()));
         int effectiveMax = config == null ? maxMessages : config.maxMessagesPerBatch();
         List<CrmWhatsappMessage> candidates = messageRepository.findActiveMessagesEndingAt(
                 conversationId, anchorMessageId, PageRequest.of(0, Math.min(200, effectiveMax * 4)));
@@ -128,5 +139,9 @@ public class AgentMessageBatchFactory {
 
     private String clean(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private static Duration max(Duration left, Duration right) {
+        return left.compareTo(right) >= 0 ? left : right;
     }
 }

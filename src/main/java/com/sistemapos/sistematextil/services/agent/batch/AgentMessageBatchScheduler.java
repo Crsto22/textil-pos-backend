@@ -19,6 +19,7 @@ import com.sistemapos.sistematextil.services.agent.config.AgentRuntimeConfigServ
 
 @Service
 public class AgentMessageBatchScheduler {
+    private static final Duration MINIMUM_SEMANTIC_WINDOW = Duration.ofSeconds(10);
     private final CrmWhatsappMessageRepository messageRepository;
     private final AgentSessionResolver sessionResolver;
     private final AgentJobStore jobStore;
@@ -56,7 +57,7 @@ public class AgentMessageBatchScheduler {
         this.messageRepository = messageRepository;
         this.sessionResolver = sessionResolver;
         this.jobStore = jobStore;
-        this.window = window;
+        this.window = max(window, MINIMUM_SEMANTIC_WINDOW);
         this.clock = clock;
         this.runtimeConfig = runtimeConfig;
     }
@@ -91,7 +92,8 @@ public class AgentMessageBatchScheduler {
                     null, invalidated);
         }
         Duration effectiveWindow = runtimeConfig == null ? window
-                : Duration.ofMillis(runtimeConfig.forConnection(connectionId).messageGroupingMs());
+                : max(Duration.ofMillis(runtimeConfig.forConnection(connectionId).messageGroupingMs()),
+                        MINIMUM_SEMANTIC_WINDOW);
         JobReference job = jobStore.enqueue(session.getIdAgentSession(), messageId, now.plus(effectiveWindow));
         return new ScheduleResult(true, false, job.jobId(), session.getIdAgentSession(), messageId,
                 job.availableAt(), invalidated);
@@ -105,6 +107,10 @@ public class AgentMessageBatchScheduler {
         return message != null
                 && message.getDeletedAt() == null
                 && "INCOMING".equalsIgnoreCase(message.getDirection());
+    }
+
+    private static Duration max(Duration left, Duration right) {
+        return left.compareTo(right) >= 0 ? left : right;
     }
 
     private boolean isWorkflowEvidence(CrmWhatsappMessage message, CrmWhatsappAgentState state) {

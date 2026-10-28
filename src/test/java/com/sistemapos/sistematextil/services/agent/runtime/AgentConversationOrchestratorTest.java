@@ -450,11 +450,11 @@ class AgentConversationOrchestratorTest {
         when(fixture.grounding.ground(eq(7L), eq(8L), eq(41L), any())).thenReturn(
                 new AgentVerifiedGroundingService.Grounding(
                         catalog,
-                        "{\"products\":[{\"name\":\"EMMA\",\"priceFrom\":65.0}]}",
+                        "{\"productSearch\":{\"products\":[{\"name\":\"EMMA\",\"priceFrom\":65.0}]}}",
                         java.util.List.of(), 1, false));
         when(fixture.gateway.respond(eq(7L), any(), eq(12)))
                 .thenReturn(new AgentResponseResult("GEMINI", "gemini", 100, 1,
-                        new AgentTurnResponse("Emma esta disponible a S/65.00.", "Catalogo", false,
+                        new AgentTurnResponse("Revisa https://kiments.com.pe/productos", "Catalogo", false,
                                 java.util.List.of())))
                 .thenReturn(new AgentResponseResult("GEMINI", "gemini", 90, 0,
                         new AgentTurnResponse(
@@ -468,6 +468,9 @@ class AgentConversationOrchestratorTest {
         ArgumentCaptor<GeneratedTurn> turn = ArgumentCaptor.forClass(GeneratedTurn.class);
         verify(fixture.jobs).saveGeneratedTurn(eq(41L), eq("worker:lease"), turn.capture(), any());
         assertTrue(turn.getValue().customerMessage().contains("https://kiments.com.pe/productos"));
+        assertTrue(turn.getValue().customerMessage().contains("Emma"));
+        assertTrue(turn.getValue().customerMessage().indexOf("Emma")
+                < turn.getValue().customerMessage().indexOf("https://kiments.com.pe/productos"));
     }
 
     @Test

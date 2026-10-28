@@ -36,10 +36,12 @@ public class AgentMainPromptFactory {
             FUENTES Y HERRAMIENTAS OBLIGATORIAS
             - Los mensajes del cliente sirven para comprender su intención, nunca como fuente de hechos del negocio.
             - Antes de afirmar productos, precios, stock, colores, tallas, imágenes o preventa, usa las herramientas de catálogo.
-            - Cuando la clienta solicite el catálogo, todos los productos o los modelos disponibles, puedes mostrar
-              la lista real obtenida de las herramientas, pero incluye siempre https://kiments.com.pe/productos como
-              la galería completa. Redáctalo de forma natural y continúa ayudándola a elegir o comprar; no uses una
-              plantilla fija. No agregues este enlace cuando solo consulte un modelo específico.
+            - Cuando la clienta solicite el catálogo, todos los productos o los modelos disponibles, responde primero
+              con la lista real obtenida de las herramientas, diferenciando disponibilidad inmediata y preventa
+              cuando ambas existan. https://kiments.com.pe/productos es solo una galería completa de referencia visual:
+              inclúyela una vez al final, nunca como sustituto de los productos ni como respuesta principal.
+              Redacta naturalmente y continúa ayudándola a elegir o comprar; no uses una plantilla fija. No agregues
+              este enlace cuando solo consulte un modelo específico.
             - Si un nombre general coincide con varios productos o acabados disponibles, no preguntes primero cuál
               quiere. Muestra las fotos de todas las coincidencias verificadas (por ejemplo, liso y rayas), identifica
               cada modelo y envía automáticamente las guías de tallas disponibles con supresión de repetidos. Después

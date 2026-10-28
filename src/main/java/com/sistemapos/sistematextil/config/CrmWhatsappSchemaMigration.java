@@ -126,16 +126,30 @@ public class CrmWhatsappSchemaMigration implements ApplicationRunner {
                       id_quick_message BIGINT NOT NULL AUTO_INCREMENT,
                       id_empresa INT NOT NULL,
                       created_by INT NOT NULL,
+                      area VARCHAR(20) NOT NULL DEFAULT 'SALES',
                       keyword VARCHAR(40) NOT NULL,
                       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       deleted_at DATETIME NULL,
                       PRIMARY KEY (id_quick_message),
-                      KEY idx_crm_quick_message_company (id_empresa, deleted_at, keyword),
+                      KEY idx_crm_quick_message_company (id_empresa, area, deleted_at, keyword),
                       CONSTRAINT fk_crm_quick_message_company FOREIGN KEY (id_empresa) REFERENCES empresa (id_empresa),
                       CONSTRAINT fk_crm_quick_message_creator FOREIGN KEY (created_by) REFERENCES usuario (id_usuario)
                     )
                     """);
+            addColumnIfMissing(connection, statement, "crm_quick_message", "area",
+                    "VARCHAR(20) NOT NULL DEFAULT 'SALES'");
+            statement.executeUpdate("""
+                    UPDATE crm_quick_message
+                    SET area = 'SALES'
+                    WHERE area IS NULL OR area = ''
+                    """);
+            if (!indexExists(connection, "crm_quick_message", "idx_crm_quick_message_company_area")) {
+                statement.execute("""
+                        ALTER TABLE crm_quick_message
+                        ADD KEY idx_crm_quick_message_company_area (id_empresa, area, deleted_at, keyword)
+                        """);
+            }
             statement.execute("""
                     CREATE TABLE IF NOT EXISTS crm_quick_message_block (
                       id_block BIGINT NOT NULL AUTO_INCREMENT,

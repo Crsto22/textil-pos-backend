@@ -22,13 +22,13 @@ import org.springframework.web.server.ResponseStatusException;
 
 import com.sistemapos.sistematextil.model.CrmQuickMessage;
 import com.sistemapos.sistematextil.model.CrmQuickMessageBlock;
+import com.sistemapos.sistematextil.model.CrmWhatsappArea;
 import com.sistemapos.sistematextil.model.Empresa;
 import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.repositories.CrmQuickMessageBlockRepository;
 import com.sistemapos.sistematextil.repositories.CrmQuickMessageRepository;
 import com.sistemapos.sistematextil.repositories.SucursalRepository;
 import com.sistemapos.sistematextil.repositories.UsuarioRepository;
-import com.sistemapos.sistematextil.services.CrmWhatsappChatService.MessageResponse;
 import com.sistemapos.sistematextil.services.CrmWhatsappChatService.SendMessageRequest;
 import com.sistemapos.sistematextil.util.usuario.Rol;
 
@@ -47,12 +47,16 @@ public class CrmQuickMessageService {
     private final SucursalRepository sucursalRepository;
     private final S3StorageService storageService;
     private final CrmWhatsappChatService chatService;
+    private final CrmShippingChatService shippingChatService;
 
     @Transactional(readOnly = true)
-    public List<QuickMessageResponse> list(String query, Usuario sessionUser) {
+    public List<QuickMessageResponse> list(String query, String requestedArea, Usuario sessionUser) {
         Usuario actor = requireCrmUser(sessionUser);
+        CrmWhatsappArea area = parseArea(requestedArea, CrmWhatsappArea.SALES);
+        requireAreaAccess(actor, area);
         String normalizedQuery = clean(query).toLowerCase(Locale.ROOT);
-        return commandRepository.findByEmpresa_IdEmpresaAndDeletedAtIsNullOrderByKeywordAsc(companyId(actor))
+        return commandRepository.findByEmpresa_IdEmpresaAndAreaAndDeletedAtIsNullOrderByKeywordAsc(
+                        companyId(actor), area)
                 .stream()
                 .filter(command -> normalizedQuery.isBlank()
                         || command.getKeyword().toLowerCase(Locale.ROOT).contains(normalizedQuery))
@@ -63,19 +67,24 @@ public class CrmQuickMessageService {
     @Transactional(readOnly = true)
     public QuickMessageResponse get(Long commandId, Usuario sessionUser) {
         Usuario actor = requireCrmUser(sessionUser);
-        return toResponse(requireCommand(commandId, companyId(actor)));
+        CrmQuickMessage command = requireCommand(commandId, companyId(actor));
+        requireAreaAccess(actor, command.getArea());
+        return toResponse(command);
     }
 
     @Transactional
     public QuickMessageResponse create(QuickMessageRequest request, List<MultipartFile> files, Usuario sessionUser) {
         Usuario actor = requireCrmUser(sessionUser);
         Integer companyId = companyId(actor);
+        CrmWhatsappArea area = parseArea(request == null ? null : request.area(), CrmWhatsappArea.SALES);
+        requireAreaAccess(actor, area);
         String keyword = normalizeKeyword(request == null ? null : request.keyword());
-        validateUniqueKeyword(companyId, keyword, null);
+        validateUniqueKeyword(companyId, area, keyword, null);
 
         CrmQuickMessage command = new CrmQuickMessage();
         command.setEmpresa(company(actor));
         command.setCreatedBy(actor);
+        command.setArea(area);
         command.setKeyword(keyword);
         command = commandRepository.save(command);
         replaceBlocks(command, request == null ? null : request.blocks(), files);
@@ -88,8 +97,13 @@ public class CrmQuickMessageService {
         Usuario actor = requireCrmUser(sessionUser);
         Integer companyId = companyId(actor);
         CrmQuickMessage command = requireCommand(commandId, companyId);
+        requireAreaAccess(actor, command.getArea());
+        CrmWhatsappArea requestedArea = parseArea(request == null ? null : request.area(), command.getArea());
+        if (requestedArea != command.getArea()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "No se puede mover un comando entre areas");
+        }
         String keyword = normalizeKeyword(request == null ? null : request.keyword());
-        validateUniqueKeyword(companyId, keyword, commandId);
+        validateUniqueKeyword(companyId, command.getArea(), keyword, commandId);
         command.setKeyword(keyword);
         replaceBlocks(command, request == null ? null : request.blocks(), files);
         return toResponse(commandRepository.saveAndFlush(command));
@@ -99,6 +113,7 @@ public class CrmQuickMessageService {
     public void delete(Long commandId, Usuario sessionUser) {
         Usuario actor = requireCrmUser(sessionUser);
         CrmQuickMessage command = requireCommand(commandId, companyId(actor));
+        requireAreaAccess(actor, command.getArea());
         List<String> mediaToDelete = activeBlocksWithMedia(command).stream()
                 .map(CrmQuickMessageBlock::getMediaStoragePath).toList();
         LocalDateTime now = LocalDateTime.now();
@@ -113,6 +128,8 @@ public class CrmQuickMessageService {
     @Transactional(readOnly = true)
     public QuickMessageMedia download(Long commandId, Long blockId, Usuario sessionUser) {
         Usuario actor = requireCrmUser(sessionUser);
+        CrmQuickMessage command = requireCommand(commandId, companyId(actor));
+        requireAreaAccess(actor, command.getArea());
         CrmQuickMessageBlock block = blockRepository
                 .findByIdBlockAndQuickMessage_IdQuickMessageAndQuickMessage_Empresa_IdEmpresaAndDeletedAtIsNull(
                         blockId, commandId, companyId(actor))
@@ -130,12 +147,13 @@ public class CrmQuickMessageService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "conversationId es requerido");
         }
         QuickMessageSnapshot command = snapshot(commandId, companyId(actor));
-        List<MessageResponse> sent = new ArrayList<>();
+        requireAreaAccess(actor, command.area());
+        List<Object> sent = new ArrayList<>();
         String error = null;
         Integer failedPosition = null;
         for (QuickMessageBlockSnapshot block : command.blocks()) {
             try {
-                sent.add(sendSnapshotBlock(block, request.conversationId(), actor));
+                sent.add(sendSnapshotBlock(command.area(), block, request.conversationId(), actor));
             } catch (RuntimeException exception) {
                 error = exception instanceof ResponseStatusException statusException
                         ? statusException.getReason()
@@ -149,21 +167,31 @@ public class CrmQuickMessageService {
         return new SendQuickMessageResponse(status, command.blocks().size(), sent.size(), failedPosition, error, sent);
     }
 
-    public MessageResponse sendBlock(Long commandId, Long blockId, SendQuickMessageRequest request, Usuario sessionUser) {
+    public Object sendBlock(Long commandId, Long blockId, SendQuickMessageRequest request, Usuario sessionUser) {
         Usuario actor = requireCrmUser(sessionUser);
         if (request == null || request.conversationId() == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "conversationId es requerido");
         }
+        CrmQuickMessage command = requireCommand(commandId, companyId(actor));
+        requireAreaAccess(actor, command.getArea());
         CrmQuickMessageBlock block = blockRepository
                 .findByIdBlockAndQuickMessage_IdQuickMessageAndQuickMessage_Empresa_IdEmpresaAndDeletedAtIsNull(
                         blockId, commandId, companyId(actor))
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Bloque no encontrado"));
-        return sendSnapshotBlock(new QuickMessageBlockSnapshot(block.getPosition(), block.getBlockType(), block.getBody(),
+        return sendSnapshotBlock(command.getArea(), new QuickMessageBlockSnapshot(block.getPosition(), block.getBlockType(), block.getBody(),
                 block.getMediaStoragePath(), block.getMediaFileName(), block.getMediaMimeType()),
                 request.conversationId(), actor);
     }
 
-    private MessageResponse sendSnapshotBlock(QuickMessageBlockSnapshot block, Long conversationId, Usuario actor) {
+    private Object sendSnapshotBlock(CrmWhatsappArea area, QuickMessageBlockSnapshot block,
+            Long conversationId, Usuario actor) {
+        if (area == CrmWhatsappArea.SHIPPING) {
+            return "TEXT".equals(block.type())
+                    ? shippingChatService.sendText(
+                            conversationId, new CrmShippingChatService.MessageRequest(block.body()), actor)
+                    : shippingChatService.sendMediaFromStorage(conversationId, block.storagePath(),
+                            block.fileName(), block.mimeType(), block.body(), actor);
+        }
         return "TEXT".equals(block.type())
                 ? chatService.enviarMensaje(conversationId, new SendMessageRequest(block.body(), null), actor)
                 : chatService.enviarMediaDesdeStorage(conversationId, block.storagePath(), block.fileName(),
@@ -177,7 +205,7 @@ public class CrmQuickMessageService {
                 .map(block -> new QuickMessageBlockSnapshot(block.getPosition(), block.getBlockType(), block.getBody(),
                         block.getMediaStoragePath(), block.getMediaFileName(), block.getMediaMimeType()))
                 .toList();
-        return new QuickMessageSnapshot(command.getIdQuickMessage(), blocks);
+        return new QuickMessageSnapshot(command.getIdQuickMessage(), command.getArea(), blocks);
     }
 
     private void replaceBlocks(CrmQuickMessage command, List<QuickMessageBlockRequest> requests,
@@ -283,8 +311,9 @@ public class CrmQuickMessageService {
         }
     }
 
-    private void validateUniqueKeyword(Integer companyId, String keyword, Long currentId) {
-        commandRepository.findFirstByEmpresa_IdEmpresaAndKeywordIgnoreCaseAndDeletedAtIsNull(companyId, keyword)
+    private void validateUniqueKeyword(Integer companyId, CrmWhatsappArea area, String keyword, Long currentId) {
+        commandRepository.findFirstByEmpresa_IdEmpresaAndAreaAndKeywordIgnoreCaseAndDeletedAtIsNull(
+                        companyId, area, keyword)
                 .filter(existing -> currentId == null || !existing.getIdQuickMessage().equals(currentId))
                 .ifPresent(existing -> { throw new ResponseStatusException(HttpStatus.CONFLICT, "El comando ya existe"); });
     }
@@ -314,11 +343,31 @@ public class CrmQuickMessageService {
         Usuario actor = usuarioRepository.findByIdUsuarioAndDeletedAtIsNull(sessionUser.getIdUsuario())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED));
         if (!"ACTIVO".equalsIgnoreCase(clean(actor.getEstado()))) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
-        if (actor.getRol() == null
-                || (actor.getRol() != Rol.ADMINISTRADOR && !actor.getRol().operaVentas())) {
+        if (actor.getRol() == null) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "No tienes acceso a los comandos del CRM");
         }
         return actor;
+    }
+
+    private void requireAreaAccess(Usuario actor, CrmWhatsappArea area) {
+        Rol role = actor.getRol();
+        boolean allowed = area == CrmWhatsappArea.SHIPPING ? role.permiteAlmacen() : role.permiteVentas();
+        if (!allowed) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "No tienes acceso a los comandos de esta area");
+        }
+    }
+
+    private CrmWhatsappArea parseArea(String value, CrmWhatsappArea defaultArea) {
+        String normalized = clean(value).toUpperCase(Locale.ROOT);
+        if (normalized.isBlank()) return defaultArea;
+        try {
+            CrmWhatsappArea area = CrmWhatsappArea.valueOf(normalized);
+            if (area != CrmWhatsappArea.SALES && area != CrmWhatsappArea.SHIPPING) throw badRequest("Area no valida");
+            return area;
+        } catch (IllegalArgumentException exception) {
+            throw badRequest("Area no valida");
+        }
     }
 
     private Empresa company(Usuario actor) {
@@ -352,7 +401,7 @@ public class CrmQuickMessageService {
                                         command.getIdQuickMessage(), block.getIdBlock())
                                 : null))
                 .toList();
-        return new QuickMessageResponse(command.getIdQuickMessage(), command.getKeyword(), blocks, creator,
+        return new QuickMessageResponse(command.getIdQuickMessage(), command.getKeyword(), command.getArea().name(), blocks, creator,
                 command.getCreatedAt(), command.getUpdatedAt());
     }
 
@@ -371,17 +420,21 @@ public class CrmQuickMessageService {
     private String clean(String value) { return value == null ? "" : value.trim(); }
     private ResponseStatusException badRequest(String message) { return new ResponseStatusException(HttpStatus.BAD_REQUEST, message); }
 
-    public record QuickMessageRequest(String keyword, List<QuickMessageBlockRequest> blocks) { }
+    public record QuickMessageRequest(String keyword, List<QuickMessageBlockRequest> blocks, String area) {
+        public QuickMessageRequest(String keyword, List<QuickMessageBlockRequest> blocks) {
+            this(keyword, blocks, null);
+        }
+    }
     public record QuickMessageBlockRequest(Long id, String type, String body) { }
-    public record QuickMessageResponse(Long id, String keyword, List<QuickMessageBlockResponse> blocks,
+    public record QuickMessageResponse(Long id, String keyword, String area, List<QuickMessageBlockResponse> blocks,
             String createdBy, LocalDateTime createdAt, LocalDateTime updatedAt) { }
     public record QuickMessageBlockResponse(Long id, String type, Integer position, String body,
             String fileName, String mimeType, String mediaUrl) { }
     public record SendQuickMessageRequest(Long conversationId) { }
     public record SendQuickMessageResponse(String status, int total, int sentCount, Integer failedPosition,
-            String error, List<MessageResponse> messages) { }
+            String error, List<Object> messages) { }
     public record QuickMessageMedia(byte[] bytes, String contentType, String fileName) { }
-    private record QuickMessageSnapshot(Long id, List<QuickMessageBlockSnapshot> blocks) { }
+    private record QuickMessageSnapshot(Long id, CrmWhatsappArea area, List<QuickMessageBlockSnapshot> blocks) { }
     private record QuickMessageBlockSnapshot(Integer position, String type, String body, String storagePath,
             String fileName, String mimeType) { }
 }

@@ -223,7 +223,7 @@ public class CrmShippingChatService {
         CrmWhatsappConversation conversation = requireConversation(conversationId, actor);
         String body = clean(request == null ? null : request.message());
         if (body.isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "message es requerido");
-        numberChangeNoticeService.registerIfNeeded(conversationId, null);
+        numberChangeNoticeService.registerIfNeeded(conversation.getIdConversation(), null);
         ResponseEntity<String> response = bridgeService.enviarTexto(CrmWhatsappArea.SHIPPING,
                 conversation.getPhone(), body, null, UUID.randomUUID().toString());
         requireBridgeSuccess(response);
@@ -240,16 +240,41 @@ public class CrmShippingChatService {
         if (file == null || file.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "file es requerido");
         }
-        numberChangeNoticeService.registerIfNeeded(conversationId, null);
-        String fileName = safeFileName(file.getOriginalFilename());
-        String mime = clean(file.getContentType());
+        try {
+            return sendMediaBytes(conversation, file.getBytes(), file.getOriginalFilename(),
+                    file.getContentType(), caption, actor);
+        } catch (ResponseStatusException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No se pudo leer el archivo");
+        }
+    }
+
+    @Transactional
+    public MessageDto sendMediaFromStorage(Long conversationId, String sourceStoragePath, String fileName,
+            String mimeType, String caption, Usuario actor) {
+        CrmWhatsappConversation conversation = requireConversation(conversationId, actor);
+        if (clean(sourceStoragePath).isBlank()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "La imagen del comando no esta disponible");
+        }
+        return sendMediaBytes(conversation, storageService.readBytes(sourceStoragePath), fileName,
+                mimeType, caption, actor);
+    }
+
+    private MessageDto sendMediaBytes(CrmWhatsappConversation conversation, byte[] bytes, String originalFileName,
+            String contentType, String caption, Usuario actor) {
+        if (bytes == null || bytes.length == 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El archivo esta vacio");
+        }
+        numberChangeNoticeService.registerIfNeeded(conversation.getIdConversation(), null);
+        String fileName = safeFileName(originalFileName);
+        String mime = clean(contentType);
         if (mime.isBlank()) mime = "application/octet-stream";
         YearMonth month = YearMonth.now();
         String storageKey = "crm/whatsapp/shipping/%04d/%02d/%s-%s".formatted(
                 month.getYear(), month.getMonthValue(), UUID.randomUUID(), fileName);
         String storagePath = null;
         try {
-            byte[] bytes = file.getBytes();
             storagePath = storageService.upload(bytes, storageKey, mime);
             ResponseEntity<String> response = bridgeService.enviarMedia(CrmWhatsappArea.SHIPPING,
                     conversation.getPhone(), bytes, fileName, mime, clean(caption), null,
@@ -263,7 +288,7 @@ public class CrmShippingChatService {
             message.setMediaStoragePath(storagePath);
             message = messageRepository.save(message);
             touch(conversation, body, type, message.getCreatedAt());
-            publish(conversationId);
+            publish(conversation.getIdConversation());
             return message(message);
         } catch (ResponseStatusException exception) {
             if (storagePath != null) storageService.deleteByKey(storagePath);

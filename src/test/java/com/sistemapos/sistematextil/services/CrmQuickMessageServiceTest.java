@@ -24,6 +24,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import com.sistemapos.sistematextil.model.CrmQuickMessage;
 import com.sistemapos.sistematextil.model.CrmQuickMessageBlock;
+import com.sistemapos.sistematextil.model.CrmWhatsappArea;
 import com.sistemapos.sistematextil.model.Empresa;
 import com.sistemapos.sistematextil.model.Sucursal;
 import com.sistemapos.sistematextil.model.Usuario;
@@ -43,6 +44,7 @@ class CrmQuickMessageServiceTest {
     @Mock private SucursalRepository sucursalRepository;
     @Mock private S3StorageService storageService;
     @Mock private CrmWhatsappChatService chatService;
+    @Mock private CrmShippingChatService shippingChatService;
 
     private CrmQuickMessageService service;
     private Usuario actor;
@@ -51,7 +53,7 @@ class CrmQuickMessageServiceTest {
     @BeforeEach
     void setUp() {
         service = new CrmQuickMessageService(commandRepository, blockRepository, usuarioRepository,
-                sucursalRepository, storageService, chatService);
+                sucursalRepository, storageService, chatService, shippingChatService);
 
         Empresa company = new Empresa();
         company.setIdEmpresa(7);
@@ -69,6 +71,7 @@ class CrmQuickMessageServiceTest {
         command.setEmpresa(company);
         command.setCreatedBy(actor);
         command.setKeyword("preventa");
+        command.setArea(CrmWhatsappArea.SALES);
         command.setBlocks(new ArrayList<>());
 
         CrmQuickMessageBlock text = block(1L, "TEXT", 0, "Hola", null);
@@ -114,7 +117,7 @@ class CrmQuickMessageServiceTest {
     }
 
     @Test
-    void deniesWarehouseUsersEvenWhenTheyHaveGeneralCrmAccess() {
+    void deniesWarehouseUsersFromSalesCommandsEvenWhenTheyHaveGeneralCrmAccess() {
         actor.setRol(Rol.ALMACEN);
         actor.setAccesoCrm(true);
 
@@ -122,7 +125,7 @@ class CrmQuickMessageServiceTest {
                 () -> service.get(31L, actor));
 
         assertEquals(HttpStatus.FORBIDDEN, exception.getStatusCode());
-        assertEquals("No tienes acceso a los comandos del CRM", exception.getReason());
+        assertEquals("No tienes acceso a los comandos de esta area", exception.getReason());
     }
 
     @Test
@@ -142,6 +145,20 @@ class CrmQuickMessageServiceTest {
         var result = service.get(31L, actor);
 
         assertEquals(31L, result.id());
+    }
+
+    @Test
+    void warehouseSendsShippingTextAndImageInConfiguredOrder() {
+        actor.setRol(Rol.ALMACEN);
+        command.setArea(CrmWhatsappArea.SHIPPING);
+
+        var result = service.send(31L, new SendQuickMessageRequest(99L), actor);
+
+        assertEquals("COMPLETED", result.status());
+        InOrder order = inOrder(shippingChatService);
+        order.verify(shippingChatService).sendText(eq(99L), any(), eq(actor));
+        order.verify(shippingChatService).sendMediaFromStorage(99L, "/storage/quick/image.png",
+                "image.png", "image/png", "Catalogo", actor);
     }
 
     private CrmQuickMessageBlock block(Long id, String type, int position, String body, String storagePath) {

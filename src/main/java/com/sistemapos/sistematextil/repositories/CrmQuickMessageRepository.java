@@ -7,15 +7,17 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.EntityGraph;
 
 import com.sistemapos.sistematextil.model.CrmQuickMessage;
+import com.sistemapos.sistematextil.model.CrmWhatsappArea;
 
 public interface CrmQuickMessageRepository extends JpaRepository<CrmQuickMessage, Long> {
 
     @EntityGraph(attributePaths = { "blocks", "createdBy", "empresa" })
-    List<CrmQuickMessage> findByEmpresa_IdEmpresaAndDeletedAtIsNullOrderByKeywordAsc(Integer idEmpresa);
+    List<CrmQuickMessage> findByEmpresa_IdEmpresaAndAreaAndDeletedAtIsNullOrderByKeywordAsc(
+            Integer idEmpresa, CrmWhatsappArea area);
 
     @EntityGraph(attributePaths = { "blocks", "createdBy", "empresa" })
     Optional<CrmQuickMessage> findByIdQuickMessageAndEmpresa_IdEmpresaAndDeletedAtIsNull(Long id, Integer idEmpresa);
 
-    Optional<CrmQuickMessage> findFirstByEmpresa_IdEmpresaAndKeywordIgnoreCaseAndDeletedAtIsNull(
-            Integer idEmpresa, String keyword);
+    Optional<CrmQuickMessage> findFirstByEmpresa_IdEmpresaAndAreaAndKeywordIgnoreCaseAndDeletedAtIsNull(
+            Integer idEmpresa, CrmWhatsappArea area, String keyword);
 }

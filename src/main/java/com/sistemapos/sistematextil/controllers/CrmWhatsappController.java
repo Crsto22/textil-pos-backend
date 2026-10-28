@@ -92,8 +92,9 @@ public class CrmWhatsappController {
     @GetMapping("/quick-messages")
     public ResponseEntity<?> listarMensajesRapidos(
             @RequestParam(name = "q", defaultValue = "") String query,
+            @RequestParam(name = "area", defaultValue = "SALES") String area,
             Authentication authentication) {
-        return ResponseEntity.ok(crmQuickMessageService.list(query, currentUser(authentication)));
+        return ResponseEntity.ok(crmQuickMessageService.list(query, area, currentUser(authentication)));
     }
 
     @GetMapping("/quick-messages/{commandId}")

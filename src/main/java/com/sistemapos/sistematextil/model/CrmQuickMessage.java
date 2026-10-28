@@ -11,6 +11,8 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
@@ -41,6 +43,10 @@ public class CrmQuickMessage {
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "created_by", nullable = false)
     private Usuario createdBy;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "area", nullable = false, length = 20)
+    private CrmWhatsappArea area = CrmWhatsappArea.SALES;
 
     @Column(name = "keyword", nullable = false, length = 40)
     private String keyword;

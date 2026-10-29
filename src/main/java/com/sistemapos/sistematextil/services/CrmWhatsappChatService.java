@@ -42,6 +42,7 @@ import com.sistemapos.sistematextil.model.CrmWhatsappConversationTag;
 import com.sistemapos.sistematextil.model.CrmWhatsappFilmAddon;
 import com.sistemapos.sistematextil.model.CrmWhatsappFulfillment;
 import com.sistemapos.sistematextil.model.CrmWhatsappMessage;
+import com.sistemapos.sistematextil.model.CrmWhatsappMessageReaction;
 import com.sistemapos.sistematextil.model.CrmWhatsappPaymentRequest;
 import com.sistemapos.sistematextil.model.CrmWhatsappPaymentRequestStatus;
 import com.sistemapos.sistematextil.model.CrmWhatsappWaitingReason;
@@ -61,6 +62,7 @@ import com.sistemapos.sistematextil.repositories.CrmWhatsappConversationTagRepos
 import com.sistemapos.sistematextil.repositories.CrmWhatsappFilmAddonRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappFulfillmentRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappMessageRepository;
+import com.sistemapos.sistematextil.repositories.CrmWhatsappMessageReactionRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappPaymentEvidenceRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappPaymentRequestRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappTagRepository;
@@ -104,6 +106,7 @@ public class CrmWhatsappChatService {
     private final CrmWhatsappFulfillmentRepository fulfillmentRepository;
     private final CrmWhatsappFilmAddonRepository filmAddonRepository;
     private final CrmWhatsappMessageRepository messageRepository;
+    private final CrmWhatsappMessageReactionRepository reactionRepository;
     private final CrmWhatsappPaymentEvidenceRepository paymentEvidenceRepository;
     private final CrmWhatsappPaymentRequestRepository paymentRequestRepository;
     private final CrmWhatsappTagRepository tagRepository;
@@ -139,6 +142,7 @@ public class CrmWhatsappChatService {
             CrmWhatsappFulfillmentRepository fulfillmentRepository,
             CrmWhatsappFilmAddonRepository filmAddonRepository,
             CrmWhatsappMessageRepository messageRepository,
+            CrmWhatsappMessageReactionRepository reactionRepository,
             CrmWhatsappPaymentEvidenceRepository paymentEvidenceRepository,
             CrmWhatsappPaymentRequestRepository paymentRequestRepository,
             CrmWhatsappTagRepository tagRepository,
@@ -171,6 +175,7 @@ public class CrmWhatsappChatService {
         this.fulfillmentRepository = fulfillmentRepository;
         this.filmAddonRepository = filmAddonRepository;
         this.messageRepository = messageRepository;
+        this.reactionRepository = reactionRepository;
         this.paymentEvidenceRepository = paymentEvidenceRepository;
         this.paymentRequestRepository = paymentRequestRepository;
         this.tagRepository = tagRepository;
@@ -1782,10 +1787,27 @@ public class CrmWhatsappChatService {
             marcarMensajeEliminado(request.messageId());
             return;
         }
+        if ("message.reaction".equals(request.event())) {
+            procesarReaccion(request);
+            return;
+        }
         boolean outgoing = "message.sent".equals(request.event());
         if (!outgoing && !"message.received".equals(request.event())) {
             return;
         }
+
+        if (isTechnicalWebhook(request)) return;
+
+        String requestedContentType = clean(request.contentType()).toUpperCase(Locale.ROOT);
+        if (requestedContentType.isBlank()) {
+            if (rawMessageNode(request).path("locationMessage").isObject()) requestedContentType = "LOCATION";
+            else if (hasUnsupportedVisibleContent(rawMessageNode(request))) requestedContentType = "UNSUPPORTED";
+        }
+        boolean explicitLocation = "LOCATION".equals(requestedContentType);
+        boolean unsupported = "UNSUPPORTED".equals(requestedContentType);
+        boolean visibleMedia = Boolean.TRUE.equals(request.hasMedia()) || request.media() != null
+                || Boolean.TRUE.equals(request.viewOnce()) || Boolean.TRUE.equals(request.sticker());
+        if (!explicitLocation && !unsupported && !visibleMedia && clean(request.body()).isBlank()) return;
 
         String from = normalizeChatId(request.from());
         if (!isValidChatId(from)) {
@@ -1829,7 +1851,9 @@ public class CrmWhatsappChatService {
         boolean viewOnce = Boolean.TRUE.equals(request.viewOnce());
         boolean sticker = Boolean.TRUE.equals(request.sticker());
         boolean hasMedia = Boolean.TRUE.equals(request.hasMedia()) || request.media() != null;
-        String messageType = viewOnce ? "VIEW_ONCE"
+        String messageType = explicitLocation ? "LOCATION"
+                : unsupported ? "UNSUPPORTED"
+                : viewOnce ? "VIEW_ONCE"
                 : sticker ? "STICKER"
                 : hasMedia ? messageTypeFor(mediaMimeType, mediaFileName) : "TEXT";
         boolean firstImageToAdvisor = agentHandlesIncoming
@@ -1875,6 +1899,8 @@ public class CrmWhatsappChatService {
         }
         String body = viewOnce
                 ? "No se puede abrir este mensaje porque fue enviado para ver una sola vez."
+                : unsupported ? "Mensaje no compatible"
+                : explicitLocation && clean(request.body()).isBlank() ? "Ubicación compartida"
                 : clean(request.body());
         LocalDateTime messageAt = parseDate(request.timestamp());
         if (conversation.getLastMessageAt() == null || !messageAt.isBefore(conversation.getLastMessageAt())) {
@@ -1896,6 +1922,13 @@ public class CrmWhatsappChatService {
         message.setMessageKeyJson(writeJson(request.messageKey()));
         message.setBaileysMessageJson(writeJson(request.baileysMessage()));
         message.setReplyToMessageId(findReplyToMessageId(request.quotedMessageId(), conversation.getIdConversation()));
+
+        if (explicitLocation && request.location() != null) {
+            message.setLocationLatitude(readDouble(request.location(), "latitude"));
+            message.setLocationLongitude(readDouble(request.location(), "longitude"));
+            message.setLocationName(blankToNull(readString(request.location(), "name")));
+            message.setLocationAddress(blankToNull(readString(request.location(), "address")));
+        }
 
         if (request.media() != null) {
             message.setMediaMimeType(mediaMimeType.isBlank() ? null : mediaMimeType);
@@ -1920,6 +1953,75 @@ public class CrmWhatsappChatService {
             applicationEventPublisher.publishEvent(
                     new CrmWarehouseConversationEvent(conversation.getIdConversation()));
         }
+    }
+
+    private void procesarReaccion(WebhookRequest request) {
+        if (reactionRepository == null || clean(request.targetMessageId()).isBlank()) return;
+        CrmWhatsappMessage target = messageRepository.findFirstByWhatsappMessageId(request.targetMessageId())
+                .filter(message -> message.getDeletedAt() == null)
+                .orElse(null);
+        if (target == null || target.getConversation() == null || target.getConversation().getConnection() == null) return;
+        var connection = connectionService.buscarPorClientId(request.clientId());
+        if (connection == null || !connection.getIdConnection().equals(
+                target.getConversation().getConnection().getIdConnection())) return;
+
+        String direction = "OUTGOING".equalsIgnoreCase(clean(request.direction())) ? "OUTGOING" : "INCOMING";
+        CrmWhatsappMessageReaction reaction = reactionRepository
+                .findFirstByMessage_IdMessageAndDirection(target.getIdMessage(), direction)
+                .orElseGet(CrmWhatsappMessageReaction::new);
+        LocalDateTime eventAt = parseDate(request.timestamp());
+        if (reaction.getEventAt() != null && eventAt.isBefore(reaction.getEventAt())) return;
+        if (clean(request.messageId()).equals(clean(reaction.getWhatsappReactionId()))) return;
+        reaction.setMessage(target);
+        reaction.setDirection(direction);
+        reaction.setWhatsappReactionId(blankToNull(request.messageId()));
+        reaction.setEventAt(eventAt);
+        String emoji = clean(request.emoji());
+        reaction.setEmoji(emoji);
+        reaction.setDeletedAt(emoji.isBlank() ? LocalDateTime.now() : null);
+        reactionRepository.save(reaction);
+
+        if (target.getConversation().getConnection().getArea() == CrmWhatsappArea.SHIPPING) {
+            applicationEventPublisher.publishEvent(
+                    new CrmWarehouseConversationEvent(target.getConversation().getIdConversation()));
+        } else {
+            publishRealtimeEvent("message.updated", target.getConversation(), toMessageResponse(target));
+        }
+    }
+
+    private boolean isTechnicalWebhook(WebhookRequest request) {
+        JsonNode message = rawMessageNode(request);
+        return message.path("protocolMessage").isObject() || message.path("albumMessage").isObject()
+                || message.path("reactionMessage").isObject();
+    }
+
+    private JsonNode rawMessageNode(WebhookRequest request) {
+        if (request == null || request.baileysMessage() == null) return objectMapper.createObjectNode();
+        return objectMapper.valueToTree(request.baileysMessage()).path("message");
+    }
+
+    private boolean hasUnsupportedVisibleContent(JsonNode message) {
+        if (message == null || !message.isObject()) return false;
+        Set<String> nonContent = Set.of("messageContextInfo", "senderKeyDistributionMessage", "conversation",
+                "extendedTextMessage", "imageMessage", "videoMessage", "audioMessage", "documentMessage",
+                "stickerMessage", "locationMessage", "protocolMessage", "albumMessage", "reactionMessage",
+                "viewOnceMessage", "viewOnceMessageV2", "viewOnceMessageV2Extension", "ephemeralMessage");
+        var fields = message.fieldNames();
+        while (fields.hasNext()) {
+            if (!nonContent.contains(fields.next())) return true;
+        }
+        return false;
+    }
+
+    private Double readDouble(Map<String, Object> source, String key) {
+        if (source == null || source.get(key) == null) return null;
+        try { return Double.valueOf(source.get(key).toString()); }
+        catch (NumberFormatException ignored) { return null; }
+    }
+
+    private String blankToNull(String value) {
+        String normalized = clean(value);
+        return normalized.isBlank() ? null : normalized;
     }
 
     private void sincronizarChatDeEnvios(WebhookRequest request) {
@@ -2893,7 +2995,10 @@ public class CrmWhatsappChatService {
                 message.getRelatedSaleId(),
                 message.getActor() == null ? null : message.getActor().getIdUsuario(),
                 message.getActorName(),
-                deleted);
+                deleted,
+                locationResponse(message, deleted),
+                message.getIdMessage() == null ? List.of()
+                        : reactionsByMessage(List.of(message)).getOrDefault(message.getIdMessage(), List.of()));
     }
 
     private List<MessageResponse> toMessageResponses(List<CrmWhatsappMessage> messages) {
@@ -2907,14 +3012,16 @@ public class CrmWhatsappChatService {
                         .collect(java.util.stream.Collectors.toMap(
                                 CrmWhatsappMessage::getIdMessage,
                                 message -> message));
+        Map<Long, List<ReactionResponse>> reactions = reactionsByMessage(messages);
         return messages.stream()
-                .map(message -> toMessageResponse(message, replies))
+                .map(message -> toMessageResponse(message, replies, reactions))
                 .toList();
     }
 
     private MessageResponse toMessageResponse(
             CrmWhatsappMessage message,
-            Map<Long, CrmWhatsappMessage> replies) {
+            Map<Long, CrmWhatsappMessage> replies,
+            Map<Long, List<ReactionResponse>> reactions) {
         boolean deleted = message.getDeletedAt() != null;
         CrmWhatsappMessage quoted = message.getReplyToMessageId() == null
                 ? null
@@ -2937,7 +3044,28 @@ public class CrmWhatsappChatService {
                 message.getRelatedSaleId(),
                 message.getActor() == null ? null : message.getActor().getIdUsuario(),
                 message.getActorName(),
-                deleted);
+                deleted,
+                locationResponse(message, deleted),
+                reactions.getOrDefault(message.getIdMessage(), List.of()));
+    }
+
+    private LocationResponse locationResponse(CrmWhatsappMessage message, boolean deleted) {
+        if (deleted || message.getLocationLatitude() == null || message.getLocationLongitude() == null) return null;
+        return new LocationResponse(message.getLocationLatitude(), message.getLocationLongitude(),
+                message.getLocationName(), message.getLocationAddress());
+    }
+
+    private Map<Long, List<ReactionResponse>> reactionsByMessage(List<CrmWhatsappMessage> messages) {
+        if (reactionRepository == null || messages.isEmpty()) return Map.of();
+        Set<Long> ids = messages.stream().map(CrmWhatsappMessage::getIdMessage)
+                .filter(java.util.Objects::nonNull).collect(java.util.stream.Collectors.toSet());
+        if (ids.isEmpty()) return Map.of();
+        return reactionRepository.findActiveByMessageIds(ids).stream().collect(java.util.stream.Collectors.groupingBy(
+                reaction -> reaction.getMessage().getIdMessage(),
+                java.util.LinkedHashMap::new,
+                java.util.stream.Collectors.mapping(
+                        reaction -> new ReactionResponse(reaction.getEmoji(), reaction.getDirection()),
+                        java.util.stream.Collectors.toList())));
     }
 
     private QuoteResponse toQuoteResponse(CrmWhatsappMessage message) {
@@ -3515,15 +3643,20 @@ public class CrmWhatsappChatService {
             Integer relatedSaleId,
             Integer sentByUserId,
             String sentByName,
-            boolean deleted) {
+            boolean deleted,
+            LocationResponse location,
+            List<ReactionResponse> reactions) {
         public MessageResponse(
                 Long id, String direction, String origin, String messageType, String body, String status,
                 LocalDateTime createdAt, String mediaMimeType, String mediaFileName, String mediaStoragePath,
                 String mediaUrl, QuoteResponse replyTo, boolean deleted) {
             this(id, direction, origin, messageType, body, status, createdAt, mediaMimeType, mediaFileName,
-                    mediaStoragePath, mediaUrl, replyTo, null, null, null, deleted);
+                    mediaStoragePath, mediaUrl, replyTo, null, null, null, deleted, null, List.of());
         }
     }
+
+    public record LocationResponse(Double latitude, Double longitude, String name, String address) {}
+    public record ReactionResponse(String emoji, String direction) {}
 
     public record MessagePageResponse(
             List<MessageResponse> content,
@@ -3746,11 +3879,16 @@ public class CrmWhatsappChatService {
             String body,
             String timestamp,
             String status,
+            String contentType,
+            String direction,
+            String targetMessageId,
+            String emoji,
             String quotedMessageId,
             Boolean viewOnce,
             Boolean sticker,
             Boolean hasMedia,
             Boolean historical,
+            Map<String, Object> location,
             Map<String, Object> media,
             Map<String, Object> messageKey,
             Map<String, Object> baileysMessage) {

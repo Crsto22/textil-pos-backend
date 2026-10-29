@@ -7,6 +7,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -18,6 +20,8 @@ import org.springframework.context.ApplicationEventPublisher;
 import com.sistemapos.sistematextil.model.CrmWhatsappArea;
 import com.sistemapos.sistematextil.model.CrmWhatsappConnection;
 import com.sistemapos.sistematextil.model.CrmWhatsappConversation;
+import com.sistemapos.sistematextil.model.CrmWhatsappMessage;
+import com.sistemapos.sistematextil.model.CrmWhatsappMessageReaction;
 import com.sistemapos.sistematextil.repositories.ClienteRepository;
 import com.sistemapos.sistematextil.repositories.ComprobanteConfigRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappAgentSessionRepository;
@@ -26,6 +30,7 @@ import com.sistemapos.sistematextil.repositories.CrmWhatsappConversationTagRepos
 import com.sistemapos.sistematextil.repositories.CrmWhatsappFilmAddonRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappFulfillmentRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappMessageRepository;
+import com.sistemapos.sistematextil.repositories.CrmWhatsappMessageReactionRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappPaymentEvidenceRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappPaymentRequestRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappTagRepository;
@@ -47,6 +52,7 @@ class CrmWhatsappShippingIdentityTest {
     @Mock CrmWhatsappFulfillmentRepository fulfillmentRepository;
     @Mock CrmWhatsappFilmAddonRepository filmAddonRepository;
     @Mock CrmWhatsappMessageRepository messageRepository;
+    @Mock CrmWhatsappMessageReactionRepository reactionRepository;
     @Mock CrmWhatsappPaymentEvidenceRepository paymentEvidenceRepository;
     @Mock CrmWhatsappPaymentRequestRepository paymentRequestRepository;
     @Mock CrmWhatsappTagRepository tagRepository;
@@ -76,6 +82,65 @@ class CrmWhatsappShippingIdentityTest {
     @InjectMocks CrmWhatsappChatService service;
 
     @Test
+    void emptyTextDoesNotCreateOrMoveAConversation() {
+        service.recibirWebhook(new CrmWhatsappChatService.WebhookRequest(
+                "kiments-sales", "message.received", "empty-1", "51999999999@s.whatsapp.net", null,
+                null, "Cliente", "", "2026-10-24T15:00:00Z", null,
+                "TEXT", "INCOMING", null, null, null, false, false, false, false,
+                null, null, Map.of(), Map.of("message", Map.of("conversation", ""))));
+
+        verify(connectionService, never()).buscarPorClientId(any());
+        verify(conversationRepository, never()).insertIfAbsent(any(), any());
+        verify(messageRepository, never()).save(any());
+    }
+
+    @Test
+    void ephemeralProtocolDoesNotCreateOrMoveAConversation() {
+        service.recibirWebhook(new CrmWhatsappChatService.WebhookRequest(
+                "kiments-sales", "message.received", "protocol-1", "51999999999@s.whatsapp.net", null,
+                null, "Cliente", "", "2026-10-24T15:00:00Z", null,
+                null, "INCOMING", null, null, null, false, false, false, false,
+                null, null, Map.of(), Map.of("message", Map.of("protocolMessage",
+                        Map.of("type", "EPHEMERAL_SYNC_RESPONSE")))));
+
+        verify(connectionService, never()).buscarPorClientId(any());
+        verify(conversationRepository, never()).insertIfAbsent(any(), any());
+        verify(messageRepository, never()).save(any());
+    }
+
+    @Test
+    void reactionUpdatesItsTargetWithoutCreatingAConversationOrUnreadMessage() {
+        CrmWhatsappConnection sales = new CrmWhatsappConnection();
+        sales.setIdConnection(10L);
+        sales.setArea(CrmWhatsappArea.SALES);
+        CrmWhatsappConversation conversation = new CrmWhatsappConversation();
+        conversation.setIdConversation(7L);
+        conversation.setConnection(sales);
+        CrmWhatsappMessage target = new CrmWhatsappMessage();
+        target.setIdMessage(90L);
+        target.setConversation(conversation);
+        target.setWhatsappMessageId("target-1");
+
+        when(connectionService.buscarPorClientId("kiments-sales")).thenReturn(sales);
+        when(messageRepository.findFirstByWhatsappMessageId("target-1")).thenReturn(Optional.of(target));
+        when(reactionRepository.findFirstByMessage_IdMessageAndDirection(90L, "INCOMING"))
+                .thenReturn(Optional.empty());
+        when(reactionRepository.save(any(CrmWhatsappMessageReaction.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(reactionRepository.findActiveByMessageIds(any())).thenReturn(List.of());
+
+        service.recibirWebhook(new CrmWhatsappChatService.WebhookRequest(
+                "kiments-sales", "message.reaction", "reaction-1", "51999999999@s.whatsapp.net", null,
+                null, "Cliente", null, "2026-10-24T15:00:00Z", null,
+                null, "INCOMING", "target-1", "👍", null, false, false, false, false,
+                null, null, Map.of(), Map.of()));
+
+        verify(reactionRepository).save(any(CrmWhatsappMessageReaction.class));
+        verify(conversationRepository, never()).insertIfAbsent(any(), any());
+        verify(messageRepository, never()).save(any());
+    }
+
+    @Test
     void syncedLidReusesCanonicalShippingConversationByNormalizedPhone() {
         CrmWhatsappConnection shipping = new CrmWhatsappConnection();
         shipping.setIdConnection(20L);
@@ -97,7 +162,7 @@ class CrmWhatsappShippingIdentityTest {
         service.recibirWebhook(new CrmWhatsappChatService.WebhookRequest(
                 "kiments-shipping", "chat.synced", null, "163569568059625@lid", "51924127067",
                 "924127067", "CLIENTE 924127067", null, "2026-10-24T15:00:00", null,
-                null, false, false, false, true, null, null, null));
+                null, null, null, null, null, false, false, false, true, null, null, null, null));
 
         verify(conversationRepository, never()).insertIfAbsent(any(), any());
         verify(applicationEventPublisher).publishEvent(any(CrmWarehouseConversationEvent.class));

@@ -7,6 +7,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import org.springframework.data.domain.PageRequest;
@@ -29,6 +30,7 @@ import com.sistemapos.sistematextil.model.Usuario;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappConversationTagRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappConversationRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappMessageRepository;
+import com.sistemapos.sistematextil.repositories.CrmWhatsappMessageReactionRepository;
 import com.sistemapos.sistematextil.repositories.CrmWhatsappTagRepository;
 import com.sistemapos.sistematextil.repositories.EmpresaRepository;
 import com.sistemapos.sistematextil.repositories.SucursalRepository;
@@ -42,6 +44,7 @@ public class CrmShippingChatService {
     private final CrmWhatsappConversationRepository conversationRepository;
     private final CrmWhatsappConversationTagRepository conversationTagRepository;
     private final CrmWhatsappMessageRepository messageRepository;
+    private final CrmWhatsappMessageReactionRepository reactionRepository;
     private final CrmWhatsappTagRepository tagRepository;
     private final EmpresaRepository empresaRepository;
     private final SucursalRepository sucursalRepository;
@@ -212,7 +215,10 @@ public class CrmShippingChatService {
             selected = new ArrayList<>(selected);
             Collections.reverse(selected);
         }
-        List<MessageDto> content = selected.stream().map(value -> message(value, mediaBasePath)).toList();
+        Map<Long, List<ReactionDto>> reactions = reactionsByMessage(selected);
+        List<MessageDto> content = selected.stream()
+                .map(value -> message(value, mediaBasePath, reactions.getOrDefault(value.getIdMessage(), List.of())))
+                .toList();
         return new MessagePage(content,
                 content.isEmpty() ? null : content.getFirst().id(),
                 content.isEmpty() ? null : content.getLast().id(), hasMoreBefore);
@@ -440,10 +446,14 @@ public class CrmShippingChatService {
     }
 
     private MessageDto message(CrmWhatsappMessage value) {
-        return message(value, "/api/crm/whatsapp/shipping/messages/");
+        return message(value, "/api/crm/whatsapp/shipping/messages/", reactionsFor(value));
     }
 
     private MessageDto message(CrmWhatsappMessage value, String mediaBasePath) {
+        return message(value, mediaBasePath, reactionsFor(value));
+    }
+
+    private MessageDto message(CrmWhatsappMessage value, String mediaBasePath, List<ReactionDto> reactions) {
         boolean deleted = value.getDeletedAt() != null;
         return new MessageDto(value.getIdMessage(), value.getDirection(), value.getMessageType(),
                 deleted ? "Mensaje eliminado" : value.getBody(), value.getMessageStatus(), value.getCreatedAt(),
@@ -452,7 +462,28 @@ public class CrmShippingChatService {
                         : mediaBasePath + value.getIdMessage() + "/media",
                 deleted ? null : value.getMediaDurationSeconds(), value.getOrigin(), value.getRelatedSaleId(),
                 value.getReceiptFormat(), value.getActor() == null ? null : value.getActor().getIdUsuario(),
-                value.getActorName(), deleted);
+                value.getActorName(), deleted,
+                deleted || value.getLocationLatitude() == null || value.getLocationLongitude() == null ? null
+                        : new LocationDto(value.getLocationLatitude(), value.getLocationLongitude(),
+                                value.getLocationName(), value.getLocationAddress()),
+                deleted ? List.of() : reactions);
+    }
+
+    private List<ReactionDto> reactionsFor(CrmWhatsappMessage message) {
+        if (message == null || message.getIdMessage() == null) return List.of();
+        return reactionsByMessage(List.of(message)).getOrDefault(message.getIdMessage(), List.of());
+    }
+
+    private Map<Long, List<ReactionDto>> reactionsByMessage(List<CrmWhatsappMessage> messages) {
+        if (reactionRepository == null || messages.isEmpty()) return Map.of();
+        Set<Long> ids = messages.stream().map(CrmWhatsappMessage::getIdMessage)
+                .filter(java.util.Objects::nonNull).collect(java.util.stream.Collectors.toSet());
+        if (ids.isEmpty()) return Map.of();
+        return reactionRepository.findActiveByMessageIds(ids).stream().collect(java.util.stream.Collectors.groupingBy(
+                reaction -> reaction.getMessage().getIdMessage(), LinkedHashMap::new,
+                java.util.stream.Collectors.mapping(
+                        reaction -> new ReactionDto(reaction.getEmoji(), reaction.getDirection()),
+                        java.util.stream.Collectors.toList())));
     }
 
     private CrmWhatsappMessage outgoing(CrmWhatsappConversation conversation, String body, String type, String json,
@@ -542,7 +573,10 @@ public class CrmShippingChatService {
     public record MessageDto(Long id, String direction, String messageType, String body, String status,
             LocalDateTime createdAt, String mediaMimeType, String mediaFileName, String mediaUrl,
             Integer mediaDurationSeconds, String origin, Integer relatedSaleId, String receiptFormat,
-            Integer sentByUserId, String sentByName, boolean deleted) {}
+            Integer sentByUserId, String sentByName, boolean deleted, LocationDto location,
+            List<ReactionDto> reactions) {}
+    public record LocationDto(Double latitude, Double longitude, String name, String address) {}
+    public record ReactionDto(String emoji, String direction) {}
     public record MessageRequest(String message) {}
     public record MediaDownload(byte[] bytes, String contentType, String fileName) {}
 }

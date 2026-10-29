@@ -90,6 +90,18 @@ public class CrmWhatsappMessage {
     @Column(name = "baileys_message_json", columnDefinition = "MEDIUMTEXT")
     private String baileysMessageJson;
 
+    @Column(name = "location_latitude")
+    private Double locationLatitude;
+
+    @Column(name = "location_longitude")
+    private Double locationLongitude;
+
+    @Column(name = "location_name", length = 255)
+    private String locationName;
+
+    @Column(name = "location_address", length = 500)
+    private String locationAddress;
+
     @Column(name = "reply_to_message_id")
     private Long replyToMessageId;
 

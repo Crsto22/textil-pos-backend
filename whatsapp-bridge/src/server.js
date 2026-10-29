@@ -14,6 +14,7 @@ import express from "express";
 import multer from "multer";
 import pino from "pino";
 import qrcode from "qrcode";
+import { classifyMessageContent } from "./message-classifier.js";
 import { prepareVoiceNote } from "./audio.js";
 import { isAuthorized, isIndividualChatId, mediaDurationSeconds, mediaExtension, normalizeChatId, normalizePhone } from "./helpers.js";
 import { prepareImageForWhatsApp } from "./image.js";
@@ -382,6 +383,9 @@ async function handleIncomingMessage(message, { historical = false } = {}) {
     return;
   }
 
+  const classification = classifyMessageContent(getContent(message));
+  if (classification.kind === "ignore") return;
+
   const from = normalizeChatId(message.key.remoteJid);
   if (!from || !isIndividualChatId(from)) {
     return;
@@ -423,6 +427,22 @@ async function handleIncomingMessage(message, { historical = false } = {}) {
     }
   }
   const timestamp = numericTimestamp(message.messageTimestamp) || Math.floor(Date.now() / 1000);
+  if (classification.kind === "reaction") {
+    state.lastActivityAt = new Date().toISOString();
+    await postToBackend({
+      event: "message.reaction",
+      messageId: message.key.id,
+      from,
+      phoneNumber: visiblePhoneNumber,
+      direction: isOutgoing ? "OUTGOING" : "INCOMING",
+      targetMessageId: classification.targetMessageId,
+      emoji: classification.emoji,
+      timestamp: new Date(timestamp * 1000).toISOString(),
+      messageKey: message.key,
+      baileysMessage: getBaileysMessageForQuote(message),
+    });
+    return;
+  }
   const payload = {
     event: isOutgoing ? "message.sent" : "message.received",
     messageId: message.key.id,
@@ -430,7 +450,8 @@ async function handleIncomingMessage(message, { historical = false } = {}) {
     phoneNumber: visiblePhoneNumber,
     username: getUsernameFromMessage(message),
     fromName: isOutgoing ? null : message.pushName || from,
-    body: getMessageText(message),
+    body: classification.body ?? getMessageText(message),
+    contentType: classification.contentType,
     timestamp: new Date(timestamp * 1000).toISOString(),
     quotedMessageId: getQuotedMessageId(message),
     viewOnce,
@@ -439,6 +460,7 @@ async function handleIncomingMessage(message, { historical = false } = {}) {
     historical,
     messageKey: message.key,
     baileysMessage: getBaileysMessageForQuote(message),
+    ...(classification.location ? { location: classification.location } : {}),
     ...(mediaPayload ? { media: mediaPayload } : {}),
   };
 

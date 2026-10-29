@@ -113,6 +113,7 @@ public interface CrmWhatsappMessageRepository extends JpaRepository<CrmWhatsappM
             SELECT m
             FROM CrmWhatsappMessage m
             WHERE m.conversation.idConversation = :conversationId
+              AND m.deletedAt IS NULL
               AND (:beforeId IS NULL OR m.idMessage < :beforeId)
             ORDER BY m.idMessage DESC
             """)
@@ -126,6 +127,7 @@ public interface CrmWhatsappMessageRepository extends JpaRepository<CrmWhatsappM
             FROM CrmWhatsappMessage m
             WHERE m.conversation.idConversation = :conversationId
               AND m.idMessage > :afterId
+              AND m.deletedAt IS NULL
             ORDER BY m.idMessage ASC
             """)
     List<CrmWhatsappMessage> findMessagesAfter(

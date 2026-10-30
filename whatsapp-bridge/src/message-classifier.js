@@ -1,4 +1,30 @@
-const NON_VISIBLE_KEYS = new Set(["messageContextInfo", "senderKeyDistributionMessage", "conversation"]);
+const NON_VISIBLE_KEYS = new Set([
+  "messageContextInfo",
+  "senderKeyDistributionMessage",
+  "secretEncryptedMessage",
+  "conversation",
+]);
+
+// Only payloads that WhatsApp presents as user-visible content should produce an
+// unsupported card. Unknown protocol/encryption payloads must stay invisible.
+const VISIBLE_UNSUPPORTED_KEYS = new Set([
+  "contactMessage",
+  "contactsArrayMessage",
+  "liveLocationMessage",
+  "pollCreationMessage",
+  "pollCreationMessageV2",
+  "pollCreationMessageV3",
+  "pollUpdateMessage",
+  "groupInviteMessage",
+  "productMessage",
+  "listMessage",
+  "listResponseMessage",
+  "buttonsMessage",
+  "buttonsResponseMessage",
+  "templateMessage",
+  "templateButtonReplyMessage",
+  "eventMessage",
+]);
 
 export function classifyMessageContent(content = {}) {
   if (content.protocolMessage || content.albumMessage) return { kind: "ignore" };
@@ -36,8 +62,9 @@ export function classifyMessageContent(content = {}) {
     return { kind: "message", contentType: null, body: String(text) };
   }
 
-  const potentiallyVisible = Object.keys(content).some((key) => !NON_VISIBLE_KEYS.has(key));
-  return potentiallyVisible
-    ? { kind: "message", contentType: "UNSUPPORTED", body: "Mensaje no compatible" }
+  const hasVisibleUnsupportedContent = Object.keys(content)
+    .some((key) => VISIBLE_UNSUPPORTED_KEYS.has(key) && !NON_VISIBLE_KEYS.has(key));
+  return hasVisibleUnsupportedContent
+    ? { kind: "message", contentType: "UNSUPPORTED", body: "Contenido de WhatsApp no compatible" }
     : { kind: "ignore" };
 }

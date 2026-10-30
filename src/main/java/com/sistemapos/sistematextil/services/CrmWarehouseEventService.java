@@ -2,6 +2,7 @@ package com.sistemapos.sistematextil.services;
 
 import java.io.IOException;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -42,8 +43,14 @@ public class CrmWarehouseEventService {
 
     @EventListener
     public void shippingConversationUpdated(CrmWarehouseConversationEvent event) {
-        publishAfterCommit(Map.of("type", "warehouse.message.updated",
-                "conversationId", event.conversationId()));
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("type", event.messageId() == null
+                ? "warehouse.message.updated"
+                : "warehouse.message.status.updated");
+        payload.put("conversationId", event.conversationId());
+        if (event.messageId() != null) payload.put("messageId", event.messageId());
+        if (event.messageStatus() != null) payload.put("status", event.messageStatus());
+        publishAfterCommit(payload);
     }
 
     @Scheduled(fixedDelay = 20000L)

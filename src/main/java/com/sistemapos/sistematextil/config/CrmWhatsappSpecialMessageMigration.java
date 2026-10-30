@@ -70,32 +70,29 @@ public class CrmWhatsappSpecialMessageMigration implements ApplicationRunner {
 
             statement.executeUpdate("""
                     UPDATE crm_whatsapp_message
-                    SET message_type = 'UNSUPPORTED', body = 'Mensaje no compatible'
-                    WHERE deleted_at IS NULL
-                      AND JSON_EXTRACT(baileys_message_json, '$.message.secretEncryptedMessage') IS NOT NULL
-                    """);
-            statement.executeUpdate("""
-                    UPDATE crm_whatsapp_message
-                    SET message_type = 'UNSUPPORTED', body = 'Mensaje no compatible'
+                    SET message_type = 'UNSUPPORTED', body = 'Contenido de WhatsApp no compatible'
                     WHERE deleted_at IS NULL
                       AND message_type = 'TEXT'
                       AND COALESCE(TRIM(body), '') = ''
                       AND media_storage_path IS NULL
-                      AND JSON_LENGTH(JSON_REMOVE(JSON_EXTRACT(baileys_message_json, '$.message'),
-                        '$.messageContextInfo', '$.senderKeyDistributionMessage', '$.conversation')) > 0
-                      AND JSON_EXTRACT(baileys_message_json, '$.message.protocolMessage') IS NULL
-                      AND JSON_EXTRACT(baileys_message_json, '$.message.albumMessage') IS NULL
-                      AND JSON_EXTRACT(baileys_message_json, '$.message.reactionMessage') IS NULL
-                      AND JSON_EXTRACT(baileys_message_json, '$.message.locationMessage') IS NULL
-                      AND JSON_EXTRACT(baileys_message_json, '$.message.extendedTextMessage') IS NULL
-                      AND JSON_EXTRACT(baileys_message_json, '$.message.imageMessage') IS NULL
-                      AND JSON_EXTRACT(baileys_message_json, '$.message.videoMessage') IS NULL
-                      AND JSON_EXTRACT(baileys_message_json, '$.message.audioMessage') IS NULL
-                      AND JSON_EXTRACT(baileys_message_json, '$.message.documentMessage') IS NULL
-                      AND JSON_EXTRACT(baileys_message_json, '$.message.stickerMessage') IS NULL
-                      AND JSON_EXTRACT(baileys_message_json, '$.message.viewOnceMessage') IS NULL
-                      AND JSON_EXTRACT(baileys_message_json, '$.message.viewOnceMessageV2') IS NULL
-                      AND JSON_EXTRACT(baileys_message_json, '$.message.ephemeralMessage') IS NULL
+                      AND (
+                        JSON_EXTRACT(baileys_message_json, '$.message.contactMessage') IS NOT NULL
+                        OR JSON_EXTRACT(baileys_message_json, '$.message.contactsArrayMessage') IS NOT NULL
+                        OR JSON_EXTRACT(baileys_message_json, '$.message.liveLocationMessage') IS NOT NULL
+                        OR JSON_EXTRACT(baileys_message_json, '$.message.pollCreationMessage') IS NOT NULL
+                        OR JSON_EXTRACT(baileys_message_json, '$.message.pollCreationMessageV2') IS NOT NULL
+                        OR JSON_EXTRACT(baileys_message_json, '$.message.pollCreationMessageV3') IS NOT NULL
+                        OR JSON_EXTRACT(baileys_message_json, '$.message.pollUpdateMessage') IS NOT NULL
+                        OR JSON_EXTRACT(baileys_message_json, '$.message.groupInviteMessage') IS NOT NULL
+                        OR JSON_EXTRACT(baileys_message_json, '$.message.productMessage') IS NOT NULL
+                        OR JSON_EXTRACT(baileys_message_json, '$.message.listMessage') IS NOT NULL
+                        OR JSON_EXTRACT(baileys_message_json, '$.message.listResponseMessage') IS NOT NULL
+                        OR JSON_EXTRACT(baileys_message_json, '$.message.buttonsMessage') IS NOT NULL
+                        OR JSON_EXTRACT(baileys_message_json, '$.message.buttonsResponseMessage') IS NOT NULL
+                        OR JSON_EXTRACT(baileys_message_json, '$.message.templateMessage') IS NOT NULL
+                        OR JSON_EXTRACT(baileys_message_json, '$.message.templateButtonReplyMessage') IS NOT NULL
+                        OR JSON_EXTRACT(baileys_message_json, '$.message.eventMessage') IS NOT NULL
+                      )
                     """);
 
             statement.executeUpdate("""
@@ -138,6 +135,8 @@ public class CrmWhatsappSpecialMessageMigration implements ApplicationRunner {
                           AND media_storage_path IS NULL
                           AND message_type = 'TEXT')
                       OR JSON_EXTRACT(baileys_message_json, '$.message.reactionMessage') IS NOT NULL
+                      OR (JSON_EXTRACT(baileys_message_json, '$.message.secretEncryptedMessage') IS NOT NULL
+                          AND media_storage_path IS NULL)
                     )
                     """);
             statement.executeUpdate("""

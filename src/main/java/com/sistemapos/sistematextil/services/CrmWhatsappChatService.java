@@ -1780,7 +1780,7 @@ public class CrmWhatsappChatService {
             return;
         }
         if ("message.status".equals(request.event())) {
-            actualizarEstadoMensaje(request.messageId(), request.status());
+            actualizarEstadoMensaje(request.clientId(), request.messageId(), request.status());
             return;
         }
         if ("message.deleted".equals(request.event())) {
@@ -1899,7 +1899,7 @@ public class CrmWhatsappChatService {
         }
         String body = viewOnce
                 ? "No se puede abrir este mensaje porque fue enviado para ver una sola vez."
-                : unsupported ? "Mensaje no compatible"
+                : unsupported ? "Contenido de WhatsApp no compatible"
                 : explicitLocation && clean(request.body()).isBlank() ? "Ubicación compartida"
                 : clean(request.body());
         LocalDateTime messageAt = parseDate(request.timestamp());
@@ -1917,7 +1917,7 @@ public class CrmWhatsappChatService {
         message.setMessageType(messageType);
         message.setBody(body);
         message.setWhatsappMessageId(request.messageId());
-        message.setMessageStatus(outgoing ? "sent" : "received");
+        message.setMessageStatus(outgoing ? initialOutgoingStatus(request.status()) : "received");
         message.setCreatedAt(messageAt);
         message.setMessageKeyJson(writeJson(request.messageKey()));
         message.setBaileysMessageJson(writeJson(request.baileysMessage()));
@@ -1992,7 +1992,8 @@ public class CrmWhatsappChatService {
     private boolean isTechnicalWebhook(WebhookRequest request) {
         JsonNode message = rawMessageNode(request);
         return message.path("protocolMessage").isObject() || message.path("albumMessage").isObject()
-                || message.path("reactionMessage").isObject();
+                || message.path("reactionMessage").isObject()
+                || message.path("secretEncryptedMessage").isObject();
     }
 
     private JsonNode rawMessageNode(WebhookRequest request) {
@@ -2002,13 +2003,13 @@ public class CrmWhatsappChatService {
 
     private boolean hasUnsupportedVisibleContent(JsonNode message) {
         if (message == null || !message.isObject()) return false;
-        Set<String> nonContent = Set.of("messageContextInfo", "senderKeyDistributionMessage", "conversation",
-                "extendedTextMessage", "imageMessage", "videoMessage", "audioMessage", "documentMessage",
-                "stickerMessage", "locationMessage", "protocolMessage", "albumMessage", "reactionMessage",
-                "viewOnceMessage", "viewOnceMessageV2", "viewOnceMessageV2Extension", "ephemeralMessage");
+        Set<String> visibleUnsupported = Set.of("contactMessage", "contactsArrayMessage", "liveLocationMessage",
+                "pollCreationMessage", "pollCreationMessageV2", "pollCreationMessageV3", "pollUpdateMessage",
+                "groupInviteMessage", "productMessage", "listMessage", "listResponseMessage", "buttonsMessage",
+                "buttonsResponseMessage", "templateMessage", "templateButtonReplyMessage", "eventMessage");
         var fields = message.fieldNames();
         while (fields.hasNext()) {
-            if (!nonContent.contains(fields.next())) return true;
+            if (visibleUnsupported.contains(fields.next())) return true;
         }
         return false;
     }
@@ -2110,21 +2111,41 @@ public class CrmWhatsappChatService {
         }
     }
 
-    private void actualizarEstadoMensaje(String messageId, String status) {
-        String normalizedStatus = clean(status);
-        if (messageId == null || messageId.isBlank() || normalizedStatus.isBlank()) {
+    private void actualizarEstadoMensaje(String clientId, String messageId, String status) {
+        String normalizedStatus = clean(status).toLowerCase(Locale.ROOT);
+        if (clean(clientId).isBlank() || messageId == null || messageId.isBlank()
+                || !isWhatsappDeliveryStatus(normalizedStatus)) {
             return;
         }
         messageRepository.findFirstByWhatsappMessageId(messageId)
                 .filter(message -> "OUTGOING".equals(message.getDirection()))
                 .filter(message -> message.getDeletedAt() == null)
+                .filter(message -> message.getConversation() != null
+                        && message.getConversation().getConnection() != null
+                        && clean(clientId).equals(clean(message.getConversation().getConnection().getClientId())))
                 .ifPresent(message -> {
-                    if (statusRank(normalizedStatus) >= statusRank(message.getMessageStatus())) {
+                    if (statusRank(normalizedStatus) > statusRank(message.getMessageStatus())) {
                         message.setMessageStatus(normalizedStatus);
                         messageRepository.save(message);
-                        publishRealtimeEvent("message.updated", message.getConversation(), toMessageResponse(message));
+                        if (message.getConversation().getConnection().getArea() == CrmWhatsappArea.SHIPPING) {
+                            applicationEventPublisher.publishEvent(new CrmWarehouseConversationEvent(
+                                    message.getConversation().getIdConversation(),
+                                    message.getIdMessage(),
+                                    normalizedStatus));
+                        } else {
+                            publishRealtimeEvent("message.updated", message.getConversation(), toMessageResponse(message));
+                        }
                     }
                 });
+    }
+
+    private String initialOutgoingStatus(String status) {
+        String normalized = clean(status).toLowerCase(Locale.ROOT);
+        return isWhatsappDeliveryStatus(normalized) ? normalized : "sent";
+    }
+
+    private boolean isWhatsappDeliveryStatus(String status) {
+        return Set.of("failed", "sent", "delivered", "read").contains(clean(status));
     }
 
     private void marcarMensajeEliminado(String messageId) {
@@ -2220,7 +2241,7 @@ public class CrmWhatsappChatService {
         nuevo.setTipoDocumento(TipoDocumento.SIN_DOC);
         nuevo.setNroDocumento(null);
         String nombre = clean(nombreRespaldo);
-        nuevo.setNombres(nombre.isBlank() ? "CLIENTE (" + telefono + ")" : nombre);
+        nuevo.setNombres(nombre.isBlank() ? "CLIENTE " + telefono : nombre);
         nuevo.setTelefono(telefono);
         nuevo.setCorreo(null);
         nuevo.setDireccion(null);

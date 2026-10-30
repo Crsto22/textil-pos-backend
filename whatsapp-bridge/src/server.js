@@ -15,6 +15,7 @@ import multer from "multer";
 import pino from "pino";
 import qrcode from "qrcode";
 import { classifyMessageContent } from "./message-classifier.js";
+import { MessageStatusCache } from "./message-status-cache.js";
 import { prepareVoiceNote } from "./audio.js";
 import { isAuthorized, isIndividualChatId, mediaDurationSeconds, mediaExtension, normalizeChatId, normalizePhone } from "./helpers.js";
 import { prepareImageForWhatsApp } from "./image.js";
@@ -61,6 +62,7 @@ let credentialWrite = Promise.resolve();
 let historyImportQueue = Promise.resolve();
 const sendDeduplicator = new SendDeduplicator();
 const requestIdempotency = new RequestIdempotencyRegistry();
+const messageStatusCache = new MessageStatusCache();
 const lidToPhoneNumber = new Map();
 
 const state = {
@@ -451,6 +453,9 @@ async function handleIncomingMessage(message, { historical = false } = {}) {
     username: getUsernameFromMessage(message),
     fromName: isOutgoing ? null : message.pushName || from,
     body: classification.body ?? getMessageText(message),
+    status: isOutgoing
+      ? messageStatusCache.consume(message.key.id, mapMessageStatus(message.status)) || "sent"
+      : "received",
     contentType: classification.contentType,
     timestamp: new Date(timestamp * 1000).toISOString(),
     quotedMessageId: getQuotedMessageId(message),
@@ -543,6 +548,8 @@ async function handleMessageStatusUpdates(updates) {
     if (!messageId || !status) {
       continue;
     }
+
+    messageStatusCache.remember(messageId, status);
 
     await postToBackend({
       event: "message.status",

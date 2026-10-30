@@ -2,7 +2,9 @@ package com.sistemapos.sistematextil.services;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -13,6 +15,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
@@ -109,6 +112,20 @@ class CrmWhatsappShippingIdentityTest {
     }
 
     @Test
+    void encryptedTechnicalPayloadDoesNotCreateOrMoveAConversation() {
+        service.recibirWebhook(new CrmWhatsappChatService.WebhookRequest(
+                "kiments-sales", "message.received", "encrypted-1", "51999999999@s.whatsapp.net", null,
+                null, "Cliente", "", "2026-10-24T15:00:00Z", null,
+                "UNSUPPORTED", "INCOMING", null, null, null, false, false, false, false,
+                null, null, Map.of(), Map.of("message", Map.of("secretEncryptedMessage",
+                        Map.of("encPayload", "technical")))));
+
+        verify(connectionService, never()).buscarPorClientId(any());
+        verify(conversationRepository, never()).insertIfAbsent(any(), any());
+        verify(messageRepository, never()).save(any());
+    }
+
+    @Test
     void reactionUpdatesItsTargetWithoutCreatingAConversationOrUnreadMessage() {
         CrmWhatsappConnection sales = new CrmWhatsappConnection();
         sales.setIdConnection(10L);
@@ -166,5 +183,78 @@ class CrmWhatsappShippingIdentityTest {
 
         verify(conversationRepository, never()).insertIfAbsent(any(), any());
         verify(applicationEventPublisher).publishEvent(any(CrmWarehouseConversationEvent.class));
+    }
+
+    @Test
+    void outgoingHistoryUsesTheStatusProvidedByWhatsapp() {
+        CrmWhatsappConnection shipping = new CrmWhatsappConnection();
+        shipping.setIdConnection(20L);
+        shipping.setClientId("kiments-shipping");
+        shipping.setArea(CrmWhatsappArea.SHIPPING);
+        CrmWhatsappConversation conversation = new CrmWhatsappConversation();
+        conversation.setIdConversation(44L);
+        conversation.setConnection(shipping);
+        conversation.setPhone("51924127067@s.whatsapp.net");
+
+        when(connectionService.buscarPorClientId("kiments-shipping")).thenReturn(shipping);
+        when(conversationRepository.findShippingIdentityCandidatesForUpdate(
+                eq(20L), eq("924127067"), eq("51924127067@s.whatsapp.net"), any()))
+                .thenReturn(List.of(conversation));
+        when(conversationRepository.save(any(CrmWhatsappConversation.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(messageRepository.save(any(CrmWhatsappMessage.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.recibirWebhook(new CrmWhatsappChatService.WebhookRequest(
+                "kiments-shipping", "message.sent", "history-1", "51924127067@s.whatsapp.net", "51924127067",
+                null, null, "Mensaje desde WhatsApp", "2026-10-24T15:00:00Z", "read",
+                "TEXT", "OUTGOING", null, null, null, false, false, false, true,
+                null, null, Map.of(), Map.of("message", Map.of("conversation", "Mensaje desde WhatsApp"))));
+
+        ArgumentCaptor<CrmWhatsappMessage> messageCaptor = ArgumentCaptor.forClass(CrmWhatsappMessage.class);
+        verify(messageRepository).save(messageCaptor.capture());
+        assertEquals("read", messageCaptor.getValue().getMessageStatus());
+    }
+
+    @Test
+    void shippingStatusUpdateIsMonotonicAndUsesTheWarehouseRealtimeChannel() {
+        CrmWhatsappConnection shipping = new CrmWhatsappConnection();
+        shipping.setIdConnection(20L);
+        shipping.setClientId("kiments-shipping");
+        shipping.setArea(CrmWhatsappArea.SHIPPING);
+        CrmWhatsappConversation conversation = new CrmWhatsappConversation();
+        conversation.setIdConversation(44L);
+        conversation.setConnection(shipping);
+        conversation.setUnreadCount(5);
+        CrmWhatsappMessage message = new CrmWhatsappMessage();
+        message.setIdMessage(91L);
+        message.setConversation(conversation);
+        message.setDirection("OUTGOING");
+        message.setMessageStatus("sent");
+
+        when(messageRepository.findFirstByWhatsappMessageId("status-1")).thenReturn(Optional.of(message));
+        when(messageRepository.save(any(CrmWhatsappMessage.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.recibirWebhook(new CrmWhatsappChatService.WebhookRequest(
+                "kiments-shipping", "message.status", "status-1", null, null,
+                null, null, null, "2026-10-24T15:01:00Z", "read",
+                null, null, null, null, null, false, false, false, false,
+                null, null, null, null));
+        service.recibirWebhook(new CrmWhatsappChatService.WebhookRequest(
+                "kiments-shipping", "message.status", "status-1", null, null,
+                null, null, null, "2026-10-24T15:02:00Z", "delivered",
+                null, null, null, null, null, false, false, false, false,
+                null, null, null, null));
+
+        assertEquals("read", message.getMessageStatus());
+        assertEquals(5, conversation.getUnreadCount());
+        verify(messageRepository, times(1)).save(message);
+        ArgumentCaptor<CrmWarehouseConversationEvent> eventCaptor =
+                ArgumentCaptor.forClass(CrmWarehouseConversationEvent.class);
+        verify(applicationEventPublisher).publishEvent(eventCaptor.capture());
+        assertEquals(44L, eventCaptor.getValue().conversationId());
+        assertEquals(91L, eventCaptor.getValue().messageId());
+        assertEquals("read", eventCaptor.getValue().messageStatus());
     }
 }

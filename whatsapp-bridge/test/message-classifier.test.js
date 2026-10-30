@@ -15,16 +15,18 @@ test("classifies reactions including removals", () => {
   assert.equal(classifyMessageContent({ reactionMessage: { key: { id: "target-1" }, text: "" } }).emoji, "");
 });
 
-test("classifies locations and unsupported visible payloads", () => {
+test("classifies locations and confirmed visible unsupported payloads", () => {
   const location = classifyMessageContent({ locationMessage: {
     degreesLatitude: -12.0464, degreesLongitude: -77.0428, name: "Lima", address: "Centro",
   } });
   assert.equal(location.contentType, "LOCATION");
   assert.equal(location.location.latitude, -12.0464);
-  assert.equal(classifyMessageContent({ secretEncryptedMessage: { encPayload: "x" } }).contentType, "UNSUPPORTED");
+  assert.equal(classifyMessageContent({ pollCreationMessageV3: { name: "Elige" } }).contentType, "UNSUPPORTED");
 });
 
-test("does not publish empty context-only messages", () => {
+test("does not publish empty context-only or encrypted technical messages", () => {
   assert.equal(classifyMessageContent({ messageContextInfo: {} }).kind, "ignore");
   assert.equal(classifyMessageContent({ conversation: "" }).kind, "ignore");
+  assert.equal(classifyMessageContent({ secretEncryptedMessage: { encPayload: "x" } }).kind, "ignore");
+  assert.equal(classifyMessageContent({ futureProtocolMessage: { value: "x" } }).kind, "ignore");
 });
